@@ -165,3 +165,15 @@ pwsh -File installer/build.ps1
 zsh -n installer/macos/Install.zsh
 zsh -n installer/macos/Manage.zsh
 ```
+
+---
+
+## .context 项目上下文
+
+> 项目使用 `.context/` 管理开发决策上下文。
+
+- **编码规范**：`.context/prefs/coding-style.md`
+- **工作流规则**：`.context/prefs/workflow.md`
+- **决策历史**：`.context/history/commits.md`
+
+**规则**：修改代码前必读 `prefs/`，做决策时按 `workflow.md` 规则记录日志。提交时 `/ccg:commit` 会自动从 git diff 分析决策并归档到 `history/`。
