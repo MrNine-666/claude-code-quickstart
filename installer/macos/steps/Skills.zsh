@@ -51,6 +51,14 @@ ppt-master	PPT Master	hugohe3/ppt-master		PPT 生成与演示文稿技能	false	
 EOF
 }
 
+ccq_skills_ignored_names_fallback() {
+  cat <<'EOF'
+ccg-skills
+collaborating-with-codex
+collaborating-with-gemini
+EOF
+}
+
 ccq_skills_catalogue() {
   local contract_path
   contract_path="$(ccq_skills_contract_path 2>/dev/null || true)"
@@ -75,6 +83,23 @@ for (const item of rows) {
 ' "${contract_path}" && return 0
   fi
   ccq_skills_catalogue_fallback
+}
+
+ccq_skills_ignored_names() {
+  local contract_path
+  contract_path="$(ccq_skills_contract_path 2>/dev/null || true)"
+  if [ -n "${contract_path}" ] && command -v node >/dev/null 2>&1; then
+    node -e '
+const fs = require("fs");
+const contract = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const names = (contract.IgnoredSkillNames || [])
+  .map(name => String(name || "").trim())
+  .filter(Boolean);
+if (names.length === 0) process.exit(1);
+for (const name of names) console.log(name);
+' "${contract_path}" 2>/dev/null && return 0
+  fi
+  ccq_skills_ignored_names_fallback
 }
 
 ccq_ui_contract_value() {
@@ -131,12 +156,23 @@ ccq_skills_installed_json() {
 }
 
 ccq_skills_installed_names() {
-  ccq_skills_installed_json | node -e '
+  local ignored
+  ignored="$(ccq_skills_ignored_names 2>/dev/null || true)"
+  ccq_skills_installed_json | CCQ_SKILLS_IGNORED_NAMES="${ignored}" node -e '
 const fs = require("fs");
 const raw = fs.readFileSync(0, "utf8").trim() || "[]";
+const ignored = new Set(String(process.env.CCQ_SKILLS_IGNORED_NAMES || "")
+  .split(/\r?\n/)
+  .map(name => name.trim().toLowerCase())
+  .filter(Boolean));
 let items = [];
 try { items = JSON.parse(raw); } catch { items = []; }
-for (const item of items) if (item && item.name) console.log(item.name);
+for (const item of items) {
+  if (!item || !item.name) continue;
+  const name = String(item.name).trim();
+  if (!name || ignored.has(name.toLowerCase())) continue;
+  console.log(name);
+}
 ' 2>/dev/null || true
 }
 

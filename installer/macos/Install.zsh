@@ -379,61 +379,123 @@ ccq_register_ccq_shortcut() {
   local zshrc_path shortcut_content
   zshrc_path="$(ccq_zshrc_path)"
 
-  shortcut_content="function ccq() {
-  local panel=\"\${1:-}\"
-  local install_script_url=\"${install_url}\"
-  local manage_script_url=\"${manage_url}\"
+  shortcut_content="$(cat <<'CCQ_SHORTCUT'
+function ccq() {
+  local panel="${1:-}"
+  local install_script_url="__INSTALL_SCRIPT_URL__"
+  local manage_script_url="__MANAGE_SCRIPT_URL__"
 
   local run_remote_panel
   run_remote_panel() {
-    local url=\"\${1:-}\"
+    local url="${1:-}"
     if ! command -v curl >/dev/null 2>&1; then
-      printf '%s\\n' 'curl 不可用，无法下载 CCQ 远程脚本' >&2
+      printf '%s\n' 'curl 不可用，无法下载 CCQ 远程脚本' >&2
       return 1
     fi
-    curl -fsSL \"\${url}\" | bash
+    curl -fsSL "${url}" | bash
   }
 
-  local select_panel
-  select_panel() {
-    if [ ! -r /dev/tty ]; then
-      printf '%s\\n' 'Manage'
+  local show_ccq_panel_menu
+  show_ccq_panel_menu() {
+    local selected_index=1
+    local options=('安装面板' '管理面板')
+    local values=('Install' 'Manage')
+    local count="${#options[@]}"
+    local line_count=$((4 + count))
+    local key next third i
+
+    if [ ! -r /dev/tty ] || [ ! -w /dev/tty ] || [ "${TERM:-dumb}" = "dumb" ]; then
+      printf '%s\n' "${values[$((selected_index + 1))]}"
       return 0
     fi
-    if ! command -v ccq_show_single_select_menu >/dev/null 2>&1; then
-      local choice
-      printf '\\n%s\\n' 'CCQ 面板选择' > /dev/tty
-      printf '  1) 安装面板\\n' > /dev/tty
-      printf '  2) 管理面板\\n' > /dev/tty
-      printf '请输入编号 [1-2]，或 q 取消: ' > /dev/tty
-      IFS= read -r choice < /dev/tty || return 1
-      case \"\${choice}\" in
-        1) printf '%s\\n' 'Install' ;;
-        2) printf '%s\\n' 'Manage' ;;
-        q|Q|'') return 1 ;;
-        *) printf '%s\\n' '未知选择' >&2; return 1 ;;
+
+    local render_menu
+    render_menu() {
+      printf '\n%s\n' 'CCQ 面板选择' > /dev/tty
+      printf '%s\n\n' '使用 ↑/↓ 选择，Enter 确认，Esc 取消' > /dev/tty
+      i=1
+      while [ "${i}" -le "${count}" ]; do
+        if [ $((i - 1)) -eq "${selected_index}" ]; then
+          printf '> %s\n' "${options[$i]}" > /dev/tty
+        else
+          printf '  %s\n' "${options[$i]}" > /dev/tty
+        fi
+        i=$((i + 1))
+      done
+    }
+
+    local redraw_menu
+    redraw_menu() {
+      printf '\033[%sA\033[J' "${line_count}" > /dev/tty
+      render_menu
+    }
+
+    local read_menu_key
+    read_menu_key() {
+      IFS= read -r -s -k 1 key < /dev/tty || return 1
+      case "${key}" in
+        $'\033')
+          if IFS= read -r -s -k 1 -t 0.08 next < /dev/tty 2>/dev/null; then
+            if [ "${next}" = "[" ]; then
+              IFS= read -r -s -k 1 -t 0.08 third < /dev/tty 2>/dev/null || third=""
+              case "${third}" in
+                A) printf 'up\n' ;;
+                B) printf 'down\n' ;;
+                *) printf 'escape\n' ;;
+              esac
+            else
+              printf 'escape\n'
+            fi
+          else
+            printf 'escape\n'
+          fi
+          ;;
+        $'\n'|$'\r') printf 'enter\n' ;;
+        q|Q) printf 'escape\n' ;;
+        *) printf 'other\n' ;;
       esac
-      return 0
-    fi
-    local idx
-    idx=\"\$(ccq_show_single_select_menu 'CCQ 面板选择' '使用 ↑/↓ 选择，Enter 确认，Esc 取消' '安装面板' '管理面板')\" || return 1
-    case \"\${idx}\" in
-      0) printf '%s\\n' 'Install' ;;
-      1) printf '%s\\n' 'Manage' ;;
-      *) return 1 ;;
-    esac
+    }
+
+    printf '\033[?25l' > /dev/tty
+    render_menu
+    while true; do
+      key="$(read_menu_key || printf 'escape')"
+      case "${key}" in
+        up)
+          selected_index=$(((selected_index - 1 + count) % count))
+          redraw_menu
+          ;;
+        down)
+          selected_index=$(((selected_index + 1) % count))
+          redraw_menu
+          ;;
+        enter)
+          printf '\n\033[?25h' > /dev/tty
+          printf '%s\n' "${values[$((selected_index + 1))]}"
+          return 0
+          ;;
+        escape)
+          printf '\n\033[?25h' > /dev/tty
+          return 1
+          ;;
+      esac
+    done
   }
 
-  if [ -z \"\${panel}\" ]; then
-    panel=\"\$(select_panel)\" || { printf '%s\\n' '已取消'; return 0; }
+  if [ -z "${panel}" ]; then
+    panel="$(show_ccq_panel_menu)" || { printf '%s\n' '已取消'; return 0; }
   fi
 
-  case \"\${panel}\" in
-    Install|安装面板) run_remote_panel \"\${install_script_url}\" ;;
-    Manage|管理面板) run_remote_panel \"\${manage_script_url}\" ;;
-    *) printf '未知面板: %s\\n' \"\${panel}\" >&2; return 1 ;;
+  case "${panel}" in
+    Install|安装面板) run_remote_panel "${install_script_url}" ;;
+    Manage|管理面板) run_remote_panel "${manage_script_url}" ;;
+    *) printf '未知面板: %s\n' "${panel}" >&2; return 1 ;;
   esac
-}"
+}
+CCQ_SHORTCUT
+)"
+  shortcut_content="${shortcut_content//__INSTALL_SCRIPT_URL__/${install_url}}"
+  shortcut_content="${shortcut_content//__MANAGE_SCRIPT_URL__/${manage_url}}"
 
   if ccq_set_shortcut_subsection "${zshrc_path}" "${shortcut_content}" || \
      ccq_write_profile_subsection "${zshrc_path}" "SHORTCUTS" "${shortcut_content}"; then

@@ -390,7 +390,7 @@ npx --yes ccg-workflow@latest init --skip-prompt --skip-mcp --lang zh-CN --insta
 
 **功能**：仅通过 `Manage → Skills 管理` 入口安装、更新或卸载 Claude Code 全局 Skills。安装流程（Basic / Advanced）不再包含 Skills，统一 Update 管理也不注册 Skills；Skills 管理菜单内部仍通过受控 catalogue 调用 `npx --yes skills add ... --yes --agent claude-code -g`，并通过 `Update-Skills` 调用 `npx --yes skills update [skill...] -g -y`。
 
-**catalogue 来源**：优先读取 `installer/contracts/skills.json` 作为 Windows/macOS 共享业务源；内联 fallback 只用于 release artifact 或 contracts 不可用场景，并由 `installer/contracts/Test-Contracts.ps1` 与 contract 校验一致。
+**catalogue 来源**：优先读取 `installer/contracts/skills.json` 作为 Windows/macOS 共享业务源；内联 fallback 只用于 release artifact 或 contracts 不可用场景，并由 `installer/contracts/Test-Contracts.ps1` 与 contract 校验一致。`skills.json` 同时提供 `IgnoredSkillNames`，用于过滤 CCG Workflow 等其他步骤受管的 Skills，避免被普通 Skills 管理误更新或误卸载。
 
 **安装策略**：
 - 所有命令通过 `Invoke-ExternalCommand -Command "npx" -Arguments <string[]>` 执行，禁止 shell 字符串拼接

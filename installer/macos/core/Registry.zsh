@@ -77,7 +77,6 @@ ccq_registry_init_bootstrap_snapshot() {
     order=$((order + 10))
   done
 
-  CCQ_BOOTSTRAP_STEP_SKIP[NodeJS]="false"
   CCQ_BOOTSTRAP_STEP_SKIP[Mcp]="false"
   CCQ_BOOTSTRAP_STEP_SKIP[Skills]="false"
   CCQ_BOOTSTRAP_STEP_OPTIONAL[Skills]="true"
@@ -217,9 +216,12 @@ const step = contract.Steps.find(s => s.StepId === process.argv[2]);
 if (!step) process.exit(1);
 const field = process.argv[3];
 if (field !== "UpdateFunction" && !Object.prototype.hasOwnProperty.call(step, field)) process.exit(1);
-const value = field === "UpdateFunction" && step.MacOSUpdateFunction !== undefined
+let value = field === "UpdateFunction" && step.MacOSUpdateFunction !== undefined
   ? step.MacOSUpdateFunction
   : step[field];
+if (field === "SkipIfInstalled" && step.MacOSSkipIfInstalled !== undefined) {
+  value = step.MacOSSkipIfInstalled;
+}
 if (value === undefined) process.exit(1);
 if (Array.isArray(value)) process.stdout.write(value.join("\n"));
 else process.stdout.write(String(value));

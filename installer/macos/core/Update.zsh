@@ -138,9 +138,13 @@ ccq_npm_outdated_global() {
   fi
 
   local outdated_json
-  outdated_json="$(npm outdated -g --json 2>/dev/null || echo '{}')"
+  # npm outdated 有可更新包时会返回 exit 1，但 stdout 仍是有效 JSON；不能用 || 追加 {}
+  # 否则会形成两个 JSON 文档，导致下游 JSON.parse 报错。
+  outdated_json="$(npm outdated -g --json 2>/dev/null)"
 
   if [ -z "${outdated_json}" ] || [ "${outdated_json}" = "null" ]; then
+    outdated_json="{}"
+  elif ! printf '%s' "${outdated_json}" | node -e 'JSON.parse(require("fs").readFileSync(0, "utf8"));' >/dev/null 2>&1; then
     outdated_json="{}"
   fi
 
@@ -157,7 +161,7 @@ ccq_npm_package_has_update() {
 const outdated = JSON.parse(require("fs").readFileSync(0, "utf8"));
 const pkg = process.env.PKG;
 console.log(outdated[pkg] ? "true" : "false");
-'
+' 2>/dev/null || printf 'false\n'
 }
 
 # ─── 更新快照（备份关键文件，可回滚）──────────────────────────────────────

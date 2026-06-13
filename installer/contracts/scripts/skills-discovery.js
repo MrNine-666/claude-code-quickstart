@@ -11,6 +11,10 @@
  *   - 菜单 UI
  *   - npx 进程启动
  *   - 缓存文件读写
+ *   - release artifact 中 contracts/scripts 不可用时的 runtime fallback
+ *
+ * 注意：本脚本是纯算法辅助，不是 Windows/macOS release 单文件的必需依赖。
+ * 跨平台业务策略优先放在 skills.json；平台 runtime 必须保留 fallback。
  */
 
 const fs = require('fs');

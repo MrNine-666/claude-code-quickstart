@@ -290,8 +290,8 @@ ccq_show_installation_summary() {
   local i=1
 
   while [ "${i}" -le "${#CCQ_STATE_STEP_IDS[@]}" ]; do
-    local status="${CCQ_STATE_STEP_STATUSES[$i]:-}"
-    case "${status}" in
+    local summary_status="${CCQ_STATE_STEP_STATUSES[$i]:-}"
+    case "${summary_status}" in
       "${CCQ_STEP_STATUS_SUCCESS}") pass_count=$((pass_count + 1)) ;;
       "${CCQ_STEP_STATUS_FAILED}") fail_count=$((fail_count + 1)) ;;
       "${CCQ_STEP_STATUS_SKIPPED}") skip_count=$((skip_count + 1)) ;;

@@ -400,12 +400,17 @@ function ConvertTo-NormalizedSkillsCatalogue {
     return @($Catalogue | ForEach-Object { ConvertTo-NormalizedSkillsEntry -Entry $_ } | Sort-Object { [int]$_['Order'] })
 }
 
-function ConvertFrom-MacOSSkillsFallback {
+function Get-MacOSSkillsContent {
     $skillsPath = Join-Path $script:InstallerRoot 'macos/steps/Skills.zsh'
     Assert-PathExists 'macos.skills' $skillsPath
-    if (-not (Test-Path $skillsPath -PathType Leaf)) { return @() }
+    if (-not (Test-Path $skillsPath -PathType Leaf)) { return '' }
+    return (Get-Content -Path $skillsPath -Raw -Encoding UTF8)
+}
 
-    $content = Get-Content -Path $skillsPath -Raw -Encoding UTF8
+function ConvertFrom-MacOSSkillsFallback {
+    $content = Get-MacOSSkillsContent
+    if ([string]::IsNullOrWhiteSpace($content)) { return @() }
+
     $match = [regex]::Match($content, "(?ms)ccq_skills_catalogue_fallback\(\)\s*\{.*?cat <<'EOF'\r?\n(?<Body>.*?)\r?\nEOF")
     if (-not $match.Success) {
         Add-Issue 'macos.skills fallback catalogue 未找到 ccq_skills_catalogue_fallback here-doc'
@@ -435,10 +440,35 @@ function ConvertFrom-MacOSSkillsFallback {
     return @($items)
 }
 
+function ConvertFrom-MacOSSkillsIgnoredNamesFallback {
+    $content = Get-MacOSSkillsContent
+    if ([string]::IsNullOrWhiteSpace($content)) { return @() }
+
+    $match = [regex]::Match($content, "(?ms)ccq_skills_ignored_names_fallback\(\)\s*\{.*?cat <<'EOF'\r?\n(?<Body>.*?)\r?\nEOF")
+    if (-not $match.Success) {
+        Add-Issue 'macos.skills ignored names fallback 未找到 ccq_skills_ignored_names_fallback here-doc'
+        return @()
+    }
+
+    return @($match.Groups['Body'].Value -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { [string]$_.Trim() })
+}
+
 function Test-SkillsContract {
     param([Parameter(Mandatory)][hashtable]$Contract)
 
     Assert-Equal 'skills.schema-version' 1 $Contract['SchemaVersion']
+
+    if (-not $Contract.ContainsKey('IgnoredSkillNames')) {
+        Add-Issue 'skills.IgnoredSkillNames 缺失'
+    } else {
+        $ignoredNames = @($Contract['IgnoredSkillNames'] | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($ignoredNames.Count -eq 0) {
+            Add-Issue 'skills.IgnoredSkillNames 不能为空'
+        }
+        Assert-Equal 'skills.windows-ignored-names-fallback' @($script:SkillsIgnoredNames) $ignoredNames
+        Assert-Equal 'skills.macos-ignored-names-fallback' $ignoredNames @(ConvertFrom-MacOSSkillsIgnoredNamesFallback)
+    }
+
     $catalogue = @(ConvertTo-NormalizedSkillsCatalogue -Catalogue @($Contract['Catalogue']))
     if ($catalogue.Count -eq 0) {
         Add-Issue 'skills.catalogue 不能为空'

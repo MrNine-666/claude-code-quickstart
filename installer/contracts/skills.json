@@ -1,6 +1,11 @@
 {
   "SchemaVersion": 1,
   "Source": "installer/contracts/skills.json",
+  "IgnoredSkillNames": [
+    "ccg-skills",
+    "collaborating-with-codex",
+    "collaborating-with-gemini"
+  ],
   "Catalogue": [
     {
       "Id": "find-skills",

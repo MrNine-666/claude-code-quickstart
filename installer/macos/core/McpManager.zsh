@@ -167,17 +167,17 @@ ccq_mcp_status_label() {
 }
 
 ccq_mcp_show_status() {
-  local lines line id name status mcp_type category status_text
+  local lines line id name mcp_status mcp_type category status_text
   lines="$(ccq_mcp_status_lines 2>/dev/null || true)"
   ccq_ui_primary "MCP Server 状态："
   if [ -z "${lines}" ]; then
     ccq_ui_warning "  尚未配置 MCP Server"
     return 0
   fi
-  while IFS=$'\t' read -r id name status mcp_type category; do
+  while IFS=$'\t' read -r id name mcp_status mcp_type category; do
     [ -n "${id}" ] || continue
-    status_text="[$(ccq_mcp_status_label "${status}")]"
-    case "${status}" in
+    status_text="[$(ccq_mcp_status_label "${mcp_status}")]"
+    case "${mcp_status}" in
       Active) ccq_ui_success "  ${status_text} ${name} (${id}) - ${mcp_type} - ${category}" ;;
       Disabled) ccq_ui_warning "  ${status_text} ${name} (${id}) - ${mcp_type} - ${category}" ;;
       Custom) ccq_ui_primary "  ${status_text} ${name} (${id})" ;;
@@ -368,7 +368,7 @@ ccq_mcp_remove_server() {
 # ─── 批量切换（Active 默认选中，Disabled 默认不选）──────────────────────────
 
 ccq_mcp_toggle_menu() {
-  local lines line id name status mcp_type category
+  local lines line id name mcp_status mcp_type category
   local ids=() statuses=() labels=() defaults=() idx=0
   lines="$(ccq_mcp_status_lines 2>/dev/null || true)"
   if [ -z "${lines}" ]; then
@@ -376,17 +376,17 @@ ccq_mcp_toggle_menu() {
     return 0
   fi
 
-  while IFS=$'\t' read -r id name status mcp_type category; do
+  while IFS=$'\t' read -r id name mcp_status mcp_type category; do
     [ -n "${id}" ] || continue
     # 仅 Active / Disabled 参与批量切换；Custom/Missing 跳过
-    case "${status}" in
+    case "${mcp_status}" in
       Active|Disabled) ;;
       *) continue ;;
     esac
     ids+=("${id}")
-    statuses+=("${status}")
-    labels+=("${name} (${id}) - $(ccq_mcp_status_label "${status}")")
-    [ "${status}" = "Active" ] && defaults+=("${idx}")
+    statuses+=("${mcp_status}")
+    labels+=("${name} (${id}) - $(ccq_mcp_status_label "${mcp_status}")")
+    [ "${mcp_status}" = "Active" ] && defaults+=("${idx}")
     idx=$((idx + 1))
   done <<EOF
 ${lines}

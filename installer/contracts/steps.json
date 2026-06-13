@@ -66,6 +66,7 @@
       "VerifyFunction": "Verify-NodeJS",
       "UpdateFunction": "",
       "SkipIfInstalled": false,
+      "MacOSSkipIfInstalled": true,
       "SkipIfInstalledWhenAutoAdded": true,
       "IsOptional": false,
       "Order": 10,

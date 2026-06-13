@@ -14,6 +14,7 @@ $script:SkillsIgnoredNames = @(
     "collaborating-with-codex",
     "collaborating-with-gemini"
 )
+$script:SkillsIgnoredNamesCache = $null
 $script:SkillsSourceDiscoveryCache = @{}
 $script:LastSkillsInstallData = @{}
 function Get-SkillsContractPath {
@@ -254,6 +255,39 @@ function Get-UniqueSkillNames {
     return @($result)
 }
 
+function Get-SkillsIgnoredNames {
+    <#
+    .SYNOPSIS
+    返回受管 Skills 忽略名单；优先读取 contracts，失败时回退内联名单。
+    #>
+    param()
+
+    if ($null -ne $script:SkillsIgnoredNamesCache) {
+        return @($script:SkillsIgnoredNamesCache)
+    }
+
+    $ignoredNames = @()
+    $contractPath = Get-SkillsContractPath
+    if ($contractPath) {
+        try {
+            $contract = Get-Content -Path $contractPath -Encoding UTF8 -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+            if ($contract.ContainsKey('IgnoredSkillNames')) {
+                $ignoredNames = @($contract['IgnoredSkillNames'] | ForEach-Object { [string]$_ })
+            }
+        }
+        catch {
+            $ignoredNames = @()
+        }
+    }
+
+    if ($ignoredNames.Count -eq 0) {
+        $ignoredNames = @($script:SkillsIgnoredNames)
+    }
+
+    $script:SkillsIgnoredNamesCache = @(Get-UniqueSkillNames -Names $ignoredNames)
+    return @($script:SkillsIgnoredNamesCache)
+}
+
 function Limit-SkillsDisplayText {
     <#
     .SYNOPSIS
@@ -298,7 +332,11 @@ function Test-SkillNameIgnored {
         [string]$Name
     )
 
-    foreach ($ignoredName in $script:SkillsIgnoredNames) {
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        return $false
+    }
+
+    foreach ($ignoredName in @(Get-SkillsIgnoredNames)) {
         if ([string]$Name -ieq [string]$ignoredName) {
             return $true
         }

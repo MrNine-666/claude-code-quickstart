@@ -39,12 +39,13 @@ curl -fsSL "https://github.com/MrNine-666/claude-code-quickstart/releases/latest
 
 - 最低系统版本：macOS 12+。
 - 包管理器：Homebrew。
-- Node.js：通过 nvm 官方脚本安装 LTS，**只做 nvm（不支持 fnm / npm 全局包备份恢复）**。
+- Node.js：通过 nvm 官方脚本安装 LTS，**只做 nvm（不支持 fnm / npm 全局包备份恢复）**；检测到当前 Node.js/npm 已满足最低版本时，安装生命周期最终状态应为 `Skipped`，不应标记为 `Success`。
 - Profile 写入：
   - Homebrew 仅在 CCQ 执行官方安装成功后，按官方推荐追加 `eval "$(<brew路径> shellenv)"` 到 `~/.zprofile`。
   - `ccq` 快捷函数写入 `~/.zshrc`。
   - CCQ 自身写入优先使用 `# >>> Claude Code Quickstart >>>` 托管块；Homebrew 与 nvm 初始化遵循各自官方安装方式，不注入 CCQ 托管块。
 - 配置 schema 与 Windows 共享：`~/.claude/settings.json`、`~/.claude.json`、`~/.claude/providers/`、`~/.ccq/mcp-meta.json`。
+- Skills catalogue 与 ignore policy 共享 `installer/contracts/skills.json`；`IgnoredSkillNames` 中的 CCG Workflow 受管 Skills 不进入 macOS Skills 状态、更新或卸载候选。
 - 禁止调用 Windows 专属机制：winget、注册表、MSI/EXE、Windows Terminal、Windows `$PROFILE`。
 - 可选工具无自动路径或失败时返回 `ManualRequired` / `Unsupported`，不得计入 Success。
 
