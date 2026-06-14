@@ -61,6 +61,7 @@ const COLORS = {
 let IS_TTY = false;
 let TTY_INPUT = process.stdin;
 let TTY_OUTPUT = process.stdout;
+let TTY_OWNS_FD = false;  // 标记是否使用自定义 fd（需在 cleanup 时 destroy）
 
 try {
   // 尝试打开 /dev/tty，如果成功则认为可交互
@@ -74,11 +75,13 @@ try {
   // "TTY_INPUT.setRawMode is not a function" 崩溃。
   TTY_INPUT = new tty.ReadStream(fs.openSync('/dev/tty', 'r'));
   TTY_OUTPUT = new tty.WriteStream(fs.openSync('/dev/tty', 'w'));
+  TTY_OWNS_FD = true;  // 标记：这些流持有我们打开的 fd，需手动 destroy
 } catch (e) {
   // /dev/tty 不可用，回退到 stdin/stdout 检测
   IS_TTY = process.stdin.isTTY && process.stdout.isTTY;
   TTY_INPUT = process.stdin;
   TTY_OUTPUT = process.stdout;
+  TTY_OWNS_FD = false;  // 标记：使用全局流，禁止 destroy
 }
 
 const SUPPORTS_ANSI = IS_TTY;
@@ -905,6 +908,13 @@ function showMenu(title, options) {
       }
       TTY_INPUT.removeListener('keypress', onKeypress);
       TTY_INPUT.pause();
+
+      // 如果使用了自定义 fd（/dev/tty），销毁流以关闭底层 fd
+      // 避免 macOS 上 fd 泄漏导致终端状态残留（表现为 ESC 后卡住，狂吐 ^[）
+      if (TTY_OWNS_FD) {
+        TTY_INPUT.destroy();
+        TTY_OUTPUT.destroy();
+      }
     }
 
     // 启用 raw mode 和 keypress 事件
@@ -1014,6 +1024,13 @@ function showMultiSelectMenu(title, options, defaultSelected = []) {
       }
       TTY_INPUT.removeListener('keypress', onKeypress);
       TTY_INPUT.pause();
+
+      // 如果使用了自定义 fd（/dev/tty），销毁流以关闭底层 fd
+      // 避免 macOS 上 fd 泄漏导致终端状态残留（表现为 ESC 后卡住，狂吐 ^[）
+      if (TTY_OWNS_FD) {
+        TTY_INPUT.destroy();
+        TTY_OUTPUT.destroy();
+      }
     }
 
     // 启用 raw mode 和 keypress 事件
@@ -1075,6 +1092,12 @@ function waitForKeypress() {
       }
       TTY_INPUT.removeListener('keypress', onKeypress);
       TTY_INPUT.pause();
+
+      // 如果使用了自定义 fd（/dev/tty），销毁流以关闭底层 fd
+      if (TTY_OWNS_FD) {
+        TTY_INPUT.destroy();
+        TTY_OUTPUT.destroy();
+      }
     }
 
     // 启用 raw mode 和 keypress 事件
