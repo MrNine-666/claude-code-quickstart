@@ -86,6 +86,25 @@ try {
 
 const SUPPORTS_ANSI = IS_TTY;
 
+/**
+ * 全局清理：销毁 TTY 流（仅在脚本退出时调用）
+ */
+function cleanupGlobalTTY() {
+  if (TTY_OWNS_FD && TTY_INPUT && TTY_OUTPUT) {
+    try {
+      // 确保恢复 raw mode（防止菜单中途 Ctrl+C 残留）
+      if (TTY_INPUT.isTTY && typeof TTY_INPUT.setRawMode === 'function') {
+        TTY_INPUT.setRawMode(false);
+      }
+      // 销毁流，关闭底层 fd
+      TTY_INPUT.destroy();
+      TTY_OUTPUT.destroy();
+    } catch (e) {
+      // 静默失败（进程已退出，无需打印）
+    }
+  }
+}
+
 // definitionHash 排除字段（来自规格 3.2）
 const EXCLUDE_KEYS = ['Description', 'Category', 'Priority', 'Recommended', 'Name', 'RuntimeDeps'];
 
@@ -889,6 +908,7 @@ function showMenu(title, options) {
         resolve(-1);
       } else if (key.ctrl && key.name === 'c') {
         cleanup();
+        cleanupGlobalTTY();
         process.exit(0);
       }
     };
@@ -908,13 +928,6 @@ function showMenu(title, options) {
       }
       TTY_INPUT.removeListener('keypress', onKeypress);
       TTY_INPUT.pause();
-
-      // 如果使用了自定义 fd（/dev/tty），销毁流以关闭底层 fd
-      // 避免 macOS 上 fd 泄漏导致终端状态残留（表现为 ESC 后卡住，狂吐 ^[）
-      if (TTY_OWNS_FD) {
-        TTY_INPUT.destroy();
-        TTY_OUTPUT.destroy();
-      }
     }
 
     // 启用 raw mode 和 keypress 事件
@@ -1005,6 +1018,7 @@ function showMultiSelectMenu(title, options, defaultSelected = []) {
         resolve(null);
       } else if (key.ctrl && key.name === 'c') {
         cleanup();
+        cleanupGlobalTTY();
         process.exit(0);
       }
     };
@@ -1024,13 +1038,6 @@ function showMultiSelectMenu(title, options, defaultSelected = []) {
       }
       TTY_INPUT.removeListener('keypress', onKeypress);
       TTY_INPUT.pause();
-
-      // 如果使用了自定义 fd（/dev/tty），销毁流以关闭底层 fd
-      // 避免 macOS 上 fd 泄漏导致终端状态残留（表现为 ESC 后卡住，狂吐 ^[）
-      if (TTY_OWNS_FD) {
-        TTY_INPUT.destroy();
-        TTY_OUTPUT.destroy();
-      }
     }
 
     // 启用 raw mode 和 keypress 事件
@@ -1092,12 +1099,6 @@ function waitForKeypress() {
       }
       TTY_INPUT.removeListener('keypress', onKeypress);
       TTY_INPUT.pause();
-
-      // 如果使用了自定义 fd（/dev/tty），销毁流以关闭底层 fd
-      if (TTY_OWNS_FD) {
-        TTY_INPUT.destroy();
-        TTY_OUTPUT.destroy();
-      }
     }
 
     // 启用 raw mode 和 keypress 事件
@@ -1287,6 +1288,7 @@ async function manageMode() {
     console.error('当前 MCP 状态：');
     const statuses = computeStatus();
     showStatusTable(statuses);
+    cleanupGlobalTTY();
     process.exit(1);
   }
 
@@ -1519,11 +1521,16 @@ async function main() {
       console.log('  node mcp-manager.js status --table  # 输出状态表格');
       console.log('  node mcp-manager.js sync-rules      # 同步 Rules 文件');
       console.log('  node mcp-manager.js --version       # 版本号');
+      cleanupGlobalTTY();
       process.exit(action ? 1 : 0);
     }
   } catch (err) {
     showError('执行失败', err.message);
+    cleanupGlobalTTY();
     process.exit(1);
+  } finally {
+    // 正常退出时也清理（避免 fd 泄漏）
+    cleanupGlobalTTY();
   }
 }
 
