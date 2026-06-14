@@ -25,6 +25,7 @@ const path = require('path');
 const crypto = require('crypto');
 const readline = require('readline');
 const os = require('os');
+const tty = require('tty');
 
 // ============================================================================
 // 常量层
@@ -67,13 +68,12 @@ try {
   fs.closeSync(ttyFd);
   IS_TTY = true;
 
-  // 创建从 /dev/tty 读写的流（用于管道场景下的交互式输入）
-  TTY_INPUT = fs.createReadStream('/dev/tty', { fd: fs.openSync('/dev/tty', 'r') });
-  TTY_OUTPUT = fs.createWriteStream('/dev/tty', { fd: fs.openSync('/dev/tty', 'w') });
-
-  // 标记为 TTY（某些库会检查这个属性）
-  TTY_INPUT.isTTY = true;
-  TTY_OUTPUT.isTTY = true;
+  // 创建从 /dev/tty 读写的真 TTY 流（用于管道场景下的交互式输入）
+  // 必须用 tty.ReadStream/WriteStream：它们天生带 setRawMode 且 isTTY 为真，
+  // fs.createReadStream 返回的是 fs.ReadStream，没有 setRawMode，会导致
+  // "TTY_INPUT.setRawMode is not a function" 崩溃。
+  TTY_INPUT = new tty.ReadStream(fs.openSync('/dev/tty', 'r'));
+  TTY_OUTPUT = new tty.WriteStream(fs.openSync('/dev/tty', 'w'));
 } catch (e) {
   // /dev/tty 不可用，回退到 stdin/stdout 检测
   IS_TTY = process.stdin.isTTY && process.stdout.isTTY;
