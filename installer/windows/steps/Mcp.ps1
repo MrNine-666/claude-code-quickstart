@@ -570,8 +570,6 @@ function Get-McpDefinitionHash {
     return $hash.Substring(0, 8)
 }
 
-// __CONTINUE_HERE__
-
 function Install-McpRuntimeDeps {
     param(
         [Parameter(Mandatory = $true)]

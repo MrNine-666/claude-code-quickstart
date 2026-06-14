@@ -56,8 +56,31 @@ const COLORS = {
   reset:    '\x1b[0m'
 };
 
-// TTY 检测
-const IS_TTY = process.stdin.isTTY && process.stdout.isTTY;
+// TTY 检测与流准备：优先使用 /dev/tty（支持 curl|bash 等管道场景）
+let IS_TTY = false;
+let TTY_INPUT = process.stdin;
+let TTY_OUTPUT = process.stdout;
+
+try {
+  // 尝试打开 /dev/tty，如果成功则认为可交互
+  const ttyFd = fs.openSync('/dev/tty', 'r+');
+  fs.closeSync(ttyFd);
+  IS_TTY = true;
+
+  // 创建从 /dev/tty 读写的流（用于管道场景下的交互式输入）
+  TTY_INPUT = fs.createReadStream('/dev/tty', { fd: fs.openSync('/dev/tty', 'r') });
+  TTY_OUTPUT = fs.createWriteStream('/dev/tty', { fd: fs.openSync('/dev/tty', 'w') });
+
+  // 标记为 TTY（某些库会检查这个属性）
+  TTY_INPUT.isTTY = true;
+  TTY_OUTPUT.isTTY = true;
+} catch (e) {
+  // /dev/tty 不可用，回退到 stdin/stdout 检测
+  IS_TTY = process.stdin.isTTY && process.stdout.isTTY;
+  TTY_INPUT = process.stdin;
+  TTY_OUTPUT = process.stdout;
+}
+
 const SUPPORTS_ANSI = IS_TTY;
 
 // definitionHash 排除字段（来自规格 3.2）
@@ -820,8 +843,8 @@ function showMenu(title, options) {
     // 渲染菜单
     function render() {
       // 清屏并移动光标到起始位置
-      readline.clearScreenDown(process.stdout);
-      readline.cursorTo(process.stdout, 0);
+      readline.clearScreenDown(TTY_OUTPUT);
+      readline.cursorTo(TTY_OUTPUT, 0);
 
       console.log('');
       console.log(colorize(title, 'primary'));
@@ -841,7 +864,7 @@ function showMenu(title, options) {
 
       // 移动光标回到菜单起始位置（为下次渲染做准备）
       // 输出行数 = 空行 + 标题 + 空行 + N 个选项 + 空行 + 提示 = N + 5
-      readline.moveCursor(process.stdout, 0, -(options.length + 5));
+      readline.moveCursor(TTY_OUTPUT, 0, -(options.length + 5));
     }
 
     // 初始渲染
@@ -870,30 +893,30 @@ function showMenu(title, options) {
     // 清理函数
     function cleanup() {
       // 移动光标到菜单末尾（输出行数 = N + 5）
-      readline.moveCursor(process.stdout, 0, options.length + 5);
+      readline.moveCursor(TTY_OUTPUT, 0, options.length + 5);
       console.log('');
 
       // 恢复光标显示
-      process.stdout.write('\x1b[?25h');
+      TTY_OUTPUT.write('\x1b[?25h');
 
       // 恢复终端模式
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(false);
+      if (TTY_INPUT.isTTY) {
+        TTY_INPUT.setRawMode(false);
       }
-      process.stdin.removeListener('keypress', onKeypress);
-      process.stdin.pause();
+      TTY_INPUT.removeListener('keypress', onKeypress);
+      TTY_INPUT.pause();
     }
 
     // 启用 raw mode 和 keypress 事件
-    if (process.stdin.isTTY) {
-      readline.emitKeypressEvents(process.stdin);
-      process.stdin.setRawMode(true);
+    if (TTY_INPUT.isTTY) {
+      readline.emitKeypressEvents(TTY_INPUT);
+      TTY_INPUT.setRawMode(true);
     }
-    process.stdin.on('keypress', onKeypress);
-    process.stdin.resume();
+    TTY_INPUT.on('keypress', onKeypress);
+    TTY_INPUT.resume();
 
     // 隐藏光标（对齐 PS1：[Console]::CursorVisible = $false）
-    process.stdout.write('\x1b[?25l');
+    TTY_OUTPUT.write('\x1b[?25l');
   });
 }
 
@@ -918,8 +941,8 @@ function showMultiSelectMenu(title, options, defaultSelected = []) {
     // 渲染菜单
     function render() {
       // 清屏并移动光标到起始位置
-      readline.clearScreenDown(process.stdout);
-      readline.cursorTo(process.stdout, 0);
+      readline.clearScreenDown(TTY_OUTPUT);
+      readline.cursorTo(TTY_OUTPUT, 0);
 
       console.log('');
       console.log(colorize(title, 'primary'));
@@ -942,7 +965,7 @@ function showMultiSelectMenu(title, options, defaultSelected = []) {
 
       // 移动光标回到菜单起始位置（为下次渲染做准备）
       // 输出行数 = 空行 + 标题 + 空行 + N 个选项 + 空行 + 提示 = N + 5
-      readline.moveCursor(process.stdout, 0, -(options.length + 5));
+      readline.moveCursor(TTY_OUTPUT, 0, -(options.length + 5));
     }
 
     // 初始渲染
@@ -979,30 +1002,30 @@ function showMultiSelectMenu(title, options, defaultSelected = []) {
     // 清理函数
     function cleanup() {
       // 移动光标到菜单末尾（输出行数 = N + 5）
-      readline.moveCursor(process.stdout, 0, options.length + 5);
+      readline.moveCursor(TTY_OUTPUT, 0, options.length + 5);
       console.log('');
 
       // 恢复光标显示
-      process.stdout.write('\x1b[?25h');
+      TTY_OUTPUT.write('\x1b[?25h');
 
       // 恢复终端模式
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(false);
+      if (TTY_INPUT.isTTY) {
+        TTY_INPUT.setRawMode(false);
       }
-      process.stdin.removeListener('keypress', onKeypress);
-      process.stdin.pause();
+      TTY_INPUT.removeListener('keypress', onKeypress);
+      TTY_INPUT.pause();
     }
 
     // 启用 raw mode 和 keypress 事件
-    if (process.stdin.isTTY) {
-      readline.emitKeypressEvents(process.stdin);
-      process.stdin.setRawMode(true);
+    if (TTY_INPUT.isTTY) {
+      readline.emitKeypressEvents(TTY_INPUT);
+      TTY_INPUT.setRawMode(true);
     }
-    process.stdin.on('keypress', onKeypress);
-    process.stdin.resume();
+    TTY_INPUT.on('keypress', onKeypress);
+    TTY_INPUT.resume();
 
     // 隐藏光标（对齐 PS1：[Console]::CursorVisible = $false）
-    process.stdout.write('\x1b[?25l');
+    TTY_OUTPUT.write('\x1b[?25l');
   });
 }
 
@@ -1019,8 +1042,8 @@ function confirm(message) {
     }
 
     const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
+      input: TTY_INPUT,
+      output: TTY_OUTPUT
     });
 
     rl.question(colorize(message + ' (Y/n): ', 'warning'), (answer) => {
@@ -1047,20 +1070,20 @@ function waitForKeypress() {
     };
 
     function cleanup() {
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(false);
+      if (TTY_INPUT.isTTY) {
+        TTY_INPUT.setRawMode(false);
       }
-      process.stdin.removeListener('keypress', onKeypress);
-      process.stdin.pause();
+      TTY_INPUT.removeListener('keypress', onKeypress);
+      TTY_INPUT.pause();
     }
 
     // 启用 raw mode 和 keypress 事件
-    if (process.stdin.isTTY) {
-      readline.emitKeypressEvents(process.stdin);
-      process.stdin.setRawMode(true);
+    if (TTY_INPUT.isTTY) {
+      readline.emitKeypressEvents(TTY_INPUT);
+      TTY_INPUT.setRawMode(true);
     }
-    process.stdin.on('keypress', onKeypress);
-    process.stdin.resume();
+    TTY_INPUT.on('keypress', onKeypress);
+    TTY_INPUT.resume();
   });
 }
 

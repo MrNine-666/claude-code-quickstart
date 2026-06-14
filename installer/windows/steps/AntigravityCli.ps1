@@ -45,8 +45,9 @@ function Invoke-AntigravityCliInstaller {
     .SYNOPSIS
     执行 Antigravity CLI 官方 Windows 安装脚本
     .DESCRIPTION
-    官方未提供 npm 包，Windows 安装方式为远程 PowerShell 安装脚本：
-    irm https://antigravity.google/cli/install.ps1 | iex
+    官方未提供 npm 包，Windows 安装方式为远程 PowerShell 安装脚本。
+    脚本 URL: https://antigravity.google/cli/install.ps1
+    安装方式: 使用 Invoke-RestMethod 下载脚本后通过 Invoke-Expression 执行。
     #>
     $scriptUrl = "https://antigravity.google/cli/install.ps1"
 
