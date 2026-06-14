@@ -261,7 +261,22 @@ function filterZshSource(relativePath) {
   return lines;
 }
 
-function buildMacOSArtifact(manifest, stepsContract, role) {
+function getMcpManagerBase64() {
+  const jsPath = path.join(installerRoot, 'contracts', 'scripts', 'mcp-manager.js');
+  if (!fs.existsSync(jsPath)) {
+    console.warn('[WARN] mcp-manager.js 不存在，跳过内嵌');
+    return null;
+  }
+  try {
+    const buffer = fs.readFileSync(jsPath);
+    return buffer.toString('base64');
+  } catch (err) {
+    console.warn(`[WARN] 无法读取或编码 mcp-manager.js: ${err.message}`);
+    return null;
+  }
+}
+
+function buildMacOSArtifact(manifest, stepsContract, role, mcpManagerBase64) {
   const { artifact, order } = macOSBuildOrder(manifest, stepsContract, role);
   for (const relPath of order) requireFile(relPath);
 
@@ -276,6 +291,14 @@ function buildMacOSArtifact(manifest, stepsContract, role) {
     lines.push(`# ─── 来自: ${relPath} ────────────────────────────────────────`);
     lines.push('');
     lines.push(...filterZshSource(relPath));
+
+    // 注入 MCP Manager JS 脚本 base64（仅对 McpManager.zsh）
+    if (mcpManagerBase64 && relPath.includes('McpManager.zsh')) {
+      lines.push('');
+      lines.push('# ─── MCP Manager JS 脚本内嵌（构建时注入）───');
+      lines.push(`CCQ_MCP_MANAGER_B64="${mcpManagerBase64}"`);
+      lines.push('');
+    }
   }
 
   const entryFile = order[order.length - 1] || '';
@@ -345,8 +368,19 @@ console.log(`安装器根目录: ${installerRoot}`);
 console.log(`输出目录:     ${outputDir}`);
 console.log(`构建平台:     ${platform}`);
 
-buildMacOSArtifact(manifest, stepsContract, 'Install');
-buildMacOSArtifact(manifest, stepsContract, 'Manage');
+// 生成 MCP Manager JS 脚本 base64（供 Install 和 Manage 内嵌）
+console.log('');
+console.log('─── 处理 MCP Manager JS 脚本 ───────────────────────────────');
+const mcpManagerBase64 = getMcpManagerBase64();
+if (mcpManagerBase64) {
+  console.log(`[PASS] MCP Manager JS 脚本已编码（base64 长度: ${mcpManagerBase64.length}）`);
+} else {
+  console.log('[WARN] MCP Manager JS 脚本未编码，Release 模式将依赖源码模式部署');
+}
+console.log('');
+
+buildMacOSArtifact(manifest, stepsContract, 'Install', mcpManagerBase64);
+buildMacOSArtifact(manifest, stepsContract, 'Manage', mcpManagerBase64);
 
 ensureExpectedOutputs(manifest);
 console.log('');

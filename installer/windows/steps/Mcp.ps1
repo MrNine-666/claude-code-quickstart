@@ -1,20 +1,274 @@
-﻿# MCP Server 安装步骤 - CCQ
+# MCP Server 安装步骤 - CCQ
 # 作者: 哈雷酱 (本小姐的专业 MCP 管理！)
-# 功能: MCP Server 安装、配置和 API Key 管理
+# 功能: MCP Server 安装、配置和凭据管理（完全自给自足）
 
 #Requires -Version 5.1
 
 # 严格模式
 Set-StrictMode -Version Latest
 
-# 依赖: Ui.ps1, Profile.ps1, Process.ps1, Net.ps1（由入口脚本 dot-source 加载）
-
-# 注: $script:DefaultMcpRuntimeDeps 和 $script:McpServers 已迁移到 core/McpManager.ps1
-# 通过 dot-source 共享作用域，$script: 变量在此文件内仍可访问
+# 依赖: Ui.ps1, Profile.ps1, Process.ps1（由入口脚本 dot-source 加载）
+# 注意：本文件包含完整的 MCP 安装管道函数，不依赖 McpManager.ps1（后者只负责 Manage 管理）
 
 # ============================================================
-# 辅助函数
+# 全局变量 - MCP Meta 配置
 # ============================================================
+
+$script:McpMetaFileName = "mcp-meta.json"
+$script:McpMetaSchemaVersion = 1
+$script:McpMaxCorruptBackups = 5
+$script:McpLockTimeoutMs = 30000
+
+# DefaultMcpRuntimeDeps 和 McpServers 从 contracts 加载或使用内联 fallback
+$script:DefaultMcpRuntimeDeps = @()
+$script:McpServers = @{}
+
+# ============================================================
+# 契约加载 - 从 contracts/mcp-servers.json 读取配置
+# ============================================================
+
+function Load-McpContract {
+    <#
+    .SYNOPSIS
+    从 contracts/mcp-servers.json 加载 MCP Server 定义
+    .DESCRIPTION
+    优先读取源码目录的 contracts 文件；Release 模式下使用内联 fallback
+    #>
+
+    $contractPaths = @()
+
+    # 源码模式：installer/windows/steps/ -> installer/contracts/
+    if ($PSScriptRoot) {
+        $contractsRoot = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) "contracts"
+        $contractPath = Join-Path $contractsRoot "mcp-servers.json"
+        if (Test-Path $contractPath) {
+            $contractPaths += $contractPath
+        }
+    }
+
+    # 尝试加载 contracts
+    foreach ($path in $contractPaths) {
+        try {
+            $json = Get-Content -Path $path -Raw -ErrorAction Stop
+            $contract = $json | ConvertFrom-Json -AsHashtable
+
+            if ($contract -and $contract.ContainsKey("McpServers")) {
+                # 加载 DefaultMcpRuntimeDeps
+                if ($contract.ContainsKey("DefaultMcpRuntimeDeps")) {
+                    $script:DefaultMcpRuntimeDeps = @($contract.DefaultMcpRuntimeDeps)
+                }
+
+                # 加载 McpServers（转换为 ordered hashtable）
+                $script:McpServers = [ordered]@{}
+                foreach ($key in $contract.McpServers.Keys) {
+                    $server = $contract.McpServers[$key]
+                    # 补充 RuntimeDeps（如果未定义）
+                    if (-not $server.ContainsKey("RuntimeDeps")) {
+                        $server["RuntimeDeps"] = $script:DefaultMcpRuntimeDeps
+                    }
+                    $script:McpServers[$key] = $server
+                }
+
+                Write-UiSuccess "已从 contracts 加载 $($script:McpServers.Count) 个 MCP Server 定义" -Level Debug
+                return
+            }
+        }
+        catch {
+            Write-UiWarning "contracts 加载失败: $($_.Exception.Message)" -Level Debug
+        }
+    }
+
+    # Fallback: 使用内联默认配置（Release 模式）
+    Write-UiWarning "使用 MCP 内联 fallback 配置" -Level Debug
+    Initialize-McpFallbackConfig
+}
+
+function Initialize-McpFallbackConfig {
+    <#
+    .SYNOPSIS
+    内联 fallback 配置（仅用于 Release 模式或 contracts 不可用）
+    #>
+
+    $script:DefaultMcpRuntimeDeps = @(
+        @{
+            Name = "Node.js LTS"
+            Command = "node"
+            MinVersion = "20.0.0"
+            WingetId = "OpenJS.NodeJS.LTS"
+            ManualUrl = "https://nodejs.org/"
+        },
+        @{
+            Name = "npm"
+            Command = "npm"
+            MinVersion = "10.0.0"
+            WingetId = "OpenJS.NodeJS.LTS"
+            ManualUrl = "https://nodejs.org/"
+        }
+    )
+
+    $script:McpServers = [ordered]@{
+        "context7" = @{
+            Name = "Context7"
+            Description = "库文档和代码示例检索"
+            McpType = "stdio"
+            Command = "npx"
+            Args = @("-y", "@upstash/context7-mcp")
+            CredentialType = "none"
+            RuntimeDeps = $script:DefaultMcpRuntimeDeps
+            Category = "Documentation"
+            Priority = 1
+            Recommended = $true
+        }
+        "deepwiki" = @{
+            Name = "DeepWiki"
+            Description = "GitHub 仓库文档和问答"
+            McpType = "http"
+            Url = "https://mcp.deepwiki.com/mcp"
+            CredentialType = "none"
+            Category = "Documentation"
+            Priority = 2
+            Recommended = $true
+        }
+        "exa" = @{
+            Name = "Exa"
+            Description = "AI 搜索引擎"
+            McpType = "stdio"
+            Command = "npx"
+            Args = @("-y", "@upstash/exa-mcp")
+            CredentialType = "single-key"
+            ApiKeyName = "EXA_API_KEY"
+            RuntimeDeps = $script:DefaultMcpRuntimeDeps
+            Category = "Search"
+            Priority = 3
+            Recommended = $true
+        }
+        "playwright" = @{
+            Name = "Playwright"
+            Description = "浏览器自动化"
+            McpType = "stdio"
+            Command = "npx"
+            Args = @("-y", "@modelcontextprotocol/server-playwright")
+            CredentialType = "none"
+            RuntimeDeps = $script:DefaultMcpRuntimeDeps
+            Category = "Automation"
+            Priority = 4
+            Recommended = $true
+        }
+    }
+}
+
+# 加载 MCP Server 契约（在函数定义后立即调用）
+Load-McpContract
+# ============================================================
+# 基础工具函数
+# ============================================================
+
+function Get-UserHome {
+    <#
+    .SYNOPSIS
+    获取用户主目录（跨平台兼容）
+    #>
+    if ($env:HOME) {
+        return $env:HOME
+    }
+    return $env:USERPROFILE
+}
+
+function Get-ClaudeSettingsPath {
+    <#
+    .SYNOPSIS
+    获取 Claude Code settings.json 路径（HC-12: ~/.claude/settings.json）
+    #>
+    return "$(Get-UserHome)\.claude\settings.json"
+}
+
+function ConvertTo-NormalizedVersion {
+    <#
+    .SYNOPSIS
+    规范化版本号为 [int, int, int] 数组（用于版本比较）
+    .PARAMETER Version
+    版本号字符串（如 "1.2.3" 或 "v1.2.3"）
+    .RETURNS
+    int[] - [Major, Minor, Patch]
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Version
+    )
+
+    $cleaned = $Version -replace '^v', ''
+    $parts = $cleaned -split '\.'
+    $normalized = @(0, 0, 0)
+    for ($i = 0; $i -lt [Math]::Min(3, $parts.Count); $i++) {
+        $num = 0
+        if ([int]::TryParse($parts[$i], [ref]$num)) {
+            $normalized[$i] = $num
+        }
+    }
+    return $normalized
+}
+
+function Read-McpCredentialValue {
+    <#
+    .SYNOPSIS
+    读取 MCP 凭据值（支持明文/SecureString/文件路径）
+    .PARAMETER Label
+    提示标签
+    .PARAMETER Secret
+    是否使用 SecureString
+    .PARAMETER Required
+    是否必填
+    .PARAMETER FilePath
+    是否为文件路径
+    .RETURNS
+    string - 凭据值
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Label,
+        [bool]$Secret = $false,
+        [bool]$Required = $false,
+        [bool]$FilePath = $false
+    )
+
+    $requiredTag = if ($Required) { " (必填)" } else { " (可选)" }
+    $prompt = "  请输入 ${Label}${requiredTag}: "
+
+    while ($true) {
+        if ($Secret) {
+            $secureValue = Read-Host -Prompt $prompt -AsSecureString
+            if ($secureValue.Length -eq 0) {
+                if ($Required) {
+                    Write-UiWarning "此字段为必填项，请重新输入"
+                    continue
+                }
+                return ""
+            }
+            $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureValue)
+            try {
+                return [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+            }
+            finally {
+                [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+            }
+        }
+        else {
+            $value = Read-Host -Prompt $prompt
+            if ([string]::IsNullOrWhiteSpace($value)) {
+                if ($Required) {
+                    Write-UiWarning "此字段为必填项，请重新输入"
+                    continue
+                }
+                return ""
+            }
+            if ($FilePath -and -not (Test-Path $value)) {
+                Write-UiWarning "路径不存在: $value"
+                continue
+            }
+            return $value
+        }
+    }
+}
 
 function Test-ObjectProperty {
     <#
@@ -33,12 +287,1004 @@ function Test-ObjectProperty {
         ($InputObject.PSObject.Properties.Name -contains $PropertyName)
 }
 
-# 注: ConvertTo-NormalizedVersion, Read-McpCredentialValue, Install-McpRuntimeDeps,
-# Invoke-McpPreInstall, Get-McpCredentials, New-McpSettingsEntry, Install-McpSoftware,
-# Write-McpEnvFile 已迁移到 core/McpManager.ps1
+# ============================================================
+# Vault 管理函数（Mutex + 读写 + 腐败恢复）
+# ============================================================
+
+function Ensure-CcqMetaDir {
+    <#
+    .SYNOPSIS
+    确保 ~/.ccq/ 目录存在（首次使用时自动创建）
+    .RETURNS
+    目录绝对路径
+    #>
+    $dir = Join-Path (Get-UserHome) ".ccq"
+    if (-not (Test-Path $dir)) {
+        New-Item -Path $dir -ItemType Directory -Force | Out-Null
+    }
+    return $dir
+}
+
+function Get-McpMetaPath {
+    <#
+    .SYNOPSIS
+    获取 mcp-meta.json 文件路径
+    #>
+    return Join-Path (Ensure-CcqMetaDir) $script:McpMetaFileName
+}
+
+function New-EmptyMcpMeta {
+    <#
+    .SYNOPSIS
+    创建空的 v1 vault 结构
+    .RETURNS
+    hashtable - 合法的空 vault
+    #>
+    $now = (Get-Date).ToUniversalTime().ToString("o")
+    return @{
+        schemaVersion = $script:McpMetaSchemaVersion
+        createdAt     = $now
+        updatedAt     = $now
+        servers       = @{}
+    }
+}
+
+function Invoke-McpCorruptionRecovery {
+    <#
+    .SYNOPSIS
+    vault 腐败恢复（备份 + 清理旧备份 + 返回空 vault）
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath
+    )
+
+    # 生成时间戳备份
+    $timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
+    $backupPath = "${FilePath}.corrupt.${timestamp}"
+
+    try {
+        Copy-Item -Path $FilePath -Destination $backupPath -Force -ErrorAction SilentlyContinue
+        Write-UiWarning "vault 腐败，已备份到: $backupPath" -Level Debug
+    }
+    catch {
+        Write-UiWarning "vault 备份失败: $($_.Exception.Message)" -Level Debug
+    }
+
+    # 清理超过 N 个的腐败备份
+    try {
+        $dir = Split-Path $FilePath -Parent
+        $baseName = Split-Path $FilePath -Leaf
+        $corruptFiles = @(Get-ChildItem -Path $dir -Filter "${baseName}.corrupt.*" -File | Sort-Object Name -Descending)
+
+        if ($corruptFiles.Count -gt $script:McpMaxCorruptBackups) {
+            $toDelete = $corruptFiles | Select-Object -First ($corruptFiles.Count - $script:McpMaxCorruptBackups)
+            foreach ($file in $toDelete) {
+                Remove-Item -Path $file.FullName -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    catch {
+        Write-UiWarning "清理旧备份失败: $($_.Exception.Message)" -Level Debug
+    }
+
+    return New-EmptyMcpMeta
+}
+
+function Read-McpMeta {
+    <#
+    .SYNOPSIS
+    读取 MCP vault（含 schema 校验 + 腐败恢复）
+    .RETURNS
+    hashtable - vault 内容（可能包含 _readOnly 标记）
+    #>
+
+    $vaultPath = Get-McpMetaPath
+
+    # Lazy create: 首次读取时不存在则返回空 vault（不写文件）
+    if (-not (Test-Path $vaultPath)) {
+        return New-EmptyMcpMeta
+    }
+
+    try {
+        $json = Get-Content -Path $vaultPath -Raw -ErrorAction Stop
+        $meta = $json | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+
+        # Schema 校验
+        if (-not $meta -or -not $meta.ContainsKey("schemaVersion") -or $meta["schemaVersion"] -lt 1) {
+            return Invoke-McpCorruptionRecovery -FilePath $vaultPath
+        }
+
+        if (-not $meta.ContainsKey("servers") -or -not ($meta["servers"] -is [hashtable])) {
+            return Invoke-McpCorruptionRecovery -FilePath $vaultPath
+        }
+
+        # 高版本检测（只读标记）
+        if ($meta["schemaVersion"] -gt $script:McpMetaSchemaVersion) {
+            $meta["_readOnly"] = $true
+            Write-UiWarning "vault schema 版本过高 ($($meta['schemaVersion']) > $($script:McpMetaSchemaVersion))，只读模式" -Level Debug
+        }
+
+        return $meta
+    }
+    catch {
+        Write-UiWarning "vault 读取失败，使用腐败恢复: $($_.Exception.Message)" -Level Debug
+        return Invoke-McpCorruptionRecovery -FilePath $vaultPath
+    }
+}
+
+function Write-McpMeta {
+    <#
+    .SYNOPSIS
+    写入 MCP vault（原子写入 + 只读检查）
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Meta
+    )
+
+    # 高版本检查
+    if ($Meta.ContainsKey("schemaVersion") -and $Meta["schemaVersion"] -gt $script:McpMetaSchemaVersion) {
+        throw "schema version too high: $($Meta['schemaVersion']) > $($script:McpMetaSchemaVersion)"
+    }
+
+    # 只读检查
+    if ($Meta.ContainsKey("_readOnly") -and $Meta["_readOnly"]) {
+        throw "vault is read-only (newer schema version)"
+    }
+
+    # 更新根 updatedAt
+    $now = (Get-Date).ToUniversalTime().ToString("o")
+    $Meta["updatedAt"] = $now
+
+    # 确保根 updatedAt >= max(servers[*].updatedAt)
+    if ($Meta.ContainsKey("servers") -and $Meta["servers"] -is [hashtable]) {
+        foreach ($serverId in $Meta["servers"].Keys) {
+            $server = $Meta["servers"][$serverId]
+            if ($server -is [hashtable] -and $server.ContainsKey("updatedAt")) {
+                if ($server["updatedAt"] -gt $Meta["updatedAt"]) {
+                    $Meta["updatedAt"] = $server["updatedAt"]
+                }
+            }
+        }
+    }
+
+    # 删除内部标记字段（_readOnly 等）
+    $cleanMeta = @{}
+    foreach ($key in $Meta.Keys) {
+        if (-not $key.StartsWith("_")) {
+            $cleanMeta[$key] = $Meta[$key]
+        }
+    }
+
+    # 原子写入
+    $vaultPath = Get-McpMetaPath
+    $json = $cleanMeta | ConvertTo-Json -Depth 10
+    Write-FileAtomically -FilePath $vaultPath -Content @($json)
+}
+
+function Invoke-WithMcpLock {
+    <#
+    .SYNOPSIS
+    Mutex 锁保护（防止并发冲突）
+    .PARAMETER ScriptBlock
+    要执行的脚本块
+    .RETURNS
+    脚本块的返回值
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$ScriptBlock
+    )
+
+    $mutexName = "Global\CCQ-MCP-Vault-Lock"
+    $mutex = $null
+    $acquired = $false
+
+    try {
+        $mutex = New-Object System.Threading.Mutex($false, $mutexName)
+        $acquired = $mutex.WaitOne($script:McpLockTimeoutMs)
+
+        if (-not $acquired) {
+            throw "无法获取 MCP 锁（30s 超时），可能有其他 CCQ 进程正在运行"
+        }
+
+        # 执行脚本块
+        return & $ScriptBlock
+    }
+    finally {
+        if ($acquired -and $mutex) {
+            $mutex.ReleaseMutex()
+        }
+        if ($mutex) {
+            $mutex.Dispose()
+        }
+    }
+}
 
 # ============================================================
-# 主要函数
+# 哈希计算函数（用于检测 MCP 定义变更）
+# ============================================================
+
+function ConvertTo-CanonicalObject {
+    <#
+    .SYNOPSIS
+    递归规范化对象：键按字母排序（用于稳定哈希计算）
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$InputObject
+    )
+
+    if ($InputObject -is [hashtable]) {
+        $sorted = [ordered]@{}
+        foreach ($key in ($InputObject.Keys | Sort-Object)) {
+            $sorted[$key] = ConvertTo-CanonicalObject -InputObject $InputObject[$key]
+        }
+        return $sorted
+    }
+    elseif ($InputObject -is [System.Collections.IList]) {
+        return @($InputObject | ForEach-Object { ConvertTo-CanonicalObject -InputObject $_ })
+    }
+    else {
+        return $InputObject
+    }
+}
+
+function Get-McpDefinitionHash {
+    <#
+    .SYNOPSIS
+    计算 MCP Server 定义的哈希（SHA-256 前 8 位）
+    .PARAMETER ServerDef
+    MCP Server 定义对象
+    .RETURNS
+    string - 8 字符哈希
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$ServerDef
+    )
+
+    # 排除非运行时字段
+    $excludeKeys = @("Description", "Category", "Priority", "Recommended", "Name", "RuntimeDeps")
+    $runtimeFields = @{}
+    foreach ($key in $ServerDef.Keys) {
+        if ($excludeKeys -notcontains $key) {
+            $runtimeFields[$key] = $ServerDef[$key]
+        }
+    }
+
+    # 递归规范化（键排序）
+    $canonical = ConvertTo-CanonicalObject -InputObject $runtimeFields
+
+    # JSON 序列化
+    $json = $canonical | ConvertTo-Json -Depth 10 -Compress
+
+    # SHA-256
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+    $hashBytes = $hasher.ComputeHash($bytes)
+    $hash = [BitConverter]::ToString($hashBytes).Replace("-", "").ToLower()
+
+    # 取前 8 位
+    return $hash.Substring(0, 8)
+}
+
+// __CONTINUE_HERE__
+
+function Install-McpRuntimeDeps {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Server
+    )
+
+    # 确保 fnm 环境已初始化（前置步骤可能已安装 fnm 但当前会话未加载）
+    if ((Test-CommandAvailable -Command "fnm") -and -not (Test-CommandAvailable -Command "node")) {
+        Write-UiInfo "初始化 fnm 环境..."
+        try {
+            $fnmEnvOutput = & fnm env --use-on-cd 2>&1 | Out-String
+            if ($fnmEnvOutput) {
+                Invoke-Expression $fnmEnvOutput
+            }
+            Refresh-SessionPath
+        } catch {
+            Write-UiWarn "fnm 环境初始化失败: $($_.Exception.Message)"
+        }
+    }
+
+    $deps = @()
+    if ($Server.ContainsKey("RuntimeDeps") -and $Server["RuntimeDeps"]) {
+        $deps = @($Server["RuntimeDeps"])
+    }
+    if ($deps.Count -eq 0) {
+        return @{ Success = $true; Installed = @() }
+    }
+
+    $installedDeps = @()
+    foreach ($dep in $deps) {
+        $depName = if ($dep.Name) { $dep.Name } else { $dep.Command }
+        $command = [string]$dep.Command
+        $needsInstall = $false
+
+        if (-not (Test-CommandAvailable -Command $command)) {
+            $needsInstall = $true
+            Write-UiWarn "$depName 未检测到，准备安装"
+        }
+        elseif ($dep.MinVersion) {
+            $installedVersionText = Get-CommandVersion -Command $command
+            $installedVersion = ConvertTo-NormalizedVersion -VersionText $installedVersionText
+            $minVersion = ConvertTo-NormalizedVersion -VersionText ([string]$dep.MinVersion)
+
+            if ($installedVersion -and $minVersion -and $installedVersion -lt $minVersion) {
+                $needsInstall = $true
+                Write-UiWarn "$depName 版本过低: $installedVersionText < $($dep.MinVersion)"
+            }
+        }
+
+        if ($needsInstall) {
+            if (-not $dep.WingetId) {
+                $manualHint = if ($dep.ManualUrl) { "，请手动安装: $($dep.ManualUrl)" } else { "" }
+                throw "依赖 $depName 缺少自动安装配置$manualHint"
+            }
+
+            if (-not (Test-CommandAvailable -Command "winget")) {
+                $manualHint = if ($dep.ManualUrl) { "`n  手动安装: $($dep.ManualUrl)" } else { "" }
+                throw "winget 不可用，无法自动安装依赖 $depName。请先运行「基础环境」安装，或手动安装后重试。$manualHint"
+            }
+
+            Invoke-WingetInstall -PackageId $dep.WingetId -PackageName $depName -AcceptLicense -Silent | Out-Null
+            Refresh-SessionPath
+
+            if (-not (Test-CommandAvailable -Command $command)) {
+                throw "依赖 $depName 安装后仍不可用"
+            }
+
+            $installedDeps += $depName
+        }
+    }
+
+    return @{ Success = $true; Installed = $installedDeps }
+}
+
+function Get-McpCredentials {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ServerId,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Server,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$SharedCredentials
+    )
+
+    $result = @{
+        Success = $true
+        Values = @{}
+        EnvFileValues = @{}
+        Shared = @{}
+        Skipped = $false
+    }
+
+    $credentialType = if ($Server.CredentialType) { [string]$Server.CredentialType } else { "none" }
+    switch ($credentialType) {
+        "none" {
+            return $result
+        }
+        "single-key" {
+            $apiKeyName = [string]$Server.ApiKeyName
+            $apiKeyValue = Read-McpCredentialValue -Label $apiKeyName -Secret $true -Required $true
+            $result.Values[$apiKeyName] = $apiKeyValue
+        }
+        "url-embedded" {
+            foreach ($credential in @($Server.Credentials)) {
+                $value = Read-McpCredentialValue `
+                    -Label ([string]$credential.Label) `
+                    -Secret ([bool]$credential.Secret) `
+                    -Required ([bool]$credential.Required)
+
+                if (-not [string]::IsNullOrWhiteSpace($value)) {
+                    $result.Values[[string]$credential.Name] = $value
+                }
+            }
+        }
+        "multi-field" {
+            foreach ($field in @($Server.Credentials)) {
+                $fieldName = [string]$field.Name
+                if ([string]::IsNullOrWhiteSpace($fieldName)) {
+                    continue
+                }
+
+                $sharedFrom = if ($field.ContainsKey("SharedFrom")) { [string]$field.SharedFrom } else { "" }
+                if (-not [string]::IsNullOrWhiteSpace($sharedFrom) -and $SharedCredentials.ContainsKey($sharedFrom)) {
+                    $result.Values[$fieldName] = [string]$SharedCredentials[$sharedFrom]
+                    continue
+                }
+
+                $defaultValue = if ($field.ContainsKey("Default")) { [string]$field.Default } else { "" }
+                $required = if ($field.ContainsKey("Required")) { [bool]$field.Required } else { $false }
+                $secret = if ($field.ContainsKey("Secret")) { [bool]$field.Secret } else { $false }
+                $fieldLabel = if ($field.ContainsKey("Label") -and $field.Label) { [string]$field.Label } else { $fieldName }
+
+                $value = Read-McpCredentialValue `
+                    -Label $fieldLabel `
+                    -Secret $secret `
+                    -Required $required `
+                    -DefaultValue $defaultValue
+
+                if (-not [string]::IsNullOrWhiteSpace($value)) {
+                    $result.Values[$fieldName] = $value
+                    if ($field.ContainsKey("Shared") -and [bool]$field.Shared) {
+                        $result.Shared[$fieldName] = $value
+                    }
+                }
+            }
+        }
+        "args-multi" {
+            foreach ($argCredential in @($Server.ArgsCredentials)) {
+                if ($argCredential.ContainsKey("Url") -and $argCredential["Url"]) {
+                    Write-UiInfo "$($argCredential.Label) 获取地址: $($argCredential["Url"])"
+                }
+
+                $value = Read-McpCredentialValue `
+                    -Label ([string]$argCredential.Label) `
+                    -Secret ([bool]$argCredential.Secret) `
+                    -Required ([bool]$argCredential.Required)
+
+                if (-not [string]::IsNullOrWhiteSpace($value)) {
+                    $result.Values[[string]$argCredential.ArgName] = $value
+                }
+            }
+        }
+        "args-token" {
+            $tokenLabel = if ($Server.TokenLabel) { [string]$Server.TokenLabel } else { "Token" }
+            $tokenValue = Read-McpCredentialValue -Label $tokenLabel -Secret $true -Required $true
+            $result.Values["token"] = $tokenValue
+        }
+        "env-file" {
+            $envFile = $Server.EnvFile
+            if (-not $envFile) {
+                throw "$($Server.Name) 缺少 EnvFile 配置"
+            }
+
+            $sharedCredentialName = if ($envFile.ContainsKey("SharedCredentialName")) { [string]$envFile.SharedCredentialName } else { "" }
+            $sharedKeyValue = ""
+
+            if (-not [string]::IsNullOrWhiteSpace($sharedCredentialName) -and $SharedCredentials.ContainsKey($sharedCredentialName)) {
+                $sharedKeyValue = [string]$SharedCredentials[$sharedCredentialName]
+                Write-UiInfo "复用共享凭据: $sharedCredentialName"
+            }
+            else {
+                $sharedLabel = if ($envFile.SharedKeyLabel) { [string]$envFile.SharedKeyLabel } else { "共享 API Key" }
+                $sharedKeyValue = Read-McpCredentialValue -Label $sharedLabel -Secret $true -Required $true
+                if (-not [string]::IsNullOrWhiteSpace($sharedCredentialName)) {
+                    $result.Shared[$sharedCredentialName] = $sharedKeyValue
+                }
+            }
+
+            foreach ($sharedKeyField in @($envFile.SharedKeyFields)) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$sharedKeyField)) {
+                    $result.EnvFileValues[[string]$sharedKeyField] = $sharedKeyValue
+                }
+            }
+
+            foreach ($field in @($envFile.Fields)) {
+                $fieldKey = [string]$field.Key
+                if ([string]::IsNullOrWhiteSpace($fieldKey)) {
+                    continue
+                }
+
+                if ($result.EnvFileValues.ContainsKey($fieldKey)) {
+                    continue
+                }
+
+                $defaultValue = if ($field.ContainsKey("Default")) { [string]$field.Default } else { "" }
+                $required = if ($field.ContainsKey("Required")) { [bool]$field.Required } else { $false }
+                $secret = if ($field.ContainsKey("Secret")) { [bool]$field.Secret } else { $false }
+                $fieldLabel = if ($field.ContainsKey("Label") -and $field.Label) { [string]$field.Label } else { $fieldKey }
+
+                $fieldValue = Read-McpCredentialValue -Label $fieldLabel -Secret $secret -Required $required -DefaultValue $defaultValue
+                if (-not [string]::IsNullOrWhiteSpace($fieldValue)) {
+                    $result.EnvFileValues[$fieldKey] = $fieldValue
+                }
+            }
+        }
+        default {
+            throw "不支持的凭据类型: $credentialType"
+        }
+    }
+
+    return $result
+}
+
+function New-McpSettingsEntry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ServerId,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Server,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Credentials
+    )
+
+    $mcpType = if ($Server.McpType) { [string]$Server.McpType } else { "stdio" }
+    $credentialType = if ($Server.CredentialType) { [string]$Server.CredentialType } else { "none" }
+
+    switch ($mcpType) {
+        "software" {
+            return $null
+        }
+        "http" {
+            if ($credentialType -eq "url-embedded") {
+                if (-not $Server.UrlTemplate) {
+                    throw "$ServerId 缺少 UrlTemplate"
+                }
+
+                $resolvedUrl = [string]$Server.UrlTemplate
+                foreach ($credentialName in $Credentials.Keys) {
+                    $placeholder = "{0}{1}{2}" -f "{", $credentialName, "}"
+                    $escapedValue = [System.Uri]::EscapeDataString([string]$Credentials[$credentialName])
+                    $resolvedUrl = $resolvedUrl -replace [regex]::Escape($placeholder), $escapedValue
+                }
+
+                if ($resolvedUrl -match "\{[A-Za-z0-9_]+\}") {
+                    # HC-M10: 掩码凭据值，避免异常消息泄露敏感信息
+                    $maskedUrl = $resolvedUrl
+                    foreach ($credName in $Credentials.Keys) {
+                        $escapedVal = [System.Uri]::EscapeDataString([string]$Credentials[$credName])
+                        if ($escapedVal) {
+                            $maskedUrl = $maskedUrl -replace [regex]::Escape($escapedVal), "***"
+                        }
+                    }
+                    throw "$ServerId 的 URL 仍包含未替换占位符: $maskedUrl"
+                }
+
+                return @{
+                    type = "http"
+                    url = $resolvedUrl
+                }
+            }
+
+            if (-not $Server.Url) {
+                throw "$ServerId 缺少 Url"
+            }
+
+            return @{
+                type = "http"
+                url = [string]$Server.Url
+            }
+        }
+        "stdio" {
+            if (-not $Server.Command) {
+                throw "$ServerId 缺少 Command"
+            }
+
+            $args = @()
+            foreach ($arg in @($Server.Args)) {
+                $args += [string]$arg
+            }
+
+            $entry = @{
+                command = [string]$Server.Command
+                args = $args
+            }
+
+            switch ($credentialType) {
+                "single-key" {
+                    $apiKeyName = [string]$Server.ApiKeyName
+                    if (-not $Credentials.ContainsKey($apiKeyName)) {
+                        throw "$ServerId 缺少凭据: $apiKeyName"
+                    }
+
+                    $entry["env"] = @{
+                        $apiKeyName = [string]$Credentials[$apiKeyName]
+                    }
+                }
+                "multi-field" {
+                    $envMap = @{}
+                    foreach ($credentialKey in $Credentials.Keys) {
+                        $credentialValue = [string]$Credentials[$credentialKey]
+                        if (-not [string]::IsNullOrWhiteSpace($credentialValue)) {
+                            $envMap[$credentialKey] = $credentialValue
+                        }
+                    }
+                    if ($envMap.Count -gt 0) {
+                        $entry["env"] = $envMap
+                    }
+                }
+                "args-multi" {
+                    foreach ($argCredential in @($Server.ArgsCredentials)) {
+                        $argName = [string]$argCredential.ArgName
+                        $required = if ($argCredential.ContainsKey("Required")) { [bool]$argCredential.Required } else { $false }
+
+                        if (-not $Credentials.ContainsKey($argName)) {
+                            if ($required) {
+                                throw "$ServerId 缺少参数凭据: $argName"
+                            }
+                            continue
+                        }
+
+                        $argValue = [string]$Credentials[$argName]
+                        if ($required -and [string]::IsNullOrWhiteSpace($argValue)) {
+                            throw "$ServerId 参数凭据为空: $argName"
+                        }
+
+                        if (-not [string]::IsNullOrWhiteSpace($argValue)) {
+                            $entry["args"] += @($argName, $argValue)
+                        }
+                    }
+                }
+                "args-token" {
+                    if (-not $Credentials.ContainsKey("token")) {
+                        throw "$ServerId 缺少 token"
+                    }
+
+                    $tokenValue = [string]$Credentials["token"]
+                    if ([string]::IsNullOrWhiteSpace($tokenValue)) {
+                        throw "$ServerId token 为空"
+                    }
+
+                    $entry["args"] += "$($Server.TokenArg)=$tokenValue"
+                }
+            }
+
+            return $entry
+        }
+        default {
+            throw "不支持的 MCP 类型: $mcpType"
+        }
+    }
+}
+
+function Install-McpSoftware {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ServerId,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Server
+    )
+
+    $result = @{
+        Success = $true
+        Method = "none"
+        Message = ""
+    }
+
+    if ($Server.McpType -ne "software") {
+        return $result
+    }
+
+    $install = $Server.SoftwareInstall
+    if (-not $install) {
+        throw "$ServerId 缺少 SoftwareInstall 配置"
+    }
+
+    if (Test-CommandAvailable -Command "winget") {
+        try {
+            if ($install.WingetSearch) {
+                $wingetArgs = @(
+                    "install",
+                    "--name", $install.WingetSearch,
+                    "-e",
+                    "--accept-package-agreements",
+                    "--accept-source-agreements",
+                    "--disable-interactivity"
+                )
+                $wingetResult = Invoke-ExternalCommand -Command "winget" -Arguments $wingetArgs -TimeoutSeconds 300
+                if (-not $wingetResult.Success) {
+                    throw "winget 按名称安装失败"
+                }
+            }
+            else {
+                throw "未配置 WingetSearch"
+            }
+
+            $result.Method = "winget"
+            $result.Message = "winget 安装成功"
+            return $result
+        }
+        catch {
+            Write-UiWarn "$($Server.Name) winget 安装失败，将尝试下载方式: $($_.Exception.Message)"
+        }
+    }
+
+    if ($install.DownloadUrl) {
+        try {
+            $downloadDir = "$env:TEMP\ClaudeEnvInstaller"
+            if (-not (Test-Path $downloadDir)) {
+                New-Item -Path $downloadDir -ItemType Directory -Force | Out-Null
+            }
+
+            $fileName = Split-Path -Path ([string]$install.DownloadUrl) -Leaf
+            if ([string]::IsNullOrWhiteSpace($fileName)) {
+                $fileName = "$ServerId-installer.exe"
+            }
+            $downloadPath = Join-Path $downloadDir $fileName
+
+            # 使用统一的下载函数
+            $downloadResult = Invoke-FileDownload -Url $install.DownloadUrl -OutputPath $downloadPath -Description "$($Server.Name) 安装程序"
+
+            if (-not $downloadResult.Success) {
+                throw "下载失败: $($downloadResult.ErrorMessage)"
+            }
+
+            $process = Start-Process -FilePath $downloadPath -PassThru -Wait
+
+            if ($process -and $process.ExitCode -ne 0) {
+                throw "安装程序退出码非 0: $($process.ExitCode)"
+            }
+
+            $result.Method = "download"
+            $result.Message = "下载安装成功"
+            return $result
+        }
+        catch {
+            Write-UiWarn "$($Server.Name) 下载安装失败，将进入引导安装: $($_.Exception.Message)"
+        }
+    }
+
+    Write-UiInfo "请手动安装 $($Server.Name)"
+    if ($install.GuideUrl) {
+        Write-UiInfo "安装指引: $($install.GuideUrl)"
+    }
+    Read-Host "安装完成后按回车继续..."
+
+    $result.Method = "guide"
+    $result.Message = "已切换为引导安装"
+    return $result
+}
+
+function Write-McpEnvFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Server,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$EnvValues
+    )
+
+    try {
+        if (-not $Server.EnvFile) {
+            throw "缺少 EnvFile 配置"
+        }
+
+        $envPath = [string]$Server.EnvFile.Path
+        if ([string]::IsNullOrWhiteSpace($envPath)) {
+            throw "EnvFile.Path 为空"
+        }
+
+        $envDir = Split-Path -Path $envPath -Parent
+        if (-not [string]::IsNullOrWhiteSpace($envDir) -and -not (Test-Path $envDir)) {
+            New-Item -Path $envDir -ItemType Directory -Force | Out-Null
+        }
+
+        $lines = @()
+        if (Test-Path $envPath) {
+            $existingLines = Get-Content -Path $envPath -ErrorAction SilentlyContinue
+            if ($null -ne $existingLines) {
+                $lines = @($existingLines)
+            }
+        }
+
+        $keyLineIndex = @{}
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+                $keyLineIndex[$matches[1]] = $i
+            }
+        }
+
+        foreach ($key in $EnvValues.Keys) {
+            $value = [string]$EnvValues[$key]
+            $value = $value -replace "`r", "" -replace "`n", ""
+            if ([string]::IsNullOrWhiteSpace($value)) {
+                continue
+            }
+
+            $line = "$key=$value"
+            if ($keyLineIndex.ContainsKey($key)) {
+                $lines[[int]$keyLineIndex[$key]] = $line
+            }
+            else {
+                $lines += $line
+            }
+        }
+
+        $writeOk = Write-FileAtomically -FilePath $envPath -Content $lines
+        if (-not $writeOk) {
+            throw "env 文件原子写入失败: $envPath"
+        }
+
+        return @{ Success = $true; Path = $envPath }
+    }
+    catch {
+        return @{
+            Success = $false
+            Path = ""
+            ErrorMessage = $_.Exception.Message
+        }
+    }
+}
+
+function Install-McpSingleServer {
+    <#
+    .SYNOPSIS
+    安装单个 MCP Server（完整 5 阶段管道）
+    被 Invoke-McpToggle（Missing + 需凭据）和 Install-Mcp（批量循环）调用
+    .PARAMETER ServerId
+    注册表中的 Server ID
+    .RETURNS
+    @{ Success; ServerId; Status; ErrorMessage }
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ServerId
+    )
+
+    if (-not $script:McpServers.Contains($ServerId)) {
+        return @{ Success = $false; ServerId = $ServerId; Status = "Unknown"; ErrorMessage = "未在注册表中定义" }
+    }
+
+    $server = $script:McpServers[$ServerId]
+
+    try {
+        # Phase 1: 运行时依赖
+        $depResult = Install-McpRuntimeDeps -Server $server
+        if (@($depResult.Installed).Count -gt 0) {
+            Write-UiSuccess "$($server.Name) 依赖安装完成: $(@($depResult.Installed) -join ', ')"
+        }
+
+        # Phase 2: 预安装
+        $preResult = Invoke-McpPreInstall -ServerId $ServerId -Server $server
+        if ($preResult.Message -and $preResult.Message -ne "无需预安装") {
+            Write-UiSuccess "$($server.Name) $($preResult.Message)"
+        }
+
+        # Phase 3: 凭据收集（含 vault 历史凭据自动填充）
+        $credentials = @{}
+        $envFileValues = @{}
+        $credentialType = if ($server.CredentialType) { [string]$server.CredentialType } else { "none" }
+
+        if ($credentialType -ne "none") {
+            # 先查 vault 历史凭据
+            $useVaultCredentials = $false
+            try {
+                $meta = Read-McpMeta
+                if ($meta.ContainsKey("servers") -and
+                    $meta.servers -is [hashtable] -and
+                    $meta.servers.ContainsKey($ServerId) -and
+                    $meta.servers[$ServerId] -is [hashtable] -and
+                    $meta.servers[$ServerId].ContainsKey("credentials") -and
+                    $meta.servers[$ServerId].credentials -is [hashtable]) {
+
+                    $vaultCred = $meta.servers[$ServerId].credentials
+                    $hasValues = $vaultCred.ContainsKey("values") -and $vaultCred.values -is [hashtable] -and $vaultCred.values.Count -gt 0
+                    $hasEnvValues = $vaultCred.ContainsKey("envFileValues") -and $vaultCred.envFileValues -is [hashtable] -and $vaultCred.envFileValues.Count -gt 0
+
+                    if ($hasValues -or $hasEnvValues) {
+                        $maskedKeys = @()
+                        if ($hasValues) {
+                            $maskedKeys += @($vaultCred.values.Keys | ForEach-Object { "$_=***" })
+                        }
+                        Write-UiInfo "检测到 $($server.Name) 的历史凭据 ($($maskedKeys -join ', '))"
+                        Write-Host -NoNewline "  是否使用历史凭据？[Y/n]: "
+                        $answer = Read-Host
+                        if ([string]::IsNullOrWhiteSpace($answer) -or $answer -match '^[Yy]') {
+                            if ($hasValues) { $credentials = $vaultCred.values }
+                            if ($hasEnvValues) { $envFileValues = $vaultCred.envFileValues }
+                            $useVaultCredentials = $true
+                            Write-UiSuccess "$($server.Name) 已使用历史凭据"
+                        }
+                    }
+                }
+            }
+            catch {
+                Write-UiWarn "vault 读取失败，跳过历史凭据检测: $($_.Exception.Message)"
+            }
+
+            # 无历史则走交互式收集
+            if (-not $useVaultCredentials) {
+                $credentialResult = Get-McpCredentials -ServerId $ServerId -Server $server -SharedCredentials @{}
+                $credentials = $credentialResult.Values
+                $envFileValuesCount = if ($credentialResult.ContainsKey("EnvFileValues") -and $credentialResult.EnvFileValues) { @($credentialResult.EnvFileValues.Keys).Count } else { 0 }
+                if ($envFileValuesCount -gt 0) {
+                    $envFileValues = $credentialResult.EnvFileValues
+                }
+            }
+        }
+
+        # Phase 4: 软件安装（仅 software 类型）
+        if ($server.McpType -eq "software") {
+            Install-McpSoftware -ServerId $ServerId -Server $server | Out-Null
+        }
+
+        # Phase 5: 配置写入
+        # 5a. env file（env-file 类型）
+        if ($credentialType -eq "env-file" -and $envFileValues.Count -gt 0) {
+            $envWriteResult = Write-McpEnvFile -Server $server -EnvValues $envFileValues
+            if ($envWriteResult.Success) {
+                Write-UiSuccess "已写入 $($server.Name) .env 文件: $($envWriteResult.Path)"
+            }
+            else {
+                Write-UiWarn "$($server.Name) .env 写入失败: $($envWriteResult.ErrorMessage)"
+            }
+        }
+
+        # 5b. .claude.json — New-McpSettingsEntry → 合并写入
+        $entry = New-McpSettingsEntry -ServerId $ServerId -Server $server -Credentials $credentials
+        if ($entry) {
+            $cjPath = "$(Get-UserHome)\.claude.json"
+            $cj = @{}
+            if (Test-Path $cjPath) {
+                $cj = Get-Content -Path $cjPath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+                if (-not $cj) { $cj = @{} }
+            }
+            if (-not $cj.ContainsKey("mcpServers")) { $cj["mcpServers"] = @{} }
+            $cj["mcpServers"][$ServerId] = $entry
+            $writeOk = Write-FileAtomically -FilePath $cjPath -Content ($cj | ConvertTo-Json -Depth 10)
+            if (-not $writeOk) {
+                throw "更新 .claude.json 失败"
+            }
+        }
+
+        # 5c. settings.json — 补充 mcp__${ServerId} 权限
+        $settingsPath = Get-ClaudeSettingsPath
+        $settings = @{}
+        if (Test-Path $settingsPath) {
+            $settings = Get-Content -Path $settingsPath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+            if (-not $settings) { $settings = @{} }
+        }
+        if (-not $settings.ContainsKey("permissions")) { $settings["permissions"] = @{} }
+        if (-not $settings["permissions"].ContainsKey("allow")) { $settings["permissions"]["allow"] = @() }
+        if (-not ($settings["permissions"]["allow"] -is [System.Collections.IList])) {
+            $settings["permissions"]["allow"] = @($settings["permissions"]["allow"])
+        }
+        $mcpPerm = "mcp__${ServerId}"
+        if ($settings["permissions"]["allow"] -notcontains $mcpPerm) {
+            $settings["permissions"]["allow"] += $mcpPerm
+            $settingsJson = $settings | ConvertTo-Json -Depth 10
+            $writeOk = Write-FileAtomically -FilePath $settingsPath -Content @($settingsJson)
+            if (-not $writeOk) {
+                Write-UiWarn "settings.json 权限写入失败"
+            }
+        }
+
+        # 5d. vault — 持久化凭据 + definitionHash
+        try {
+            $null = Invoke-WithMcpLock {
+                $vaultMeta = Read-McpMeta
+                $cred = @{}
+                if ($credentials.Count -gt 0) { $cred["values"] = $credentials }
+                if ($envFileValues.Count -gt 0) { $cred["envFileValues"] = $envFileValues }
+                $vaultMeta.servers[$ServerId] = @{
+                    disabled       = $false
+                    credentials    = $cred
+                    definitionHash = Get-McpDefinitionHash $server
+                    updatedAt      = (Get-Date).ToUniversalTime().ToString("o")
+                }
+                Write-McpMeta $vaultMeta
+            }
+        }
+        catch {
+            Write-UiWarn "vault 写入失败（不影响 MCP 配置）: $($_.Exception.Message)"
+        }
+
+        # 5e. Sync-AllMcpRules
+        $syncResult = Sync-AllMcpRules
+        if (-not $syncResult.Success) {
+            Write-UiWarn "MCP Rules 同步失败: $($syncResult.ErrorMessage)"
+        }
+
+        # 凭据清零（安全）
+        foreach ($key in @($credentials.Keys)) { $credentials[$key] = $null }
+
+        Write-UiSuccess "MCP Server '$ServerId' 安装完成"
+        return @{ Success = $true; ServerId = $ServerId; Status = "Active" }
+    }
+    catch {
+        Write-UiError "安装 MCP Server '$ServerId' 失败: $($_.Exception.Message)"
+        return @{ Success = $false; ServerId = $ServerId; Status = "Failed"; ErrorMessage = $_.Exception.Message }
+    }
+}
+
+# ============================================================
+# 主要函数（安装/验证/更新）
 # ============================================================
 
 function Test-McpInstalled {
@@ -749,3 +1995,6 @@ function Update-Mcp {
 }
 
 # 注意：此脚本通过 dot-source 加载，不需要 Export-ModuleMember
+
+# 注意：此脚本通过 dot-source 加载，不需要 Export-ModuleMember
+

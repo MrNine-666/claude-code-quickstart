@@ -166,7 +166,7 @@ process.stdout.write(JSON.stringify(out));
     history_value="$(printf '%s' "${history_json}" | NAME="${name}" node -e 'const fs=require("fs"); const h=JSON.parse(fs.readFileSync(0,"utf8") || "{}"); process.stdout.write(h[process.env.NAME] || "");' 2>/dev/null || true)"
 
     if [ -n "${history_value}" ] && ccq_mcp_tty; then
-      printf '  %s: 检测到历史凭据，复用? [Y/n] ' "${label}" >&2
+      printf '  %s: 检测到历史凭据，复用? [Y/n] ' "${label}" >/dev/tty
       read -r reply </dev/tty
       if [ -z "${reply}" ] || [ "${reply}" = "Y" ] || [ "${reply}" = "y" ]; then
         value="${history_value}"
@@ -370,6 +370,47 @@ Verify-Mcp() {
   printf 'Success=false\n'
   printf 'ErrorMessage=MCP Server 配置验证失败\n'
   return 1
+}
+
+# ============================================================================
+# Vault 并发保护（安装流程自给自足，不依赖 core/McpManager.zsh）
+# macOS 无 flock(1) 命令，优先 zsh 原生 zsystem flock；Linux 环境兜底 flock(1)
+# ============================================================================
+
+: "${CCQ_MCP_LOCK_FILE:=${TMPDIR:-/tmp}/.ccq-mcp-vault.lock}"
+: "${CCQ_MCP_LOCK_TIMEOUT:=30}"
+
+ccq_mcp_with_lock() {
+  local lock_file="${CCQ_MCP_LOCK_FILE}"
+  local timeout="${CCQ_MCP_LOCK_TIMEOUT}"
+  mkdir -p "$(dirname "${lock_file}")"
+
+  if zmodload zsh/system 2>/dev/null && zsystem supports flock 2>/dev/null; then
+    local lock_fd rc
+    : >> "${lock_file}"
+    if ! zsystem flock -t "${timeout}" -f lock_fd "${lock_file}" 2>/dev/null; then
+      CCQ_MCP_ERROR="无法获取 MCP Vault 锁（${timeout}s 超时），可能有其他 CCQ 进程正在运行"
+      return 1
+    fi
+    "$@"
+    rc=$?
+    zsystem flock -u "${lock_fd}" 2>/dev/null || true
+    return ${rc}
+  fi
+
+  if command -v flock >/dev/null 2>&1; then
+    local rc
+    ( flock -x -w "${timeout}" 9 || exit 99; "$@" ) 9>"${lock_file}"
+    rc=$?
+    if [ "${rc}" -eq 99 ]; then
+      CCQ_MCP_ERROR="无法获取 MCP Vault 锁（${timeout}s 超时），可能有其他 CCQ 进程正在运行"
+      return 1
+    fi
+    return ${rc}
+  fi
+
+  # 无锁机制可用时直接执行（降级，不阻塞主流程）
+  "$@"
 }
 
 # 管理函数已搬至 core/McpManager.zsh，此文件仅保留安装契约

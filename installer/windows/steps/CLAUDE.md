@@ -1,7 +1,7 @@
 # installer/windows/steps/ — Windows 安装步骤模块
 
 > 面包屑：[根目录](../../../CLAUDE.md) › [installer/](../../CLAUDE.md) › windows/ › steps/
-> 生成时间：2026-03-06 (Install+Manage 分离架构)
+> 生成时间：2026-06-14 (MCP 重构：Mcp.ps1 从 751 行扩展到 2000 行，完全自给自足)
 
 ---
 
@@ -308,13 +308,54 @@ Homebrew 不可用、安装失败或验证失败时返回 `ManualRequired` 并�
 
 ## Mcp — MCP Server 配置
 
-**文件**：`Mcp.ps1`
+**文件**：`Mcp.ps1` (2000 行，完全自给自足)
+**依赖核心模块**：`Ui.ps1`, `Profile.ps1`, `Process.ps1`
 **配置路径**：
 - `$env:USERPROFILE\.claude.json` - MCP Server 配置（mcpServers）
 - `$env:USERPROFILE\.claude\settings.json` - 权限配置（permissions）
+- `$env:USERPROFILE\.ccq\mcp-meta.json` - MCP Vault（凭据持久化 + 状态管理）
 
-**功能**：在 .claude.json 中写入 `mcpServers` 配置块，在 settings.json 中写入权限配置，支持多个 MCP 插件服务器。
-变量插值注意使用 `${serverId}` 格式（避免冒号歧义）。
+**架构**：完整的安装管道实现（契约加载、基础工具、Vault 管理、安装管道、主要函数），**不依赖** `core/McpManager.ps1` 中的安装函数。McpManager 仅负责 Manage 管理（wrapper + Rules 同步）。
+
+### 功能模块（26 个函数）
+
+**契约加载**（2 个）：
+- `Load-McpContract` - 从 `contracts/mcp-servers.json` 加载 MCP Server 定义
+- `Initialize-McpFallbackConfig` - 内联 fallback 配置（Release 模式）
+
+**基础工具**（7 个）：
+- `Get-UserHome` - 获取用户主目录
+- `Get-ClaudeSettingsPath` - 获取 Claude settings.json 路径
+- `ConvertTo-NormalizedVersion` - 规范化版本号为 [int, int, int]
+- `Read-McpCredentialValue` - 读取凭据（支持明文/SecureString/文件路径）
+- `Test-ObjectProperty` - 检测对象属性
+- `ConvertTo-CanonicalObject` - 规范化对象结构
+- `Get-McpDefinitionHash` - 计算 MCP Server 配置指纹（SHA-256）
+
+**Vault 管理**（7 个）：
+- `Ensure-CcqMetaDir` - 确保 `~/.ccq/` 目录存在
+- `Get-McpMetaPath` - 获取 Vault 路径
+- `New-EmptyMcpMeta` - 创建空 Vault 结构
+- `Invoke-McpCorruptionRecovery` - Vault 腐败恢复（自动备份）
+- `Read-McpMeta` - 读取 Vault（带腐败检测）
+- `Write-McpMeta` - 写入 Vault（原子写入）
+- `Invoke-WithMcpLock` - Vault 并发保护（Mutex，30s 超时）
+
+**安装管道**（6 个）：
+- `Install-McpRuntimeDeps` - 安装运行时依赖（Node.js / npm）
+- `Get-McpCredentials` - 收集 MCP Server 凭据（交互式）
+- `New-McpSettingsEntry` - 生成 MCP Server 配置条目
+- `Install-McpSoftware` - 安装 MCP 软件（npm global / npx）
+- `Write-McpEnvFile` - 写入 .env 文件（用于 envFile 凭据）
+- `Install-McpSingleServer` - 单个 MCP Server 完整安装流程
+
+**主要函数**（4 个）：
+- `Test-McpInstalled` - 检测已安装的 MCP Server 数量
+- `Install-Mcp` - MCP 安装主流程（选择 → 安装 → Rules 同步）
+- `Verify-Mcp` - 验证安装结果
+- `Clear-NpxCache` - 清理 npx 缓存（避免安装失败）
+
+### 关键特性
 
 **增量安装支持**：
 - 设置 `SkipIfInstalled = $false`，允许用户每次都能进入选择菜单
@@ -322,24 +363,41 @@ Homebrew 不可用、安装失败或验证失败时返回 `ManualRequired` 并�
 - 默认只选中推荐的且未安装的 MCP Server
 - 自动跳过已安装的 MCP Server，只安装新选择的
 
-**contextweaver 安装增强**：针对 Windows 权限问题，添加了 npm 缓存清理和 `--force` 重试机制，解决 EPERM 错误导致的安装失败。
-
-**检测逻辑修复**：
-1. 修复了配置文件路径错误：MCP Server 配置应写入 `~/.claude.json`，而不是 `settings.json`
-2. 现在只有当 .claude.json 中有实际的 stdio/http MCP Server 配置时才返回 true（但不会跳过安装）
-
-**Vault 集成（mcp-lifecycle）**：
+**Vault 集成**（mcp-lifecycle）：
 - Install-Mcp Phase 3：凭据收集前读取 `~/.ccq/mcp-meta.json` 检查历史凭据，提示 `[Y/n]` 自动填充
 - Install-Mcp Phase 5：`.claude.json` 写入成功后，通过 `Invoke-WithMcpLock` 将凭据持久化到 vault
-- Update-Mcp（当前未注册到 Registry，不参与统一更新，仅保留备用）：`Clear-NpxCache` 清理 npx 缓存 + PreInstall npm-global 包更新
 - 凭据在 vault 写入后立即清零（安全）
 - Vault 读写失败不阻塞主流程（仅 warning）
+- Vault 腐败自动恢复：保留最近 5 个备份
 
 **MCP Rules 动态渲染**：
-- Install-Mcp 末尾调用 `Sync-AllMcpRules`，根据已启用的 MCP Server 动态生成 `rules/ccq-mcp-*.md` 文件
+- Install-Mcp 末尾调用 `Sync-AllMcpRules`（由 `core/McpManager.ps1` 提供），根据已启用的 MCP Server 动态生成 `rules/ccq-mcp-*.md` 文件
 - 分类定义在 `core/McpManager.ps1` 的 `$script:McpRulesCategories` 中维护
 - 3 个分类：Search（搜索）、Documentation（文档）、Development（代码检索）
 - 某分类下所有 MCP 禁用时，对应 rules 文件自动删除
+
+**契约加载策略**：
+1. 优先读取 `installer/contracts/mcp-servers.json`（源码模式）
+2. Fallback 到内联配置（Release 模式，`irm|iex` 执行）
+3. 支持 4 个核心 MCP Server：context7、deepwiki、exa、playwright
+
+**安装错误处理**：
+- contextweaver 安装增强：针对 Windows 权限问题，添加 npm 缓存清理和 `--force` 重试机制
+- RuntimeDeps 检测：自动检测 Node.js 和 npm 版本
+- 安装失败时友好错误提示，不中断其他 MCP Server 安装
+
+### 与 McpManager 的职责分离
+
+| 职责 | Mcp.ps1 (Install) | McpManager.ps1 (Manage) |
+|------|-------------------|-------------------------|
+| **契约加载** | ✅ 完整实现 | ❌ 不负责 |
+| **安装管道** | ✅ 完整实现（6 个函数） | ❌ 不负责 |
+| **Vault 管理** | ✅ 完整实现（7 个函数） | ✅ 提供 Vault 恢复辅助 |
+| **Rules 同步** | ✅ 调用 McpManager | ✅ 提供 `Sync-AllMcpRules` |
+| **交互管理** | ❌ 不负责 | ✅ 提供交互 TUI（调用 mcp-manager.js） |
+| **CRUD 操作** | ❌ 不负责 | ✅ 提供 disable/enable/remove（调用 mcp-manager.js） |
+
+**设计原则**：Mcp.ps1 完全自给自足，不依赖 McpManager.ps1 的安装函数；McpManager.ps1 是轻量 wrapper（247 行），主要职责是调用 `~/.ccq/scripts/mcp-manager.js` 完成 Manage 管理。
 
 ---
 

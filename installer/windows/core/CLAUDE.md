@@ -249,13 +249,24 @@ $success = if ($result -is [bool]) { $result }
 
 ## McpManager.ps1
 
-### 职责
+### 职责（v2.0.0 轻量 wrapper 架构）
 
-MCP Server 生命周期管理：凭据 vault 读写、状态查看、禁用/启用/删除、批量切换、管理菜单。
+**轻量 Node.js wrapper**（247 行），调用 `~/.ccq/scripts/mcp-manager.js` 完成所有 MCP 管理。完整 TUI + 业务逻辑在 JS 脚本中实现（1180 行），平台层仅负责脚本部署与调用。
+
+### 架构变更
+
+| 项目 | v1.x（旧架构） | v2.0.0（新架构） |
+|------|---------------|----------------|
+| 代码行数 | 890 行 | 247 行（-72%） |
+| 实现语言 | PowerShell | PowerShell wrapper + Node.js 核心 |
+| 业务逻辑 | 平台层实现 | `mcp-manager.js` 实现（跨平台共享） |
+| TUI 渲染 | PowerShell UI 函数 | Node.js readline + ANSI |
+| 部署方式 | 无需部署 | JS 脚本部署到 `~/.ccq/scripts/` |
+| Release 模式 | 内联 PowerShell 代码 | 内嵌 base64 编码的 JS 脚本（46KB）|
 
 ### 数据模型
 
-**Vault 文件**: `~/.ccq/mcp-meta.json`（Schema v1）
+**Vault 文件**: `~/.ccq/mcp-meta.json`（Schema v1，与旧版兼容）
 
 ```json
 {
@@ -266,6 +277,8 @@ MCP Server 生命周期管理：凭据 vault 读写、状态查看、禁用/启�
     "<serverId>": {
       "disabled": false,
       "credentials": { "values": {}, "envFileValues": {} },
+      "config": { /* 完整 .claude.json 配置 */ },
+      "permissions": ["mcp__<serverId>__*"],
       "definitionHash": "8 hex chars (SHA-256)",
       "updatedAt": "ISO 8601"
     }
@@ -273,35 +286,48 @@ MCP Server 生命周期管理：凭据 vault 读写、状态查看、禁用/启�
 }
 ```
 
-### 常量
-
-| 常量 | 值 | 说明 |
-|------|-----|------|
-| `$McpMetaSchemaVersion` | `1` | vault schema 版本 |
-| `$McpMaxCorruptBackups` | `5` | 腐败备份最大数量 |
-| `$McpMutexName` | `Global\CCQ.Mcp.Lock` | 并发保护 Mutex |
-| `$McpMutexTimeoutMs` | `30000` | Mutex 超时（30s） |
-
-### 主要函数
+### 主要函数（平台层 wrapper）
 
 | 函数 | 职责 |
 |------|------|
-| `Ensure-CcqMetaDir` | 确保 `~/.ccq/` 目录存在 |
-| `Get-McpMetaPath` | 返回 vault 文件路径 |
-| `New-EmptyMcpMeta` | 创建空 v1 vault |
-| `Read-McpMeta` | 读取 vault + 腐败恢复 + schema 校验 |
-| `Write-McpMeta` | 原子写入 vault + 时间戳更新 |
-| `Invoke-WithMcpLock` | Mutex 包装（防止并发写入） |
-| `Get-McpDefinitionHash` | SHA-256 前 8 位哈希 |
-| `Get-McpStatus` | 计算所有 MCP 状态（Custom/Disabled/Active/Missing） |
-| `Show-McpStatusTable` | 彩色表格输出 |
-| `Disable-McpServer` | 禁用（保存配置到 vault，从 .claude.json 移除） |
-| `Enable-McpServer` | 启用（从 vault 恢复，重建配置） |
-| `Remove-McpServer` | 删除（清理所有相关文件） |
-| `Invoke-McpToggle` | 批量切换（Active↔Disabled） |
-| `Show-McpManageMenu` | 交互管理菜单（状态/切换/删除） |
+| `Get-McpManagerScriptPath` | 返回 `~/.ccq/scripts/mcp-manager.js` 路径 |
+| `Install-McpManagerScript` | 部署 JS 脚本（优先 base64 内嵌，fallback 源码复制）|
+| `Show-McpManageMenu` | 调用 `node mcp-manager.js manage`（交互 TUI）|
+| `Sync-AllMcpRules` | 调用 `node mcp-manager.js sync-rules`（Rules 同步）|
+| `Get-McpStatus` | 调用 `node mcp-manager.js status`（返回 JSON）|
+| `Get-McpContract` | 向后兼容空壳（返回空契约）|
+| `Invoke-McpPreInstall` | 向后兼容空壳（无操作）|
 
-> **加载顺序**：McpManager.ps1 必须在 Bootstrap.ps1 之后、steps/ 之前加载。依赖 Ui.ps1、Process.ps1、Profile.ps1 的函数。运行时依赖 Mcp.ps1 的 `$script:McpServers` 和 `New-McpSettingsEntry`。
+### 部署策略
+
+1. **Release 模式**（`irm|iex`）：从内嵌 base64 解码写入（`$script:EmbeddedMcpManagerB64`）
+2. **源码模式**：从 `installer/contracts/scripts/mcp-manager.js` 复制
+3. **版本检测**：脚本头部 `SCRIPT_VERSION` 与内嵌版本不一致时覆盖
+
+### JS 脚本功能（mcp-manager.js）
+
+| 模块 | 功能 |
+|------|------|
+| 常量层 | SCRIPT_VERSION、路径、颜色、schema |
+| 工具层 | CJK 宽度计算、pad、颜色、原子写入、文件锁 |
+| 数据层 | JSON 读写、vault 腐败恢复、契约加载 |
+| 算法层 | 状态计算（Custom/Active/Disabled/Missing）、definitionHash、凭据同步 |
+| 变更层 | disable、enable、remove（三处状态同步）|
+| 渲染层 | 状态表格、交互菜单、确认对话框、错误展开 |
+| Rules层 | 动态渲染 `~/.claude/rules/ccq-mcp-*.md` |
+| 入口层 | 命令行路由（manage / status / sync-rules / --version）|
+
+### 命令行接口
+
+```bash
+node ~/.ccq/scripts/mcp-manager.js manage          # 交互式管理（完整 TUI）
+node ~/.ccq/scripts/mcp-manager.js status          # 输出状态（JSON）
+node ~/.ccq/scripts/mcp-manager.js status --table  # 输出状态表格（人类可读）
+node ~/.ccq/scripts/mcp-manager.js sync-rules      # 同步 Rules 文件
+node ~/.ccq/scripts/mcp-manager.js --version       # 版本号
+```
+
+> **加载顺序**：McpManager.ps1 必须在 Bootstrap.ps1 之后、steps/ 之前加载。依赖 Ui.ps1、Process.ps1 的函数。
 
 ---
 
@@ -375,7 +401,7 @@ macOS 安装器实现了与 Windows 功能对等的核心模块，采用 zsh 脚
 | `Net.ps1` | - | N/A - macOS 使用 curl/wget 原生工具 |
 | `Registry.ps1` | `Registry.zsh` | 98% - 步骤注册表、拓扑排序、Legacy 映射 |
 | `Bootstrap.ps1` | `Bootstrap.zsh` | 95% - 生命周期、Critical 失败策略、五类摘要 |
-| `McpManager.ps1` | `McpManager.zsh` | 98% - Vault、状态管理、批量切换、动态 Rules |
+| `McpManager.ps1` (247行) | `McpManager.zsh` (175行) | **100% - 轻量 wrapper，共享 `mcp-manager.js` 核心（1180行）** |
 | `Provider.ps1` | `Provider.zsh` | 98% - CRUD、Sync、模型环境键管理 |
 
 ### 平台差异要点

@@ -164,6 +164,32 @@ function Get-ScriptParamBlockInfo {
     }
 }
 
+function Get-McpManagerScriptBase64 {
+    <#
+    .SYNOPSIS
+    读取 mcp-manager.js 并编码为 base64 字符串
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$InstallerRoot
+    )
+
+    $jsScriptPath = Join-Path $InstallerRoot 'contracts' 'scripts' 'mcp-manager.js'
+    if (-not (Test-Path $jsScriptPath -PathType Leaf)) {
+        Write-Warning "mcp-manager.js 不存在，跳过内嵌: $jsScriptPath"
+        return $null
+    }
+
+    try {
+        $bytes = [IO.File]::ReadAllBytes($jsScriptPath)
+        $base64 = [Convert]::ToBase64String($bytes)
+        return $base64
+    } catch {
+        Write-Warning "无法读取或编码 mcp-manager.js: $($_.Exception.Message)"
+        return $null
+    }
+}
+
 function Build-SingleFileScript {
     <#
     .SYNOPSIS
@@ -184,7 +210,9 @@ function Build-SingleFileScript {
 
         [string]$HoistParamFromRelativePath = '',
 
-        [string]$OutputEncoding = 'UTF8'
+        [string]$OutputEncoding = 'UTF8',
+
+        [string]$McpManagerBase64 = $null
     )
 
     foreach ($relPath in @($FileOrder)) {
@@ -247,6 +275,16 @@ function Build-SingleFileScript {
             if ($line -match '^\s*#Requires\s') { continue }
             if ($line -match $scriptRootPattern) { continue }
             $buffer.Add($line)
+        }
+
+        # 注入 MCP Manager JS 脚本 base64（仅对 McpManager.ps1）
+        if ($McpManagerBase64 -and $relPath -like '*McpManager.ps1') {
+            $buffer.Add('')
+            $buffer.Add('# ─── MCP Manager JS 脚本内嵌（构建时注入）───')
+            $buffer.Add('$script:EmbeddedMcpManagerB64 = @"')
+            $buffer.Add($McpManagerBase64)
+            $buffer.Add('"@')
+            $buffer.Add('')
         }
     }
 
@@ -392,6 +430,17 @@ function Main {
     }
     Clear-KnownBuildArtifacts -OutputDir $OutputDir -Platform $Platform
 
+    # 生成 MCP Manager JS 脚本 base64（供 Install 和 Manage 内嵌）
+    Write-Host ''
+    Write-Host '─── 处理 MCP Manager JS 脚本 ───────────────────────────────' -ForegroundColor Yellow
+    $mcpManagerBase64 = Get-McpManagerScriptBase64 -InstallerRoot $InstallerRoot
+    if ($mcpManagerBase64) {
+        $base64Length = $mcpManagerBase64.Length
+        Write-Host "[PASS] MCP Manager JS 脚本已编码（base64 长度: $base64Length）" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] MCP Manager JS 脚本未编码，Release 模式将依赖源码模式部署" -ForegroundColor Yellow
+    }
+
     $builtItems = [System.Collections.Generic.List[hashtable]]::new()
     $allOk = $true
 
@@ -418,7 +467,8 @@ function Main {
         -OutputPath $installOutput `
         -RequiresHeader ([string]$installArtifact['RequiresHeader']) `
         -HoistParamFromRelativePath ([string]$installArtifact['HoistParamFrom']) `
-        -OutputEncoding ([string]$installArtifact['OutputEncoding'])
+        -OutputEncoding ([string]$installArtifact['OutputEncoding']) `
+        -McpManagerBase64 $mcpManagerBase64
 
     Write-Host ''
     Write-Host '─── 构建 Windows Manage 单文件版本 ────────────────────────' -ForegroundColor Yellow
@@ -431,7 +481,8 @@ function Main {
         -OutputPath $manageOutput `
         -RequiresHeader ([string]$manageArtifact['RequiresHeader']) `
         -HoistParamFromRelativePath ([string]$manageArtifact['HoistParamFrom']) `
-        -OutputEncoding ([string]$manageArtifact['OutputEncoding'])
+        -OutputEncoding ([string]$manageArtifact['OutputEncoding']) `
+        -McpManagerBase64 $mcpManagerBase64
 
     Write-Host ''
     Write-Host '─── Windows 语法检查 ──────────────────────────────────────' -ForegroundColor Yellow

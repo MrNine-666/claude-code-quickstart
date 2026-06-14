@@ -1,6 +1,6 @@
 # claude-code-quickstart -- AI 上下文索引
 
-> 生成时间：2026-06-11 | 覆盖率：97% (33/34 文件)
+> 生成时间：2026-06-14 | 覆盖率：97% (33/34 文件) | 最近更新：MCP 架构重构（Install 自给自足）
 
 Windows 10/11 与 macOS 12+ 双平台的 **Claude Code 开发环境自动化安装器**。Windows 使用双阶段 PowerShell 架构（PS 5.1 引导 + PS 7 主安装/管理），macOS 使用 zsh + Homebrew + nvm 原生入口；13 步安装依赖链、Manage 四大管理入口（Update / Provider / MCP / Skills）、共享 contracts 契约与实时检测机制。
 
