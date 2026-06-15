@@ -679,6 +679,12 @@ function Install-ClaudeConfig {
         Write-UiInfo "  - 权限项: $($settings['permissions']['allow'].Count) 项" -Level Detail
         Write-UiInfo "  - 环境变量: $($script:ClaudeConfigEnvDefaults.Count) 项" -Level Detail
 
+        # 注册 ccq 快捷函数到 PowerShell Profile
+        $ccqRegistered = Register-CcqShortcut
+        if ($ccqRegistered) {
+            [void]$updatedItems.Add("profile::ccq-function::registered")
+        }
+
         if ($updatedItems.Count -eq 0) {
             $result.UpdatedItems = @("noop::ClaudeConfig::no-change")
         } else {
@@ -1029,6 +1035,132 @@ function Update-ClaudeConfig {
 # 辅助函数：获取 Claude Code settings.json 路径（HC-12: ~/.claude/settings.json）
 function Get-ClaudeSettingsPath {
     return "$(Get-UserHome)\.claude\settings.json"
+}
+
+# ─── CCQ 函数注册 ───────────────────────────────────────────────────────────
+
+function Get-CcqFunctionTemplate {
+    <#
+    .SYNOPSIS
+    读取 ccq 函数模板（优先从 contracts/templates，fallback 到内联）
+    #>
+    param()
+
+    # 尝试从 contracts/templates 读取
+    $contractsRoot = Get-ClaudeConfigContractsRoot
+    if (-not [string]::IsNullOrWhiteSpace($contractsRoot)) {
+        $templatePath = Join-Path $contractsRoot "templates\profile\ccq-function.ps1.txt"
+        if (Test-Path $templatePath) {
+            try {
+                return Get-Content $templatePath -Raw -Encoding UTF8
+            } catch {
+                Write-Verbose "读取 ccq 函数模板失败: $($_.Exception.Message)"
+            }
+        }
+    }
+
+    # Fallback 到内联模板
+    return @'
+function ccq {
+    <#
+    .SYNOPSIS
+    Claude Code Quickstart - 统一安装与管理面板入口
+
+    .DESCRIPTION
+    显示菜单供用户选择：
+    [1] 安装面板 - 首次安装或重新安装
+    [2] 管理面板 - Provider/Skills/Update/MCP 管理
+
+    .EXAMPLE
+    ccq
+    显示菜单并等待用户选择
+    #>
+
+    Write-Host ""
+    Write-Host "════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host " Claude Code Quickstart" -ForegroundColor White
+    Write-Host "════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  [1] 安装面板  - 首次安装或重新安装" -ForegroundColor Green
+    Write-Host "  [2] 管理面板  - Provider/Skills/Update/MCP" -ForegroundColor Yellow
+    Write-Host "  [Q] 退出" -ForegroundColor Gray
+    Write-Host ""
+
+    $choice = Read-Host "请选择"
+
+    switch ($choice) {
+        "1" {
+            Write-Host ""
+            Write-Host "正在启动安装面板..." -ForegroundColor Green
+            $installUrl = "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/install.ps1"
+            try {
+                Invoke-RestMethod $installUrl | Invoke-Expression
+            } catch {
+                Write-Host "❌ 安装面板启动失败: $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "请检查网络连接后重试，或手动运行：" -ForegroundColor Yellow
+                Write-Host "  irm $installUrl | iex" -ForegroundColor Gray
+            }
+        }
+        "2" {
+            Write-Host ""
+            Write-Host "正在启动管理面板..." -ForegroundColor Yellow
+            $manageUrl = "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/manage.ps1"
+            try {
+                Invoke-RestMethod $manageUrl | Invoke-Expression
+            } catch {
+                Write-Host "❌ 管理面板启动失败: $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "请检查网络连接后重试，或手动运行：" -ForegroundColor Yellow
+                Write-Host "  irm $manageUrl | iex" -ForegroundColor Gray
+            }
+        }
+        {$_ -in @("q", "Q")} {
+            Write-Host ""
+            Write-Host "再见！" -ForegroundColor Gray
+            return
+        }
+        default {
+            Write-Host ""
+            Write-Host "无效选择，请重新运行 ccq" -ForegroundColor Red
+        }
+    }
+}
+'@
+}
+
+function Register-CcqShortcut {
+    <#
+    .SYNOPSIS
+    在 PowerShell Profile 中注册 ccq 函数（使用 HC-4 标记块）
+    #>
+    param()
+
+    try {
+        $profilePath = Get-PowerShellProfilePath
+        if ([string]::IsNullOrWhiteSpace($profilePath)) {
+            throw "无法确定 PowerShell Profile 路径"
+        }
+
+        # 确保 Profile 目录存在
+        $profileDir = Split-Path $profilePath -Parent
+        if (-not (Test-Path $profileDir)) {
+            New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+        }
+
+        # 读取 ccq 函数模板
+        $ccqFunction = Get-CcqFunctionTemplate
+
+        # 使用 Profile.ps1 的标记块写入函数
+        Add-ManagedBlockToFile -FilePath $profilePath -Content $ccqFunction
+
+        Write-UiSuccess "✓ ccq 快捷函数已注册到 PowerShell Profile" -Level Detail
+        Write-UiInfo "Profile 路径: $profilePath" -Level Detail
+        Write-UiInfo "使用方法: 在新终端中运行 'ccq' 打开菜单" -Level Detail
+
+        return $true
+    } catch {
+        Write-UiWarning "注册 ccq 函数失败: $($_.Exception.Message)" -Level Detail
+        return $false
+    }
 }
 
 # 注意：此脚本通过 dot-source 加载，不需要 Export-ModuleMember

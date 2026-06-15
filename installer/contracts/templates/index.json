@@ -74,6 +74,26 @@
       "ContentFile": "claude-md.platform-macos.md",
       "Description": "macOS 专属环境章节（四-环境特定 + Windows 兼容提醒 + 输出设置）",
       "Status": "existing"
+    },
+    {
+      "Id": "ccq-function.powershell",
+      "Source": "installer/contracts/templates/profile/ccq-function.ps1.txt",
+      "ManagedByStepId": "ClaudeConfig",
+      "Platform": "Windows",
+      "ContentFile": "profile/ccq-function.ps1.txt",
+      "TargetPath": "$PROFILE",
+      "Description": "PowerShell Profile ccq 函数模板（统一安装/管理面板入口，无版本号）",
+      "Status": "new"
+    },
+    {
+      "Id": "ccq-function.zsh",
+      "Source": "installer/contracts/templates/profile/ccq-function.zsh.txt",
+      "ManagedByStepId": "ClaudeConfig",
+      "Platform": "MacOS",
+      "ContentFile": "profile/ccq-function.zsh.txt",
+      "TargetPath": "~/.zshrc",
+      "Description": "zsh Profile ccq 函数模板（统一安装/管理面板入口，无版本号）",
+      "Status": "new"
     }
   ]
 }
