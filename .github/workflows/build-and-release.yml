@@ -12,9 +12,98 @@ permissions:
   contents: write
 
 jobs:
+  test-windows:
+    name: Test Windows (PowerShell 5.1 + 7)
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 验证 Windows PowerShell 5.1 兼容入口语法
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(
+            '.\installer\windows\Bootstrap.ps1'
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_.Message }
+              throw "PowerShell 5.1 语法检查失败: $file"
+            }
+            Write-Host "[PASS] $file"
+          }
+
+      - name: 验证 PowerShell 7 脚本语法
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ".\test-syntax.ps1"
+
+      - name: 验证 Manage JS 语法
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(
+            '.\installer\contracts\scripts\manage.js',
+            '.\installer\contracts\scripts\provider-manager.js',
+            '.\installer\contracts\scripts\skills-manager.js',
+            '.\installer\contracts\scripts\update-manager.js',
+            '.\installer\contracts\scripts\mcp-manager.js'
+          )
+          foreach ($file in $files) {
+            node --check $file
+            Write-Host "[PASS] $file"
+          }
+
+      - name: 运行 Manage JS 回归测试
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node .\installer\contracts\scripts\run-tests.js
+
+  test-macos:
+    name: Test macOS (12+ compatible)
+    runs-on: macos-13
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 验证 zsh 入口语法
+        run: |
+          set -eu
+          zsh -n installer/macos/Install.zsh
+          zsh -n installer/macos/Manage.zsh
+          sh installer/build.sh --check
+
+      - name: 验证 Manage JS 语法
+        run: |
+          set -eu
+          for file in \
+            installer/contracts/scripts/manage.js \
+            installer/contracts/scripts/provider-manager.js \
+            installer/contracts/scripts/skills-manager.js \
+            installer/contracts/scripts/update-manager.js \
+            installer/contracts/scripts/mcp-manager.js; do
+            node --check "$file"
+            printf '[PASS] %s\n' "$file"
+          done
+
+      - name: 运行 Manage JS 回归测试
+        run: |
+          set -eu
+          node installer/contracts/scripts/run-tests.js
+
   build-windows:
     name: Build Windows artifacts
     runs-on: windows-latest
+    needs:
+      - test-windows
 
     steps:
       - name: 检出代码
@@ -64,6 +153,8 @@ jobs:
   build-macos:
     name: Build macOS artifacts
     runs-on: macos-latest
+    needs:
+      - test-macos
 
     steps:
       - name: 检出代码
