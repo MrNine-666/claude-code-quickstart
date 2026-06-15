@@ -6,3 +6,4 @@
 | Date | Context-Id | Commit | Summary | Decisions | Bugs | Risk |
 |------|-----------|--------|---------|-----------|------|------|
 | 2026-06-14 | 3ff7f901 | (pending) | feat(installer): MCP 管理支持管道场景交互与预发布自动检测 | 3 | 1 | low |
+| 2026-06-16 | 32f988d9 | (pending) | docs(installer): 记录 Manage JS 管理入口架构 | 3 | 0 | low |

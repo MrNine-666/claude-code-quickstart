@@ -11,16 +11,20 @@
 |------|---------|------|
 | `windows/Bootstrap.ps1` | Windows / PS 5.1+ | 前置检测：Windows 版本 → winget → Windows Terminal → PS 7 安装 → Git Bash UTF-8 |
 | `windows/Install.ps1` | Windows / PS 7.0+ | Windows 安装入口：Basic / Advanced 分组安装，动态加载 `windows/core/` 与 `windows/steps/` |
-| `windows/Manage.ps1` | Windows / PS 7.0+ | Windows 管理入口：Update / Provider / MCP / Skills |
-| `windows/core/` | Windows / PowerShell | Windows runtime core：UI、Process、Profile、Registry、Bootstrap、**McpManager（轻量 wrapper）**、Provider |
+| `windows/Manage.ps1` | Windows / PS 7.0+ | Windows 管理入口：加载 ManageCore，并路由到 JS 管理面板（Update / Provider / MCP / Skills） |
+| `windows/core/` | Windows / PowerShell | Windows runtime core：UI、Process、Profile、Registry、Bootstrap、**McpManager（轻量 wrapper）**、**ManageCore（Manage JS 集合部署 wrapper）**、Provider |
 | `windows/steps/` | Windows / PowerShell | Windows 13 个安装步骤 + Skills 管理模块，StepId 与 macOS 保持一致 |
-| `contracts/` | JSON 契约 + Node.js 脚本 | 跨平台 StepId、分组、依赖、Provider、MCP、ClaudeConfig、模板、构建清单、Skills catalogue、UI 文案策略 + **MCP 管理 JS 脚本（完整 TUI + 业务逻辑）** |
+| `contracts/` | JSON 契约 + Node.js 脚本 | 跨平台 StepId、分组、依赖、Provider、MCP、ClaudeConfig、模板、构建清单、Skills catalogue、UI 文案策略 + **Manage/MCP 管理 JS 脚本集合** |
+| `contracts/scripts/manage.js` | Node.js | **Manage 管理面板入口**：子菜单路由到 Provider / Skills / Update / MCP 四个子管理器，含共享原子写入、Profile 锁、临时缓存工具 |
+| `contracts/scripts/provider-manager.js` | Node.js | **Provider 管理核心**：供应商 CRUD、settings.json 字段所有权、Profile 标记块同步 |
+| `contracts/scripts/skills-manager.js` | Node.js | **Skills 管理核心**：发现、安装、更新、卸载、发现缓存与 CCG 管理技能过滤 |
+| `contracts/scripts/update-manager.js` | Node.js | **Update 管理核心**：版本检测、npm outdated 缓存、快照、更新摘要与回滚 API |
 | `contracts/scripts/mcp-manager.js` | Node.js | **MCP 管理核心**：状态计算、CRUD、凭据同步、Rules 渲染、交互 TUI（1180 行，零外部依赖）|
 | `macos/Install.zsh` | macOS / bash→zsh | macOS 安装入口：合并 Bootstrap 前置检测，支持 `curl ... | bash` 后自动切换 `/bin/zsh` |
-| `macos/Manage.zsh` | macOS / zsh | macOS 管理入口：Update / Provider / MCP / Skills |
+| `macos/Manage.zsh` | macOS / zsh | macOS 管理入口：加载 ManageCore，并路由到 JS 管理面板（Update / Provider / MCP / Skills） |
 | `macos/core/McpManager.zsh` | macOS / zsh | macOS MCP 管理轻量 wrapper（175 行），调用 `~/.ccq/scripts/mcp-manager.js` |
-| `build.ps1` | PowerShell 7+ | Windows / GitHub Actions 构建入口，输出 `bootstrap.ps1`、`install.ps1`（含 MCP JS 内嵌）、`manage.ps1`（含 MCP JS 内嵌）|
-| `build.sh` | POSIX sh + node | macOS / Unix 本机构建入口，输出 `install.sh`（含 MCP JS 内嵌）、`manage.sh`（含 MCP JS 内嵌），支持无 `pwsh` 的结构检查 |
+| `build.ps1` | PowerShell 7+ | Windows / GitHub Actions 构建入口，输出 `bootstrap.ps1`、`install.ps1`（含 MCP JS 内嵌）、`manage.ps1`（含 MCP + Manage JS 集合内嵌）|
+| `build.sh` | POSIX sh + node | macOS / Unix 本机构建入口，输出 `install.sh`（含 MCP JS 内嵌）、`manage.sh`（含 MCP + Manage JS 集合内嵌），支持无 `pwsh` 的结构检查 |
 
 旧源码入口 `installer/Bootstrap.ps1`、`installer/Install.ps1`、`installer/Manage.ps1` 和旧构建入口 `installer/build/Build-SingleFile.ps1` 不作为支持路径保留。
 
@@ -239,4 +243,53 @@ MCP（Model Context Protocol）安装与管理采用 **职责分离** 架构：*
 - ✅ 职责清晰：Install 在步骤（自给自足），Manage 在 Manager（wrapper + JS）
 - ✅ 跨平台统一：Windows 和 macOS 都是 wrapper + mcp-manager.js 核心
 - ✅ 易于维护：安装逻辑和管理逻辑分离，互不影响
+
+---
+
+## Manage 管理入口（JS 化架构）
+
+Manage 四大管理入口（Update / Provider / MCP / Skills）已统一迁移到 Node.js 核心，沿用 MCP 已验证的「轻量 wrapper + JS 核心」范式。用户入口 `ccq` 与面板交互对用户无感知变化。
+
+### 架构流程
+
+```text
+ccq（Profile 快捷函数，固定 GitHub Release URL，不含版本号）
+  │
+  │  [2] 管理面板 → curl manage.sh | bash  /  irm manage.ps1 | iex
+  ▼
+manage.sh / manage.ps1（轻量 wrapper，从 Release 拉取）
+  │  职责：检测 Node.js → 委派 ManageCore 部署 → 调用 node manage.js
+  ▼
+ManageCore.zsh / ManageCore.ps1（core/ 部署 wrapper）
+  │  1. base64 内嵌解码 / 源码 fallback → 写入 ~/.ccq/scripts/*.js
+  │  2. 按 SCRIPT_VERSION 版本检测，一致则跳过部署
+  ▼
+node ~/.ccq/scripts/manage.js（统一入口 + 子菜单路由）
+  │
+  ├── [1] Provider 管理 → spawn provider-manager.js
+  ├── [2] Skills 管理   → spawn skills-manager.js
+  ├── [3] Update 管理   → spawn update-manager.js
+  └── [4] MCP 管理      → spawn mcp-manager.js（复用已迁移核心）
+```
+
+### 与 MCP 架构的对称性
+
+| 维度 | MCP（已验证） | Provider / Skills / Update（本次迁移） |
+|------|--------------|--------------------------------------|
+| 平台 wrapper | `McpManager.{ps1,zsh}` | `ManageCore.{ps1,zsh}` |
+| JS 核心 | `mcp-manager.js` | `provider/skills/update-manager.js` + `manage.js` 入口 |
+| 部署位置 | `~/.ccq/scripts/` | `~/.ccq/scripts/` |
+| 内嵌方式 | base64 到 install/manage 产物 | base64 到 manage 产物（`Get-ManageScriptsBase64` / `getManageScriptsBase64`） |
+| 版本检测 | `SCRIPT_VERSION` | `SCRIPT_VERSION`（当前 `1.0.0`，与 `ManageCoreVersion` 同步） |
+
+`manage.js` 作为统一入口，子菜单通过 `invokeManager(name)` spawn 同目录下的专项管理器；MCP 子菜单复用 `mcp-manager.js`，不重复实现。共享工具（`atomicWrite`、`withProfileLock`、临时缓存目录）在 `manage.js` 提取，跨子管理器复用。
+
+### 部署、回滚与离线
+
+- **部署降级链**：base64 内嵌（Release / `irm|iex`、`curl|bash`）→ 源码复制（`installer/contracts/scripts/*.js`）→ 已部署版本（版本检测命中跳过）。
+- **旧实现回滚**：`Provider.legacy.{ps1,zsh}` / `Skills.legacy.{ps1,zsh}` / `Update.legacy.*` 保留一个稳定 release 周期，供回滚与功能对照。
+- **源码模式入口（离线可用）**：`pwsh installer/windows/Manage.ps1` / `zsh installer/macos/Manage.zsh`。
+- **网络边界**：`manage.ps1` / `manage.sh` 已 base64 内嵌全部 JS 集合，面板本身打开**不需要联网**；需要联网的是子操作——Skills 安装/更新（`npx skills`）、Update 检测（`npm outdated`）、MCP Server 配置等。完全离线场景请使用源码模式入口。
+
+打包与 contracts 内联细节见 [installer/contracts/README.md](contracts/README.md) 的「Manage JS 集合打包」小节。
 

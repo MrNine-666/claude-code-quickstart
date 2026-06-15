@@ -1,8 +1,8 @@
 # claude-code-quickstart -- AI 上下文索引
 
-> 生成时间：2026-06-14 | 覆盖率：97% (33/34 文件) | 最近更新：MCP 架构重构（Install 自给自足）
+> 生成时间：2026-06-15 | 覆盖率：97% (33/34 文件) | 最近更新：Manage 四大管理入口 JS 化（Update / Provider / Skills 统一到 Node.js，MCP 复用）
 
-Windows 10/11 与 macOS 12+ 双平台的 **Claude Code 开发环境自动化安装器**。Windows 使用双阶段 PowerShell 架构（PS 5.1 引导 + PS 7 主安装/管理），macOS 使用 zsh + Homebrew + nvm 原生入口；13 步安装依赖链、Manage 四大管理入口（Update / Provider / MCP / Skills）、共享 contracts 契约与实时检测机制。
+Windows 10/11 与 macOS 12+ 双平台的 **Claude Code 开发环境自动化安装器**。Windows 使用双阶段 PowerShell 架构（PS 5.1 引导 + PS 7 主安装/管理），macOS 使用 zsh + Homebrew + nvm 原生入口；13 步安装依赖链、Manage 四大管理入口（Update / Provider / MCP / Skills）通过 Node.js 共享核心统一实现，平台层仅保留轻量 wrapper；共享 contracts 契约与实时检测机制。
 
 ---
 
@@ -42,13 +42,13 @@ graph TD
     W --> W1["Bootstrap / Install / Manage ps1"]
     C --> C1["Ui / Process / Profile"]
     C --> C2["Admin / Net / Registry"]
-    C --> C3["Bootstrap / McpManager / Provider"]
+    C --> C3["Bootstrap / McpManager / ManageCore / Provider"]
     D --> D1["NodeJS (5 子模块) / Git / ClaudeCode / ApiKey"]
     D --> D2["Ccline / ClaudeConfig / ClaudeMd / Mcp / CcgWorkflow / OpenSpec"]
     D --> D3["CcSwitch / CodexCli / AntigravityCli (可选)"]
-    F --> F1["steps / providers / MCP / ClaudeConfig / templates / build"]
+    F --> F1["steps / providers / MCP / ClaudeConfig / templates / build / Manage JS"]
     G --> G1["Install / Manage zsh"]
-    G --> G2["core: Ui / Process / Profile / Platform / PackageManager / Json / Registry / Bootstrap / McpManager / Provider"]
+    G --> G2["core: Ui / Process / Profile / Platform / PackageManager / Json / Registry / Bootstrap / McpManager / ManageCore / Provider"]
     G --> G3["steps: 13 个安装步骤 + Skills 管理"]
     H --> H1["bootstrap.ps1 / install.ps1 / manage.ps1 / install.sh / manage.sh"]
     click C "./installer/windows/core/CLAUDE.md"
@@ -73,9 +73,9 @@ Git (无依赖)    ClaudeMd (无依赖)    CcSwitch [可选, 依赖 ClaudeCode] 
 | 模块 | 详细文档 | 职责 |
 |------|---------|------|
 | installer/ | [installer/CLAUDE.md](installer/CLAUDE.md) | Windows/macOS 平台目录、contracts 与双构建入口导航 |
-| installer/contracts/ | [installer/contracts/README.md](installer/contracts/README.md) | 跨平台步骤、供应商、MCP、ClaudeConfig、模板、构建、Skills catalogue 与 UI 文案契约 |
+| installer/contracts/ | [installer/contracts/README.md](installer/contracts/README.md) | 跨平台步骤、供应商、MCP、ClaudeConfig、模板、构建、Skills catalogue、UI 文案契约与 Manage JS 集合 |
 | installer/windows/ | [installer/CLAUDE.md](installer/CLAUDE.md) | Windows canonical 入口、core 与 steps |
-| installer/windows/core/ | [installer/windows/core/CLAUDE.md](installer/windows/core/CLAUDE.md) | Windows PowerShell runtime core（含 Registry + McpManager + Provider） |
+| installer/windows/core/ | [installer/windows/core/CLAUDE.md](installer/windows/core/CLAUDE.md) | Windows PowerShell runtime core（含 Registry + McpManager + ManageCore + Provider） |
 | installer/windows/steps/ | [installer/windows/steps/CLAUDE.md](installer/windows/steps/CLAUDE.md) | Windows 13 个安装步骤模块 + Skills 管理模块（NodeJS 含 5 子模块，含 Update 函数） |
 | installer/macos/ | [installer/macos/README.md](installer/macos/README.md) | macOS zsh Install/Manage、core 与 13 个安装步骤 + Skills 管理模块 |
 
@@ -109,6 +109,7 @@ Git (无依赖)    ClaudeMd (无依赖)    CcSwitch [可选, 依赖 ClaudeCode] 
 ~/.claude/rules/ccq-mcp-*.md       # MCP 工具速查（McpManager 动态渲染）
 ~/.claude/providers/        # 供应商 Profile 目录（ApiKey 写入）
 ~/.ccq/mcp-meta.json        # MCP Server vault（凭据持久化 + 状态管理）
+~/.ccq/scripts/             # Manage JS 集合部署目录（manage/provider/skills/update/mcp-manager.js，ManageCore 版本检测部署）
 $PROFILE                    # PowerShell 配置文件（fnm）
 %TEMP%\ClaudeEnvInstaller\  # 备份目录（含更新快照 update_* ）
 ```
@@ -165,6 +166,30 @@ pwsh -File installer/build.ps1
 zsh -n installer/macos/Install.zsh
 zsh -n installer/macos/Manage.zsh
 ```
+
+---
+
+## Manage JS 架构
+
+Manage 四大入口已经统一到 Node.js 共享核心：`ccq` / `Manage.ps1` / `Manage.zsh` 进入平台 wrapper 后，由 `ManageCore.ps1` / `ManageCore.zsh` 部署 `installer/contracts/scripts/` 下的 JS 集合到 `~/.ccq/scripts/`，再调用 `node manage.js` 显示子菜单。
+
+```
+ccq
+ ├─ 安装面板 → install.ps1 / install.sh
+ └─ 管理面板 → manage.ps1 / manage.sh
+        ↓
+   ManageCore.ps1 / ManageCore.zsh
+        ↓  base64 内嵌 → 源码 fallback → 已部署版本
+   ~/.ccq/scripts/manage.js
+        ├─ provider-manager.js
+        ├─ skills-manager.js
+        ├─ update-manager.js
+        └─ mcp-manager.js
+```
+
+- **打包方式**：`installer/build.ps1` 的 `Get-ManageScriptsBase64` 与 `installer/build.sh` 的 `getManageScriptsBase64` 把 `manage.js`、`provider-manager.js`、`skills-manager.js`、`update-manager.js` 与 `mcp-manager.js` 编码为 base64 JSON，注入 `manage.ps1` / `manage.sh`。
+- **回滚机制**：版本一致时复用已部署脚本；base64 不可用时走源码模式；Provider / Skills / Update 的 legacy 脚本保留一个稳定 release 周期用于回滚。
+- **离线限制**：面板入口可通过源码模式离线运行：`pwsh installer/windows/Manage.ps1` 或 `zsh installer/macos/Manage.zsh`；但 Skills 安装/更新、Update 检查、需要远端资源的 MCP 操作仍需网络。
 
 ---
 
