@@ -190,6 +190,52 @@ function Get-McpManagerScriptBase64 {
     }
 }
 
+function Get-ManageScriptsBase64 {
+    <#
+    .SYNOPSIS
+    读取 manage.js 及其子管理器（provider/skills/update-manager.js），
+    编码为以文件名为键的 base64 hashtable。
+
+    .DESCRIPTION
+    返回 hashtable：
+    @{
+        'manage.js'           = '<base64>'
+        'provider-manager.js' = '<base64>'
+        'skills-manager.js'   = '<base64>'
+        'update-manager.js'   = '<base64>'
+    }
+    缺失文件跳过并告警（不中断构建），与 Get-McpManagerScriptBase64 行为一致。
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$InstallerRoot
+    )
+
+    $scriptsDir = Join-Path $InstallerRoot 'contracts' 'scripts'
+    $targets = @(
+        'manage.js',
+        'provider-manager.js',
+        'skills-manager.js',
+        'update-manager.js'
+    )
+
+    $result = @{}
+    foreach ($fileName in $targets) {
+        $filePath = Join-Path $scriptsDir $fileName
+        if (-not (Test-Path $filePath -PathType Leaf)) {
+            Write-Warning "$fileName 不存在，跳过内嵌: $filePath"
+            continue
+        }
+        try {
+            $bytes = [IO.File]::ReadAllBytes($filePath)
+            $result[$fileName] = [Convert]::ToBase64String($bytes)
+        } catch {
+            Write-Warning "无法读取或编码 ${fileName}: $($_.Exception.Message)"
+        }
+    }
+    return $result
+}
+
 function Build-SingleFileScript {
     <#
     .SYNOPSIS
@@ -212,7 +258,9 @@ function Build-SingleFileScript {
 
         [string]$OutputEncoding = 'UTF8',
 
-        [string]$McpManagerBase64 = $null
+        [string]$McpManagerBase64 = $null,
+
+        [hashtable]$ManageScriptsBase64 = $null
     )
 
     foreach ($relPath in @($FileOrder)) {
@@ -283,6 +331,17 @@ function Build-SingleFileScript {
             $buffer.Add('# ─── MCP Manager JS 脚本内嵌（构建时注入）───')
             $buffer.Add('$script:EmbeddedMcpManagerB64 = @"')
             $buffer.Add($McpManagerBase64)
+            $buffer.Add('"@')
+            $buffer.Add('')
+        }
+
+        # 注入 manage.js 及子管理器 base64（仅对 windows/Manage.ps1 入口文件）
+        if ($ManageScriptsBase64 -and $ManageScriptsBase64.Count -gt 0 -and $relPath -like '*windows\Manage.ps1') {
+            $buffer.Add('')
+            $buffer.Add('# ─── manage.js + 子管理器 JS 脚本内嵌（构建时注入）───')
+            $jsonPayload = $ManageScriptsBase64 | ConvertTo-Json -Compress
+            $buffer.Add('$script:EmbeddedManageScriptsJson = @"')
+            $buffer.Add($jsonPayload)
             $buffer.Add('"@')
             $buffer.Add('')
         }
@@ -441,6 +500,16 @@ function Main {
         Write-Host "[WARN] MCP Manager JS 脚本未编码，Release 模式将依赖源码模式部署" -ForegroundColor Yellow
     }
 
+    # 生成 Windows Manage JS 脚本集合 base64（供 Manage 内嵌）
+    Write-Host ''
+    Write-Host '─── 处理 Windows Manage JS 脚本集合 ───────────────────────' -ForegroundColor Yellow
+    $manageScriptsBase64 = Get-ManageScriptsBase64 -InstallerRoot $InstallerRoot
+    if ($manageScriptsBase64 -and $manageScriptsBase64.Count -gt 0) {
+        Write-Host "[PASS] Windows Manage JS 脚本集合已编码（文件数: $($manageScriptsBase64.Count)）" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] Windows Manage JS 脚本集合为空，Release 模式将依赖源码模式部署" -ForegroundColor Yellow
+    }
+
     $builtItems = [System.Collections.Generic.List[hashtable]]::new()
     $allOk = $true
 
@@ -482,7 +551,8 @@ function Main {
         -RequiresHeader ([string]$manageArtifact['RequiresHeader']) `
         -HoistParamFromRelativePath ([string]$manageArtifact['HoistParamFrom']) `
         -OutputEncoding ([string]$manageArtifact['OutputEncoding']) `
-        -McpManagerBase64 $mcpManagerBase64
+        -McpManagerBase64 $mcpManagerBase64 `
+        -ManageScriptsBase64 $manageScriptsBase64
 
     Write-Host ''
     Write-Host '─── Windows 语法检查 ──────────────────────────────────────' -ForegroundColor Yellow

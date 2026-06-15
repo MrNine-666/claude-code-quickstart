@@ -276,7 +276,29 @@ function getMcpManagerBase64() {
   }
 }
 
-function buildMacOSArtifact(manifest, stepsContract, role, mcpManagerBase64) {
+function getManageScriptsBase64() {
+  // 读取 manage.js 及其子管理器，编码为 base64 JSON
+  // 返回格式: {"manage.js":"<base64>","provider-manager.js":"<base64>",...}
+  const scriptsDir = path.join(installerRoot, 'contracts', 'scripts');
+  const targets = ['manage.js', 'provider-manager.js', 'skills-manager.js', 'update-manager.js'];
+  const result = {};
+  for (const fileName of targets) {
+    const filePath = path.join(scriptsDir, fileName);
+    if (!fs.existsSync(filePath)) {
+      console.warn(`[WARN] ${fileName} 不存在，跳过内嵌`);
+      continue;
+    }
+    try {
+      const buffer = fs.readFileSync(filePath);
+      result[fileName] = buffer.toString('base64');
+    } catch (err) {
+      console.warn(`[WARN] 无法读取或编码 ${fileName}: ${err.message}`);
+    }
+  }
+  return Object.keys(result).length > 0 ? JSON.stringify(result) : null;
+}
+
+function buildMacOSArtifact(manifest, stepsContract, role, mcpManagerBase64, manageScriptsBase64) {
   const { artifact, order } = macOSBuildOrder(manifest, stepsContract, role);
   for (const relPath of order) requireFile(relPath);
 
@@ -297,6 +319,14 @@ function buildMacOSArtifact(manifest, stepsContract, role, mcpManagerBase64) {
       lines.push('');
       lines.push('# ─── MCP Manager JS 脚本内嵌（构建时注入）───');
       lines.push(`CCQ_MCP_MANAGER_B64="${mcpManagerBase64}"`);
+      lines.push('');
+    }
+
+    // 注入 manage.js 及子管理器 base64（仅对 macos/Manage.zsh 入口文件）
+    if (manageScriptsBase64 && relPath.includes('macos/Manage.zsh')) {
+      lines.push('');
+      lines.push('# ─── manage.js + 子管理器 JS 脚本内嵌（构建时注入）───');
+      lines.push(`CCQ_MANAGE_SCRIPTS_JSON='${manageScriptsBase64}'`);
       lines.push('');
     }
   }
@@ -377,10 +407,21 @@ if (mcpManagerBase64) {
 } else {
   console.log('[WARN] MCP Manager JS 脚本未编码，Release 模式将依赖源码模式部署');
 }
+
+// 生成 macOS Manage JS 脚本集合 base64（供 Manage 内嵌）
+console.log('');
+console.log('─── 处理 macOS Manage JS 脚本集合 ───────────────────────');
+const manageScriptsBase64 = getManageScriptsBase64();
+if (manageScriptsBase64) {
+  const count = JSON.parse(manageScriptsBase64);
+  console.log(`[PASS] macOS Manage JS 脚本集合已编码（文件数: ${Object.keys(count).length}）`);
+} else {
+  console.log('[WARN] macOS Manage JS 脚本集合为空，Release 模式将依赖源码模式部署');
+}
 console.log('');
 
-buildMacOSArtifact(manifest, stepsContract, 'Install', mcpManagerBase64);
-buildMacOSArtifact(manifest, stepsContract, 'Manage', mcpManagerBase64);
+buildMacOSArtifact(manifest, stepsContract, 'Install', mcpManagerBase64, null);
+buildMacOSArtifact(manifest, stepsContract, 'Manage', mcpManagerBase64, manageScriptsBase64);
 
 ensureExpectedOutputs(manifest);
 console.log('');
