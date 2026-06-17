@@ -9,3 +9,4 @@
 | 2026-06-16 | 32f988d9 | (pending) | docs(installer): 记录 Manage JS 管理入口架构 | 3 | 0 | low |
 | 2026-06-16 | 1f5b1091 | (pending) | test(installer): 新增 Manage JS 回归测试套件 | 3 | 0 | medium |
 | 2026-06-16 | 7c48fe48 | (pending) | ci(installer): 接入跨平台测试门禁 | 3 | 0 | medium |
+| 2026-06-17 | 5a33bd49 | (pending) | refactor(installer): 移除 McpManager 平台 wrapper 并完成 Skills 文件重命名 | 2 | 0 | low |
