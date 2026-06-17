@@ -109,6 +109,12 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      - name: 安装 Node.js 依赖（esbuild，供 manage.js bundle 构建）
+        shell: pwsh
+        run: |
+          # 仅装 devDependencies（esbuild），供 build.ps1 的 Invoke-ManageBundleBuild 打包单文件 bundle
+          npm ci --ignore-scripts
+
       - name: 构建 Windows 单文件脚本
         shell: pwsh
         run: |
@@ -121,7 +127,8 @@ jobs:
           $expected = @(
             ".\dist\bootstrap.ps1",
             ".\dist\install.ps1",
-            ".\dist\manage.ps1"
+            ".\dist\manage.ps1",
+            ".\dist\manage.js"
           )
           $forbidden = @(
             ".\dist\install.sh",
@@ -139,6 +146,12 @@ jobs:
               throw "Windows job 不应生成 macOS 产物: $path"
             }
           }
+          # manage.js bundle 大小上限（HC-JS-MODULE-LOADING，<150KB）
+          $bundleKB = [math]::Round((Get-Item '.\dist\manage.js').Length / 1KB, 1)
+          if ($bundleKB -ge 150) {
+            throw "manage.js bundle 过大: ${bundleKB} KB（上限 150 KB）"
+          }
+          Write-Host "[PASS] manage.js bundle ${bundleKB} KB < 150 KB" -ForegroundColor Green
 
       - name: 上传 Windows 构建产物
         uses: actions/upload-artifact@v4
@@ -148,6 +161,7 @@ jobs:
             dist/bootstrap.ps1
             dist/install.ps1
             dist/manage.ps1
+            dist/manage.js
           retention-days: 7
 
   build-macos:
@@ -213,16 +227,23 @@ jobs:
       - name: 验证 Release artifact 集合
         run: |
           set -eu
-          expected="bootstrap.ps1 install.ps1 manage.ps1 install.sh manage.sh"
+          expected="bootstrap.ps1 install.ps1 manage.ps1 install.sh manage.sh manage.js"
           for file in ${expected}; do
             test -f "dist/${file}" || { echo "Release 缺少 artifact: ${file}" >&2; exit 1; }
           done
           count="$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')"
-          if [ "${count}" != "5" ]; then
+          if [ "${count}" != "6" ]; then
             echo "Release artifact 数量异常: ${count}" >&2
             find dist -maxdepth 1 -type f -print >&2
             exit 1
           fi
+          # manage.js bundle 大小上限（HC-JS-MODULE-LOADING，<150KB）
+          bundle_kb="$(du -k dist/manage.js | cut -f1)"
+          if [ "${bundle_kb}" -ge 150 ]; then
+            echo "manage.js bundle 过大: ${bundle_kb} KB（上限 150 KB）" >&2
+            exit 1
+          fi
+          echo "[PASS] manage.js bundle ${bundle_kb} KB < 150 KB"
 
       - name: 创建或更新 GitHub Release
         uses: softprops/action-gh-release@v2
@@ -275,5 +296,6 @@ jobs:
             | `manage.ps1` | PowerShell 7.0+ | Windows 管理入口 |
             | `install.sh` | macOS bash → zsh | macOS 安装入口 |
             | `manage.sh` | macOS zsh | macOS 管理入口 |
+            | `manage.js` | Node.js 20+ | Manage JS 单文件 bundle（wrapper 缓存拉取，~150KB） |
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

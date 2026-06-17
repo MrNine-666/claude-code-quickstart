@@ -351,7 +351,7 @@ Install-Mcp() {
     return 1
   fi
 
-  # 安装后同步 MCP Rules（core/McpManager.zsh 提供）
+  # 安装后同步 MCP Rules（Install 链自给自足，纯 node 渲染，不依赖 core/McpManager.zsh）
   if command -v ccq_mcp_sync_rules >/dev/null 2>&1; then
     ccq_mcp_sync_rules >/dev/null 2>&1 || ccq_ui_warning "MCP Rules 同步失败" "developer"
   fi
@@ -411,6 +411,92 @@ ccq_mcp_with_lock() {
 
   # 无锁机制可用时直接执行（降级，不阻塞主流程）
   "$@"
+}
+
+# ============================================================================
+# Rules 同步（Install 链自给自足，不依赖 core/McpManager.zsh）
+# 读取 .claude.json 的 mcpServers 作为已启用列表，按契约 McpRulesCategories
+# 渲染 ~/.claude/rules/ccq-mcp-*.md；逻辑与 mcp-manager.js renderRules/syncRules
+# 同源（均从契约读分类），输出字节一致。静默失败，不阻塞安装主流程。
+# ============================================================================
+
+ccq_mcp_sync_rules() {
+  command -v node >/dev/null 2>&1 || return 0
+  [ -f "${CCQ_MCP_CONTRACT}" ] || return 0
+
+  local claude_json rules_dir
+  claude_json="$(ccq_mcp_claude_json_path)"
+  rules_dir="${HOME}/.claude/rules"
+  mkdir -p "${rules_dir}"
+
+  node -e '
+const fs = require("fs");
+const path = require("path");
+
+const contractPath = process.argv[1];
+const claudeJsonPath = process.argv[2];
+const rulesDir = process.argv[3];
+
+function readJson(p, fallback) {
+  try { const raw = fs.readFileSync(p, "utf8").trim(); return raw ? JSON.parse(raw) : fallback; }
+  catch { return fallback; }
+}
+
+const contract = readJson(contractPath, {});
+const categories = contract.McpRulesCategories || {};
+const servers = contract.McpServers || {};
+const claudeJson = readJson(claudeJsonPath, {});
+const enabledIds = Object.keys(claudeJson.mcpServers || {});
+
+// 渲染单个分类（对齐 mcp-manager.js renderRules）
+function renderRules(cat, enabledMcpIds) {
+  let content = `# ${cat.Title}\n\n`;
+  content += `> 自动生成，请勿手动编辑。由 MCP Manager 根据已启用的 MCP Server 动态渲染。\n\n`;
+  if (cat.Desc) content += `${cat.Desc}\n\n`;
+  content += `| 场景 | 工具链 |\n`;
+  content += `|------|--------|\n`;
+  for (const chain of cat.Chains || []) {
+    const tools = [];
+    for (const step of chain.Steps || []) {
+      if (enabledMcpIds.includes(step.McpId)) tools.push(step.Tool || `mcp__${step.McpId}__*`);
+    }
+    if (chain.Fallback) tools.push(`${chain.Fallback}（兜底）`);
+    if (tools.length > 0) content += `| ${chain.Scenario} | \`${tools.join(" → ")}\` |\n`;
+  }
+  for (const row of cat.StaticRows || []) content += `| ${row.Scenario} | \`${row.Tool}\` |\n`;
+  content += `\n`;
+  if (cat.Tips && cat.Tips.length > 0) {
+    content += `**Tips**:\n`;
+    for (const tip of cat.Tips) content += `- ${tip}\n`;
+  }
+  return content;
+}
+
+function writeFileAtomic(filePath, content) {
+  const tempPath = filePath + ".tmp." + process.pid;
+  fs.writeFileSync(tempPath, content, "utf8");
+  fs.renameSync(tempPath, filePath);
+}
+
+for (const catName of Object.keys(categories)) {
+  const cat = categories[catName];
+  const filePath = path.join(rulesDir, cat.FileName);
+  // 该分类下已启用的 MCP（契约属于本分类且 .claude.json 已配置）
+  const enabledForCat = Object.keys(servers).filter(
+    (id) => servers[id].Category === catName && enabledIds.includes(id)
+  );
+  if (enabledForCat.length === 0) {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    continue;
+  }
+  const content = renderRules(cat, enabledForCat);
+  let existing = "";
+  if (fs.existsSync(filePath)) existing = fs.readFileSync(filePath, "utf8");
+  if (content.replace(/\r\n/g, "\n").trim() !== existing.replace(/\r\n/g, "\n").trim()) {
+    writeFileAtomic(filePath, content);
+  }
+}
+' "${CCQ_MCP_CONTRACT}" "${claude_json}" "${rules_dir}" 2>/dev/null || return 1
 }
 
 # 管理函数已搬至 core/McpManager.zsh，此文件仅保留安装契约

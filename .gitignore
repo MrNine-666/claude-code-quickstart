@@ -25,3 +25,8 @@ $RECYCLE.BIN/
 
 # ─── PowerShell 产物 ───
 *.psc1
+
+# ─── Node.js 依赖（由 package.json / package-lock.json 还原，不纳入版本控制）───
+node_modules/
+npm-debug.log*
+.npm/

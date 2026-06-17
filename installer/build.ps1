@@ -164,76 +164,50 @@ function Get-ScriptParamBlockInfo {
     }
 }
 
-function Get-McpManagerScriptBase64 {
+function Invoke-ManageBundleBuild {
     <#
     .SYNOPSIS
-    读取 mcp-manager.js 并编码为 base64 字符串
-    #>
-    param(
-        [Parameter(Mandatory)]
-        [string]$InstallerRoot
-    )
-
-    $jsScriptPath = Join-Path $InstallerRoot 'contracts' 'scripts' 'mcp-manager.js'
-    if (-not (Test-Path $jsScriptPath -PathType Leaf)) {
-        Write-Warning "mcp-manager.js 不存在，跳过内嵌: $jsScriptPath"
-        return $null
-    }
-
-    try {
-        $bytes = [IO.File]::ReadAllBytes($jsScriptPath)
-        $base64 = [Convert]::ToBase64String($bytes)
-        return $base64
-    } catch {
-        Write-Warning "无法读取或编码 mcp-manager.js: $($_.Exception.Message)"
-        return $null
-    }
-}
-
-function Get-ManageScriptsBase64 {
-    <#
-    .SYNOPSIS
-    读取 manage.js 及其子管理器（provider/skills/update-manager.js），
-    编码为以文件名为键的 base64 hashtable。
+    调用 esbuild 将 manage.js + 子管理器打包为单文件 bundle dist/manage.js（P10 方案 3）。
 
     .DESCRIPTION
-    返回 hashtable：
-    @{
-        'manage.js'           = '<base64>'
-        'provider-manager.js' = '<base64>'
-        'skills-manager.js'   = '<base64>'
-        'update-manager.js'   = '<base64>'
-    }
-    缺失文件跳过并告警（不中断构建），与 Get-McpManagerScriptBase64 行为一致。
+    取代 base64 多文件内嵌：manage.js 经 esbuild 静态打包全部子模块，由 wrapper 缓存到
+    $TMPDIR/.ccq/manage.js 后运行。需要 node + esbuild（devDependency）。
+    esbuild 不可用时告警跳过（不阻断 .ps1 产物构建；CI 在 npm ci 后产出 bundle）。
+
+    .OUTPUTS
+    System.Boolean - 构建成功返回 $true，跳过或失败返回 $false
     #>
     param(
         [Parameter(Mandatory)]
         [string]$InstallerRoot
     )
 
-    $scriptsDir = Join-Path $InstallerRoot 'contracts' 'scripts'
-    $targets = @(
-        'manage.js',
-        'provider-manager.js',
-        'skills-manager.js',
-        'update-manager.js'
-    )
-
-    $result = @{}
-    foreach ($fileName in $targets) {
-        $filePath = Join-Path $scriptsDir $fileName
-        if (-not (Test-Path $filePath -PathType Leaf)) {
-            Write-Warning "$fileName 不存在，跳过内嵌: $filePath"
-            continue
-        }
-        try {
-            $bytes = [IO.File]::ReadAllBytes($filePath)
-            $result[$fileName] = [Convert]::ToBase64String($bytes)
-        } catch {
-            Write-Warning "无法读取或编码 ${fileName}: $($_.Exception.Message)"
-        }
+    $esbuildConfig = Join-Path $InstallerRoot 'contracts' 'scripts' 'esbuild.config.js'
+    if (-not (Test-Path $esbuildConfig -PathType Leaf)) {
+        Write-Host "[WARN] 未找到 esbuild 配置，跳过 manage.js bundle 构建: $esbuildConfig" -ForegroundColor Yellow
+        return $false
     }
-    return $result
+
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+        Write-Host "[WARN] 未检测到 node，跳过 manage.js bundle 构建" -ForegroundColor Yellow
+        return $false
+    }
+
+    $repoRoot = Split-Path $InstallerRoot -Parent
+    $esbuildModule = Join-Path $repoRoot 'node_modules' 'esbuild'
+    if (-not (Test-Path $esbuildModule -PathType Container)) {
+        Write-Host "[WARN] 未安装 esbuild 依赖（请先 npm ci），跳过 manage.js bundle 构建" -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host '正在构建 manage.js 单文件 bundle (esbuild)...'
+    & node $esbuildConfig
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[FAIL] manage.js bundle 构建失败（esbuild 退出码 $LASTEXITCODE）" -ForegroundColor Red
+        return $false
+    }
+    Write-Host '[PASS] manage.js 单文件 bundle 已生成' -ForegroundColor Green
+    return $true
 }
 
 function Build-SingleFileScript {
@@ -256,11 +230,7 @@ function Build-SingleFileScript {
 
         [string]$HoistParamFromRelativePath = '',
 
-        [string]$OutputEncoding = 'UTF8',
-
-        [string]$McpManagerBase64 = $null,
-
-        [hashtable]$ManageScriptsBase64 = $null
+        [string]$OutputEncoding = 'UTF8'
     )
 
     foreach ($relPath in @($FileOrder)) {
@@ -323,27 +293,6 @@ function Build-SingleFileScript {
             if ($line -match '^\s*#Requires\s') { continue }
             if ($line -match $scriptRootPattern) { continue }
             $buffer.Add($line)
-        }
-
-        # 注入 MCP Manager JS 脚本 base64（仅对 McpManager.ps1）
-        if ($McpManagerBase64 -and $relPath -like '*McpManager.ps1') {
-            $buffer.Add('')
-            $buffer.Add('# ─── MCP Manager JS 脚本内嵌（构建时注入）───')
-            $buffer.Add('$script:EmbeddedMcpManagerB64 = @"')
-            $buffer.Add($McpManagerBase64)
-            $buffer.Add('"@')
-            $buffer.Add('')
-        }
-
-        # 注入 manage.js 及子管理器 base64（仅对 windows/Manage.ps1 入口文件）
-        if ($ManageScriptsBase64 -and $ManageScriptsBase64.Count -gt 0 -and $relPath -like '*windows\Manage.ps1') {
-            $buffer.Add('')
-            $buffer.Add('# ─── manage.js + 子管理器 JS 脚本内嵌（构建时注入）───')
-            $jsonPayload = $ManageScriptsBase64 | ConvertTo-Json -Compress
-            $buffer.Add('$script:EmbeddedManageScriptsJson = @"')
-            $buffer.Add($jsonPayload)
-            $buffer.Add('"@')
-            $buffer.Add('')
         }
     }
 
@@ -489,26 +438,10 @@ function Main {
     }
     Clear-KnownBuildArtifacts -OutputDir $OutputDir -Platform $Platform
 
-    # 生成 MCP Manager JS 脚本 base64（供 Install 和 Manage 内嵌）
+    # 构建 manage.js 单文件 bundle（P10 方案 3：esbuild 打包，取代 base64 内嵌）
     Write-Host ''
-    Write-Host '─── 处理 MCP Manager JS 脚本 ───────────────────────────────' -ForegroundColor Yellow
-    $mcpManagerBase64 = Get-McpManagerScriptBase64 -InstallerRoot $InstallerRoot
-    if ($mcpManagerBase64) {
-        $base64Length = $mcpManagerBase64.Length
-        Write-Host "[PASS] MCP Manager JS 脚本已编码（base64 长度: $base64Length）" -ForegroundColor Green
-    } else {
-        Write-Host "[WARN] MCP Manager JS 脚本未编码，Release 模式将依赖源码模式部署" -ForegroundColor Yellow
-    }
-
-    # 生成 Windows Manage JS 脚本集合 base64（供 Manage 内嵌）
-    Write-Host ''
-    Write-Host '─── 处理 Windows Manage JS 脚本集合 ───────────────────────' -ForegroundColor Yellow
-    $manageScriptsBase64 = Get-ManageScriptsBase64 -InstallerRoot $InstallerRoot
-    if ($manageScriptsBase64 -and $manageScriptsBase64.Count -gt 0) {
-        Write-Host "[PASS] Windows Manage JS 脚本集合已编码（文件数: $($manageScriptsBase64.Count)）" -ForegroundColor Green
-    } else {
-        Write-Host "[WARN] Windows Manage JS 脚本集合为空，Release 模式将依赖源码模式部署" -ForegroundColor Yellow
-    }
+    Write-Host '─── 构建 manage.js 单文件 bundle ──────────────────────────' -ForegroundColor Yellow
+    $null = Invoke-ManageBundleBuild -InstallerRoot $InstallerRoot
 
     $builtItems = [System.Collections.Generic.List[hashtable]]::new()
     $allOk = $true
@@ -536,8 +469,7 @@ function Main {
         -OutputPath $installOutput `
         -RequiresHeader ([string]$installArtifact['RequiresHeader']) `
         -HoistParamFromRelativePath ([string]$installArtifact['HoistParamFrom']) `
-        -OutputEncoding ([string]$installArtifact['OutputEncoding']) `
-        -McpManagerBase64 $mcpManagerBase64
+        -OutputEncoding ([string]$installArtifact['OutputEncoding'])
 
     Write-Host ''
     Write-Host '─── 构建 Windows Manage 单文件版本 ────────────────────────' -ForegroundColor Yellow
@@ -550,9 +482,7 @@ function Main {
         -OutputPath $manageOutput `
         -RequiresHeader ([string]$manageArtifact['RequiresHeader']) `
         -HoistParamFromRelativePath ([string]$manageArtifact['HoistParamFrom']) `
-        -OutputEncoding ([string]$manageArtifact['OutputEncoding']) `
-        -McpManagerBase64 $mcpManagerBase64 `
-        -ManageScriptsBase64 $manageScriptsBase64
+        -OutputEncoding ([string]$manageArtifact['OutputEncoding'])
 
     Write-Host ''
     Write-Host '─── Windows 语法检查 ──────────────────────────────────────' -ForegroundColor Yellow

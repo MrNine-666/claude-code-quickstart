@@ -59,11 +59,11 @@ $script:InstallerRoot = if ([string]::IsNullOrWhiteSpace($script:WindowsRoot)) {
 . "$script:WindowsRoot\core\Ui.ps1"
 . "$script:WindowsRoot\core\Process.ps1"
 . "$script:WindowsRoot\core\Profile.ps1"
+. "$script:WindowsRoot\core\Update.ps1"
 . "$script:WindowsRoot\core\Admin.ps1"
 . "$script:WindowsRoot\core\Net.ps1"
 . "$script:WindowsRoot\core\Registry.ps1"
 . "$script:WindowsRoot\core\Bootstrap.ps1"
-. "$script:WindowsRoot\core\McpManager.ps1"
 . "$script:WindowsRoot\core\Provider.ps1"
 
 # ─── Dot-source 所有步骤模块（从 Registry 动态加载）──────────────────────────

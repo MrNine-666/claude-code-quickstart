@@ -26,21 +26,29 @@
 
 Windows 步骤路径必须使用 `windows/steps/*.ps1`，macOS 步骤路径必须使用 `macos/steps/*.zsh`，禁止平台加载路径混用。构建入口固定为 `installer/build.ps1` 与 `installer/build.sh`，默认输出目录为 repo 根目录 `dist/`；前者只输出 `bootstrap.ps1`、`install.ps1`、`manage.ps1`，后者只输出 `install.sh`、`manage.sh`，CI Release job 负责汇总五个短 artifact。
 
-## Manage JS 集合打包
+## Manage JS 单文件 bundle（P10 方案 3）
 
-Manage 管理面板的 Provider / Skills / Update 三个专项模块与入口 `manage.js` 统一迁移到 Node.js，MCP 复用既有 `mcp-manager.js`。所有受管 JS 共享同一套 base64 内嵌 + 版本检测部署机制（HC-JS-MODULE-LOADING，bundle 四源文件总和 <150KB）。
+Manage 管理面板用 **esbuild 单文件 bundle** 取代旧 base64 多文件内嵌。`manage.js` 与四子模块（provider/skills/update/mcp-manager）静态打包为 `dist/manage.js`（~150KB），wrapper 按需缓存到固定目录（1 小时 TTL）。
 
-**部署划分**（5 个 JS 最终都落到 `~/.ccq/scripts/`，但部署者不同）：
+**架构三级解析**（ManageCore.{ps1,zsh}）：
+1. **源码优先**（离线）→ `installer/contracts/scripts/manage.js`，require 同目录子模块
+2. **缓存命中**（0 网络）→ `$TMPDIR/.ccq/manage.js`（修改时间 <1h 直接复用）
+3. **过期下载**（远端最新）→ `curl /releases/latest/download/manage.js`，存固定路径；下载失败降级旧缓存
 
-| 部署者 | 受管 JS | base64 来源（构建注入） |
-|--------|---------|----------------------|
-| `ManageCore.{ps1,zsh}` | `manage.js`、`provider-manager.js`、`skills-manager.js`、`update-manager.js`（4 个） | `build.ps1` 的 `Get-ManageScriptsBase64` / `build.sh` 的 `getManageScriptsBase64` → `manage.ps1` / `manage.sh` 的 `$script:EmbeddedManageScriptsJson` / `CCQ_MANAGE_SCRIPTS_JSON` |
-| `McpManager.{ps1,zsh}` | `mcp-manager.js`（1 个，独立） | `build.ps1` 的 `Get-McpManagerScriptBase64` / `build.sh` 的 `getMcpManagerBase64` → `install.ps1` / `install.sh` / `manage.ps1` / `manage.sh` |
+**同进程调用**（P10 任务 10.1.3）：`invokeManager` 改用 `require('./子模块').runInteractive()`，由 esbuild 静态内联，取代旧 spawn 独立进程 + `~/.ccq/scripts/` 部署。
 
-`manage.js` 子菜单 [4] MCP 通过 `invokeManager('mcp-manager')` spawn 同目录下的共享 `mcp-manager.js`。Phase 8（任务 9.x）计划把 `mcp-manager.js` 纳入 ManageCore 5 文件统一部署并删除独立 McpManager wrapper，届时两个 base64 函数合并。
+**bundle 构建**（P10 任务 10.1.5）：
+- `build.ps1` / `build.sh` 调用 `node installer/contracts/scripts/esbuild.config.js`
+- 产物 `dist/manage.js` 与 3 个 .ps1 + 2 个 .sh 平级，GitHub Release 同时上传 6 个 artifact
+- wrapper URL：`https://github.com/.../releases/latest/download/manage.js`（无版本号 / 无哈希）
 
-**base64 内嵌注入**：运行时 `ManageCore.ps1` / `ManageCore.zsh` 解码内嵌 JSON 写入 `~/.ccq/scripts/`，并按 `manage.js` 的 `SCRIPT_VERSION`（当前 `1.0.0`，与 `ManageCoreVersion` 同步）做版本检测——已部署且版本一致时跳过写入。
+**删除旧逻辑**（P10 任务 10.2.1-10.2.5）：
+- ~~`Get-ManageScriptsBase64` / `getManageScriptsBase64`~~（多文件 base64 编码）
+- ~~`$script:EmbeddedManageScriptsJson` / `CCQ_MANAGE_SCRIPTS_JSON`~~（注入变量）
+- ~~`ManageScriptNames` / `CCQ_MANAGE_SCRIPT_NAMES`~~（部署清单）
+- ~~`ManageCoreVersion` / `SCRIPT_VERSION` 版本检测~~（缓存仅按 TTL）
+- ~~`Install-ManageScripts` / `ccq_manage_core_install_scripts`~~（部署函数）
 
-**降级链**：内嵌 base64（Release / `irm|iex`、`curl|bash`）→ 源码复制 `installer/contracts/scripts/*.js`（源码模式）→ 已部署版本（版本检测命中跳过）。三条路径任一成功即进入 `node manage.js`，避免 `curl | node -` 占用 stdin 破坏交互菜单（HC-TTY-INHERIT）。
+**缓存清理**：系统重启自动清理 `$TMPDIR/.ccq/`（Windows `%TEMP%\.ccq\`），无需手动维护。1 小时内多次 `ccq` 零网络开销，过期自动重拉最新。
 
-**contracts 内联**：`providers.json` / `skills.json` / `mcp-servers.json` / `claude-config.json` / `ui.json` 在各 `*-manager.js` 中以 JS 常量内联（含内联 fallback），manage 集合一次下载即自带全部业务契约，运行期无额外契约网络请求。任何 contract schema 变更需重新构建发布 manage 集合。
+**contracts 内联**：`providers.json` / `skills.json` / `mcp-servers.json` / `claude-config.json` / `ui.json` 在各 `*-manager.js` 中以 JS 常量内联，bundle 自带全部业务契约，运行期无额外契约网络请求。任何 contract schema 变更需重新构建发布 bundle。

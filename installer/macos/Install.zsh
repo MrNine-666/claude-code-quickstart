@@ -114,7 +114,7 @@ ccq_load_core() {
 
   local core_dir="${CCQ_MACOS_ROOT}/core"
   local core_file
-  for core_file in Ui Process Profile Platform PackageManager Json Registry Bootstrap Provider McpManager Update; do
+  for core_file in Ui Process Profile Platform PackageManager Json Registry Bootstrap Provider Update; do
     ccq_source_file "${core_dir}/${core_file}.zsh" || {
       printf '无法加载 macOS core: %s\n' "${core_file}.zsh" >&2
       return 1

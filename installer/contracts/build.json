@@ -64,11 +64,11 @@
           "windows/core/Ui.ps1",
           "windows/core/Process.ps1",
           "windows/core/Profile.ps1",
+          "windows/core/Update.ps1",
           "windows/core/Admin.ps1",
           "windows/core/Net.ps1",
           "windows/core/Registry.ps1",
           "windows/core/Bootstrap.ps1",
-          "windows/core/McpManager.ps1",
           "windows/core/Provider.ps1"
         ],
         "IncludeSteps": true
@@ -84,11 +84,12 @@
           "windows/core/Ui.ps1",
           "windows/core/Process.ps1",
           "windows/core/Profile.ps1",
+          "windows/core/Update.ps1",
           "windows/core/Admin.ps1",
           "windows/core/Net.ps1",
           "windows/core/Registry.ps1",
           "windows/core/Bootstrap.ps1",
-          "windows/core/McpManager.ps1",
+          "windows/core/ManageCore.ps1",
           "windows/core/Provider.ps1"
         ],
         "IncludeSteps": true
@@ -98,33 +99,45 @@
   "MacOS": {
     "StepContract": "contracts/steps.json",
     "CommonStepFile": "macos/steps/_NpmToolCommon.zsh",
-    "CoreFiles": [
-      "macos/core/Ui.zsh",
-      "macos/core/Process.zsh",
-      "macos/core/Profile.zsh",
-      "macos/core/Platform.zsh",
-      "macos/core/PackageManager.zsh",
-      "macos/core/Json.zsh",
-      "macos/core/Registry.zsh",
-      "macos/core/Bootstrap.zsh",
-      "macos/core/Provider.zsh",
-      "macos/core/McpManager.zsh",
-      "macos/core/Update.zsh"
-    ],
     "Artifacts": [
       {
         "Role": "Install",
         "OutputFile": "install.sh",
         "EntryFile": "macos/Install.zsh",
         "IncludeSteps": true,
-        "Wrapper": "bash-to-zsh"
+        "Wrapper": "bash-to-zsh",
+        "CoreFiles": [
+          "macos/core/Ui.zsh",
+          "macos/core/Process.zsh",
+          "macos/core/Profile.zsh",
+          "macos/core/Platform.zsh",
+          "macos/core/PackageManager.zsh",
+          "macos/core/Json.zsh",
+          "macos/core/Registry.zsh",
+          "macos/core/Bootstrap.zsh",
+          "macos/core/Provider.zsh",
+          "macos/core/Update.zsh"
+        ]
       },
       {
         "Role": "Manage",
         "OutputFile": "manage.sh",
         "EntryFile": "macos/Manage.zsh",
         "IncludeSteps": true,
-        "Wrapper": "bash-to-zsh"
+        "Wrapper": "bash-to-zsh",
+        "CoreFiles": [
+          "macos/core/Ui.zsh",
+          "macos/core/Process.zsh",
+          "macos/core/Profile.zsh",
+          "macos/core/Platform.zsh",
+          "macos/core/PackageManager.zsh",
+          "macos/core/Json.zsh",
+          "macos/core/Registry.zsh",
+          "macos/core/Bootstrap.zsh",
+          "macos/core/Provider.zsh",
+          "macos/core/ManageCore.zsh",
+          "macos/core/Update.zsh"
+        ]
       }
     ]
   }

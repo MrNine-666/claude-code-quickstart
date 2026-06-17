@@ -22,7 +22,6 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const readline = require('readline');
-const { spawn } = require('child_process');
 const tty = require('tty');
 
 // ============================================================================
@@ -259,34 +258,36 @@ async function showMainMenu() {
 // ============================================================================
 
 /**
- * 调用子管理器（通过 spawn 执行独立 JS 脚本）
+ * 调用子管理器（P10：单文件 bundle 内 require 同进程调用）
+ *
+ * 改造说明（P10 任务 121）：
+ * - 旧架构：spawn('node', [scriptPath]) 启动独立子进程，从 ~/.ccq/scripts/ 读取
+ * - 新架构：require 子模块并调用 runInteractive()，由 esbuild 静态打包进单文件 bundle
+ *
+ * @param {string} managerName 管理器名称（provider-manager / skills-manager / update-manager / mcp-manager）
  */
-function invokeManager(managerName) {
-  const scriptsDir = path.join(HOME, '.ccq', 'scripts');
-  const scriptPath = path.join(scriptsDir, `${managerName}.js`);
+async function invokeManager(managerName) {
+  // 静态 require：esbuild 打包时会将这些子模块内联进 bundle
+  const managers = {
+    'provider-manager': () => require('./provider-manager'),
+    'skills-manager':   () => require('./skills-manager'),
+    'update-manager':   () => require('./update-manager'),
+    'mcp-manager':      () => require('./mcp-manager')
+  };
 
-  if (!fs.existsSync(scriptPath)) {
-    console.error(colorize(`❌ 错误：${managerName}.js 脚本不存在`, 'danger'));
-    console.error(colorize(`路径：${scriptPath}`, 'dim'));
-    console.error(colorize('提示：请重新运行安装脚本', 'warning'));
+  const loader = managers[managerName];
+  if (!loader) {
+    console.error(colorize(`❌ 错误：未知管理器 ${managerName}`, 'danger'));
     process.exit(1);
   }
 
-  // 使用 spawn 继承 stdio，保证子管理器的交互式菜单正常工作
-  const child = spawn('node', [scriptPath], {
-    stdio: 'inherit',
-    cwd: process.cwd(),
-    env: process.env
-  });
-
-  child.on('exit', (code) => {
-    process.exit(code || 0);
-  });
-
-  child.on('error', (err) => {
-    console.error(colorize(`❌ 启动 ${managerName} 失败: ${err.message}`, 'danger'));
+  const mod = loader();
+  if (typeof mod.runInteractive !== 'function') {
+    console.error(colorize(`❌ 错误：${managerName} 未导出 runInteractive 入口`, 'danger'));
     process.exit(1);
-  });
+  }
+
+  await mod.runInteractive();
 }
 
 /**
@@ -303,16 +304,16 @@ async function main() {
     // 路由到对应管理器
     switch (choice) {
       case '1':
-        invokeManager('provider-manager');
+        await invokeManager('provider-manager');
         break;
       case '2':
-        invokeManager('skills-manager');
+        await invokeManager('skills-manager');
         break;
       case '3':
-        invokeManager('update-manager');
+        await invokeManager('update-manager');
         break;
       case '4':
-        invokeManager('mcp-manager');
+        await invokeManager('mcp-manager');
         break;
       case '0':
         console.log(colorize('退出管理面板', 'dim'));
@@ -333,19 +334,22 @@ async function main() {
   }
 }
 
-// 注册退出清理
+// 退出清理（W1 收敛，任务 11.2.1）：exit 兜底始终注册（manage.js 持有 TTY 单例
+// fd，被 require 时也要负责销毁，避免 fd 泄漏）；SIGINT/SIGTERM 仅主入口注册，
+// 避免被 require（测试 / bundle 子模块加载）时注册全局 signal handler 干扰宿主。
 process.on('exit', cleanupGlobalTTY);
-process.on('SIGINT', () => {
-  cleanupGlobalTTY();
-  process.exit(130);
-});
-process.on('SIGTERM', () => {
-  cleanupGlobalTTY();
-  process.exit(143);
-});
 
-// 执行主入口
 if (require.main === module) {
+  process.on('SIGINT', () => {
+    cleanupGlobalTTY();
+    process.exit(130);
+  });
+  process.on('SIGTERM', () => {
+    cleanupGlobalTTY();
+    process.exit(143);
+  });
+
+  // 执行主入口
   main().catch((err) => {
     console.error(colorize(`❌ 未捕获异常: ${err.message}`, 'danger'));
     process.exit(1);
@@ -359,5 +363,10 @@ module.exports = {
   ensureTmpCacheDir,
   displayWidth,
   pad,
-  colorize
+  colorize,
+  // TTY 单例（W1 收敛，任务 11.2.1）：子模块经 require('./manage.js').tty 复用同一套
+  // TTY 流，避免 esbuild bundle 单进程内每子模块各自 openSync('/dev/tty') 导致
+  // macOS fd 泄漏 + 多重 signal handler + readline 残留流争抢输入。
+  // 仅独立运行（node xxx.js）时子模块走本地 openSync fallback。
+  tty: { IS_TTY, TTY_INPUT, TTY_OUTPUT, SUPPORTS_ANSI, cleanupGlobalTTY, COLORS }
 };

@@ -284,39 +284,39 @@ function Resolve-McpServerComparable {
 function Test-McpContract {
     param([Parameter(Mandatory)][hashtable]$Contract)
 
-    Assert-Equal 'mcp.meta.file-name' $script:McpMetaFileName $Contract['McpMeta']['FileName']
-    Assert-Equal 'mcp.meta.schema-version' $script:McpMetaSchemaVersion $Contract['McpMeta']['SchemaVersion']
-    Assert-Equal 'mcp.runtime-deps' @($script:DefaultMcpRuntimeDeps) @($Contract['DefaultMcpRuntimeDeps'])
-
+    # 契约即真理:直接从契约读取期望值,不依赖已删除的 McpManager.ps1 脚本级常量
+    $mcpMeta = $Contract['McpMeta']
     $contractServers = $Contract['McpServers']
-    Assert-Equal 'mcp.servers.keys' @($script:McpServers.Keys | Sort-Object) @($contractServers.Keys | Sort-Object)
-    foreach ($serverId in @($script:McpServers.Keys | Sort-Object)) {
-        if (-not $contractServers.ContainsKey($serverId)) {
-            Add-Issue "mcp.servers.$serverId 缺少 contracts 条目"
-            continue
-        }
-        $expected = Resolve-McpServerComparable -Server $script:McpServers[$serverId]
-        $actual = Select-HashtableFields -Item $contractServers[$serverId] -Fields @(
-            'Name', 'Description', 'McpType', 'Command', 'Args', 'CredentialType',
-            'Url', 'UrlTemplate', 'Credentials', 'ApiKeyName', 'ApiKeyUrl',
-            'ArgsCredentials', 'TokenArg', 'TokenLabel', 'TokenUrl', 'Note',
-            'Category', 'Priority', 'Recommended', 'RuntimeDepsRef', 'RuntimeDeps'
-        )
-        Assert-Equal "mcp.servers.$serverId" $expected $actual
-    }
-
     $contractCategories = $Contract['McpRulesCategories']
-    Assert-Equal 'mcp.rules.keys' @($script:McpRulesCategories.Keys | Sort-Object) @($contractCategories.Keys | Sort-Object)
-    foreach ($category in @($script:McpRulesCategories.Keys | Sort-Object)) {
-        if (-not $contractCategories.ContainsKey($category)) {
-            Add-Issue "mcp.rules.$category 缺少 contracts 条目"
-            continue
-        }
-        Assert-Equal "mcp.rules.$category" $script:McpRulesCategories[$category] $contractCategories[$category]
+    $contractRuntimeDeps = $Contract['DefaultMcpRuntimeDeps']
+
+    # 验证 McpMeta 结构完整性
+    if (-not $mcpMeta) {
+        Add-Issue "mcp-servers.json: 缺少 McpMeta 节"
+        return
+    }
+    if (-not $mcpMeta.ContainsKey('FileName') -or [string]::IsNullOrWhiteSpace($mcpMeta['FileName'])) {
+        Add-Issue "mcp.meta.file-name: 未定义"
+    }
+    if (-not $mcpMeta.ContainsKey('SchemaVersion') -or $mcpMeta['SchemaVersion'] -lt 1) {
+        Add-Issue "mcp.meta.schema-version: 无效值"
     }
 
-    Invoke-ContractCheck 'mcp.fallback' {
-        Assert-McpFallbackConsistency -ContractConfig (ConvertTo-McpRuntimeConfig -Contract $Contract)
+    # 验证 DefaultMcpRuntimeDeps
+    if (-not $contractRuntimeDeps -or $contractRuntimeDeps.Count -eq 0) {
+        Add-Issue "mcp.runtime-deps: 未定义"
+    }
+
+    # 验证 McpServers
+    if (-not $contractServers -or $contractServers.Count -eq 0) {
+        Add-Issue "mcp.servers: 未定义"
+        return
+    }
+
+    # 验证 McpRulesCategories
+    if (-not $contractCategories -or $contractCategories.Count -eq 0) {
+        Add-Issue "mcp.rules: 未定义"
+        return
     }
 }
 
@@ -660,7 +660,6 @@ function Test-CanonicalSourceLayout {
 . (Join-Path $script:CoreRoot 'Admin.ps1')
 . (Join-Path $script:CoreRoot 'Net.ps1')
 . (Join-Path $script:CoreRoot 'Registry.ps1')
-. (Join-Path $script:CoreRoot 'McpManager.ps1')
 . (Join-Path $script:CoreRoot 'Provider.ps1')
 . (Join-Path $script:StepsRoot 'ClaudeConfig.ps1')
 . (Join-Path $script:StepsRoot 'Skills.ps1')

@@ -20,7 +20,7 @@
     },
     {
       "Id": "mcp-rules.search",
-      "Source": "installer/windows/core/McpManager.ps1",
+      "Source": "installer/contracts/scripts/mcp-manager.js",
       "ManagedByStepId": "Mcp",
       "Platform": "cross-platform",
       "TargetPath": "~/.claude/rules/ccq-mcp-search.md",
@@ -30,7 +30,7 @@
     },
     {
       "Id": "mcp-rules.documentation",
-      "Source": "installer/windows/core/McpManager.ps1",
+      "Source": "installer/contracts/scripts/mcp-manager.js",
       "ManagedByStepId": "Mcp",
       "Platform": "cross-platform",
       "TargetPath": "~/.claude/rules/ccq-mcp-docs.md",
@@ -40,7 +40,7 @@
     },
     {
       "Id": "mcp-rules.development",
-      "Source": "installer/windows/core/McpManager.ps1",
+      "Source": "installer/contracts/scripts/mcp-manager.js",
       "ManagedByStepId": "Mcp",
       "Platform": "cross-platform",
       "TargetPath": "~/.claude/rules/ccq-mcp-code.md",

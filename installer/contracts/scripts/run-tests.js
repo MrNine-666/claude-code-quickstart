@@ -31,6 +31,7 @@ const INTEGRATION_TESTS = [
   'update-manager.test.js',
   'skills-e2e.test.js',
   'deploy.test.js',
+  'wrapper-cache.test.js',
   'perf.test.js'
 ];
 

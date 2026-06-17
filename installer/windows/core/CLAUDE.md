@@ -14,11 +14,12 @@
 | `Ui.ps1` | 893 | TUI 组件：语义颜色系统（6 色）、菜单、进度、摘要表格 |
 | `Process.ps1` | 492 | 外部命令执行、PATH 刷新、版本检测、npm/winget 封装 |
 | `Profile.ps1` | 526 | `$PROFILE` 安全编辑：备份、标记块读写、原子写入 |
+| `Update.ps1` | ~310 | **更新状态管理**：更新清单、内容指纹、更新快照（与 macOS `Update.zsh` 对称的集中式 Update core，从 Profile.ps1 迁出） |
 | `Admin.ps1` | 137 | 管理员权限检测与自提权 |
 | `Net.ps1` | ~270 | 端点可达性检测、文件下载 |
 | `Registry.ps1` | 280 | **共享步骤注册表**：元数据、分组、依赖、迁移映射（消除 DRY 违规） |
 | `Bootstrap.ps1` | 617 | 步骤状态模型、生命周期调度、拓扑排序、恢复逻辑 |
-| `McpManager.ps1` | ~890 | MCP Server CRUD 管理：vault 读写、状态查看、禁用/启用/删除、凭据持久化 |
+| `ManageCore.ps1` | ~145 | **Manage JS 单文件 bundle 缓存调用 wrapper**：检测 Node.js → 源码/缓存/下载三级解析 manage.js → node 调用（TTY 继承） |
 | `Provider.ps1` | ~810 | 供应商管理核心：CRUD + Sync + 交互菜单，Install-ApiKey 和 Manage 共用 |
 
 ---
@@ -123,6 +124,36 @@ $script:BackupDirectory = "$env:TEMP\ClaudeEnvInstaller\Backups"
 | `Test-ManagedBlockExists` | 检测标记块是否存在 |
 | `Write-FileAtomically` | **参数 `-FilePath`（非 `-Path`）**，临时文件 + `Move-Item -Force` |
 | `Clear-OldBackups` | 清理超过 N 天或超过 M 个的备份文件 |
+
+---
+
+## Update.ps1
+
+### 职责
+
+**集中式 Update 基础设施 core**（与 macOS `Update.zsh` 对称），提供更新状态管理：更新清单（内容指纹管理）、内容指纹计算、更新前快照备份。**非功能变更**——这些函数原本分散在 `Profile.ps1`，集中化以消除 Windows/macOS 代码组织不对称。
+
+### 主要函数
+
+| 函数 | 职责 |
+|------|------|
+| `Get-UpdateManifestPath` | 返回 `~/.ccq/update-manifest.json` 路径 |
+| `Read-UpdateManifest` | 读取更新清单（容错：文件不存在/损坏返回空清单 `{schemaVersion=1, steps={}}`） |
+| `Write-UpdateManifest` | 原子写入更新清单（依赖 Profile 的 `Write-FileAtomically`） |
+| `Get-StringFingerprint` | 计算字符串 SHA256 指纹（64 字符十六进制），**被 Provider.ps1 + 3 个 step 调用** |
+| `New-UpdateSnapshot` | 创建更新前会话级快照目录（`update_<时间戳_fff>_<PID>_<GUID8>`，唯一目录名防并发） |
+| `Clear-OldUpdateSnapshots` | 清理旧快照（contracts-first 策略参数 + HC-13 数组安全） |
+
+### 依赖与加载位置（双边界约束）
+
+Update.ps1 必须在 `Profile → Update → … → Provider` 的唯一位置加载，由两个边界夹定：
+
+- **下界**（Update 在 Profile 之后）：依赖 Profile.ps1 的 `Write-FileAtomically` / `Initialize-BackupDirectory` / `Get-UserHome` / `Get-CleanupPolicyContract` / `$script:BackupDirectory`
+- **上界**（Update 在 Provider 之前）：`Provider.ps1:754` 依赖 `Get-StringFingerprint` 计算 pathHash
+
+> **与 macOS 的合理差异**：macOS `Provider.zsh` 不依赖 fingerprint，故 macOS 把 `Update.zsh` 放在 CoreFiles **最末**（Provider 之后）；Windows 因 `Provider.ps1` 依赖 `Get-StringFingerprint`，必须放 Provider 之前。两平台加载位置不一致是**正确的**，源于 Provider 实现差异。
+
+> **方案 B 职责划分**：npm 检测（`Test-NpmUpdateAvailable` / `Get-NpmOutdatedGlobal` / `Invoke-NpmGlobalInstall`）**留 Process.ps1**（命令执行层），不迁入 Update.ps1。Windows Update.ps1 只含"更新状态管理"，与 macOS Update.zsh 含 npm 检测是合理的职责划分差异。
 
 ---
 
@@ -247,87 +278,37 @@ $success = if ($result -is [bool]) { $result }
 
 ---
 
-## McpManager.ps1
+## ManageCore.ps1
 
-### 职责（v2.0.0 轻量 wrapper 架构）
+### 职责（P10：Manage JS 单文件 bundle 缓存 wrapper）
 
-**轻量 Node.js wrapper**（247 行），调用 `~/.ccq/scripts/mcp-manager.js` 完成所有 MCP 管理。完整 TUI + 业务逻辑在 JS 脚本中实现（1180 行），平台层仅负责脚本部署与调用。
+**轻量 Node.js wrapper**（~145 行），把 `manage.js` 单文件 bundle 解析到可执行路径并以 TTY 继承方式调用，作为 Manage 四大管理面板（Provider / Skills / Update / MCP）的统一入口。业务逻辑全在 `manage.js` bundle（esbuild 打包 4 子管理器）中实现，平台层仅负责「检测 Node.js → 解析 manage.js → node 调用」。原 `McpManager.ps1` 平台 wrapper 已于 P8 删除，MCP 管理并入 `manage.js` → `mcp-manager.js`。
 
-### 架构变更
+### 三级解析策略（HC-CACHE-TMPDIR + HC-15）
 
-| 项目 | v1.x（旧架构） | v2.0.0（新架构） |
-|------|---------------|----------------|
-| 代码行数 | 890 行 | 247 行（-72%） |
-| 实现语言 | PowerShell | PowerShell wrapper + Node.js 核心 |
-| 业务逻辑 | 平台层实现 | `mcp-manager.js` 实现（跨平台共享） |
-| TUI 渲染 | PowerShell UI 函数 | Node.js readline + ANSI |
-| 部署方式 | 无需部署 | JS 脚本部署到 `~/.ccq/scripts/` |
-| Release 模式 | 内联 PowerShell 代码 | 内嵌 base64 编码的 JS 脚本（46KB）|
+1. **源码模式优先**（离线可用）：`$PSScriptRoot` 可解析时定位 `installer/contracts/scripts/manage.js` 直接运行（require 同目录子模块）
+2. **缓存命中**（0 网络）：`$env:TEMP\.ccq\manage.js` 修改时间 <1 小时直接复用
+3. **过期下载**（远端最新）：`Invoke-WebRequest /releases/latest/download/manage.js` 覆盖缓存；下载失败时降级复用旧缓存
 
-### 数据模型
+> **HC-15**：`irm|iex` Release 模式下 `$PSScriptRoot` 为空，源码探测前判空，缓存路径仅依赖 `$env:TEMP`。
 
-**Vault 文件**: `~/.ccq/mcp-meta.json`（Schema v1，与旧版兼容）
-
-```json
-{
-  "schemaVersion": 1,
-  "createdAt": "ISO 8601",
-  "updatedAt": "ISO 8601",
-  "servers": {
-    "<serverId>": {
-      "disabled": false,
-      "credentials": { "values": {}, "envFileValues": {} },
-      "config": { /* 完整 .claude.json 配置 */ },
-      "permissions": ["mcp__<serverId>__*"],
-      "definitionHash": "8 hex chars (SHA-256)",
-      "updatedAt": "ISO 8601"
-    }
-  }
-}
-```
-
-### 主要函数（平台层 wrapper）
+### 主要函数
 
 | 函数 | 职责 |
 |------|------|
-| `Get-McpManagerScriptPath` | 返回 `~/.ccq/scripts/mcp-manager.js` 路径 |
-| `Install-McpManagerScript` | 部署 JS 脚本（优先 base64 内嵌，fallback 源码复制）|
-| `Show-McpManageMenu` | 调用 `node mcp-manager.js manage`（交互 TUI）|
-| `Sync-AllMcpRules` | 调用 `node mcp-manager.js sync-rules`（Rules 同步）|
-| `Get-McpStatus` | 调用 `node mcp-manager.js status`（返回 JSON）|
-| `Get-McpContract` | 向后兼容空壳（返回空契约）|
-| `Invoke-McpPreInstall` | 向后兼容空壳（无操作）|
+| `Get-ManageCachePath` | 返回 `$env:TEMP\.ccq\manage.js` 固定缓存路径 |
+| `Get-SourceManageScript` | 源码模式探测（`$PSScriptRoot` 上溯 contracts/scripts/manage.js），不可用返回 `$null` |
+| `Resolve-ManageScript` | 三级解析（源码 → 缓存 TTL → 下载），返回 manage.js 路径或 `$null` |
+| `Show-ManagePanel` | 对外入口：检测 Node.js（含 <20 版本警告）→ 解析 → `& node manage.js`（TTY 继承） |
 
-### 部署策略
+### 配置常量
 
-1. **Release 模式**（`irm|iex`）：从内嵌 base64 解码写入（`$script:EmbeddedMcpManagerB64`）
-2. **源码模式**：从 `installer/contracts/scripts/mcp-manager.js` 复制
-3. **版本检测**：脚本头部 `SCRIPT_VERSION` 与内嵌版本不一致时覆盖
-
-### JS 脚本功能（mcp-manager.js）
-
-| 模块 | 功能 |
-|------|------|
-| 常量层 | SCRIPT_VERSION、路径、颜色、schema |
-| 工具层 | CJK 宽度计算、pad、颜色、原子写入、文件锁 |
-| 数据层 | JSON 读写、vault 腐败恢复、契约加载 |
-| 算法层 | 状态计算（Custom/Active/Disabled/Missing）、definitionHash、凭据同步 |
-| 变更层 | disable、enable、remove（三处状态同步）|
-| 渲染层 | 状态表格、交互菜单、确认对话框、错误展开 |
-| Rules层 | 动态渲染 `~/.claude/rules/ccq-mcp-*.md` |
-| 入口层 | 命令行路由（manage / status / sync-rules / --version）|
-
-### 命令行接口
-
-```bash
-node ~/.ccq/scripts/mcp-manager.js manage          # 交互式管理（完整 TUI）
-node ~/.ccq/scripts/mcp-manager.js status          # 输出状态（JSON）
-node ~/.ccq/scripts/mcp-manager.js status --table  # 输出状态表格（人类可读）
-node ~/.ccq/scripts/mcp-manager.js sync-rules      # 同步 Rules 文件
-node ~/.ccq/scripts/mcp-manager.js --version       # 版本号
+```powershell
+$script:ManageBundleUrl    = '.../releases/latest/download/manage.js'  # HC-ZERO-CACHE：无版本号 / 无内容哈希
+$script:ManageCacheTtlHours = 1                                        # 缓存有效期（小时）
 ```
 
-> **加载顺序**：McpManager.ps1 必须在 Bootstrap.ps1 之后、steps/ 之前加载。依赖 Ui.ps1、Process.ps1 的函数。
+> **加载顺序**：ManageCore.ps1 在 Bootstrap.ps1 之后、Provider.ps1 之前加载。依赖 Ui.ps1、Process.ps1 的函数。打包与缓存细节见 [installer/contracts/README.md](../../contracts/README.md) 的「Manage JS 单文件 bundle」小节。
 
 ---
 
@@ -382,7 +363,7 @@ $script:BuiltinProviders = @{
 
 ### 加载顺序
 
-Provider.ps1 在 McpManager.ps1 之后加载。依赖 Ui.ps1、Profile.ps1 的函数。被 steps/ApiKey.ps1 dot-source 引用。
+Provider.ps1 在 ManageCore.ps1 之后加载。依赖 Ui.ps1、Profile.ps1 的函数，**且依赖 Update.ps1 的 `Get-StringFingerprint`**（行 754 计算 pathHash）——这是 Update.ps1 必须在 Provider.ps1 之前加载的强约束（上界）。被 steps/ApiKey.ps1 dot-source 引用。
 
 ---
 
@@ -396,12 +377,13 @@ macOS 安装器实现了与 Windows 功能对等的核心模块，采用 zsh 脚
 |---------------------|-------------|-----------|
 | `Ui.ps1` | `Ui.zsh` | 95% - 语义颜色、表格、菜单、错误展开 |
 | `Process.ps1` | `Process.zsh` | 95% - 命令执行、重试、超时、npm outdated 缓存 |
-| `Profile.ps1` | `Profile.zsh` | 98% - 原子写入、备份、受管区块、Manifest、Snapshot |
+| `Profile.ps1` | `Profile.zsh` | 98% - 原子写入、备份、受管区块（Manifest/Snapshot 已迁至 Update core） |
+| `Update.ps1` (~310行) | `Update.zsh` | **对称 - 更新清单、内容指纹、更新快照**（npm 检测留 Process.ps1，属合理职责划分差异；加载位置两平台不一致见 Update.ps1 章节） |
 | `Admin.ps1` | - | N/A - macOS 无需管理员自提权 |
 | `Net.ps1` | - | N/A - macOS 使用 curl/wget 原生工具 |
 | `Registry.ps1` | `Registry.zsh` | 98% - 步骤注册表、拓扑排序、Legacy 映射 |
 | `Bootstrap.ps1` | `Bootstrap.zsh` | 95% - 生命周期、Critical 失败策略、五类摘要 |
-| `McpManager.ps1` (247行) | `McpManager.zsh` (175行) | **100% - 轻量 wrapper，共享 `mcp-manager.js` 核心（1180行）** |
+| `ManageCore.ps1` (~145行) | `ManageCore.zsh` (~130行) | **100% - Manage JS bundle 缓存 wrapper，三级解析（源码/缓存/下载）共享 `manage.js`** |
 | `Provider.ps1` | `Provider.zsh` | 98% - CRUD、Sync、模型环境键管理 |
 
 ### 平台差异要点

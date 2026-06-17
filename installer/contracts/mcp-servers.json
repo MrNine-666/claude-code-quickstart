@@ -1,6 +1,6 @@
 {
   "SchemaVersion": 1,
-  "Source": "installer/windows/core/McpManager.ps1",
+  "Source": "installer/contracts/scripts/mcp-manager.js",
   "McpMeta": {
     "FileName": "mcp-meta.json",
     "Path": "~/.ccq/mcp-meta.json",

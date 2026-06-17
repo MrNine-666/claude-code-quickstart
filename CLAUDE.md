@@ -109,7 +109,7 @@ Git (无依赖)    ClaudeMd (无依赖)    CcSwitch [可选, 依赖 ClaudeCode] 
 ~/.claude/rules/ccq-mcp-*.md       # MCP 工具速查（McpManager 动态渲染）
 ~/.claude/providers/        # 供应商 Profile 目录（ApiKey 写入）
 ~/.ccq/mcp-meta.json        # MCP Server vault（凭据持久化 + 状态管理）
-~/.ccq/scripts/             # Manage JS 集合部署目录（manage/provider/skills/update/mcp-manager.js，ManageCore 版本检测部署）
+%TEMP%\.ccq\manage.js        # Manage JS 单文件 bundle 缓存（P10：1 小时 TTL，系统重启清理；macOS 为 $TMPDIR/.ccq/manage.js）
 $PROFILE                    # PowerShell 配置文件（fnm）
 %TEMP%\ClaudeEnvInstaller\  # 备份目录（含更新快照 update_* ）
 ```
@@ -171,25 +171,26 @@ zsh -n installer/macos/Manage.zsh
 
 ## Manage JS 架构
 
-Manage 四大入口已经统一到 Node.js 共享核心：`ccq` / `Manage.ps1` / `Manage.zsh` 进入平台 wrapper 后，由 `ManageCore.ps1` / `ManageCore.zsh` 部署 `installer/contracts/scripts/` 下的 JS 集合到 `~/.ccq/scripts/`，再调用 `node manage.js` 显示子菜单。
+**P10 架构反转**（2026-06-16）：Manage 四大入口（Update / Provider / MCP / Skills）用 **esbuild 单文件 bundle + 固定目录缓存** 取代旧 base64 多文件部署。`ccq` / `Manage.ps1` / `Manage.zsh` 进入平台 wrapper 后，`ManageCore.ps1` / `ManageCore.zsh`（~50 行缓存调度）按「源码优先 → 缓存命中（1h TTL）→ 过期下载」三级解析 `manage.js`，再调用 `node` 显示子菜单。
 
 ```
 ccq
  ├─ 安装面板 → install.ps1 / install.sh
  └─ 管理面板 → manage.ps1 / manage.sh
         ↓
-   ManageCore.ps1 / ManageCore.zsh
-        ↓  base64 内嵌 → 源码 fallback → 已部署版本
-   ~/.ccq/scripts/manage.js
-        ├─ provider-manager.js
-        ├─ skills-manager.js
-        ├─ update-manager.js
-        └─ mcp-manager.js
+   ManageCore.ps1 / ManageCore.zsh（缓存 wrapper）
+        ↓  源码优先 → 缓存命中(<1h) → 过期 curl /releases/latest/download/manage.js
+   $TMPDIR/.ccq/manage.js（esbuild 单文件 bundle，~150KB）
+        ├─ require('./provider-manager').runInteractive()
+        ├─ require('./skills-manager').runInteractive()
+        ├─ require('./update-manager').runInteractive()
+        └─ require('./mcp-manager').runInteractive()
 ```
 
-- **打包方式**：`installer/build.ps1` 的 `Get-ManageScriptsBase64` 与 `installer/build.sh` 的 `getManageScriptsBase64` 把 `manage.js`、`provider-manager.js`、`skills-manager.js`、`update-manager.js` 与 `mcp-manager.js` 编码为 base64 JSON，注入 `manage.ps1` / `manage.sh`。
-- **回滚机制**：版本一致时复用已部署脚本；base64 不可用时走源码模式；Provider / Skills / Update 的 legacy 脚本保留一个稳定 release 周期用于回滚。
-- **离线限制**：面板入口可通过源码模式离线运行：`pwsh installer/windows/Manage.ps1` 或 `zsh installer/macos/Manage.zsh`；但 Skills 安装/更新、Update 检查、需要远端资源的 MCP 操作仍需网络。
+- **打包方式**：`installer/build.ps1` 的 `Invoke-ManageBundleBuild` 与 `installer/build.sh` 的 `buildManageBundle` 调用 `node installer/contracts/scripts/esbuild.config.js`，把 `manage.js` + 4 子模块静态打包为单文件 bundle `dist/manage.js`，与 3 个 .ps1 + 2 个 .sh 平级，GitHub Release 上传 6 个 artifact。
+- **缓存策略**：固定路径 `$TMPDIR/.ccq/manage.js`（Windows `%TEMP%\.ccq\manage.js`），修改时间 <1 小时直接复用（零网络），过期自动重拉最新；系统重启自动清理 `$TMPDIR`，无需手动维护。
+- **同进程调用**：`invokeManager` 改用 `require('./子模块').runInteractive()`，由 esbuild 内联进 bundle，取代旧 spawn 独立进程 + `~/.ccq/scripts/` 部署。
+- **离线可用**：源码模式下 ManageCore 直接运行 `installer/contracts/scripts/manage.js`（require 同目录子模块）；缓存命中时也零网络。但 Skills 安装/更新、Update 检查、需要远端资源的 MCP 操作仍需网络。
 
 ---
 

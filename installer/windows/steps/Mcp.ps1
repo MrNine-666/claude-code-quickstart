@@ -22,6 +22,7 @@ $script:McpLockTimeoutMs = 30000
 # DefaultMcpRuntimeDeps 和 McpServers 从 contracts 加载或使用内联 fallback
 $script:DefaultMcpRuntimeDeps = @()
 $script:McpServers = @{}
+$script:McpRulesCategories = [ordered]@{}
 
 # ============================================================
 # 契约加载 - 从 contracts/mcp-servers.json 读取配置
@@ -67,6 +68,11 @@ function Load-McpContract {
                         $server["RuntimeDeps"] = $script:DefaultMcpRuntimeDeps
                     }
                     $script:McpServers[$key] = $server
+                }
+
+                # 加载 Rules 分类定义（Install 链纯 PS 渲染使用）
+                if ($contract.ContainsKey("McpRulesCategories")) {
+                    $script:McpRulesCategories = $contract.McpRulesCategories
                 }
 
                 Write-UiSuccess "已从 contracts 加载 $($script:McpServers.Count) 个 MCP Server 定义" -Level Debug
@@ -155,10 +161,183 @@ function Initialize-McpFallbackConfig {
             Recommended = $true
         }
     }
+
+    # Rules 分类内联 fallback（与 contracts/mcp-servers.json 的 McpRulesCategories 对齐）
+    $script:McpRulesCategories = [ordered]@{
+        "Search" = @{
+            FileName = "ccq-mcp-search.md"
+            Title = "搜索工具"
+            Desc = "联网搜索和内容提取。"
+            Chains = @(
+                @{ Scenario = "联网搜索"; Steps = @(@{ McpId = "exa"; Tool = "mcp__exa__web_search_exa" }); Fallback = "WebSearch" }
+                @{ Scenario = "公司研究"; Steps = @(@{ McpId = "exa"; Tool = "mcp__exa__company_research_exa" }) }
+                @{ Scenario = "代码示例搜索"; Steps = @(@{ McpId = "exa"; Tool = "mcp__exa__get_code_context_exa" }) }
+            )
+        }
+        "Documentation" = @{
+            FileName = "ccq-mcp-docs.md"
+            Title = "文档检索工具"
+            Desc = "库文档和开源项目文档检索。"
+            Chains = @(
+                @{ Scenario = "库官方文档"; Steps = @(@{ McpId = "context7"; Tool = "mcp__context7__resolve-library-id → mcp__context7__query-docs" }) }
+                @{ Scenario = "GitHub 开源项目"; Steps = @(@{ McpId = "deepwiki"; Tool = "mcp__deepwiki__ask_question / read_wiki_structure / read_wiki_contents" }) }
+            )
+            Tips = @("context7 先 resolve-library-id 再 query-docs", "deepwiki 用于理解 GitHub 项目架构")
+        }
+    }
 }
 
 # 加载 MCP Server 契约（在函数定义后立即调用）
 Load-McpContract
+
+# ============================================================
+# Rules 同步（Install 链纯 PS 渲染，不依赖 mcp-manager.js）
+# ============================================================
+
+function Format-McpRulesContent {
+    <#
+    .SYNOPSIS
+    渲染单个分类的 Rules 文件内容（对齐 mcp-manager.js renderRules）
+    .PARAMETER Category
+    分类定义 hashtable（含 Title/Desc/Chains/StaticRows/Tips）
+    .PARAMETER EnabledMcpIds
+    已启用的 MCP Server ID 数组
+    .OUTPUTS
+    System.String - 渲染后的 markdown 内容；无可渲染行时返回 $null
+    #>
+    param(
+        [Parameter(Mandatory = $true)] [hashtable]$Category,
+        [Parameter(Mandatory = $true)] [string[]]$EnabledMcpIds
+    )
+
+    $sb = [System.Text.StringBuilder]::new()
+    [void]$sb.Append("# $($Category.Title)`n`n")
+    [void]$sb.Append("> 自动生成，请勿手动编辑。由 MCP Manager 根据已启用的 MCP Server 动态渲染。`n`n")
+
+    if ($Category.ContainsKey("Desc") -and $Category.Desc) {
+        [void]$sb.Append("$($Category.Desc)`n`n")
+    }
+
+    [void]$sb.Append("| 场景 | 工具链 |`n")
+    [void]$sb.Append("|------|--------|`n")
+
+    # 渲染 Chains（仅保留已启用 MCP 的步骤）
+    if ($Category.ContainsKey("Chains") -and $Category.Chains) {
+        foreach ($chain in $Category.Chains) {
+            $tools = [System.Collections.Generic.List[string]]::new()
+            if ($chain.ContainsKey("Steps") -and $chain.Steps) {
+                foreach ($step in $chain.Steps) {
+                    if ($EnabledMcpIds -contains $step.McpId) {
+                        $tool = if ($step.ContainsKey("Tool") -and $step.Tool) { $step.Tool } else { "mcp__$($step.McpId)__*" }
+                        $tools.Add($tool)
+                    }
+                }
+            }
+            if ($chain.ContainsKey("Fallback") -and $chain.Fallback) {
+                $tools.Add("$($chain.Fallback)（兜底）")
+            }
+            if ($tools.Count -gt 0) {
+                [void]$sb.Append("| $($chain.Scenario) | ``$($tools -join ' → ')`` |`n")
+            }
+        }
+    }
+
+    # 渲染 StaticRows（始终输出）
+    if ($Category.ContainsKey("StaticRows") -and $Category.StaticRows) {
+        foreach ($row in $Category.StaticRows) {
+            [void]$sb.Append("| $($row.Scenario) | ``$($row.Tool)`` |`n")
+        }
+    }
+
+    [void]$sb.Append("`n")
+
+    # Tips
+    if ($Category.ContainsKey("Tips") -and $Category.Tips -and @($Category.Tips).Count -gt 0) {
+        [void]$sb.Append("**Tips**:`n")
+        foreach ($tip in $Category.Tips) {
+            [void]$sb.Append("- $tip`n")
+        }
+    }
+
+    return $sb.ToString()
+}
+
+function Sync-McpRules {
+    <#
+    .SYNOPSIS
+    同步 MCP Rules 文件（Install 链纯 PS 实现，对齐 mcp-manager.js syncRules）
+    .DESCRIPTION
+    读取 .claude.json 的 mcpServers 作为已启用列表，按契约分类渲染
+    ~/.claude/rules/ccq-mcp-*.md；某分类无已启用 MCP 时删除对应文件。
+    静默失败，不阻塞安装主流程。
+    .OUTPUTS
+    System.Boolean - 同步成功返回 $true
+    #>
+    try {
+        if (-not $script:McpRulesCategories -or @($script:McpRulesCategories.Keys).Count -eq 0) {
+            return $true
+        }
+
+        # 已启用 MCP = .claude.json 实际配置的 mcpServers
+        $enabledIds = @()
+        $claudeJsonPath = "$(Get-UserHome)\.claude.json"
+        if (Test-Path $claudeJsonPath) {
+            $claudeJson = Get-Content -Path $claudeJsonPath -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -AsHashtable -ErrorAction SilentlyContinue
+            if ($claudeJson -and $claudeJson.ContainsKey("mcpServers") -and $claudeJson["mcpServers"]) {
+                $enabledIds = @($claudeJson["mcpServers"].Keys)
+            }
+        }
+
+        $rulesDir = "$(Get-UserHome)\.claude\rules"
+
+        foreach ($catName in $script:McpRulesCategories.Keys) {
+            $cat = $script:McpRulesCategories[$catName]
+            $filePath = Join-Path $rulesDir $cat.FileName
+
+            # 该分类下已启用的 MCP ID（契约里属于本分类且 .claude.json 已配置）
+            $enabledForCat = @($script:McpServers.Keys | Where-Object {
+                $script:McpServers[$_].Category -eq $catName -and $enabledIds -contains $_
+            })
+
+            # 无已启用 MCP → 删除文件
+            if ($enabledForCat.Count -eq 0) {
+                if (Test-Path $filePath) {
+                    Remove-Item -Path $filePath -Force -ErrorAction SilentlyContinue
+                }
+                continue
+            }
+
+            $content = Format-McpRulesContent -Category $cat -EnabledMcpIds $enabledForCat
+            if (-not $content) { continue }
+
+            # 变更检测（规范化换行后比较）
+            $existing = ""
+            if (Test-Path $filePath) {
+                $existing = Get-Content -Path $filePath -Raw -ErrorAction SilentlyContinue
+            }
+            $contentNorm = ($content -replace "`r`n", "`n").Trim()
+            $existingNorm = ($existing -replace "`r`n", "`n").Trim()
+
+            if ($contentNorm -ne $existingNorm) {
+                if (-not (Test-Path $rulesDir)) {
+                    New-Item -ItemType Directory -Path $rulesDir -Force | Out-Null
+                }
+                # 字节精确原子写（UTF-8 无 BOM，对齐 mcp-manager.js writeFileAtomic：
+                # 不追加尾换行、不写 BOM，确保两条链生成的 rules 文件字节一致）
+                $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+                $tempPath = "$filePath.tmp_$([guid]::NewGuid().ToString('N').Substring(0,8))"
+                [IO.File]::WriteAllText($tempPath, $content, $utf8NoBom)
+                Move-Item -Path $tempPath -Destination $filePath -Force
+            }
+        }
+        return $true
+    }
+    catch {
+        # 静默失败，不阻塞主流程
+        return $false
+    }
+}
+
 # ============================================================
 # 基础工具函数
 # ============================================================
@@ -1128,12 +1307,6 @@ function Install-McpSingleServer {
             Write-UiSuccess "$($server.Name) 依赖安装完成: $(@($depResult.Installed) -join ', ')"
         }
 
-        # Phase 2: 预安装
-        $preResult = Invoke-McpPreInstall -ServerId $ServerId -Server $server
-        if ($preResult.Message -and $preResult.Message -ne "无需预安装") {
-            Write-UiSuccess "$($server.Name) $($preResult.Message)"
-        }
-
         # Phase 3: 凭据收集（含 vault 历史凭据自动填充）
         $credentials = @{}
         $envFileValues = @{}
@@ -1263,10 +1436,9 @@ function Install-McpSingleServer {
             Write-UiWarn "vault 写入失败（不影响 MCP 配置）: $($_.Exception.Message)"
         }
 
-        # 5e. Sync-AllMcpRules
-        $syncResult = Sync-AllMcpRules
-        if (-not $syncResult.Success) {
-            Write-UiWarn "MCP Rules 同步失败: $($syncResult.ErrorMessage)"
+        # 5e. 同步 MCP Rules（Install 链纯 PS 渲染，不依赖 mcp-manager.js）
+        if (-not (Sync-McpRules)) {
+            Write-UiWarn "MCP Rules 同步失败"
         }
 
         # 凭据清零（安全）

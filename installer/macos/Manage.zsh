@@ -108,7 +108,7 @@ ccq_manage_load_core() {
 
   local core_dir="${CCQ_MACOS_ROOT}/core"
   local core_file
-  for core_file in Ui Process Profile Platform PackageManager Json Registry Bootstrap Provider McpManager Update; do
+  for core_file in Ui Process Profile Platform PackageManager Json Registry Bootstrap Provider ManageCore Update; do
     ccq_manage_source_file "${core_dir}/${core_file}.zsh" || {
       printf '无法加载 macOS core: %s\n' "${core_file}.zsh" >&2
       return 1
@@ -707,8 +707,9 @@ ccq_manage_mcp_meta_path() {
 }
 
 ccq_manage_mcp_action() {
-  if command -v ccq_mcp_manage_menu >/dev/null 2>&1; then
-    ccq_mcp_manage_menu
+  # MCP 管理统一路由到 JS 面板（manage.js 子菜单 [4] MCP → mcp-manager.js）
+  if command -v ccq_manage_core_show_panel >/dev/null 2>&1; then
+    ccq_manage_core_show_panel
     return $?
   fi
 
@@ -720,7 +721,7 @@ ccq_manage_mcp_action() {
   else
     ccq_ui_warning "  尚未发现 MCP vault: ${meta_path}"
   fi
-  ccq_ui_warning "McpManager 核心模块未加载"
+  ccq_ui_warning "ManageCore 核心模块未加载"
 }
 
 ccq_manage_skills_action() {
@@ -785,19 +786,9 @@ ccq_manage_main() {
     return 1
   fi
 
-  local choice
-  while true; do
-    choice="$(ccq_manage_select_action)" || { ccq_ui_primary "退出 CCQ 管理面板" "developer"; break; }
-    case "${choice}" in
-      0)
-        ccq_manage_update_action
-        ccq_manage_pause_for_main_menu
-        ;;
-      1) ccq_manage_provider_action ;;
-      2) ccq_manage_mcp_action ;;
-      3) ccq_manage_skills_action ;;
-    esac
-  done
+  # JS 统一管理面板（manage.js 子菜单路由 Update/Provider/MCP/Skills）
+  # CLI 模式（-Action）仍走上方 dispatch；manage.js 为纯交互面板（无 CLI 参数）
+  ccq_manage_core_show_panel
 }
 
 ccq_manage_main "$@"

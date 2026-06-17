@@ -54,19 +54,28 @@ const COLORS = {
   reset: '\x1b[0m'
 };
 
-let IS_TTY = false;
-let TTY_INPUT = process.stdin;
-let TTY_OUTPUT = process.stdout;
-let TTY_OWNS_FD = false;
-try {
-  const ttyFd = fs.openSync('/dev/tty', 'r+');
-  fs.closeSync(ttyFd);
-  IS_TTY = true;
-  TTY_INPUT = new tty.ReadStream(fs.openSync('/dev/tty', 'r'));
-  TTY_OUTPUT = new tty.WriteStream(fs.openSync('/dev/tty', 'w'));
-  TTY_OWNS_FD = true;
-} catch (e) {
-  IS_TTY = process.stdin.isTTY && process.stdout.isTTY;
+// TTY 状态（W1 收敛，任务 11.2.1）：bundle 模式复用 manage.js 单例 TTY 流，
+// 避免每子模块各自 openSync('/dev/tty') 导致 fd 泄漏 + 多重 signal handler；
+// 仅独立运行（node update-manager.js）时本地 openSync。
+let IS_TTY, TTY_INPUT, TTY_OUTPUT, TTY_OWNS_FD;
+if (shared?.tty) {
+  ({ IS_TTY, TTY_INPUT, TTY_OUTPUT } = shared.tty);
+  TTY_OWNS_FD = false;
+} else {
+  IS_TTY = false;
+  TTY_INPUT = process.stdin;
+  TTY_OUTPUT = process.stdout;
+  TTY_OWNS_FD = false;
+  try {
+    const ttyFd = fs.openSync('/dev/tty', 'r+');
+    fs.closeSync(ttyFd);
+    IS_TTY = true;
+    TTY_INPUT = new tty.ReadStream(fs.openSync('/dev/tty', 'r'));
+    TTY_OUTPUT = new tty.WriteStream(fs.openSync('/dev/tty', 'w'));
+    TTY_OWNS_FD = true;
+  } catch (e) {
+    IS_TTY = process.stdin.isTTY && process.stdout.isTTY;
+  }
 }
 const SUPPORTS_ANSI = IS_TTY;
 
@@ -698,14 +707,37 @@ async function main() {
   }
 }
 
-process.on('exit', cleanupGlobalTTY);
-process.on('SIGINT', () => { cleanupGlobalTTY(); process.exit(130); });
-process.on('SIGTERM', () => { cleanupGlobalTTY(); process.exit(143); });
+// 退出清理与入口：仅独立 CLI 运行时注册（W1 收敛），bundle 模式由 manage.js 统一注册
+if (require.main === module) {
+  process.on('exit', cleanupGlobalTTY);
+  process.on('SIGINT', () => { cleanupGlobalTTY(); process.exit(130); });
+  process.on('SIGTERM', () => { cleanupGlobalTTY(); process.exit(143); });
+  main();
+}
 
-if (require.main === module) main();
+/**
+ * 交互式入口函数（供 manage.js 单文件 bundle 调用）
+ *
+ * 复用 runApplyUpdates() 的交互逻辑，但通过函数调用而非子进程启动。
+ * 不调用 process.exit，让控制权返回 manage.js。
+ */
+async function runInteractive() {
+  try {
+    console.log(colorize('═══════════════════════════════════════════', 'primary'));
+    console.log(colorize('            Update 组件更新                ', 'primary'));
+    console.log(colorize('═══════════════════════════════════════════', 'primary'));
+    await runApplyUpdates();
+    cleanupGlobalTTY();
+  } catch (err) {
+    console.error(colorize(`❌ ${err.message}`, 'danger'));
+    cleanupGlobalTTY();
+    throw err;
+  }
+}
 
 module.exports = {
   SCRIPT_VERSION,
+  runInteractive,
   NPM_OUTDATED_CACHE_TTL_MS,
   parseSemver,
   semverCompare,

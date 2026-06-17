@@ -77,24 +77,30 @@ const COLORS = {
 const MARKER_START = '# >>> Claude Code Quickstart >>>';
 const MARKER_END = '# <<< Claude Code Quickstart <<<';
 
-// TTY 检测与流准备（复用 mcp-manager.js 的 TTY 处理，供 Phase 1b TUI 使用）
-let IS_TTY = false;
-let TTY_INPUT = process.stdin;
-let TTY_OUTPUT = process.stdout;
-let TTY_OWNS_FD = false;
-
-try {
-  const ttyFd = fs.openSync('/dev/tty', 'r+');
-  fs.closeSync(ttyFd);
-  IS_TTY = true;
-  TTY_INPUT = new tty.ReadStream(fs.openSync('/dev/tty', 'r'));
-  TTY_OUTPUT = new tty.WriteStream(fs.openSync('/dev/tty', 'w'));
-  TTY_OWNS_FD = true;
-} catch (e) {
-  IS_TTY = process.stdin.isTTY && process.stdout.isTTY;
+// TTY 状态（W1 收敛，任务 11.2.1）：bundle 模式复用 manage.js 单例 TTY 流，
+// 避免每子模块各自 openSync('/dev/tty') 导致 fd 泄漏 + 多重 signal handler +
+// readline 流争抢；仅独立运行（node provider-manager.js）时本地 openSync。
+// /dev/tty 优先以支持 curl|bash / irm|iex 管道场景下的交互式输入。
+let IS_TTY, TTY_INPUT, TTY_OUTPUT, TTY_OWNS_FD;
+if (shared?.tty) {
+  ({ IS_TTY, TTY_INPUT, TTY_OUTPUT } = shared.tty);
+  TTY_OWNS_FD = false;  // 复用 manage.js 单例，cleanup 成 no-op
+} else {
+  IS_TTY = false;
+  TTY_INPUT = process.stdin;
+  TTY_OUTPUT = process.stdout;
   TTY_OWNS_FD = false;
+  try {
+    const ttyFd = fs.openSync('/dev/tty', 'r+');
+    fs.closeSync(ttyFd);
+    IS_TTY = true;
+    TTY_INPUT = new tty.ReadStream(fs.openSync('/dev/tty', 'r'));
+    TTY_OUTPUT = new tty.WriteStream(fs.openSync('/dev/tty', 'w'));
+    TTY_OWNS_FD = true;
+  } catch (e) {
+    IS_TTY = process.stdin.isTTY && process.stdout.isTTY;
+  }
 }
-
 const SUPPORTS_ANSI = IS_TTY;
 
 function cleanupGlobalTTY() {
@@ -1197,7 +1203,681 @@ function hasProfileMarker(profilePath) {
 }
 
 // ============================================================================
-// 入口层（Phase 1a：--version / status / list；TUI Dashboard 待 Phase 1b）
+// 交互式 TUI 层（Phase 1b，任务 11.1）
+// 忠实移植 installer/windows/core/Provider.ps1：
+//   Show-ProviderDashboard / Show-ProviderDashboardFallback / Render-ProviderTable /
+//   Render-ActionBar / Add-Provider / Edit-Provider / Edit-ManagedModelEnv / Remove-Provider
+// 渲染用 CJK-aware displayWidth/pad；单键捕获、单选菜单、掩码输入复用 readline
+// raw mode（对齐 mcp-manager.js showMenu 范式）。业务逻辑全部委托现有 *Unlocked
+// 变更函数（零新增业务逻辑，HC-FEATURE-PARITY）。
+// ============================================================================
+
+/** 清屏 + 光标归位（对齐 Clear-UiScreen） */
+function clearProviderScreen() {
+  readline.cursorTo(TTY_OUTPUT, 0, 0);
+  readline.clearScreenDown(TTY_OUTPUT);
+}
+
+/** 横幅标题（对齐 Show-AsciiBanner 简化版） */
+function showProviderBanner(title) {
+  console.log(colorize(title, 'primary'));
+  console.log(colorize('─'.repeat(Math.max(1, displayWidth(title))), 'dim'));
+  console.log('');
+}
+
+/** 行模式输入（对齐 Read-Host）。非 TTY 返回空串。 */
+function promptInput(question) {
+  return new Promise((resolve) => {
+    if (!IS_TTY) { resolve(''); return; }
+    const rl = readline.createInterface({ input: TTY_INPUT, output: TTY_OUTPUT });
+    rl.question(question, (answer) => { rl.close(); resolve(answer == null ? '' : String(answer)); });
+  });
+}
+
+/** 掩码输入（对齐 Read-Host -AsSecureString）：raw mode 不回显，Enter 提交，Backspace 删除 */
+function promptSecret(question) {
+  return new Promise((resolve) => {
+    if (!IS_TTY) { resolve(''); return; }
+    TTY_OUTPUT.write(question);
+    let input = '';
+    const onKeypress = (str, key) => {
+      if (key.name === 'return' || key.name === 'enter') {
+        cleanup();
+        TTY_OUTPUT.write('\n');
+        resolve(input);
+      } else if (key.name === 'backspace') {
+        if (input.length > 0) { input = input.slice(0, -1); TTY_OUTPUT.write('\b \b'); }
+      } else if (key.ctrl && key.name === 'c') {
+        cleanup();
+        cleanupGlobalTTY();
+        process.exit(130);
+      } else if (str && !key.ctrl && !key.meta && key.name !== 'tab' && key.name !== 'escape') {
+        input += str;  // raw mode 天然不回显，对齐 -AsSecureString
+      }
+    };
+    function cleanup() {
+      if (TTY_INPUT.isTTY) TTY_INPUT.setRawMode(false);
+      TTY_INPUT.removeListener('keypress', onKeypress);
+      TTY_INPUT.pause();
+    }
+    if (TTY_INPUT.isTTY) { readline.emitKeypressEvents(TTY_INPUT); TTY_INPUT.setRawMode(true); }
+    TTY_INPUT.on('keypress', onKeypress);
+    TTY_INPUT.resume();
+  });
+}
+
+/** 单键捕获（对齐 [Console]::ReadKey($true)）。非 TTY 返回 null。 */
+function readSingleKey() {
+  return new Promise((resolve) => {
+    if (!IS_TTY) { resolve(null); return; }
+    const onKeypress = (str, key) => { cleanup(); resolve(key || { name: null, sequence: str, ctrl: false }); };
+    function cleanup() {
+      if (TTY_INPUT.isTTY) TTY_INPUT.setRawMode(false);
+      TTY_INPUT.removeListener('keypress', onKeypress);
+      TTY_INPUT.pause();
+    }
+    if (TTY_INPUT.isTTY) { readline.emitKeypressEvents(TTY_INPUT); TTY_INPUT.setRawMode(true); }
+    TTY_INPUT.on('keypress', onKeypress);
+    TTY_INPUT.resume();
+  });
+}
+
+/** 等待任意键（对齐「按任意键继续」） */
+async function waitAnyKey() {
+  if (!IS_TTY) return;
+  console.log(colorize('按任意键继续...', 'dim'));
+  await readSingleKey();
+}
+
+/**
+ * 单选菜单（对齐 Show-SingleSelectMenu + mcp-manager.js showMenu 范式）
+ * @returns {Promise<number>} 选中索引（0-based）；取消/Esc 返回 -1
+ */
+function providerSingleSelect(title, options) {
+  return new Promise((resolve) => {
+    if (!IS_TTY) { resolve(-1); return; }
+    let selected = 0;
+    const lineCount = options.length + 5;  // 空行+标题+空行+N选项+空行+提示
+
+    function render() {
+      readline.clearScreenDown(TTY_OUTPUT);
+      readline.cursorTo(TTY_OUTPUT, 0);
+      console.log('');
+      console.log(colorize(title, 'primary'));
+      console.log('');
+      options.forEach((opt, i) => {
+        if (i === selected) console.log(colorize(`  ► ${opt}`, 'primary'));
+        else console.log(`    ${opt}`);
+      });
+      console.log('');
+      console.log(colorize('↑/↓ 选择  Enter 确认  Esc/q 取消', 'dim'));
+      readline.moveCursor(TTY_OUTPUT, 0, -lineCount);
+    }
+    render();
+
+    const onKeypress = (str, key) => {
+      if (key.name === 'up') { selected = (selected - 1 + options.length) % options.length; render(); }
+      else if (key.name === 'down') { selected = (selected + 1) % options.length; render(); }
+      else if (key.name === 'return') { cleanup(); readline.moveCursor(TTY_OUTPUT, 0, lineCount); console.log(''); resolve(selected); }
+      else if (key.name === 'escape' || str === 'q') { cleanup(); readline.moveCursor(TTY_OUTPUT, 0, lineCount); console.log(''); resolve(-1); }
+      else if (key.ctrl && key.name === 'c') { cleanup(); cleanupGlobalTTY(); process.exit(0); }
+    };
+    function cleanup() {
+      if (TTY_INPUT.isTTY) TTY_INPUT.setRawMode(false);
+      TTY_INPUT.removeListener('keypress', onKeypress);
+      TTY_INPUT.pause();
+      TTY_OUTPUT.write('\x1b[?25h');  // 恢复光标
+    }
+    if (TTY_INPUT.isTTY) { readline.emitKeypressEvents(TTY_INPUT); TTY_INPUT.setRawMode(true); }
+    TTY_INPUT.on('keypress', onKeypress);
+    TTY_INPUT.resume();
+    TTY_OUTPUT.write('\x1b[?25l');  // 隐藏光标（对齐 PS [Console]::CursorVisible = $false）
+  });
+}
+
+/** 渲染供应商表格（对齐 Render-ProviderTable，CJK-aware padding + 截断） */
+function renderProviderTable(profiles, selectedIndex) {
+  const colWidths = [15, 35, 15, 10];
+  const headerLine = '  ' +
+    pad('供应商', colWidths[0]) + ' ' +
+    pad('Base URL', colWidths[1]) + ' ' +
+    pad('API Key', colWidths[2]) + ' ' +
+    pad('状态', colWidths[3]);
+  console.log(colorize(headerLine, 'dim'));
+  const sepWidth = colWidths.reduce((a, b) => a + b, 0) + colWidths.length - 1;
+  console.log(colorize('  ' + '-'.repeat(sepWidth), 'dim'));
+
+  profiles.forEach((p, i) => {
+    const isSelected = i === selectedIndex;
+    const marker = isSelected ? '►' : ' ';
+    const colorKey = isSelected ? 'primary' : (p.isActive ? 'success' : 'dim');
+
+    // URL 截断（ASCII，按 .length，对齐 PS 1958-1961）
+    let urlDisplay = String(p.baseUrl || '');
+    if (urlDisplay.length > colWidths[1]) urlDisplay = urlDisplay.substring(0, colWidths[1] - 3) + '...';
+    // 名称截断（CJK 感知，对齐 PS 1963-1970 while 循环）
+    let nameDisplay = String(p.name || '');
+    if (displayWidth(nameDisplay) > colWidths[0]) {
+      while (displayWidth(nameDisplay + '...') > colWidths[0] && nameDisplay.length > 0) {
+        nameDisplay = nameDisplay.substring(0, nameDisplay.length - 1);
+      }
+      nameDisplay += '...';
+    }
+    const statusText = p.isActive ? 'Active' : 'Inactive';
+
+    const line = marker + ' ' +
+      pad(nameDisplay, colWidths[0]) + ' ' +
+      pad(urlDisplay, colWidths[1]) + ' ' +
+      pad(String(p.maskedApiKey || ''), colWidths[2]) + ' ' +
+      pad(statusText, colWidths[3]);
+    console.log(colorize(line, colorKey));
+  });
+}
+
+/** 渲染热键栏（对齐 Render-ActionBar，热键高亮） */
+function renderActionBar(hasProviders) {
+  console.log('');
+  const k = (s) => colorize(s, 'info');
+  const d = (s) => colorize(s, 'dim');
+  if (hasProviders) {
+    console.log(
+      d(' [') + k('↑↓') + d('] 移动  [') + k('Enter') + d('] 切换活跃  [') +
+      k('A') + d('] 添加  [') + k('E') + d('] 修改  [') +
+      k('M') + d('] 模型  [') + k('D') + d('] 删除  [') +
+      k('Esc') + d('] 返回')
+    );
+  } else {
+    console.log(d(' [') + k('A') + d('] 添加  [') + k('Esc') + d('] 返回'));
+  }
+}
+
+/** 渲染选中供应商模型配置摘要（Detail Pane，对齐 Dashboard 2157-2169） */
+function renderDetailPane(profilePath) {
+  console.log('');
+  if (!profilePath || !fs.existsSync(profilePath)) return;
+  try {
+    const profile = readJson(profilePath, null);
+    if (!profile) { console.log(colorize('  模型配置: (读取失败)', 'dim')); return; }
+    console.log(colorize(`  模型配置: ${getManagedModelSummary(profile)}`, 'dim'));
+  } catch (e) {
+    console.log(colorize('  模型配置: (读取失败)', 'dim'));
+  }
+}
+
+/** 截断辅助（已配置标记用） */
+function truncateLabel(s, max) {
+  s = String(s || '');
+  return s.length > max ? s.substring(0, max) + '...' : s;
+}
+
+/** 收集模型环境键（对齐 Add-Provider / Edit-ManagedModelEnv 的逐键输入） */
+async function collectModelEnv(promptPrefix) {
+  const cfg = RUNTIME_CONFIG;
+  const modelEnv = {};
+  for (const envKey of cfg.managedModelEnvKeys) {
+    const label = cfg.modelEnvLabels[envKey];
+    const v = (await promptInput(`${promptPrefix}${label} (${envKey}) (留空跳过)`)).trim();
+    if (v) modelEnv[envKey] = v;
+  }
+  return Object.keys(modelEnv).length > 0 ? modelEnv : null;
+}
+
+// ─── Create：添加供应商交互（对齐 Add-Provider 1180-1493）─────────────────────
+async function addProviderInteractive() {
+  const cfg = RUNTIME_CONFIG;
+  const existing = getProviderList();
+  const builtinKeys = ['zhipu', 'minimax', 'moonshot', 'deepseek', 'bailian'];
+
+  // 6 选 1 菜单（含已配置标记，对齐 1194-1222）
+  const labels = builtinKeys.map((bk) => {
+    const t = cfg.builtinProviders[bk];
+    const copies = findBuiltinProviderProfiles(bk, existing);
+    let tag = '';
+    if (copies.length === 1) {
+      tag = copies[0].name === t.name ? ' [已配置]' : ` [已配置: ${truncateLabel(copies[0].name, 10)}]`;
+    } else if (copies.length > 1) {
+      tag = ` [已配置 x${copies.length}]`;
+    }
+    return `${t.name} - ${t.description}${tag}`;
+  });
+  labels.push(`${cfg.builtinProviders.custom.name} - ${cfg.builtinProviders.custom.description}`);
+  const allKeys = [...builtinKeys, 'custom'];
+
+  const idx = await providerSingleSelect('请选择 API 供应商:', labels);
+  if (idx < 0 || idx >= allKeys.length) {
+    console.log(colorize('未选择供应商', 'warning'));
+    await waitAnyKey();
+    return null;
+  }
+
+  const builtinKey = allKeys[idx];
+  const template = cfg.builtinProviders[builtinKey];
+  let providerName = template.name;
+  let providerBaseUrl = template.baseUrl;
+  let customName = '';
+  const isBuiltin = builtinKey !== 'custom';
+
+  console.log(colorize(`已选择: ${providerName}`, 'success'));
+
+  if (!isBuiltin) {
+    // 自定义：名称 + Base URL（校验，对齐 1240-1268）
+    customName = (await promptInput('供应商名称（可选，直接回车使用默认）')).trim();
+    if (customName) providerName = customName;
+    while (true) {
+      const url = (await promptInput('Base URL（必填，如 https://api.example.com/anthropic）')).trim();
+      if (!url) { console.log(colorize('Base URL 不能为空', 'danger')); continue; }
+      if (!/^https?:\/\//.test(url)) { console.log(colorize('Base URL 必须以 http:// 或 https:// 开头', 'danger')); continue; }
+      providerBaseUrl = url.replace(/\/+$/, '');
+      break;
+    }
+    console.log(colorize(`Base URL 已设置: ${providerBaseUrl}`, 'success'));
+  } else {
+    console.log(colorize(`请前往以下平台获取 API Key: ${template.platformUrl}`, 'info'));
+  }
+
+  // API Key 掩码输入（对齐 1359-1383）
+  console.log('');
+  console.log(colorize(`请粘贴 ${providerName} 的 API Key（输入不会回显）:`, 'primary'));
+  console.log(colorize('注意: API Key 将写入 ~/.claude/settings.json 和 ~/.claude/providers/', 'warning'));
+  let apiKey = '';
+  while (true) {
+    apiKey = (await promptSecret('API Key: ')).trim();
+    if (!apiKey) { console.log(colorize('API Key 不能为空，请重新输入', 'danger')); continue; }
+    break;
+  }
+
+  // 重复检测交互（对齐 1273-1357）
+  let conflictStrategy;
+  if (isBuiltin) {
+    const copies = findBuiltinProviderProfiles(builtinKey, existing);
+    if (copies.length > 0) {
+      console.log('');
+      console.log(colorize(`检测到 ${template.name} 已配置：`, 'warning'));
+      copies.forEach((c) => console.log(colorize(`  - ${c.name} (${c.baseUrl})`, 'info')));
+      const action = await providerSingleSelect('如何处理？', [
+        '新增（保留现有，创建新配置）', '覆盖现有配置', '取消添加',
+      ]);
+      if (action === -1 || action === 2) {
+        console.log(colorize('已取消，可通过「修改供应商」更新现有配置', 'dim'));
+        await waitAnyKey();
+        return null;
+      }
+      if (action === 0) {
+        conflictStrategy = 'increment';
+        const newName = (await promptInput('显示名称（可选，直接回车使用默认）')).trim();
+        if (newName) providerName = newName;
+      } else {
+        conflictStrategy = 'overwrite';
+      }
+    }
+  } else {
+    const customKey = newCustomProviderKey(customName, providerBaseUrl);
+    const customPath = path.join(PROVIDERS_DIR, `${customKey}.json`);
+    if (fs.existsSync(customPath)) {
+      const existProfile = readJson(customPath, {});
+      const existName = (existProfile._meta && existProfile._meta.provider) || customKey;
+      const existUrl = (existProfile._meta && existProfile._meta.baseUrl) || '未知';
+      console.log('');
+      console.log(colorize('检测到同名供应商已存在：', 'warning'));
+      console.log(colorize(`  名称: ${existName}`, 'info'));
+      console.log(colorize(`  Base URL: ${existUrl}`, 'info'));
+      console.log(colorize(`  文件: ~/.claude/providers/${customKey}.json`, 'info'));
+      const ow = await providerSingleSelect('如何处理？', ['覆盖现有配置', '取消添加']);
+      if (ow !== 0) {
+        console.log(colorize('已取消，可通过「修改供应商」更新现有配置', 'dim'));
+        await waitAnyKey();
+        return null;
+      }
+      conflictStrategy = 'overwrite';
+    }
+  }
+
+  // 模型 env 收集（对齐 1417-1451）
+  let modelEnv = null;
+  if (isBuiltin && template.requireModelConfig) {
+    console.log('');
+    console.log(colorize('此供应商需要配置模型名称', 'primary'));
+    console.log(colorize('  将写入 settings.env 的 3 个模型键；留空表示不设置该键', 'dim'));
+    modelEnv = await collectModelEnv('  ');
+  } else if (!isBuiltin) {
+    const mi = await providerSingleSelect('是否配置模型环境键？(可选，大多数供应商不需要)', ['跳过', '配置模型']);
+    if (mi === 1) {
+      console.log(colorize('  将写入 settings.env 的 3 个模型键；留空表示不设置该键', 'dim'));
+      modelEnv = await collectModelEnv('  ');
+    }
+  }
+
+  // 配置摘要 + 确认（对齐 1385-1401）
+  console.log('');
+  console.log(colorize('即将写入以下配置：', 'warning'));
+  console.log(colorize(`  供应商: ${providerName}`, 'info'));
+  console.log(colorize(`  Base URL: ${providerBaseUrl}`, 'info'));
+  if (isBuiltin && template.extraEnv) {
+    const extra = Object.entries(template.extraEnv).map(([ek, ev]) => `${ek}=${ev}`).join(', ');
+    console.log(colorize(`  额外 env: ${extra}`, 'info'));
+  }
+  console.log(colorize(`  Key 摘要: ${maskApiKey(apiKey)}`, 'info'));
+  console.log('');
+  const confirmIdx = await providerSingleSelect('确认保存配置？', ['是，保存', '否，取消']);
+  if (confirmIdx !== 0) {
+    console.log(colorize('已取消', 'warning'));
+    await waitAnyKey();
+    return null;
+  }
+
+  // 激活询问（对齐 1474-1484）
+  const actIdx = await providerSingleSelect('是否立即激活此供应商？', ['是，立即激活', '否，稍后激活']);
+  const activate = actIdx === 0;
+
+  // 委托 addProvider 执行（key 生成 / Profile 构建 / 激活全部封装）
+  const result = addProvider({
+    builtinKey: isBuiltin ? builtinKey : undefined,
+    name: providerName,
+    baseUrl: isBuiltin ? undefined : providerBaseUrl,
+    apiKey,
+    modelEnv: modelEnv || undefined,
+    activate,
+    conflictStrategy,
+  });
+
+  if (result.success) {
+    console.log(colorize(`供应商 Profile 已保存: ~/.claude/providers/${result.key}.json`, 'success'));
+    if (result.activated) console.log(colorize(`已激活: ${result.name}`, 'success'));
+    if (result.activateError) console.log(colorize(`激活失败: ${result.activateError}`, 'warning'));
+  } else {
+    console.log(colorize(`添加失败: ${result.error}`, 'danger'));
+  }
+  await waitAnyKey();
+  return result;
+}
+
+// ─── Model Config：模型环境键管理（对齐 Edit-ManagedModelEnv 1497-1571）─────────
+async function editManagedModelEnvInteractive(profilePath) {
+  const cfg = RUNTIME_CONFIG;
+  const profile = readJson(profilePath, null) || {};
+  let editable = {};
+  const current = getManagedModelEnv(profile);
+  for (const envKey of cfg.managedModelEnvKeys) {
+    if (current[envKey] !== undefined) editable[envKey] = current[envKey];
+  }
+
+  while (true) {
+    console.log('');
+    console.log(colorize('模型配置管理', 'primary'));
+    console.log('');
+    if (Object.keys(editable).length === 0) {
+      console.log(colorize('  (无模型配置)', 'dim'));
+    } else {
+      for (const envKey of cfg.managedModelEnvKeys) {
+        if (editable[envKey] !== undefined) {
+          console.log(colorize(`  ${cfg.modelEnvLabels[envKey]} (${envKey}) => ${editable[envKey]}`, 'info'));
+        }
+      }
+    }
+    console.log('');
+    const c = await providerSingleSelect('选择操作：', ['设置模型环境键', '清除全部模型配置', '返回']);
+    if (c === 0) {
+      for (const envKey of cfg.managedModelEnvKeys) {
+        const label = cfg.modelEnvLabels[envKey];
+        const cur = editable[envKey] !== undefined ? editable[envKey] : '(未设置)';
+        const v = (await promptInput(`  ${label} (${envKey}) [${cur}] (留空保持不变，输入 - 删除)`)).trim();
+        if (v === '-') { delete editable[envKey]; }
+        else if (v) { editable[envKey] = v; }
+      }
+      console.log(colorize('模型配置已更新', 'success'));
+    } else if (c === 1) {
+      if (Object.keys(editable).length === 0) { console.log(colorize('当前无模型配置，无需清除', 'dim')); continue; }
+      const ci = await providerSingleSelect('确认清除全部模型配置？', ['是，清除', '否，取消']);
+      if (ci === 0) { editable = {}; console.log(colorize('已清除全部模型配置', 'success')); }
+    } else {
+      break;
+    }
+  }
+  return Object.keys(editable).length > 0 ? editable : null;
+}
+
+// ─── Update：修改供应商（对齐 Edit-Provider 1575-1765）─────────────────────────
+async function editProviderInteractive(key) {
+  const profilePath = path.join(PROVIDERS_DIR, `${key}.json`);
+  if (!fs.existsSync(profilePath)) {
+    console.log(colorize(`供应商 Profile 不存在: ${key}`, 'danger'));
+    await waitAnyKey();
+    return;
+  }
+  const profile = readJson(profilePath, null);
+  if (!profile) {
+    console.log(colorize('供应商 Profile 读取失败', 'danger'));
+    await waitAnyKey();
+    return;
+  }
+  const meta = profile._meta || {};
+  const envData = profile.env || {};
+
+  // 显示当前配置（对齐 1599-1610）
+  console.log('');
+  console.log(colorize('当前配置:', 'primary'));
+  console.log(colorize(`  供应商: ${meta.provider || ''}`, 'info'));
+  console.log(colorize(`  Base URL: ${meta.baseUrl || ''}`, 'info'));
+  console.log(colorize(`  API Key: ${maskApiKey(envData.ANTHROPIC_AUTH_TOKEN || '')}`, 'info'));
+  console.log(colorize(`  模型配置: ${getManagedModelSummary(profile)}`, 'info'));
+  console.log('');
+
+  const choice = await providerSingleSelect('选择修改项：', [
+    '修改 API Key', '修改 Base URL', '修改供应商名称', '配置模型环境键', '全部重新配置',
+  ]);
+  if (choice === -1) return;
+
+  // 全部重新配置 → 备份 + Add 新 + 清旧（对齐 1697-1725）
+  if (choice === 4) {
+    const backupPath = profilePath + '.bak';
+    try {
+      fs.copyFileSync(profilePath, backupPath);
+      const addResult = await addProviderInteractive();
+      if (addResult && addResult.success) {
+        if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
+        if (addResult.key !== key && fs.existsSync(profilePath)) fs.unlinkSync(profilePath);
+      } else if (fs.existsSync(backupPath)) {
+        fs.renameSync(backupPath, profilePath);
+        console.log(colorize('已恢复原有配置', 'warning'));
+      }
+    } catch (e) {
+      try { if (fs.existsSync(backupPath)) fs.renameSync(backupPath, profilePath); } catch (_) { /* 静默 */ }
+      console.log(colorize('操作异常，已恢复原有配置', 'warning'));
+    }
+    return;
+  }
+
+  const updates = {};
+  if (choice === 0) {
+    console.log(colorize('请输入新的 API Key（输入不会回显）:', 'primary'));
+    const nk = (await promptSecret('新 API Key: ')).trim();
+    if (!nk) { console.log(colorize('API Key 不能为空，取消修改', 'danger')); await waitAnyKey(); return; }
+    updates.apiKey = nk;
+  } else if (choice === 1) {
+    const nu = (await promptInput('新 Base URL ')).trim();
+    if (!nu || !/^https?:\/\//.test(nu)) { console.log(colorize('Base URL 无效，取消修改', 'danger')); await waitAnyKey(); return; }
+    updates.baseUrl = nu;
+  } else if (choice === 2) {
+    const nn = (await promptInput('新供应商名称 ')).trim();
+    if (!nn) { console.log(colorize('名称不能为空，取消修改', 'danger')); await waitAnyKey(); return; }
+    updates.name = nn;
+  } else if (choice === 3) {
+    updates.modelEnv = await editManagedModelEnvInteractive(profilePath);
+  }
+
+  try {
+    const r = editProvider(key, updates);
+    if (updates.modelEnv !== undefined) {
+      console.log(colorize('模型配置已保存', 'success'));
+    } else {
+      const dispName = r.renamed ? `${key} → ${r.key}` : (meta.provider || key);
+      console.log(colorize(`供应商配置已更新: ${dispName}`, 'success'));
+    }
+  } catch (e) {
+    console.log(colorize(`修改失败: ${e.message}`, 'danger'));
+  }
+  await waitAnyKey();
+}
+
+// ─── Delete：删除供应商（对齐 Remove-Provider 1769-1807）───────────────────────
+async function removeProviderInteractive(key) {
+  // 活跃供应商保护（对齐 1791-1797；deleteProvider 内部也保护，此处先给友好提示）
+  const active = getActiveProvider();
+  if (active && active.key === key) {
+    console.log('');
+    console.log(colorize(`无法删除当前活跃的供应商: ${active.name}`, 'danger'));
+    console.log(colorize('请先切换到其他供应商后再删除', 'warning'));
+    console.log('');
+    await waitAnyKey();
+    return;
+  }
+  const ci = await providerSingleSelect(`确认删除供应商 Profile: ${key}？`, ['是，删除', '否，取消']);
+  if (ci !== 0) { console.log(colorize('已取消', 'dim')); return; }
+  try {
+    deleteProvider(key, {});
+    console.log(colorize(`已删除供应商 Profile: ${key}`, 'success'));
+  } catch (e) {
+    console.log(colorize(`删除失败: ${e.message}`, 'danger'));
+  }
+  await waitAnyKey();
+}
+
+// ─── Dashboard 主循环（对齐 Show-ProviderDashboard 2103-2237）──────────────────
+async function showProviderDashboard() {
+  let selectedIndex = 0;
+  TTY_OUTPUT.write('\x1b[?25l');  // 隐藏光标
+  try {
+    while (true) {
+      const data = getDisplayData();
+      const profiles = data.profiles;
+      // Clamp selectedIndex（对齐 2137-2143）
+      if (profiles.length === 0) selectedIndex = 0;
+      else {
+        if (selectedIndex >= profiles.length) selectedIndex = profiles.length - 1;
+        if (selectedIndex < 0) selectedIndex = 0;
+      }
+
+      clearProviderScreen();
+      showProviderBanner('供应商管理');
+
+      if (!data.hasProviders) {
+        console.log(colorize('  暂无供应商配置', 'warning'));
+        console.log('');
+        console.log(colorize('  按 [A] 添加第一个供应商', 'dim'));
+      } else {
+        renderProviderTable(profiles, selectedIndex);
+        if (profiles.length > 0) {
+          renderDetailPane(path.join(PROVIDERS_DIR, `${profiles[selectedIndex].key}.json`));
+        }
+      }
+      renderActionBar(data.hasProviders);
+
+      const key = await readSingleKey();
+      if (!key) break;
+      const name = key.name || '';
+      const ch = (key.sequence || '').toLowerCase();
+
+      if (name === 'up') {
+        if (profiles.length) selectedIndex = (selectedIndex - 1 + profiles.length) % profiles.length;
+      } else if (name === 'down') {
+        if (profiles.length) selectedIndex = (selectedIndex + 1) % profiles.length;
+      } else if (name === 'return') {
+        if (profiles.length) {
+          try { switchProvider(profiles[selectedIndex].key); }
+          catch (e) { console.log(colorize(e.message, 'danger')); await waitAnyKey(); }
+        }
+      } else if (ch === 'a') {
+        await addProviderInteractive();
+      } else if (ch === 'e') {
+        if (profiles.length) await editProviderInteractive(profiles[selectedIndex].key);
+      } else if (ch === 'm') {
+        if (profiles.length) {
+          const pp = path.join(PROVIDERS_DIR, `${profiles[selectedIndex].key}.json`);
+          if (fs.existsSync(pp)) {
+            const newModelEnv = await editManagedModelEnvInteractive(pp);
+            try { editProvider(profiles[selectedIndex].key, { modelEnv: newModelEnv }); }
+            catch (e) { console.log(colorize(e.message, 'danger')); await waitAnyKey(); }
+          }
+        }
+      } else if (ch === 'd') {
+        if (profiles.length) await removeProviderInteractive(profiles[selectedIndex].key);
+      } else if (name === 'escape') {
+        break;
+      } else if (key.ctrl && name === 'c') {
+        break;
+      }
+    }
+  } finally {
+    TTY_OUTPUT.write('\x1b[?25h');  // 恢复光标（对齐 finally [Console]::CursorVisible = $true）
+  }
+}
+
+// ─── Fallback：非 ANSI 数字菜单降级（对齐 Show-ProviderDashboardFallback 2016-2101）─
+async function showProviderDashboardFallback() {
+  while (true) {
+    const data = getDisplayData();
+    const profiles = data.profiles;
+    console.log('');
+    console.log(colorize('供应商管理', 'primary'));
+    console.log('');
+
+    if (profiles.length === 0) {
+      console.log(colorize('暂无供应商配置', 'warning'));
+      console.log('');
+      console.log(colorize('操作: A=添加供应商  Q=返回上级', 'info'));
+    } else {
+      profiles.forEach((p, i) => {
+        const tag = p.isActive ? '已启用' : '未启用';
+        console.log(`  [${i + 1}] ${p.name} - ${p.baseUrl} (${tag})`);
+      });
+      console.log('');
+      console.log(colorize('操作: [编号]=切换活跃  A=添加  E<编号>=修改  M<编号>=模型配置  D<编号>=删除  Q=返回', 'info'));
+    }
+
+    const input = (await promptInput('请输入 ')).trim();
+    if (!input) continue;
+    if (/^[qQ]$/.test(input)) return;
+    if (/^[aA]$/.test(input)) { await addProviderInteractive(); continue; }
+
+    let m;
+    if (/^\d+$/.test(input)) {
+      const idx = parseInt(input, 10) - 1;
+      if (idx >= 0 && idx < profiles.length) {
+        try { switchProvider(profiles[idx].key); console.log(colorize('已切换', 'success')); }
+        catch (e) { console.log(colorize(e.message, 'danger')); }
+      } else { console.log(colorize('编号超出范围', 'danger')); }
+      continue;
+    }
+    if ((m = input.match(/^[eE]\s*(\d+)$/))) {
+      const idx = parseInt(m[1], 10) - 1;
+      if (idx >= 0 && idx < profiles.length) await editProviderInteractive(profiles[idx].key);
+      else console.log(colorize('编号超出范围', 'danger'));
+      continue;
+    }
+    if ((m = input.match(/^[mM]\s*(\d+)$/))) {
+      const idx = parseInt(m[1], 10) - 1;
+      if (idx >= 0 && idx < profiles.length) {
+        const pp = path.join(PROVIDERS_DIR, `${profiles[idx].key}.json`);
+        if (fs.existsSync(pp)) {
+          const newModelEnv = await editManagedModelEnvInteractive(pp);
+          try { editProvider(profiles[idx].key, { modelEnv: newModelEnv }); console.log(colorize('模型配置已保存', 'success')); }
+          catch (e) { console.log(colorize(e.message, 'danger')); }
+        }
+      } else { console.log(colorize('编号超出范围', 'danger')); }
+      continue;
+    }
+    if ((m = input.match(/^[dD]\s*(\d+)$/))) {
+      const idx = parseInt(m[1], 10) - 1;
+      if (idx >= 0 && idx < profiles.length) await removeProviderInteractive(profiles[idx].key);
+      else console.log(colorize('编号超出范围', 'danger'));
+      continue;
+    }
+    console.log(colorize('无效输入', 'danger'));
+  }
+}
+
+// ============================================================================
+// 入口层（--version / status / list + 交互式 TUI Dashboard）
 // ============================================================================
 
 async function main() {
@@ -1224,20 +1904,8 @@ async function main() {
       process.exit(0);
     }
 
-    // Phase 1a 占位（TUI Dashboard / 交互式 CRUD 待 Phase 1b）
-    console.log(colorize('═══════════════════════════════════════════', 'primary'));
-    console.log(colorize('           Provider 供应商管理              ', 'primary'));
-    console.log(colorize('═══════════════════════════════════════════', 'primary'));
-    console.log('');
-    console.log(colorize('ℹ️  Phase 1a 核心逻辑已就绪（CRUD + Switch + 字段所有权）', 'info'));
-    console.log(colorize('   交互式 TUI Dashboard 待 Phase 1b 接入', 'dim'));
-    console.log('');
-    console.log(colorize('可用命令:', 'info'));
-    console.log(colorize('  node provider-manager.js status    查看供应商状态（JSON）', 'dim'));
-    console.log(colorize('  node provider-manager.js active    查看活跃供应商（JSON）', 'dim'));
-    console.log(colorize('  node provider-manager.js --version 查看版本', 'dim'));
-    console.log('');
-
+    // 默认：交互式 Dashboard（Phase 1b 接入，任务 11.1.7）
+    await runInteractive();
     cleanupGlobalTTY();
     process.exit(0);
   } catch (err) {
@@ -1247,12 +1915,12 @@ async function main() {
   }
 }
 
-// 注册退出清理
-process.on('exit', cleanupGlobalTTY);
-process.on('SIGINT', () => { cleanupGlobalTTY(); process.exit(130); });
-process.on('SIGTERM', () => { cleanupGlobalTTY(); process.exit(143); });
-
+// 退出清理与入口：仅独立 CLI 运行时注册（W1 收敛），bundle 模式由 manage.js 统一注册
 if (require.main === module) {
+  process.on('exit', cleanupGlobalTTY);
+  process.on('SIGINT', () => { cleanupGlobalTTY(); process.exit(130); });
+  process.on('SIGTERM', () => { cleanupGlobalTTY(); process.exit(143); });
+
   main().catch((err) => {
     console.error(colorize(`❌ 未捕获异常: ${err.message}`, 'danger'));
     cleanupGlobalTTY();
@@ -1263,8 +1931,42 @@ if (require.main === module) {
 // ============================================================================
 // 导出（供 manage.js 路由 / 单元测试 / Phase 1b TUI 复用）
 // ============================================================================
+
+/**
+ * 交互式入口函数（供 manage.js 单文件 bundle 调用）
+ *
+ * 复用 main() 的交互逻辑，但通过函数调用而非子进程启动
+ */
+async function runInteractive() {
+  try {
+    loadProviderConfig();  // 确保 RUNTIME_CONFIG 初始化
+    try {
+      syncFromSettings();  // 入口自动同步（迁移旧用户，对齐 Provider.ps1 2110-2114）
+    } catch (e) {
+      console.log(colorize(`供应商自动同步失败: ${e.message}`, 'warning'));
+    }
+
+    if (!IS_TTY) {
+      // 非 TTY：无法交互（避免 Fallback 死循环）
+      console.log(colorize('供应商管理需要交互式终端（TTY）。', 'warning'));
+      console.log(colorize('可用命令: node provider-manager.js status | active | --version', 'dim'));
+      return;
+    }
+    if (!SUPPORTS_ANSI) {
+      await showProviderDashboardFallback();
+    } else {
+      await showProviderDashboard();
+    }
+  } catch (err) {
+    console.error(colorize(`❌ ${err.message}`, 'danger'));
+    throw err;  // 抛出给 manage.js 处理
+  }
+}
+
 module.exports = {
   SCRIPT_VERSION,
+  // P10 交互式入口（供 manage.js bundle 调用）
+  runInteractive,
   // 契约层
   loadProviderContract,
   normalizeContract,

@@ -65,11 +65,12 @@ $script:InstallerRoot = if ([string]::IsNullOrWhiteSpace($script:WindowsRoot)) {
 . "$script:WindowsRoot\core\Ui.ps1"
 . "$script:WindowsRoot\core\Process.ps1"
 . "$script:WindowsRoot\core\Profile.ps1"
+. "$script:WindowsRoot\core\Update.ps1"
 . "$script:WindowsRoot\core\Admin.ps1"
 . "$script:WindowsRoot\core\Net.ps1"
 . "$script:WindowsRoot\core\Registry.ps1"
 . "$script:WindowsRoot\core\Bootstrap.ps1"
-. "$script:WindowsRoot\core\McpManager.ps1"
+. "$script:WindowsRoot\core\ManageCore.ps1"
 . "$script:WindowsRoot\core\Provider.ps1"
 
 # ─── Dot-source 所有步骤模块（从 Registry 动态加载）──────────────────────────
@@ -758,7 +759,8 @@ function Main {
                     }
                 }
                 "Mcp" {
-                    Show-McpManageMenu
+                    # MCP 管理统一路由到 JS 面板（manage.js 子菜单 [4] MCP → mcp-manager.js）
+                    Show-ManagePanel
                 }
                 "Skills" {
                     Show-SkillsManageMenu
@@ -768,38 +770,9 @@ function Main {
             return
         }
 
-        # ── 交互模式
-        while ($true) {
-            $choice = Select-ManageAction
-
-            if ($choice -eq -1) {
-                Write-Host ""
-                Write-UiPrimary "退出 CCQ 管理"
-                break
-            }
-
-            switch ($choice) {
-                0 {
-                    # 更新管理（捕获返回值，防止 $failCount 泄漏到控制台）
-                    $null = Invoke-UpdateAction
-                    Write-Host ""
-                    Write-UiDim "按任意键返回主菜单..."
-                    $null = [Console]::ReadKey($true)
-                }
-                1 {
-                    # 供应商管理
-                    Show-ProviderDashboard
-                }
-                2 {
-                    # MCP 管理
-                    Show-McpManageMenu
-                }
-                3 {
-                    # Skills 管理
-                    Show-SkillsManageMenu
-                }
-            }
-        }
+        # ── 交互模式：JS 统一管理面板（manage.js 子菜单路由 Update/Provider/MCP/Skills）
+        # CLI 模式（-Action）仍走上方原生 PS 分支；manage.js 为纯交互面板（无 CLI 参数）
+        Show-ManagePanel
 
     } catch {
         Write-UiDanger "CCQ 管理运行中发生严重错误: $($_.Exception.Message)"

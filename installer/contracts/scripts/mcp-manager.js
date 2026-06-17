@@ -27,6 +27,10 @@ const readline = require('readline');
 const os = require('os');
 const tty = require('tty');
 
+// 复用 manage.js 共享 TTY 单例（W1 收敛，任务 11.2.1）；mcp-manager 仍自持菜单框架
+let shared;
+try { shared = require('./manage.js'); } catch (e) { shared = null; }
+
 // ============================================================================
 // 常量层
 // ============================================================================
@@ -57,33 +61,34 @@ const COLORS = {
   reset:    '\x1b[0m'
 };
 
-// TTY 检测与流准备：优先使用 /dev/tty（支持 curl|bash 等管道场景）
-let IS_TTY = false;
-let TTY_INPUT = process.stdin;
-let TTY_OUTPUT = process.stdout;
-let TTY_OWNS_FD = false;  // 标记是否使用自定义 fd（需在 cleanup 时 destroy）
-
-try {
-  // 尝试打开 /dev/tty，如果成功则认为可交互
-  const ttyFd = fs.openSync('/dev/tty', 'r+');
-  fs.closeSync(ttyFd);
-  IS_TTY = true;
-
-  // 创建从 /dev/tty 读写的真 TTY 流（用于管道场景下的交互式输入）
-  // 必须用 tty.ReadStream/WriteStream：它们天生带 setRawMode 且 isTTY 为真，
-  // fs.createReadStream 返回的是 fs.ReadStream，没有 setRawMode，会导致
-  // "TTY_INPUT.setRawMode is not a function" 崩溃。
-  TTY_INPUT = new tty.ReadStream(fs.openSync('/dev/tty', 'r'));
-  TTY_OUTPUT = new tty.WriteStream(fs.openSync('/dev/tty', 'w'));
-  TTY_OWNS_FD = true;  // 标记：这些流持有我们打开的 fd，需手动 destroy
-} catch (e) {
-  // /dev/tty 不可用，回退到 stdin/stdout 检测
-  IS_TTY = process.stdin.isTTY && process.stdout.isTTY;
+// TTY 状态（W1 收敛，任务 11.2.1）：bundle 模式复用 manage.js 单例 TTY 流，
+// 避免每子模块各自 openSync('/dev/tty') 导致 fd 泄漏 + readline 流争抢；
+// 仅独立运行（node mcp-manager.js）时本地 openSync。/dev/tty 优先以支持
+// curl|bash 管道场景。必须用 tty.ReadStream/WriteStream（天生带 setRawMode 且
+// isTTY 为真），不可用 fs.createReadStream（无 setRawMode 会崩溃）。
+let IS_TTY, TTY_INPUT, TTY_OUTPUT, TTY_OWNS_FD;
+if (shared?.tty) {
+  ({ IS_TTY, TTY_INPUT, TTY_OUTPUT } = shared.tty);
+  TTY_OWNS_FD = false;  // 复用 manage.js 单例，cleanup 成 no-op
+} else {
+  IS_TTY = false;
   TTY_INPUT = process.stdin;
   TTY_OUTPUT = process.stdout;
-  TTY_OWNS_FD = false;  // 标记：使用全局流，禁止 destroy
+  TTY_OWNS_FD = false;
+  try {
+    const ttyFd = fs.openSync('/dev/tty', 'r+');
+    fs.closeSync(ttyFd);
+    IS_TTY = true;
+    TTY_INPUT = new tty.ReadStream(fs.openSync('/dev/tty', 'r'));
+    TTY_OUTPUT = new tty.WriteStream(fs.openSync('/dev/tty', 'w'));
+    TTY_OWNS_FD = true;
+  } catch (e) {
+    IS_TTY = process.stdin.isTTY && process.stdout.isTTY;
+    TTY_INPUT = process.stdin;
+    TTY_OUTPUT = process.stdout;
+    TTY_OWNS_FD = false;
+  }
 }
-
 const SUPPORTS_ANSI = IS_TTY;
 
 /**
@@ -365,13 +370,13 @@ function loadContract() {
     if (fs.existsSync(p)) {
       const raw = readJson(p, {});
       // 契约文件顶级键是 McpServers，规范化为 servers
-      return { servers: raw.McpServers || {} };
+      return { servers: raw.McpServers || {}, rulesCategories: raw.McpRulesCategories || null };
     }
   }
 
   // Fallback: 返回空契约（只管理已有的 MCP，不提供内置定义）
   // 适用于 Release 模式 + 契约文件未内嵌的降级场景
-  return { servers: {} };
+  return { servers: {}, rulesCategories: null };
 }
 
 // ============================================================================
@@ -1135,10 +1140,11 @@ function showError(message, detail) {
 // ============================================================================
 
 /**
- * Rules 分类配置（来自规格 2.2，简化版本）
- * 完整配置应从 contracts 加载，这里提供 fallback
+ * Rules 分类内联 fallback（仅契约不可用时使用）
+ * 完整定义来自 contracts/mcp-servers.json 的 McpRulesCategories，
+ * 由 loadRulesCategories() 优先加载；此常量是 Release 降级保底。
  */
-const MCP_RULES_CATEGORIES = {
+const MCP_RULES_CATEGORIES_FALLBACK = {
   Search: {
     FileName: 'ccq-mcp-search.md',
     Title: '搜索工具',
@@ -1159,10 +1165,21 @@ const MCP_RULES_CATEGORIES = {
 };
 
 /**
+ * 加载 Rules 分类定义：优先契约，降级到内联 fallback
+ */
+function loadRulesCategories() {
+  const contract = loadContract();
+  if (contract.rulesCategories && Object.keys(contract.rulesCategories).length > 0) {
+    return contract.rulesCategories;
+  }
+  return MCP_RULES_CATEGORIES_FALLBACK;
+}
+
+/**
  * 渲染单个分类的 Rules 文件（来自规格 13）
  */
-function renderRules(categoryName, enabledMcpIds) {
-  const cat = MCP_RULES_CATEGORIES[categoryName];
+function renderRules(category, enabledMcpIds) {
+  const cat = category;
   if (!cat) return null;
 
   let content = `# ${cat.Title}\n\n`;
@@ -1219,6 +1236,7 @@ function renderRules(categoryName, enabledMcpIds) {
  */
 function syncRules() {
   try {
+    const rulesCategories = loadRulesCategories();
     const statuses = computeStatus();
     const enabledIds = statuses
       .filter(s => s.Status === 'Active')
@@ -1236,9 +1254,9 @@ function syncRules() {
     }
 
     // 同步每个分类
-    for (const catName in MCP_RULES_CATEGORIES) {
+    for (const catName in rulesCategories) {
       const enabledIdsForCat = enabledByCategory[catName] || [];
-      const cat = MCP_RULES_CATEGORIES[catName];
+      const cat = rulesCategories[catName];
       const filePath = path.join(RULES_DIR, cat.FileName);
 
       // 无已启用 MCP → 删除文件
@@ -1250,7 +1268,7 @@ function syncRules() {
       }
 
       // 渲染内容
-      const content = renderRules(catName, enabledIdsForCat);
+      const content = renderRules(cat, enabledIdsForCat);
       if (!content) continue;
 
       // 变更检测
@@ -1539,7 +1557,24 @@ if (require.main === module) {
   main();
 }
 
+/**
+ * 交互式入口函数（供 manage.js 单文件 bundle 调用）
+ *
+ * 直接调用 manageMode() 进入交互式 TUI，不调用 process.exit。
+ */
+async function runInteractive() {
+  try {
+    await manageMode();
+    cleanupGlobalTTY();
+  } catch (err) {
+    showError('执行失败', err.message);
+    cleanupGlobalTTY();
+    throw err;
+  }
+}
+
 module.exports = {
+  runInteractive,
   computeStatus,
   disableServer,
   enableServer,

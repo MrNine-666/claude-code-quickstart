@@ -153,7 +153,7 @@ function artifactFor(manifest, role) {
 
 function macOSBuildOrder(manifest, stepsContract, role) {
   const artifact = artifactFor(manifest, role);
-  const order = [...(manifest.MacOS.CoreFiles || []).map(normalizeRelPath)];
+  const order = [...(artifact.CoreFiles || []).map(normalizeRelPath)];
   if (artifact.IncludeSteps) order.push(...macOSStepFiles(manifest, stepsContract));
   order.push(normalizeRelPath(artifact.EntryFile));
   return { artifact, order };
@@ -261,44 +261,29 @@ function filterZshSource(relativePath) {
   return lines;
 }
 
-function getMcpManagerBase64() {
-  const jsPath = path.join(installerRoot, 'contracts', 'scripts', 'mcp-manager.js');
-  if (!fs.existsSync(jsPath)) {
-    console.warn('[WARN] mcp-manager.js 不存在，跳过内嵌');
-    return null;
+function buildManageBundle() {
+  // P10 方案 3：调用 esbuild 将 manage.js + 子管理器打包为单文件 dist/manage.js（取代 base64 内嵌）
+  // esbuild 不可用时告警跳过（不阻断 .sh 产物构建；CI 在 npm ci 后产出 bundle）
+  const esbuildConfig = path.join(installerRoot, 'contracts', 'scripts', 'esbuild.config.js');
+  if (!fs.existsSync(esbuildConfig)) {
+    console.warn('[WARN] 未找到 esbuild 配置，跳过 manage.js bundle 构建');
+    return false;
   }
-  try {
-    const buffer = fs.readFileSync(jsPath);
-    return buffer.toString('base64');
-  } catch (err) {
-    console.warn(`[WARN] 无法读取或编码 mcp-manager.js: ${err.message}`);
-    return null;
+  const esbuildModule = path.join(path.dirname(installerRoot), 'node_modules', 'esbuild');
+  if (!fs.existsSync(esbuildModule)) {
+    console.warn('[WARN] 未安装 esbuild 依赖（请先 npm ci），跳过 manage.js bundle 构建');
+    return false;
   }
+  const result = childProcess.spawnSync('node', [esbuildConfig], { stdio: 'inherit' });
+  if (result.status !== 0) {
+    console.warn(`[WARN] manage.js bundle 构建失败（esbuild 退出码 ${result.status}）`);
+    return false;
+  }
+  pass('manage.js 单文件 bundle 已生成');
+  return true;
 }
 
-function getManageScriptsBase64() {
-  // 读取 manage.js 及其子管理器，编码为 base64 JSON
-  // 返回格式: {"manage.js":"<base64>","provider-manager.js":"<base64>",...}
-  const scriptsDir = path.join(installerRoot, 'contracts', 'scripts');
-  const targets = ['manage.js', 'provider-manager.js', 'skills-manager.js', 'update-manager.js'];
-  const result = {};
-  for (const fileName of targets) {
-    const filePath = path.join(scriptsDir, fileName);
-    if (!fs.existsSync(filePath)) {
-      console.warn(`[WARN] ${fileName} 不存在，跳过内嵌`);
-      continue;
-    }
-    try {
-      const buffer = fs.readFileSync(filePath);
-      result[fileName] = buffer.toString('base64');
-    } catch (err) {
-      console.warn(`[WARN] 无法读取或编码 ${fileName}: ${err.message}`);
-    }
-  }
-  return Object.keys(result).length > 0 ? JSON.stringify(result) : null;
-}
-
-function buildMacOSArtifact(manifest, stepsContract, role, mcpManagerBase64, manageScriptsBase64) {
+function buildMacOSArtifact(manifest, stepsContract, role) {
   const { artifact, order } = macOSBuildOrder(manifest, stepsContract, role);
   for (const relPath of order) requireFile(relPath);
 
@@ -313,22 +298,6 @@ function buildMacOSArtifact(manifest, stepsContract, role, mcpManagerBase64, man
     lines.push(`# ─── 来自: ${relPath} ────────────────────────────────────────`);
     lines.push('');
     lines.push(...filterZshSource(relPath));
-
-    // 注入 MCP Manager JS 脚本 base64（仅对 McpManager.zsh）
-    if (mcpManagerBase64 && relPath.includes('McpManager.zsh')) {
-      lines.push('');
-      lines.push('# ─── MCP Manager JS 脚本内嵌（构建时注入）───');
-      lines.push(`CCQ_MCP_MANAGER_B64="${mcpManagerBase64}"`);
-      lines.push('');
-    }
-
-    // 注入 manage.js 及子管理器 base64（仅对 macos/Manage.zsh 入口文件）
-    if (manageScriptsBase64 && relPath.includes('macos/Manage.zsh')) {
-      lines.push('');
-      lines.push('# ─── manage.js + 子管理器 JS 脚本内嵌（构建时注入）───');
-      lines.push(`CCQ_MANAGE_SCRIPTS_JSON='${manageScriptsBase64}'`);
-      lines.push('');
-    }
   }
 
   const entryFile = order[order.length - 1] || '';
@@ -398,30 +367,14 @@ console.log(`安装器根目录: ${installerRoot}`);
 console.log(`输出目录:     ${outputDir}`);
 console.log(`构建平台:     ${platform}`);
 
-// 生成 MCP Manager JS 脚本 base64（供 Install 和 Manage 内嵌）
+// 构建 manage.js 单文件 bundle（P10 方案 3：esbuild 打包，取代 base64 内嵌）
 console.log('');
-console.log('─── 处理 MCP Manager JS 脚本 ───────────────────────────────');
-const mcpManagerBase64 = getMcpManagerBase64();
-if (mcpManagerBase64) {
-  console.log(`[PASS] MCP Manager JS 脚本已编码（base64 长度: ${mcpManagerBase64.length}）`);
-} else {
-  console.log('[WARN] MCP Manager JS 脚本未编码，Release 模式将依赖源码模式部署');
-}
-
-// 生成 macOS Manage JS 脚本集合 base64（供 Manage 内嵌）
-console.log('');
-console.log('─── 处理 macOS Manage JS 脚本集合 ───────────────────────');
-const manageScriptsBase64 = getManageScriptsBase64();
-if (manageScriptsBase64) {
-  const count = JSON.parse(manageScriptsBase64);
-  console.log(`[PASS] macOS Manage JS 脚本集合已编码（文件数: ${Object.keys(count).length}）`);
-} else {
-  console.log('[WARN] macOS Manage JS 脚本集合为空，Release 模式将依赖源码模式部署');
-}
+console.log('─── 构建 manage.js 单文件 bundle ──────────────────────────');
+buildManageBundle();
 console.log('');
 
-buildMacOSArtifact(manifest, stepsContract, 'Install', mcpManagerBase64, null);
-buildMacOSArtifact(manifest, stepsContract, 'Manage', mcpManagerBase64, manageScriptsBase64);
+buildMacOSArtifact(manifest, stepsContract, 'Install');
+buildMacOSArtifact(manifest, stepsContract, 'Manage');
 
 ensureExpectedOutputs(manifest);
 console.log('');

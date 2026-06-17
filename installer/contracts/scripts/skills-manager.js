@@ -32,6 +32,10 @@ const readline = require('readline');
 const { spawn } = require('child_process');
 const tty = require('tty');
 
+// 复用 manage.js 共享工具与 TTY 单例（W1 收敛，任务 11.2.1）
+let shared;
+try { shared = require('./manage.js'); } catch (e) { shared = null; }
+
 // ============================================================================
 // 常量层
 // ============================================================================
@@ -68,26 +72,32 @@ const COLORS = {
   reset:    '\x1b[0m'
 };
 
-// TTY 检测与流准备（复用 mcp-manager.js 的 TTY 处理逻辑）
-let IS_TTY = false;
-let TTY_INPUT = process.stdin;
-let TTY_OUTPUT = process.stdout;
-let TTY_OWNS_FD = false;
-
-try {
-  const ttyFd = fs.openSync('/dev/tty', 'r+');
-  fs.closeSync(ttyFd);
-  IS_TTY = true;
-  TTY_INPUT = new tty.ReadStream(fs.openSync('/dev/tty', 'r'));
-  TTY_OUTPUT = new tty.WriteStream(fs.openSync('/dev/tty', 'w'));
-  TTY_OWNS_FD = true;
-} catch (e) {
-  IS_TTY = process.stdin.isTTY && process.stdout.isTTY;
+// TTY 状态（W1 收敛，任务 11.2.1）：bundle 模式复用 manage.js 单例 TTY 流，
+// 避免每子模块各自 openSync('/dev/tty') 导致 fd 泄漏 + readline 流争抢；
+// 仅独立运行（node skills-manager.js）时本地 openSync。
+let IS_TTY, TTY_INPUT, TTY_OUTPUT, TTY_OWNS_FD;
+if (shared?.tty) {
+  ({ IS_TTY, TTY_INPUT, TTY_OUTPUT } = shared.tty);
+  TTY_OWNS_FD = false;
+} else {
+  IS_TTY = false;
   TTY_INPUT = process.stdin;
   TTY_OUTPUT = process.stdout;
   TTY_OWNS_FD = false;
+  try {
+    const ttyFd = fs.openSync('/dev/tty', 'r+');
+    fs.closeSync(ttyFd);
+    IS_TTY = true;
+    TTY_INPUT = new tty.ReadStream(fs.openSync('/dev/tty', 'r'));
+    TTY_OUTPUT = new tty.WriteStream(fs.openSync('/dev/tty', 'w'));
+    TTY_OWNS_FD = true;
+  } catch (e) {
+    IS_TTY = process.stdin.isTTY && process.stdout.isTTY;
+    TTY_INPUT = process.stdin;
+    TTY_OUTPUT = process.stdout;
+    TTY_OWNS_FD = false;
+  }
 }
-
 const SUPPORTS_ANSI = IS_TTY;
 
 // Session 缓存
@@ -872,8 +882,63 @@ if (require.main === module) {
   main();
 }
 
+// ============================================================================
+// 导出（供 manage.js 路由 / 单元测试使用）
+// ============================================================================
+
+/**
+ * 交互式入口函数（供 manage.js 单文件 bundle 调用）
+ *
+ * 复用 main() 的交互循环，但通过函数调用而非子进程启动
+ */
+async function runInteractive() {
+  try {
+    // 确保临时缓存目录存在
+    ensureTmpCacheDir();
+
+    console.log(colorize('═══════════════════════════════════════════', 'primary'));
+    console.log(colorize('            Skills 技能管理                ', 'primary'));
+    console.log(colorize('═══════════════════════════════════════════', 'primary'));
+
+    // 主循环
+    while (true) {
+      await showSkillsStatus();
+
+      const choice = await promptChoice('选择操作', [
+        '安装 Skills',
+        '更新 Skills',
+        '卸载 Skills',
+        '返回'
+      ]);
+
+      if (choice === -1 || choice === 3) {
+        console.log('');
+        console.log(colorize('再见！(￣▽￣)ゞ', 'primary'));
+        break;
+      }
+
+      if (choice === 0) {
+        await showInstallMenu();
+      } else if (choice === 1) {
+        await showUpdateMenu();
+      } else if (choice === 2) {
+        await showUninstallMenu();
+      }
+    }
+
+    cleanupGlobalTTY();
+    // 不调用 process.exit，让控制权返回 manage.js
+  } catch (err) {
+    console.error(colorize(`❌ ${err.message}`, 'danger'));
+    cleanupGlobalTTY();
+    throw err;  // 抛出给 manage.js 处理
+  }
+}
+
 module.exports = {
   SCRIPT_VERSION,
+  // P10 交互式入口（供 manage.js bundle 调用）
+  runInteractive,
   // 纯函数（可测试）
   uniqueSkillNames,
   removeAnsiSequences,
