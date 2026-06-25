@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema",
+  "title": "CCG Workflow Contract",
+  "description": "CCG Workflow 步骤的跨平台契约：验证项、环境变量默认值、历史规则文件清单",
+  "version": "1.0.0",
+  "contract": {
+    "verifyItems": [
+      {
+        "id": "commands",
+        "label": "命令模板",
+        "path": "~/.claude/commands/ccg",
+        "minCount": 20,
+        "filePattern": "*.md"
+      },
+      {
+        "id": "agents",
+        "label": "Agent 模板",
+        "path": "~/.claude/agents/ccg",
+        "minCount": 4,
+        "filePattern": "*.md"
+      },
+      {
+        "id": "configToml",
+        "label": "配置文件",
+        "path": "~/.claude/.ccg/config.toml",
+        "minCount": 1
+      },
+      {
+        "id": "wrapper",
+        "label": "二进制文件",
+        "path": "~/.claude/bin/codeagent-wrapper",
+        "minCount": 1,
+        "command": "codeagent-wrapper",
+        "versionArgs": ["--version"]
+      },
+      {
+        "id": "pathAvailability",
+        "label": "PATH 可用性",
+        "command": "codeagent-wrapper"
+      },
+      {
+        "id": "envConfig",
+        "label": "CCG 环境变量",
+        "envKeys": [
+          "CODEAGENT_POST_MESSAGE_DELAY",
+          "CODEX_TIMEOUT",
+          "BASH_DEFAULT_TIMEOUT_MS",
+          "BASH_MAX_TIMEOUT_MS"
+        ]
+      },
+      {
+        "id": "mcpProtection",
+        "label": "MCP 配置",
+        "path": "~/.claude.json",
+        "jsonKey": "mcpServers"
+      }
+    ],
+    "managedEnvDefaults": {
+      "CODEAGENT_POST_MESSAGE_DELAY": "1",
+      "CODEX_TIMEOUT": "7200",
+      "BASH_DEFAULT_TIMEOUT_MS": "600000",
+      "BASH_MAX_TIMEOUT_MS": "3600000"
+    },
+    "managedRuleFiles": [
+      "ccq-ccgworkflow.md",
+      "ccq-multimodel.md",
+      "ccq-tools.md",
+      "ccq-workflow.md"
+    ]
+  }
+}

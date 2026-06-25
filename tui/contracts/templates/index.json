@@ -1,0 +1,29 @@
+{
+  "SchemaVersion": 1,
+  "Templates": [
+    {
+      "Id": "claude-md-template.base",
+      "Source": "tui/contracts/templates/claude-md.base.md",
+      "Platform": "cross-platform",
+      "ContentFile": "claude-md.base.md",
+      "Description": "跨平台通用章节（一~三、五）",
+      "Status": "existing"
+    },
+    {
+      "Id": "claude-md-template.platform-windows",
+      "Source": "tui/contracts/templates/claude-md.platform-windows.md",
+      "Platform": "Windows",
+      "ContentFile": "claude-md.platform-windows.md",
+      "Description": "Windows 专属环境章节（四-环境特定 + 输出设置）",
+      "Status": "existing"
+    },
+    {
+      "Id": "claude-md-template.platform-macos",
+      "Source": "tui/contracts/templates/claude-md.platform-macos.md",
+      "Platform": "MacOS",
+      "ContentFile": "claude-md.platform-macos.md",
+      "Description": "macOS 专属环境章节（四-环境特定 + Windows 兼容提醒 + 输出设置）",
+      "Status": "existing"
+    }
+  ]
+}

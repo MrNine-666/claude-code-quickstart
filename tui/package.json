@@ -1,0 +1,33 @@
+{
+  "name": "tui",
+  "module": "src/index.tsx",
+  "type": "module",
+  "private": true,
+  "packageManager": "bun@1.3.14",
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "scripts": {
+    "dev": "bun run --watch src/index.tsx",
+    "build": "bun run scripts/build.ts",
+    "build:windows-x64": "bun build --compile --target=bun-windows-x64 --outfile=dist/ccq-windows-x64.exe src/index.tsx",
+    "build:windows-arm64": "bun build --compile --target=bun-windows-arm64 --outfile=dist/ccq-windows-arm64.exe src/index.tsx",
+    "build:darwin-x64": "bun build --compile --target=bun-darwin-x64 --outfile=dist/ccq-darwin-x64 src/index.tsx",
+    "build:darwin-arm64": "bun build --compile --target=bun-darwin-arm64 --outfile=dist/ccq-darwin-arm64 src/index.tsx"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19.2.17"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@opentui-ui/toast": "^0.0.5",
+    "@opentui/core": "0.4.2",
+    "@opentui/keymap": "^0.4.2",
+    "@opentui/react": "0.4.2",
+    "opentui-spinner": "^0.0.7",
+    "react": "19.2.6"
+  }
+}

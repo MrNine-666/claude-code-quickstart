@@ -1,0 +1,90 @@
+{
+  "SchemaVersion": 1,
+  "Source": "installer/windows/steps/ClaudeConfig.ps1",
+  "SettingsPath": "~/.claude/settings.json",
+  "Ownership": {
+    "InstallStrategy": "fill-missing-only",
+    "UpdateStrategy": "align-owned-env-and-append-permissions",
+    "DoNotManageTopLevelKeys": [
+      "model",
+      "statusLine",
+      "hooks",
+      "outputStyle",
+      "mcpServers"
+    ],
+    "DoNotManageEnvKeys": [
+      "ANTHROPIC_AUTH_TOKEN",
+      "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "ANTHROPIC_MODEL",
+      "CLAUDE_CODE_SUBAGENT_MODEL",
+      "CLAUDE_CODE_EFFORT_LEVEL",
+      "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK",
+      "API_TIMEOUT_MS",
+      "ENABLE_TOOL_SEARCH"
+    ]
+  },
+  "TopLevelDefaults": {
+    "language": "简体中文",
+    "alwaysThinkingEnabled": true,
+    "plansDirectory": ".claude/plan",
+    "attribution": {
+      "commit": "",
+      "pr": ""
+    }
+  },
+  "ClaudeConfigEnvDefaults": {
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "90",
+    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "DISABLE_INSTALLATION_CHECKS": "1",
+    "MAX_THINKING_TOKENS": "31999",
+    "CODEAGENT_POST_MESSAGE_DELAY": "1",
+    "CODEX_TIMEOUT": "7200",
+    "BASH_DEFAULT_TIMEOUT_MS": "600000",
+    "BASH_MAX_TIMEOUT_MS": "3600000"
+  },
+  "ClaudeConfigDeprecatedEnvKeys": [],
+  "ClaudeConfigBasePermissions": [
+    "Bash",
+    "BashOutput",
+    "Edit",
+    "Glob",
+    "Grep",
+    "KillShell",
+    "NotebookEdit",
+    "PowerShell",
+    "Read",
+    "SlashCommand",
+    "Skill",
+    "Task",
+    "TodoWrite",
+    "WebFetch",
+    "WebSearch",
+    "Write"
+  ],
+  "Descriptions": {
+    "TopLevelDefaults": {
+      "language": "Claude Code 界面显示语言",
+      "alwaysThinkingEnabled": "始终启用扩展思考模式",
+      "plansDirectory": "计划文件存储目录（相对工作区根）",
+      "attribution": "代码提交与 PR 的归因信息"
+    },
+    "ClaudeConfigEnvDefaults": {
+      "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "上下文自动压缩触发阈值（百分比）",
+      "CLAUDE_CODE_ATTRIBUTION_HEADER": "提交信息归因头开关（0=关闭，1=开启）",
+      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "禁用非必要网络流量与遥测（1=禁用）",
+      "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "启用实验性多代理团队协作功能（1=启用）",
+      "DISABLE_INSTALLATION_CHECKS": "禁用 Claude Code 启动安装检查（1=禁用）",
+      "MAX_THINKING_TOKENS": "扩展思考模式的最大 token 上限",
+      "CODEAGENT_POST_MESSAGE_DELAY": "CodeAgent 消息发送间隔秒数（ccg-workflow推荐配置）",
+      "CODEX_TIMEOUT": "Codex 命令超时秒数（ccg-workflow推荐配置）",
+      "BASH_DEFAULT_TIMEOUT_MS": "Bash 命令默认超时毫秒数（ccg-workflow推荐配置）",
+      "BASH_MAX_TIMEOUT_MS": "Bash 命令最大超时毫秒数（ccg-workflow推荐配置）"
+    },
+    "ClaudeConfigBasePermissions": "Claude Code 基础权限白名单，授予常用文件、命令与工具操作能力（导入时仅追加缺失项，不删除用户已有权限）"
+  }
+}

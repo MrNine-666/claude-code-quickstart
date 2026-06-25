@@ -1,0 +1,202 @@
+{
+  "SchemaVersion": 1,
+  "Source": "contracts/scripts/mcp-manager.js",
+  "McpMeta": {
+    "FileName": "mcp-meta.json",
+    "Path": "~/.ccq/mcp-meta.json",
+    "SchemaVersion": 1,
+    "Statuses": [
+      "Custom",
+      "Active",
+      "Disabled",
+      "Missing",
+      "Unknown"
+    ],
+    "ServerEntryFields": [
+      "disabled",
+      "credentials",
+      "config",
+      "permissions",
+      "definitionHash",
+      "updatedAt"
+    ]
+  },
+  "DefaultMcpRuntimeDeps": [
+    {
+      "Name": "Node.js LTS",
+      "Command": "node",
+      "MinVersion": "20.0.0",
+      "WingetId": "OpenJS.NodeJS.LTS",
+      "ManualUrl": "https://nodejs.org/"
+    },
+    {
+      "Name": "npm",
+      "Command": "npm",
+      "MinVersion": "10.0.0",
+      "WingetId": "OpenJS.NodeJS.LTS",
+      "ManualUrl": "https://nodejs.org/"
+    }
+  ],
+  "CredentialTypes": [
+    "none",
+    "single-key",
+    "url-embedded",
+    "multi-field",
+    "args-multi",
+    "args-token",
+    "env-file"
+  ],
+  "McpServers": {
+    "context7": {
+      "Name": "Context7",
+      "Description": "库文档和代码示例检索，支持最新的开发框架文档",
+      "McpType": "stdio",
+      "Command": "npx",
+      "Args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ],
+      "CredentialType": "none",
+      "RuntimeDepsRef": "DefaultMcpRuntimeDeps",
+      "Category": "Documentation",
+      "Priority": 1,
+      "Recommended": true
+    },
+    "deepwiki": {
+      "Name": "DeepWiki",
+      "Description": "GitHub 仓库 AI 文档生成和问答",
+      "McpType": "http",
+      "Url": "https://mcp.deepwiki.com/mcp",
+      "CredentialType": "none",
+      "Category": "Documentation",
+      "Priority": 2,
+      "Recommended": true
+    },
+    "tavily": {
+      "Name": "Tavily",
+      "Description": "AI 驱动的实时网络搜索、抓取和研究",
+      "McpType": "http",
+      "UrlTemplate": "https://mcp.tavily.com/mcp/?tavilyApiKey={TAVILY_API_KEY}",
+      "CredentialType": "url-embedded",
+      "Credentials": [
+        {
+          "Name": "TAVILY_API_KEY",
+          "Label": "Tavily API Key",
+          "Secret": true,
+          "Required": true,
+          "Url": "https://app.tavily.com/home"
+        }
+      ],
+      "Category": "Search",
+      "Priority": 3,
+      "Recommended": false
+    },
+    "playwright": {
+      "Name": "Playwright",
+      "Description": "Microsoft 官方网页自动化，基于可访问性树交互",
+      "McpType": "stdio",
+      "Command": "npx",
+      "Args": [
+        "-y",
+        "@playwright/mcp@latest"
+      ],
+      "CredentialType": "none",
+      "RuntimeDepsRef": "DefaultMcpRuntimeDeps",
+      "Category": "Automation",
+      "Priority": 5,
+      "Recommended": true
+    },
+    "exa": {
+      "Name": "Exa Search",
+      "Description": "AI 原生高质量网络搜索和内容提取",
+      "McpType": "stdio",
+      "Command": "npx",
+      "Args": [
+        "-y",
+        "exa-mcp-server"
+      ],
+      "CredentialType": "single-key",
+      "ApiKeyName": "EXA_API_KEY",
+      "ApiKeyUrl": "https://dashboard.exa.ai/api-keys",
+      "RuntimeDepsRef": "DefaultMcpRuntimeDeps",
+      "Category": "Search",
+      "Priority": 6,
+      "Recommended": true
+    },
+    "ace-tool": {
+      "Name": "ACE Tool",
+      "Description": "代码上下文检索、语义搜索",
+      "McpType": "stdio",
+      "Command": "npx",
+      "Args": [
+        "-y",
+        "ace-tool@latest"
+      ],
+      "CredentialType": "args-multi",
+      "ArgsCredentials": [
+        {
+          "ArgName": "--base-url",
+          "Label": "ACE Backend URL",
+          "Secret": false,
+          "Required": true,
+          "Url": "https://github.com/eastxiaodong/ace-tool"
+        },
+        {
+          "ArgName": "--token",
+          "Label": "ACE Token",
+          "Secret": true,
+          "Required": true
+        }
+      ],
+      "RuntimeDepsRef": "DefaultMcpRuntimeDeps",
+      "Category": "Development",
+      "Priority": 7,
+      "Recommended": false
+    },
+    "mastergo": {
+      "Name": "MasterGo",
+      "Description": "MasterGo 设计稿解析和代码生成 (需团队版)",
+      "McpType": "stdio",
+      "Command": "npx",
+      "Args": [
+        "-y",
+        "@mastergo/magic-mcp",
+        "--url=https://mastergo.com"
+      ],
+      "CredentialType": "args-token",
+      "TokenArg": "--token",
+      "TokenLabel": "MasterGo API Token",
+      "TokenUrl": "https://mastergo.com/help/MG/MCP",
+      "RuntimeDepsRef": "DefaultMcpRuntimeDeps",
+      "Category": "Design",
+      "Priority": 8,
+      "Recommended": false
+    },
+    "figma": {
+      "Name": "Figma",
+      "Description": "Figma 官方设计稿代码生成和变量提取",
+      "McpType": "http",
+      "Url": "https://mcp.figma.com/mcp",
+      "CredentialType": "none",
+      "Note": "首次使用时会弹出 OAuth 认证流程，无需手动配置 API Key",
+      "Category": "Design",
+      "Priority": 10,
+      "Recommended": false
+    },
+    "chrome-devtools": {
+      "Name": "Chrome DevTools",
+      "Description": "Chrome 浏览器自动化控制、网络监控和性能分析",
+      "McpType": "stdio",
+      "Command": "npx",
+      "Args": [
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ],
+      "CredentialType": "none",
+      "RuntimeDepsRef": "DefaultMcpRuntimeDeps",
+      "Category": "Automation",
+      "Priority": 11,
+      "Recommended": false
+    }
+  }
+}
