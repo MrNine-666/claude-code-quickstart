@@ -15,7 +15,7 @@ Windows 与 macOS 双平台的 Claude Code 开发环境自动化安装器。
   - [方式一：云端直接执行](#方式一云端直接执行推荐)
   - [方式二：下载单文件执行](#方式二下载单文件执行)
   - [方式三：从源码运行](#方式三从源码运行开发者)
-- [安装内容（13 步 + Skills 管理）](#安装内容13-步--skills-管理)
+- [安装内容（install 仅装 Basic 三步）](#安装内容install-仅装-basic-三步)
 - [Manage 管理脚本](#manage-管理脚本)
 - [第三方供应商](#第三方供应商)
 - [MCP Server](#mcp-server)
@@ -43,13 +43,14 @@ CCQ 通过 Windows 双阶段脚本、macOS 原生入口与实时检测机制，�
 
 ## 核心特性
 
-- **双平台入口**：Windows 使用 PS 5.1 引导 + PS 7 安装/管理，macOS 使用 `curl ... | bash` 自动切换 zsh
-- **共享契约**：`installer/contracts/` 统一 StepId、Provider、MCP、ClaudeConfig、构建清单、Skills catalogue 与 UI 文案语义
+- **双平台入口**：Windows 使用 PS 5.1 单运行时（前置检测内联 + Basic 直装，PS7 作为推荐组件非阻塞安装），macOS 使用 `curl ... | bash` 自动切换 zsh
+- **共享契约**：契约按「谁用归谁」拆分——`installer/contracts/`（install 链：步骤/构建/清理）与 `tui/contracts/`（TUI 链：供应商/MCP/ClaudeConfig/模板，**内嵌进 ccq 可执行文件**）
 - **实时检测**：每次运行都检测当前状态，已安装组件自动跳过
-- **分组安装**：基础环境（必装）+ 进阶扩展（可选/按需）
-- **统一面板入口**：`ccq` 可选择安装面板或管理面板；管理面板提供更新、供应商、MCP、Skills 管理
+- **分组安装**：install 仅装 Basic 三步（NodeJS / Git / ClaudeCode），进阶项（提示词 / 配置 / 工具管理）搬进 Manage TUI
+- **单文件可执行 TUI**：OpenTUI + Bun 构建的 `ccq` 可执行文件，通过 PATH 天然可达（**不注入 Profile**），提供 6 菜单（供应商 / MCP / Skills / 提示词 / 配置文件 / 工具管理）
 - **供应商 Profile 化**：供应商配置持久化到 `~/.claude/providers/`
 - **MCP 凭据 Vault**：凭据持久化到 `~/.ccq/mcp-meta.json`
+- **整可执行文件热更新**：后台检查 GitHub Release 最新版本，强确认下载后原子替换 `~/.local/bin/ccq[.exe]`
 - **更新安全机制**：更新前自动快照备份，支持失败后回滚
 
 ---
@@ -59,7 +60,7 @@ CCQ 通过 Windows 双阶段脚本、macOS 原生入口与实时检测机制，�
 | 项目 | Windows | macOS |
 |---|---|---|
 | 操作系统 | Windows 10 1903 (18362)+ / Windows 11 | macOS 12 Monterey 或更新版本 |
-| Shell / 运行时 | PowerShell 5.1 可启动，引导脚本会自动准备 PS 7 | `/bin/zsh`，云端入口兼容 `curl ... | bash` |
+| Shell / 运行时 | PowerShell 5.1+ 单运行时直跑（PS7 作为推荐组件非阻塞安装，不 re-exec） | `/bin/zsh`，云端入口兼容 `curl ... | bash` |
 | 包管理器 | winget | Homebrew |
 | Node.js | 安装脚本自动准备 Node.js LTS | 通过 nvm 官方脚本安装 Node.js LTS |
 | 权限 | 管理员权限（建议） | 普通用户即可；Homebrew 安装可能需要用户确认 |
@@ -73,33 +74,24 @@ CCQ 通过 Windows 双阶段脚本、macOS 原生入口与实时检测机制，�
 
 #### Windows
 
-##### 1) 引导脚本（PS 5.1+，管理员）
-
-```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force
-irm 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/bootstrap.ps1' | iex
-```
-
-##### 2) 安装脚本（PS 7+）
+##### 1) 安装脚本（PS 5.1+）
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
 irm 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/install.ps1' | iex
 ```
 
-##### 3) 管理脚本（PS 7+）
+PS 5.1 单运行时直跑：前置检测内联（Windows 版本 / winget 自动安装 / PS7 非阻塞推荐）+ Basic 三步直装（NodeJS / Git / ClaudeCode），**末尾确认下载 ccq.exe 到 `%USERPROFILE%\.local\bin\` 并加入用户 PATH（不注入 Profile）**。
 
-新增快捷指令入口（历史安装用户需重新执行一次安装脚本的基础环境）：
+##### 2) 管理面板
+
+安装完成后，**开新终端**直接运行：
 
 ```powershell
 ccq
 ```
 
-直接远程运行管理入口：
-
-```powershell
-irm 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/manage.ps1' | iex
-```
+进入 6 菜单管理控制台（供应商 / MCP / Skills / 提示词 / 配置文件 / 工具管理）。
 
 #### macOS
 
@@ -109,17 +101,13 @@ irm 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/downlo
 curl -fsSL "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/install.sh" | bash
 ```
 
-安装完成后，新开 zsh 终端或执行 `source ~/.zshrc`，使用快捷面板：
+安装完成后，**开新终端**直接运行：
 
 ```sh
 ccq
 ```
 
-也可直接运行管理入口：
-
-```sh
-curl -fsSL "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/manage.sh" | bash
-```
+进入 6 菜单管理控制台。
 
 ---
 
@@ -127,36 +115,28 @@ curl -fsSL "https://github.com/MrNine-666/claude-code-quickstart/releases/latest
 
 从 [Releases](../../releases) 下载：
 
-Windows：
-
-- `bootstrap.ps1`
-- `install.ps1`
-- `manage.ps1`
-
-macOS：
-
-- `install.sh`
-- `manage.sh`
+- Windows: `install.ps1` + `ccq-windows-{x64|arm64}.exe`（2 件）
+- macOS: `install.sh` + `ccq-darwin-{x64|arm64}`（2 件）
 
 Windows 执行示例：
 
 ```powershell
-# 引导（PS 5.1+，管理员）
+# 安装（PS 5.1+，末尾确认下载 ccq.exe）
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
-.\bootstrap.ps1
-
-# 安装（PS 7+）
 .\install.ps1
 
-# 管理（PS 7+）
-.\manage.ps1
+# 管理（安装后开新终端）
+ccq
 ```
 
 macOS 执行示例：
 
 ```sh
+# 安装（末尾确认下载 ccq）
 bash ./install.sh
-bash ./manage.sh
+
+# 管理（安装后开新终端）
+ccq
 ```
 
 ---
@@ -169,15 +149,13 @@ Windows：
 git clone https://github.com/MrNine-666/claude-code-quickstart.git
 cd claude-code-quickstart
 
-# 引导（PS 5.1+）
+# 安装（PS 5.1+）
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
-.\installer\windows\Bootstrap.ps1
+pwsh -File installer/windows/Install.ps1
 
-# 安装（PS 7+）
-.\installer\windows\Install.ps1
-
-# 管理（PS 7+）
-.\installer\windows\Manage.ps1
+# 管理（从源码运行 TUI）
+cd tui
+bun run dev
 ```
 
 macOS：
@@ -189,8 +167,9 @@ cd claude-code-quickstart
 # 安装
 zsh installer/macos/Install.zsh
 
-# 管理
-zsh installer/macos/Manage.zsh
+# 管理（从源码运行 TUI）
+cd tui
+bun run dev
 ```
 
 模拟 `irm | iex`（可传参，如 `-OutputMode Developer` 全量输出）：
@@ -205,73 +184,67 @@ pwsh -File installer/build.ps1
 ```sh
 sh installer/build.sh
 bash dist/install.sh --list-steps
-bash dist/manage.sh --action Update --list-updates
 ```
 
 ---
 
-## 安装内容（13 步 + Skills 管理）
+## 安装内容（install 仅装 Basic 三步）
 
-### 基础环境（必装）
+### 基础环境（install 直装，必装）
 
 1. Node.js
 2. Git
 3. Claude Code
-4. 第三方供应商配置
 
-### 进阶扩展（按需）
+### 进阶扩展（已迁移 Manage TUI，按需）
 
-5. CCometixLine
-6. Claude 基础配置
-7. CLAUDE.md 配置
-8. MCP Server 配置
-9. CCG 工作流
-10. OpenSpec CLI
-11. cc-switch（可选）
-12. Codex CLI（可选）
-13. Antigravity CLI（可选）
+进阶项不再出现在 install 流程，统一搬进 Manage 控制台：
 
-Skills 不再出现在安装面板或 Advanced 选择流程中，也不参与统一 Update 更新管理。需要安装、更新或卸载 Skills 时，请进入 Manage → Skills 管理；若 Windows symlink 权限受限，可在 Skills 管理的安装流程中交互启用 copy 模式：
+- **提示词**：CLAUDE.md 推荐 / 导入 / 外部编辑器
+- **配置文件**：settings.json fill-missing / 外部编辑器
+- **工具管理**：Ccline / CcgWorkflow / OpenSpec CLI / Codex CLI / Antigravity CLI 的安装 / 更新 / 卸载（全生命周期，含 ClaudeCode）
+- **供应商**：供应商 Profile 化管理
+- **MCP**：MCP Server 选装 / 凭据 / CRUD
+- **Skills**：Claude Code 全局 Skills 安装 / 更新 / 卸载
 
-```powershell
-pwsh -File installer/windows/Manage.ps1 -Action Skills
-```
-
-macOS 进阶可选工具说明：
-
-- cc-switch：通过 `brew install --cask cc-switch` 安装，`brew upgrade --cask cc-switch` 更新。
-- Codex CLI：通过 npm 全局安装并验证 `codex` 命令。
-- Antigravity CLI：通过官方 `https://antigravity.google/cli/install.sh` 安装 `agy` 到 `~/.local/bin`。
+第三方供应商配置（ApiKey）不再作为 install 步骤，统一经 Manage TUI → 供应商管理完成。
 
 ---
 
-## Manage 管理脚本
+## Manage 管理控制台（ccq）
 
-Windows 使用 `installer/windows/Manage.ps1` 或远程 `manage.ps1`，macOS 使用 `installer/macos/Manage.zsh` 或远程 `manage.sh`。两端都提供统一管理入口：
+安装后直接运行 `ccq` 命令进入管理控制台。`ccq` 是 OpenTUI + Bun 构建的单文件可执行产物（`tui/` 子项目交叉编译而来），安装时下载到 `~/.local/bin/ccq[.exe]`（与 Claude Code native installer 同目录），通过用户级 PATH 天然可达，**不注入 Profile**。提供统一管理控制台 **6 菜单**：
 
-### 1) 更新管理（Update）
+### 1) 供应商管理（Provider）
 
-- 检测可更新组件（不包含 Skills）
-- 支持交互多选更新
-- 更新前自动快照备份
-- 指纹预检（模板未变更自动跳过）
-
-### 2) 供应商管理（Provider）
-
-- 供应商 Profile 的新增 / 编辑 / 删除 / 切换
+- 供应商 Profile 的新增 / 编辑 / 删除 / 切换 / 设置默认
 - 支持从 settings.json 同步历史配置
 
-### 3) MCP 管理（Mcp）
+### 2) MCP 管理（Mcp）
 
 - 查看状态（已启用 / 已禁用 / 未安装）
+- `i` 键选装内置 MCP（收集凭据 → 写入 `.claude.json` + Vault）
 - 启用 / 禁用 / 删除
 - 凭据通过 vault 持久化
 
-### 4) Skills 管理（Skills）
+### 3) Skills 管理（Skills）
 
 - 安装 / 更新 / 卸载 Claude Code 全局 Skills
 - 安装入口先单选 source；集合类 source 可继续多选子 Skills
-- 与安装面板和统一 Update 解耦，避免首次安装或常规更新时自动变更 Skills
+
+### 4) 提示词（Prompts）
+
+- 查看推荐 CLAUDE.md / 导入 / 复制 / 外部编辑器
+
+### 5) 配置文件（Config）
+
+- 查看 settings.json 推荐配置（含 description）/ fill-missing 导入 / 复制 / 外部编辑器
+
+### 6) 工具管理（Tools）
+
+- ClaudeCode + Ccline / CcgWorkflow / OpenSpec / CodexCli / AntigravityCli 全生命周期
+- 安装 / 更新 / 卸载（强确认 + snapshot 保护）
+- 旧独立「检查更新」已并入此菜单
 
 ---
 
@@ -312,22 +285,23 @@ Windows 使用 `installer/windows/Manage.ps1` 或远程 `manage.ps1`，macOS 使
 
 ```text
 claude-code-quickstart/
-├── dist/                              # 默认构建输出：bootstrap.ps1/install.ps1/manage.ps1/install.sh/manage.sh
+├── dist/                              # 默认构建输出：install.ps1/install.sh + 4 平台 ccq 可执行文件
+├── tui/                               # 根级 OpenTUI TUI 子项目（src/ → bun build --compile）
+│   ├── contracts/                     # TUI 链契约：claude-config / mcp-servers / providers / templates（内嵌进可执行文件）
+│   ├── scripts/                       # 构建 / smoke / parity 验证脚本
+│   └── src/                           # 6 菜单管理控制台实现
 ├── installer/
-│   ├── build.ps1                      # Windows / GitHub Actions 构建入口
-│   ├── build.sh                       # macOS / Unix 本机构建入口
-│   ├── contracts/                     # 跨平台业务契约
+│   ├── build.ps1                      # Windows / GitHub Actions 构建入口（install.ps1 + Windows ccq）
+│   ├── build.sh                       # macOS / Unix 构建入口（install.sh + macOS ccq）
+│   ├── contracts/                     # install 链契约：steps / build / cleanup-policy
 │   ├── windows/
-│   │   ├── Bootstrap.ps1    # Windows PS 5.1 引导入口
-│   │   ├── Install.ps1      # Windows PS 7+ 安装入口
-│   │   ├── Manage.ps1       # Windows PS 7+ 管理入口
-│   │   ├── core/                      # Windows PowerShell runtime core
-│   │   └── steps/                     # Windows 步骤实现
+│   │   ├── Install.ps1                # Windows PS 5.1+ 安装入口（前置检测内联 + Basic 直装 + 末尾下载 ccq.exe）
+│   │   ├── core/                      # Windows PowerShell runtime core（含 ccq 可执行文件管理函数）
+│   │   └── steps/                     # Windows Basic 步骤实现
 │   └── macos/
-│       ├── Install.zsh      # macOS 安装入口
-│       ├── Manage.zsh       # macOS 管理入口
-│       ├── core/                      # macOS zsh runtime core
-│       └── steps/                     # macOS 步骤实现
+│       ├── Install.zsh                # macOS 安装入口（前置检测内联 + Basic 直装 + 末尾下载 ccq）
+│       ├── core/                      # macOS zsh runtime core（含 ccq 可执行文件管理函数）
+│       └── steps/                     # macOS Basic 步骤实现
 └── test-syntax.ps1
 ```
 
@@ -343,30 +317,30 @@ claude-code-quickstart/
 
 按你的场景处理：
 
-1. **Windows 历史安装用户**
-   - 重新执行一次安装脚本的基础环境，让 `ccq` 写入 `$PROFILE`
-
-2. **Windows 刚刚执行完 install**
-   - 先新开一个终端再试：
+1. **Windows 刚刚执行完 install**
+   - `ccq.exe` 已下载到 `%USERPROFILE%\.local\bin\` 并加入用户 PATH（不注入 `$PROFILE`），**先新开一个终端**再试：
 
    ```powershell
    ccq
    ```
 
-   - 如果当前终端也想立即可用，可执行：
+   - 如果当前终端也想立即可用，可临时把目录加进当前会话 PATH：
 
    ```powershell
-   . $PROFILE
+   $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
    ccq
    ```
 
-3. **macOS 用户**
-   - 新开 zsh 终端，或执行：
+2. **macOS 用户**
+   - `ccq` 已下载到 `~/.local/bin/` 并确保该目录在 PATH（不注入 Profile），**新开 zsh 终端**，或在当前会话临时追加：
 
    ```sh
-   source ~/.zshrc
+   export PATH="$HOME/.local/bin:$PATH"
    ccq
    ```
+
+3. **历史安装用户（旧版本残留）**
+   - 旧版本曾把 `ccq` 函数写入 `$PROFILE` / `~/.zshrc`，新版改走 PATH 目录。重新执行一次最新安装脚本即可下载 `ccq` 可执行文件并修正 PATH。
 
 ---
 

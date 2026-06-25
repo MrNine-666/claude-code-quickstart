@@ -1,6 +1,6 @@
 # installer/macos/core
 
-macOS zsh 运行时核心库。该目录只承载平台实现，不复制 Windows PowerShell 业务规则；步骤、供应商、MCP 和配置默认值从 `installer/contracts/` 消费。
+macOS zsh 运行时核心库。该目录只承载平台实现，不复制 Windows PowerShell 业务规则；步骤、供应商、MCP 和配置默认值从 `contracts/` 消费。
 
 ## 加载顺序
 

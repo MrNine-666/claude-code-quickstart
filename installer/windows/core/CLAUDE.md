@@ -1,7 +1,7 @@
 # installer/windows/core/ — Windows 核心基础库
 
 > 面包屑：[根目录](../../../CLAUDE.md) › [installer/](../../CLAUDE.md) › windows/ › core/
-> 生成时间：2026-03-06 (Install+Manage 分离架构)
+> 生成时间：2026-06-24（Manage TUI 迁移到 OpenTUI + Bun 单文件可执行，ManageCore.ps1 已删除）
 
 所有核心模块通过 **dot-source** 加载（非 Module），无 `Export-ModuleMember`，函数在调用方作用域内直接可用。
 
@@ -19,8 +19,9 @@
 | `Net.ps1` | ~270 | 端点可达性检测、文件下载 |
 | `Registry.ps1` | 280 | **共享步骤注册表**：元数据、分组、依赖、迁移映射（消除 DRY 违规） |
 | `Bootstrap.ps1` | 617 | 步骤状态模型、生命周期调度、拓扑排序、恢复逻辑 |
-| `ManageCore.ps1` | ~145 | **Manage JS 单文件 bundle 缓存调用 wrapper**：检测 Node.js → 源码/缓存/下载三级解析 manage.js → node 调用（TTY 继承） |
-| `Provider.ps1` | ~810 | 供应商管理核心：CRUD + Sync + 交互菜单，Install-ApiKey 和 Manage 共用 |
+| `CcqExecutable.ps1` | ~200 | **ccq 可执行文件管理**：架构检测、下载、PATH 管理（Windows 使用 `%USERPROFILE%\.local\bin`） |
+
+旧 `ManageCore.ps1`（Manage TUI 目录型产物缓存 wrapper）已删除，Manage 改为 OpenTUI + Bun 单文件可执行分发。
 
 ---
 
@@ -140,18 +141,15 @@ $script:BackupDirectory = "$env:TEMP\ClaudeEnvInstaller\Backups"
 | `Get-UpdateManifestPath` | 返回 `~/.ccq/update-manifest.json` 路径 |
 | `Read-UpdateManifest` | 读取更新清单（容错：文件不存在/损坏返回空清单 `{schemaVersion=1, steps={}}`） |
 | `Write-UpdateManifest` | 原子写入更新清单（依赖 Profile 的 `Write-FileAtomically`） |
-| `Get-StringFingerprint` | 计算字符串 SHA256 指纹（64 字符十六进制），**被 Provider.ps1 + 3 个 step 调用** |
+| `Get-StringFingerprint` | 计算字符串 SHA256 指纹（64 字符十六进制），**被 3 个 step 调用** |
 | `New-UpdateSnapshot` | 创建更新前会话级快照目录（`update_<时间戳_fff>_<PID>_<GUID8>`，唯一目录名防并发） |
 | `Clear-OldUpdateSnapshots` | 清理旧快照（contracts-first 策略参数 + HC-13 数组安全） |
 
-### 依赖与加载位置（双边界约束）
+### 依赖与加载位置（下界约束）
 
-Update.ps1 必须在 `Profile → Update → … → Provider` 的唯一位置加载，由两个边界夹定：
+Update.ps1 须在 Profile.ps1 之后加载：依赖 Profile.ps1 的 `Write-FileAtomically` / `Initialize-BackupDirectory` / `Get-UserHome` / `Get-CleanupPolicyContract` / `$script:BackupDirectory`。`Get-StringFingerprint` 仅被 steps 调用（steps 在 core 之后加载），无 core 内的上界约束。
 
-- **下界**（Update 在 Profile 之后）：依赖 Profile.ps1 的 `Write-FileAtomically` / `Initialize-BackupDirectory` / `Get-UserHome` / `Get-CleanupPolicyContract` / `$script:BackupDirectory`
-- **上界**（Update 在 Provider 之前）：`Provider.ps1:754` 依赖 `Get-StringFingerprint` 计算 pathHash
-
-> **与 macOS 的合理差异**：macOS `Provider.zsh` 不依赖 fingerprint，故 macOS 把 `Update.zsh` 放在 CoreFiles **最末**（Provider 之后）；Windows 因 `Provider.ps1` 依赖 `Get-StringFingerprint`，必须放 Provider 之前。两平台加载位置不一致是**正确的**，源于 Provider 实现差异。
+> **历史变更**：供应商管理迁移至 manage TUI、`Provider.ps1`/`Provider.zsh` 删除前，旧 `Provider.ps1` 曾依赖 `Get-StringFingerprint` 形成"Update 在 Provider 之前"的上界；Provider 删除后该约束消失，两平台 Update core 均只保留 Profile 下界。
 
 > **方案 B 职责划分**：npm 检测（`Test-NpmUpdateAvailable` / `Get-NpmOutdatedGlobal` / `Invoke-NpmGlobalInstall`）**留 Process.ps1**（命令执行层），不迁入 Update.ps1。Windows Update.ps1 只含"更新状态管理"，与 macOS Update.zsh 含 npm 检测是合理的职责划分差异。
 
@@ -186,7 +184,7 @@ Update.ps1 必须在 `Profile → Update → … → Provider` 的唯一位置�
 
 ### 职责
 
-**v1.2.0 新增**：共享步骤注册表，消除 `Install.ps1` 与 `Manage.ps1` 之间的重复定义。
+**v1.2.0 新增**：共享步骤注册表，统一 `Install.ps1` 的步骤定义（旧 `Manage.ps1` 已删除，管理面板改为 OpenTUI + Bun 单文件可执行 `ccq`）。
 
 ### 主要函数
 
@@ -230,13 +228,10 @@ class InstallState {
 "NodeJS"      = @()
 "Git"           = @()
 "ClaudeCode"    = @("NodeJS")
-"ApiKey"        = @("ClaudeCode")
 "Ccline"        = @("ClaudeCode")
-"CcSwitch"      = @("ClaudeCode")
 "ClaudeConfig"  = @("ClaudeCode")
 "ClaudeMd"      = @()
 "Mcp"           = @("ClaudeCode")
-"CcgWorkflow"   = @("NodeJS")
 "CodexCli"      = @("NodeJS")
 "AntigravityCli" = @()
 "OpenSpec"      = @("NodeJS")
@@ -278,92 +273,36 @@ $success = if ($result -is [bool]) { $result }
 
 ---
 
-## ManageCore.ps1
+## CcqExecutable.ps1
 
-### 职责（P10：Manage JS 单文件 bundle 缓存 wrapper）
+### 职责（ccq 可执行文件管理）
 
-**轻量 Node.js wrapper**（~145 行），把 `manage.js` 单文件 bundle 解析到可执行路径并以 TTY 继承方式调用，作为 Manage 四大管理面板（Provider / Skills / Update / MCP）的统一入口。业务逻辑全在 `manage.js` bundle（esbuild 打包 4 子管理器）中实现，平台层仅负责「检测 Node.js → 解析 manage.js → node 调用」。原 `McpManager.ps1` 平台 wrapper 已于 P8 删除，MCP 管理并入 `manage.js` → `mcp-manager.js`。
-
-### 三级解析策略（HC-CACHE-TMPDIR + HC-15）
-
-1. **源码模式优先**（离线可用）：`$PSScriptRoot` 可解析时定位 `installer/contracts/scripts/manage.js` 直接运行（require 同目录子模块）
-2. **缓存命中**（0 网络）：`$env:TEMP\.ccq\manage.js` 修改时间 <1 小时直接复用
-3. **过期下载**（远端最新）：`Invoke-WebRequest /releases/latest/download/manage.js` 覆盖缓存；下载失败时降级复用旧缓存
-
-> **HC-15**：`irm|iex` Release 模式下 `$PSScriptRoot` 为空，源码探测前判空，缓存路径仅依赖 `$env:TEMP`。
+**ccq 可执行文件管理模块**，负责检测 CPU 架构、从 GitHub Release 下载对应平台的单文件可执行产物、安装到 `%USERPROFILE%\.local\bin\ccq.exe`（与 Claude Code native installer 同目录），并加入用户 PATH 使 `ccq` 命令天然可达，**不注入 Profile**。
 
 ### 主要函数
 
 | 函数 | 职责 |
 |------|------|
-| `Get-ManageCachePath` | 返回 `$env:TEMP\.ccq\manage.js` 固定缓存路径 |
-| `Get-SourceManageScript` | 源码模式探测（`$PSScriptRoot` 上溯 contracts/scripts/manage.js），不可用返回 `$null` |
-| `Resolve-ManageScript` | 三级解析（源码 → 缓存 TTL → 下载），返回 manage.js 路径或 `$null` |
-| `Show-ManagePanel` | 对外入口：检测 Node.js（含 <20 版本警告）→ 解析 → `& node manage.js`（TTY 继承） |
+| `Get-CpuArchitecture` | 检测 CPU 架构，返回 `x64` 或 `arm64`（通过 `$env:PROCESSOR_ARCHITECTURE` + WMI 查询） |
+| `Install-CcqExecutable` | 下载 ccq 可执行文件到 `%USERPROFILE%\.local\bin\ccq.exe`（自动检测架构，从 GitHub Release 下载，原子替换） |
+| `Add-DirectoryToUserPath` | 将 `%USERPROFILE%\.local\bin` 加入用户 PATH（无需 Profile） |
+| `Test-CcqInstalled` | 检测 ccq 是否已安装且可执行（`ccq --version` 可达） |
 
 ### 配置常量
 
 ```powershell
-$script:ManageBundleUrl    = '.../releases/latest/download/manage.js'  # HC-ZERO-CACHE：无版本号 / 无内容哈希
-$script:ManageCacheTtlHours = 1                                        # 缓存有效期（小时）
+$script:CcqGitHubReleaseBaseUrl = "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download"
+$script:CcqInstallDir           = "$env:USERPROFILE\.local\bin"  # 与 Claude Code native installer 同目录
 ```
 
-> **加载顺序**：ManageCore.ps1 在 Bootstrap.ps1 之后、Provider.ps1 之前加载。依赖 Ui.ps1、Process.ps1 的函数。打包与缓存细节见 [installer/contracts/README.md](../../contracts/README.md) 的「Manage JS 单文件 bundle」小节。
+### Windows PATH 策略
 
----
+Windows 使用用户级 `.local/bin` 方式（无需 Profile）：
+1. 下载 `ccq-windows-{x64|arm64}.exe` 到 `%USERPROFILE%\.local\bin\ccq.exe`
+2. 将 `%USERPROFILE%\.local\bin` 加入用户 PATH（若已存在则跳过）
+3. 该路径与 Claude Code native installer 的 `%USERPROFILE%\.local\bin\claude.exe` 保持一致
 
-## Provider.ps1
-
-### 职责
-
-**v2.0.0 新增**：供应商管理核心模块，提供完整 CRUD + 自动同步 + 交互菜单。被 `Install-ApiKey` 和 `Manage.ps1` 共用。
-
-### 内置供应商模板
-
-```powershell
-$script:BuiltinProviders = @{
-    zhipu    = @{ Name = "智谱 GLM"; BaseUrl = "https://open.bigmodel.cn/api/anthropic"; ModelEnv = @{...}; ExtraEnv = @{ API_TIMEOUT_MS = "3000000" } }
-    minimax  = @{ Name = "MiniMax"; BaseUrl = "https://api.minimaxi.com/anthropic"; ModelEnv = @{...}; ExtraEnv = @{ ANTHROPIC_MODEL = "MiniMax-M3" } }
-    moonshot = @{ Name = "Kimi Code"; BaseUrl = "https://api.kimi.com/coding/"; ModelEnv = @{...}; ExtraEnv = @{ ENABLE_TOOL_SEARCH = "false" } }
-    deepseek = @{ Name = "DeepSeek"; BaseUrl = "https://api.deepseek.com/anthropic"; ModelEnv = @{...}; ExtraEnv = @{ CLAUDE_CODE_EFFORT_LEVEL = "max" } }
-    bailian  = @{ Name = "阿里云百炼"; BaseUrl = "https://coding.dashscope.aliyuncs.com/apps/anthropic"; ModelEnv = @{...}; ExtraEnv = @{ ANTHROPIC_MODEL = "qwen3.7-plus" } }
-    custom   = @{ Name = "自定义供应商"; BaseUrl = "" }
-}
-```
-
-### 主要函数
-
-| 函数 | 职责 |
-|------|------|
-| `Get-ProviderSettingsPath` | 返回 `~/.claude/settings.json` 路径（私有辅助） |
-| `Get-ProviderProfilesDir` | 返回 `~/.claude/providers/` 目录路径 |
-| `Read-SettingsJson` | 安全读取 settings.json 为 hashtable |
-| `Write-SettingsJsonAtomic` | 原子写入 settings.json（temp + Move-Item） |
-| `Get-ProviderManagedModelEnvFromLegacyAliases` | 兼容读取旧版别名映射字段并转换为模型 env 键 |
-| `Get-ProviderManagedModelEnv` | 从 Profile 提取受管模型 env 键 |
-| `Set-ProviderManagedModelEnv` | 写入 Profile 的 `modelEnv` 并清理旧字段 |
-| `Get-ProviderManagedModelSummary` | 生成人类可读的模型配置摘要 |
-| `Sync-ProviderFromSettings` | 从 settings.json 反向生成 Profile（迁移旧用户） |
-| `Get-ProviderProfiles` | 扫描 `~/.claude/providers/*.json`，返回 Profile 数组 |
-| `Get-ActiveProvider` | 识别当前活跃供应商（BaseUrl 匹配） |
-| `Show-ProviderStatus` | 显示供应商状态表格（CJK-aware padding） |
-| `Add-Provider` | 交互式添加供应商（`-Activate` 开关控制自动激活） |
-| `Edit-Provider` | 修改已有供应商配置（API Key / Base URL / 名称 / 全部） |
-| `Remove-Provider` | 删除供应商（活跃供应商安全阻止） |
-| `Switch-Provider` | 切换活跃供应商（Profile → settings.json 合并） |
-| `Show-ProviderManageMenu` | 供应商管理交互菜单（while 循环，Esc 返回） |
-
-### 设计要点
-
-- **安装复用**：`Add-Provider -Activate` 被 `Install-ApiKey` 直接调用，安装步骤不再自行实现供应商选择
-- **自动同步**：`Sync-ProviderFromSettings` 在进入供应商管理菜单时自动执行
-- **单一数据源**：`$script:BuiltinProviders` 是内置供应商的唯一定义
-- **SecureString**：API Key 输入使用 `Read-Host -AsSecureString`，内存中用后即清
-- **原子写入**：所有 Profile 和 settings.json 操作均为 temp + Move-Item
-
-### 加载顺序
-
-Provider.ps1 在 ManageCore.ps1 之后加载。依赖 Ui.ps1、Profile.ps1 的函数，**且依赖 Update.ps1 的 `Get-StringFingerprint`**（行 754 计算 pathHash）——这是 Update.ps1 必须在 Provider.ps1 之前加载的强约束（上界）。被 steps/ApiKey.ps1 dot-source 引用。
+> **加载顺序**：CcqExecutable.ps1 在 Net.ps1 之后加载（依赖 `Invoke-FileDownload`），在 Bootstrap.ps1 之前加载。
 
 ---
 
@@ -383,8 +322,7 @@ macOS 安装器实现了与 Windows 功能对等的核心模块，采用 zsh 脚
 | `Net.ps1` | - | N/A - macOS 使用 curl/wget 原生工具 |
 | `Registry.ps1` | `Registry.zsh` | 98% - 步骤注册表、拓扑排序、Legacy 映射 |
 | `Bootstrap.ps1` | `Bootstrap.zsh` | 95% - 生命周期、Critical 失败策略、五类摘要 |
-| `ManageCore.ps1` (~145行) | `ManageCore.zsh` (~130行) | **100% - Manage JS bundle 缓存 wrapper，三级解析（源码/缓存/下载）共享 `manage.js`** |
-| `Provider.ps1` | `Provider.zsh` | 98% - CRUD、Sync、模型环境键管理 |
+| `CcqExecutable.ps1` (~200行) | `CcqExecutable.zsh` (~150行) | **100% - ccq 可执行文件管理，架构检测 / 下载 / PATH（Windows 与 macOS 均使用 `.local/bin`）** |
 
 ### 平台差异要点
 
@@ -415,10 +353,10 @@ macOS 安装器实现了与 Windows 功能对等的核心模块，采用 zsh 脚
 ### 共享机制
 
 **contracts 业务契约**（100% 共享）：
-- `installer/contracts/steps.json` - 步骤元数据、依赖、分组
-- `installer/contracts/providers.json` - 供应商定义
-- `installer/contracts/mcp-servers.json` - MCP Server 配置
-- `installer/contracts/claude-config.json` - Claude 配置模板
+- `contracts/steps.json` - 步骤元数据、依赖、分组
+- `contracts/providers.json` - 供应商定义
+- `contracts/mcp-servers.json` - MCP Server 配置
+- `contracts/claude-config.json` - Claude 配置模板
 
 **配置文件 schema**（100% 共享）：
 - `~/.claude/settings.json` - Claude Code 主配置
@@ -440,7 +378,6 @@ macOS 安装器实现了与 Windows 功能对等的核心模块，采用 zsh 脚
 | 命令执行 | `Invoke-ExternalCommand` | `ccq_run_command` |
 | 原子写入 | `Write-FileAtomic` | `ccq_write_file_atomic` |
 | 备份文件 | `Backup-File` | `ccq_backup_file` |
-| 供应商切换 | `Switch-Provider` | `ccq_switch_provider` |
 | MCP 启用 | `Enable-McpServer` | `ccq_enable_mcp_server` |
 | 步骤生命周期 | `Invoke-StepLifecycle` | `ccq_invoke_step_lifecycle` |
 | 拓扑排序 | `Get-ExecutionOrder` | `ccq_get_execution_order` |
