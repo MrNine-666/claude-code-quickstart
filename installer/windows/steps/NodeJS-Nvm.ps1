@@ -1,4 +1,4 @@
-# NodeJS-Nvm.ps1 - nvm-windows 专属安装层
+﻿# NodeJS-Nvm.ps1 - nvm-windows 专属安装层
 # 职责：nvm-windows 安装、环境同步
 
 #Requires -Version 5.1

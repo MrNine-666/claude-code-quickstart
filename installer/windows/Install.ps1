@@ -1,14 +1,10 @@
-#Requires -Version 7.0
+﻿#Requires -Version 5.1
 # Install.ps1 - CCQ（安装入口）
-# 功能: 首次安装入口（Onboarding），两级分组安装（基础环境 / 进阶扩展）
+# 功能: 首次安装入口（Onboarding），PS5.1 单运行时直跑——前置检测 + 基础环境直装
+#       （NodeJS / Git / ClaudeCode），无顶层菜单；进阶/管理功能由 Manage TUI 承载
 
 param(
     [switch]$ListSteps,
-    [ValidateSet("Basic", "Advanced", "")]
-    [string]$Group = "",
-    [ValidateSet("OneClick", "Select", "")]
-    [string]$Mode = "",
-    [switch]$Staged,
     [ValidateSet("Normal", "Developer")]
     [string]$OutputMode = "Normal"
 )
@@ -35,27 +31,12 @@ public class _CcqKernel32Cp {
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-# ─── PS 版本运行时拦截（#Requires 对 irm|iex 无效，需运行时二次校验）────────
-
-if ($PSVersionTable.PSVersion.Major -lt 7) {
-    Write-Host ""
-    Write-Host "  [ERROR] Install.ps1 需要 PowerShell 7.0 或更高版本" -ForegroundColor Red
-    Write-Host "  当前版本: PowerShell $($PSVersionTable.PSVersion)" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "  解决方案：" -ForegroundColor Yellow
-    Write-Host "    1. 先运行引导脚本:" -ForegroundColor White
-    Write-Host "       Set-ExecutionPolicy Bypass -Scope Process -Force" -ForegroundColor Gray
-    Write-Host "       [Text.Encoding]::UTF8.GetString((New-Object Net.WebClient).DownloadData('https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/bootstrap.ps1')) | iex" -ForegroundColor Gray
-    Write-Host "    2. 或在 Windows Terminal 中打开 PowerShell 7 后执行此脚本" -ForegroundColor White
-    Write-Host ""
-    exit 1
-}
-
 $script:WindowsRoot = if ([string]::IsNullOrWhiteSpace($PSScriptRoot)) { "" } else { $PSScriptRoot }
 $script:InstallerRoot = if ([string]::IsNullOrWhiteSpace($script:WindowsRoot)) { "" } else { Split-Path -Parent $script:WindowsRoot }
 
 # ─── Dot-source 核心模块 ────────────────────────────────────────────────────
 
+. "$script:WindowsRoot\core\Json.ps1"
 . "$script:WindowsRoot\core\Ui.ps1"
 . "$script:WindowsRoot\core\Process.ps1"
 . "$script:WindowsRoot\core\Profile.ps1"
@@ -64,7 +45,6 @@ $script:InstallerRoot = if ([string]::IsNullOrWhiteSpace($script:WindowsRoot)) {
 . "$script:WindowsRoot\core\Net.ps1"
 . "$script:WindowsRoot\core\Registry.ps1"
 . "$script:WindowsRoot\core\Bootstrap.ps1"
-. "$script:WindowsRoot\core\Provider.ps1"
 
 # ─── Dot-source 所有步骤模块（从 Registry 动态加载）──────────────────────────
 
@@ -93,95 +73,7 @@ $script:StepRegistry = Get-StepRegistry
 
 $script:StepGroups = Get-StepGroups
 
-# ─── 进程级幂等标志 ──────────────────────────────────────────────────────────
-
-$script:CcqShortcutRegistered = $false
-
 # ─── 核心函数 ───────────────────────────────────────────────────────────────
-
-function Invoke-SilentStepTest {
-    <#
-    .SYNOPSIS
-    静默执行步骤 TestFunction，抑制所有输出流，返回布尔安装状态
-    .DESCRIPTION
-    统一封装 Preference 保存/恢复 + 输出流抑制，使用 finally 确保恢复。
-    消除 Get-GroupStatus 和 Show-AdvancedSelectMenu 中的重复逻辑（DRY）。
-    .PARAMETER TestFunction
-    步骤的 Test 函数名
-    .RETURNS
-    $true/$false — 是否已安装
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$TestFunction
-    )
-
-    $testResult = $null
-    $originalVerbose = $VerbosePreference
-    $originalDebug = $DebugPreference
-    $originalInfo = $InformationPreference
-    $originalWarning = $WarningPreference
-
-    try {
-        # 设置为静默模式
-        $VerbosePreference = 'SilentlyContinue'
-        $DebugPreference = 'SilentlyContinue'
-        $InformationPreference = 'SilentlyContinue'
-        $WarningPreference = 'SilentlyContinue'
-
-        # 调用 TestFunction 并抑制所有输出流（移除 *>&1 避免 WarningRecord/ErrorRecord 污染）
-        $testResult = & $TestFunction 2>$null 3>$null 4>$null 5>$null 6>$null
-    } catch {
-        # 忽略检测错误，视为未安装
-        $testResult = $null
-    } finally {
-        # 确保恢复原始 Preference 设置（即使异常也不泄漏）
-        $VerbosePreference = $originalVerbose
-        $DebugPreference = $originalDebug
-        $InformationPreference = $originalInfo
-        $WarningPreference = $originalWarning
-    }
-
-    if ($testResult -is [bool]) { return $testResult }
-    elseif ($testResult) { return [bool]$testResult.IsInstalled }
-    else { return $false }
-}
-
-function Get-GroupStatus {
-    <#
-    .SYNOPSIS
-    获取分组的安装状态统计
-    .PARAMETER GroupName
-    分组名称（Basic / Advanced）
-    .RETURNS
-    @{ Total; Installed; StepStatuses }
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$GroupName
-    )
-
-    $group = $script:StepGroups[$GroupName]
-    $total = $group.StepIds.Count
-    $installed = 0
-    $stepStatuses = @{}
-
-    foreach ($stepId in $group.StepIds) {
-        $stepConfig = Get-StepConfigById -StepId $stepId
-        if (-not $stepConfig) { continue }
-
-        $isInstalled = Invoke-SilentStepTest -TestFunction $stepConfig.TestFunction
-
-        $stepStatuses[$stepId] = $isInstalled
-        if ($isInstalled) { $installed++ }
-    }
-
-    return @{
-        Total        = $total
-        Installed    = $installed
-        StepStatuses = $stepStatuses
-    }
-}
 
 function Get-DependencyClosure {
     <#
@@ -296,193 +188,6 @@ function Show-ExecutionPlan {
     return ($confirmIndex -eq 0)
 }
 
-function Register-CcqShortcut {
-    <#
-    .SYNOPSIS
-    注册 ccq 快捷命令（当前会话 + Profile 持久化）
-    .DESCRIPTION
-    非阻塞设计：失败仅输出 Debug 级警告，不影响安装主流程。
-    进程级幂等：同一进程内仅持久化一次，避免重复写入 Profile。
-    #>
-    param()
-
-    # 进程级幂等 guard：同一进程内仅持久化一次
-    if ($script:CcqShortcutRegistered) {
-        return
-    }
-
-    $installScriptUrl = "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/install.ps1"
-    $manageScriptUrl = "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/manage.ps1"
-
-    $shortcutTemplate = @'
-function ccq {
-    param(
-        [ValidateSet('安装面板', '管理面板', 'Install', 'Manage', '')]
-        [string]$Panel = ''
-    )
-
-    $installScriptUrl = '__INSTALL_SCRIPT_URL__'
-    $manageScriptUrl = '__MANAGE_SCRIPT_URL__'
-
-    function Show-CcqPanelMenu {
-        param(
-            [int]$DefaultIndex = 1
-        )
-
-        $options = @(
-            @{ Label = '安装面板'; Value = 'Install' },
-            @{ Label = '管理面板'; Value = 'Manage' }
-        )
-        $selectedIndex = [Math]::Max(0, [Math]::Min($DefaultIndex, $options.Count - 1))
-
-        try {
-            if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) {
-                return $options[$selectedIndex].Value
-            }
-        } catch {
-            return $options[$selectedIndex].Value
-        }
-
-        $renderMenu = {
-            param([int]$Index)
-
-            Write-Host ''
-            Write-Host 'CCQ 面板选择'
-            Write-Host '使用 ↑/↓ 选择，Enter 确认，Esc 取消'
-            Write-Host ''
-
-            for ($i = 0; $i -lt $options.Count; $i++) {
-                $prefix = if ($i -eq $Index) { '> ' } else { '  ' }
-                Write-Host ($prefix + $options[$i].Label)
-            }
-        }
-
-        $menuLineCount = 4 + $options.Count
-        $redrawMenu = {
-            param([int]$Index)
-
-            try {
-                $top = [Math]::Max(0, [Console]::CursorTop - $menuLineCount)
-                [Console]::SetCursorPosition(0, $top)
-
-                $blank = ' ' * [Math]::Max(1, [Console]::WindowWidth - 1)
-                for ($i = 0; $i -lt $menuLineCount; $i++) {
-                    Write-Host $blank
-                }
-
-                [Console]::SetCursorPosition(0, $top)
-            } catch {
-                Write-Host ''
-            }
-
-            & $renderMenu $Index
-        }
-
-        $cursorVisible = $true
-        $cursorVisibilityCaptured = $false
-
-        try {
-            try {
-                $cursorVisible = [Console]::CursorVisible
-                $cursorVisibilityCaptured = $true
-                [Console]::CursorVisible = $false
-            } catch { }
-
-            & $renderMenu $selectedIndex
-
-            while ($true) {
-                $key = [Console]::ReadKey($true)
-                switch ($key.Key) {
-                    'UpArrow' {
-                        $selectedIndex = ($selectedIndex - 1 + $options.Count) % $options.Count
-                        & $redrawMenu $selectedIndex
-                    }
-                    'DownArrow' {
-                        $selectedIndex = ($selectedIndex + 1) % $options.Count
-                        & $redrawMenu $selectedIndex
-                    }
-                    'Enter' {
-                        return $options[$selectedIndex].Value
-                    }
-                    'Escape' {
-                        Write-Host ''
-                        return ''
-                    }
-                }
-            }
-        } catch {
-            Write-Host ''
-            return $options[$selectedIndex].Value
-        } finally {
-            if ($cursorVisibilityCaptured) {
-                try { [Console]::CursorVisible = $cursorVisible } catch { }
-            }
-        }
-    }
-
-    if ([string]::IsNullOrWhiteSpace($Panel)) {
-        $Panel = Show-CcqPanelMenu -DefaultIndex 1
-        if ([string]::IsNullOrWhiteSpace($Panel)) {
-            Write-Host '已取消'
-            return
-        }
-    }
-
-    switch ($Panel) {
-        { $_ -in @('Install', '安装面板') } { irm $installScriptUrl | iex }
-        { $_ -in @('Manage', '管理面板') } { irm $manageScriptUrl | iex }
-        default { Write-Host ('未知面板: ' + $Panel) }
-    }
-}
-'@
-
-    $shortcutContentText = $shortcutTemplate.Replace('__INSTALL_SCRIPT_URL__', $installScriptUrl).Replace('__MANAGE_SCRIPT_URL__', $manageScriptUrl)
-    $shortcutContent = @($shortcutContentText -split "`r?`n")
-
-    try {
-        # 1) 当前会话立即可用
-        $ccqScript = [ScriptBlock]::Create(($shortcutContent -join "`n"))
-        Set-Item -Path Function:\global:ccq -Value $ccqScript
-
-        # 2) Profile 持久化（仅写 SHORTCUTS 子段）
-        $profilePath = $PROFILE
-        if ([string]::IsNullOrWhiteSpace($profilePath)) {
-            return
-        }
-
-        # 先迁移旧结构（幂等）
-        if (Test-Path $profilePath) {
-            $null = Migrate-ManagedBlockToSubsections -FilePath $profilePath
-        }
-
-        # 规范化写入 SHORTCUTS 子段（收敛历史重复 + 裸 ccq 函数清理）
-        $saved = Set-CcqShortcutSubsectionInFile -FilePath $profilePath -ShortcutContent $shortcutContent
-
-        # 降级：托管块不存在时创建新块
-        if (-not $saved) {
-            $saved = Write-ProfileSubsection -FilePath $profilePath -SectionName "SHORTCUTS" -SectionContent $shortcutContent
-        }
-
-
-        if (-not $saved) {
-            Write-UiWarning "⚠ ccq 快捷命令持久化失败（不影响安装流程）" -Level Debug
-        } else {
-            # 成功后置位，确保同一进程内不会重复写盘
-            $script:CcqShortcutRegistered = $true
-
-            try {
-                # 在当前进程中刷新 Profile，让 irm|iex 这类同进程安装场景无需新开终端。
-                # 注意：若用户通过 pwsh -File 启动安装器，父进程作用域无法被子进程修改。
-                if (Test-Path $profilePath) { . $profilePath }
-            } catch {
-                Write-UiWarning "⚠ 当前会话加载 Profile 失败（不影响安装流程）: $($_.Exception.Message)" -Level Debug
-            }
-        }
-
-    } catch {
-        Write-UiWarning "⚠ 注册 ccq 快捷命令失败（不影响安装流程）: $($_.Exception.Message)" -Level Debug
-    }
-}
 
 function Invoke-GroupedInstall {
     <#
@@ -509,8 +214,6 @@ function Invoke-GroupedInstall {
     if (-not $closure.FinalPlan -or $closure.FinalPlan.Count -eq 0) {
         Write-Host ""
         Write-UiSuccess "所有选定步骤已安装，无需操作"
-        # 即使无需安装，也执行 Profile 规范化（清理历史污染）
-        Register-CcqShortcut
         return @{ Total = 0; Success = 0; Failed = 0; Skipped = 0 }
     }
 
@@ -611,136 +314,97 @@ function Invoke-GroupedInstall {
         }
     }
 
-    # 指纹管理步骤 → 种子写入清单（Success + Skipped）
-    # Success: CCQ 刚安装/更新了此步骤，记录指纹
-    # Skipped: 步骤已安装但被跳过，同样需要种子，否则 Update 会因无指纹而误报"有更新"
-    try {
-        $fpManagedSteps = @("ClaudeMd", "ClaudeConfig", "CcgWorkflow")
-        $manifest = Read-UpdateManifest
-        $seeded = $false
-
-        foreach ($sid in $orderedStepIds) {
-            if ($sid -notin $fpManagedSteps) { continue }
-            $sr = $State.StepResults[$sid]
-            if (-not $sr -or ($sr.Status -ne [StepStatus]::Success -and $sr.Status -ne [StepStatus]::Skipped)) { continue }
-
-            $fnName = "Get-${sid}Fingerprint"
-            if (-not (Get-Command $fnName -ErrorAction SilentlyContinue)) { continue }
-
-            $fp = & $fnName
-            if (-not [string]::IsNullOrWhiteSpace($fp)) {
-                $manifest["steps"][$sid] = @{
-                    fingerprint = $fp
-                    appliedAt   = (Get-Date).ToUniversalTime().ToString("o")
-                }
-                $seeded = $true
-            }
-        }
-
-        if ($seeded) {
-            Write-UpdateManifest -Manifest $manifest
-        }
-    } catch {
-        # 指纹种子写入失败不阻塞安装流程
-    }
-
-    Register-CcqShortcut
-
     return $results
 }
 
-function Show-AdvancedSelectMenu {
+# ─── CCQ 可执行文件下载确认 ───────────────────────────────────────────────────
+
+function Confirm-CcqExecutableDownload {
     <#
     .SYNOPSIS
-    显示进阶步骤的多选菜单（带状态标签）
-    .RETURNS
-    用户选择的 StepId 数组
+    在 install 末尾弹出确认，询问用户是否下载 ccq 可执行文件到 PATH 目录
+    .DESCRIPTION
+    遵守 TDR-6：用户拒绝则跳过；确认则按平台架构下载到 %USERPROFILE%\.local\bin\ccq.exe
+    并通过注册表 HKCU\Environment 加入用户 PATH（非 Profile）。
     #>
     param()
 
+    Write-UiPrimary "ccq 管理工具安装"
     Write-Host ""
-    Write-UiPrimary "正在检测进阶扩展组件状态..." -Level Detail
+    Write-UiInfo "ccq 是 Claude Code Quickstart 的管理控制台，提供以下功能："
+    Write-UiInfo "  • 供应商管理（Provider 配置）"
+    Write-UiInfo "  • MCP Server 管理"
+    Write-UiInfo "  • Skills 管理"
+    Write-UiInfo "  • 提示词配置"
+    Write-UiInfo "  • 配置文件管理"
+    Write-UiInfo "  • 工具管理（ClaudeCode / Ccline / OpenSpec 等）"
+    Write-Host ""
+    Write-UiWarning "是否现在下载 ccq 可执行文件到 PATH 目录？"
+    Write-UiDim "  （拒绝则跳过，可稍后手动安装）"
     Write-Host ""
 
-    $advancedGroup = $script:StepGroups["Advanced"]
-    $options = @()
-    $stepIdMap = @()
-    $defaultSelected = @()
+    $choices = @(
+        [System.Management.Automation.Host.ChoiceDescription]::new("&是", "下载 ccq 可执行文件")
+        [System.Management.Automation.Host.ChoiceDescription]::new("&否", "跳过，稍后手动安装")
+    )
 
-    for ($i = 0; $i -lt $advancedGroup.StepIds.Count; $i++) {
-        $stepId = $advancedGroup.StepIds[$i]
-        $stepConfig = Get-StepConfigById -StepId $stepId
-        if (-not $stepConfig) { continue }
+    $decision = $Host.UI.PromptForChoice("", "请选择", $choices, 0)
 
-        $stepNum = $i + 1
+    if ($decision -ne 0) {
+        Write-Host ""
+        Write-UiInfo "已跳过 ccq 可执行文件下载"
+        Write-UiDim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
+        return
+    }
 
-        # 静默获取安装状态（委托 Invoke-SilentStepTest）
-        $isInstalled = Invoke-SilentStepTest -TestFunction $stepConfig.TestFunction
+    Write-Host ""
+    Write-UiInfo "正在准备下载 ccq 可执行文件..."
 
-        $statusBadge = if ($isInstalled) { "【已安装】" } else { "【未安装】" }
-        $displayText = "$($stepNum). $($stepConfig.StepName)$statusBadge - $($stepConfig.Description)"
-
-        $options += $displayText
-        $stepIdMap += $stepId
-
-        # 默认勾选策略：未安装 + 非可选 → 勾选
-        if (-not $isInstalled -and -not $stepConfig.IsOptional) {
-            $defaultSelected += $i
+    # 1. 检测是否已安装
+    $installed = Test-CcqExecutableInstalled
+    if ($installed.IsInstalled) {
+        Write-UiSuccess "✓ ccq 可执行文件已安装: $($installed.Path)"
+        if (-not [string]::IsNullOrWhiteSpace($installed.Version)) {
+            Write-UiInfo "  当前版本: $($installed.Version)"
         }
+        Write-UiDim "  如需更新，请在新终端运行: ccq"
+        return
     }
 
-    $selectedIndices = @(Show-MultiSelectMenu `
-        -Title "进阶扩展 - 选择要安装的组件：" `
-        -Options $options `
-        -DefaultSelected $defaultSelected)
+    # 2. 检测平台架构
+    $arch = Get-CcqArchitecture
+    Write-UiInfo "检测到平台架构: $arch"
 
-    # 安全的空值检查：处理 $null 或空数组
-    if (-not $selectedIndices -or $selectedIndices.Count -eq 0) {
-        return @()
+    # 3. 构建下载 URL
+    $baseUrl = "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download"
+    $exeName = "ccq-${arch}.exe"
+    $downloadUrl = "${baseUrl}/${exeName}"
+
+    Write-UiDim "  下载 URL: $downloadUrl"
+
+    # 4. 执行下载与安装
+    $installResult = Install-CcqExecutable -DownloadUrl $downloadUrl
+
+    if ($installResult.Success) {
+        Write-Host ""
+        Write-UiSuccess "════════════════════════════════════════════════════════════"
+        Write-UiSuccess " ccq 可执行文件安装成功！"
+        Write-UiSuccess "════════════════════════════════════════════════════════════"
+        Write-Host ""
+        Write-UiInfo "下次启动新终端后，可直接运行以下命令进入管理控制台："
+        Write-Host ""
+        Write-UiPrimary "    ccq"
+        Write-Host ""
+        Write-UiDim "（当前会话 PATH 尚未刷新，请开启新终端）"
+    } else {
+        Write-Host ""
+        Write-UiWarning "ccq 可执行文件下载失败，但不影响 Claude Code 基础环境"
+        Write-UiDim "  错误: $($installResult.ErrorMessage)"
+        Write-UiInfo "您可以稍后手动下载："
+        Write-UiInfo "  1. 访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
+        Write-UiInfo "  2. 下载对应平台的可执行文件（$exeName）"
+        Write-UiInfo "  3. 放置到任意 PATH 目录"
     }
-
-    $selectedStepIds = @()
-    foreach ($idx in $selectedIndices) {
-        $selectedStepIds += $stepIdMap[$idx]
-    }
-
-    return $selectedStepIds
-}
-
-# ─── 菜单函数 ───────────────────────────────────────────────────────────────
-
-function Select-TopLevelAction {
-    <#
-    .SYNOPSIS
-    显示顶层分组选择菜单
-    .RETURNS
-    选中的索引（0=基础, 1=进阶, -1=Esc）
-    #>
-    param()
-
-    $options = @(
-        "基础环境 - Node.js, Git, Claude Code, 第三方供应商配置"
-        "进阶扩展 - 增强配置，MCP，Workflow"
-    )
-
-    return Show-SingleSelectMenu -Title "请选择操作：" -Options $options -DefaultIndex 0
-}
-
-function Select-AdvancedAction {
-    <#
-    .SYNOPSIS
-    显示进阶扩展的子菜单
-    .RETURNS
-    选中的索引（0=一键, 1=可选, -1=Esc）
-    #>
-    param()
-
-    $options = @(
-        "一键安装 - 安装全部必选进阶组件（不含可选的 cc-switch/Codex/Antigravity CLI）"
-        "可选安装 - 选择要安装的组件"
-    )
-
-    return Show-SingleSelectMenu -Title "进阶扩展 - 请选择安装模式：" -Options $options -DefaultIndex 0
 }
 
 # ─── 步骤列表输出 ────────────────────────────────────────────────────────────
@@ -756,7 +420,7 @@ function Show-StepList {
     Write-Host ""
 
     $stepIndex = 0
-    foreach ($groupName in @("Basic", "Advanced")) {
+    foreach ($groupName in @("Basic")) {
         $group = $script:StepGroups[$groupName]
         Write-UiPrimary "─── $($group.Label)（$($group.Description)）───"
         Write-Host ""
@@ -843,9 +507,12 @@ function Show-FinalSummary {
     if ($Results.Failed -eq 0) {
         Write-Host ""
         Write-UiPrimary "快速开始：" -Level Detail
-        Write-UiInfo "  ccq             - CCQ 面板入口（安装面板/管理面板）" -Level Detail
         Write-UiInfo "  claude          - 启动 Claude Code" -Level Detail
         Write-UiInfo "  claude --help   - 查看帮助信息" -Level Detail
+        Write-Host ""
+        Write-UiPrimary "管理面板（可选）：" -Level Detail
+        Write-UiInfo "  方式 1: irm https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/manage.ps1 | iex" -Level Detail
+        Write-UiInfo "  方式 2: npm install -g ccq && ccq" -Level Detail
     } else {
         Write-UiWarning "安装完成，但有 $($Results.Failed) 个步骤失败"
         Write-Host ""
@@ -867,6 +534,150 @@ function Show-FinalSummary {
     $State.IsCompleted = ($Results.Failed -eq 0)
 }
 
+# ─── 前置环境检测（PS5.1 单运行时，合并自原 Bootstrap.ps1）────────────────────
+
+function Install-RecommendedPowerShell7 {
+    <#
+    .SYNOPSIS
+    为用户安装 PowerShell 7（推荐环境组件，非阻塞）
+    .DESCRIPTION
+    脚本运行时为 PS5.1，PS7 仅作推荐组件安装：装失败 / 用户跳过 SHALL NOT 中断基础
+    安装，脚本始终在当前 PS5.1 进程继续，不 re-exec。
+    #>
+    param()
+
+    $required = [Version]"7.0"
+
+    if (Test-CommandAvailable -Command "pwsh") {
+        $version = Get-CommandVersion -Command "pwsh"
+        $versionString = if ($version) { $version -replace '[^\d\.].*$', '' } else { "" }
+        if ($versionString) {
+            try {
+                if ([Version]$versionString -ge $required) {
+                    Write-UiSuccess "PowerShell 7 已安装（版本 $version）"
+                    return
+                }
+            } catch { }
+        }
+        Write-UiWarning "检测到 PowerShell 7 版本过低（$version），建议升级"
+    } else {
+        Write-UiInfo "未检测到 PowerShell 7（推荐组件，可提升后续开发体验）" -Level Detail
+    }
+
+    if (-not (Test-CommandAvailable -Command "winget")) {
+        Write-UiWarning "winget 不可用，跳过 PowerShell 7 自动安装（可稍后手动安装：https://aka.ms/powershell）"
+        return
+    }
+
+    try {
+        $installResult = Invoke-WingetInstall -PackageId "Microsoft.PowerShell" -PackageName "PowerShell 7" -Silent -AcceptLicense
+        if ($installResult.Success) {
+            Refresh-SessionPath
+            Write-UiSuccess "PowerShell 7 安装成功（推荐组件）"
+        } else {
+            Write-UiWarning "PowerShell 7 自动安装未完成（不影响基础安装，可稍后手动安装：https://aka.ms/powershell）"
+        }
+    } catch {
+        Write-UiWarning "PowerShell 7 自动安装出错（不影响基础安装）：$($_.Exception.Message)"
+    }
+}
+
+function Install-WindowsTerminal {
+    <#
+    .SYNOPSIS
+    安装 Windows Terminal（可选推荐组件，非阻塞）
+    #>
+    param()
+
+    # 检测是否已安装（兼容不支持 Appx 的系统，如 Windows Server Core）
+    try {
+        $wtPackage = Get-AppxPackage -Name "Microsoft.WindowsTerminal" -ErrorAction Stop
+        if ($wtPackage) {
+            Write-UiSuccess "Windows Terminal 已安装"
+            return
+        }
+    } catch {
+        Write-UiInfo "无法检测 Windows Terminal（系统不支持 Appx），跳过" -Level Detail
+        return
+    }
+
+    $options = @("安装 Windows Terminal（推荐，更好的终端体验）", "跳过，使用默认终端")
+    $choice = Show-SingleSelectMenu -Title "是否安装 Windows Terminal？" -Options $options -DefaultIndex 0
+    if ($choice -ne 0) {
+        Write-UiInfo "已跳过 Windows Terminal 安装" -Level Detail
+        return
+    }
+
+    if (-not (Test-CommandAvailable -Command "winget")) {
+        Write-UiWarning "winget 不可用，跳过 Windows Terminal 自动安装"
+        return
+    }
+
+    try {
+        $installResult = Invoke-WingetInstall -PackageId "Microsoft.WindowsTerminal" -PackageName "Windows Terminal" -Silent -AcceptLicense
+        if ($installResult.Success) {
+            Write-UiSuccess "Windows Terminal 安装成功"
+        } else {
+            Write-UiWarning "Windows Terminal 自动安装未完成（不影响基础安装）"
+        }
+    } catch {
+        Write-UiWarning "Windows Terminal 自动安装出错（不影响基础安装）：$($_.Exception.Message)"
+    }
+}
+
+function Invoke-InstallPreflight {
+    <#
+    .SYNOPSIS
+    install 前置环境检测（PS5.1 单运行时）：Windows 版本 / winget / PS7 / Windows Terminal
+    .DESCRIPTION
+    合并自原 Bootstrap.ps1。脚本始终在 PS5.1 进程直跑，不 re-exec。winget 缺失自动
+    安装；PS7 与 Windows Terminal 为推荐组件，安装失败 / 用户跳过不中断基础安装。
+    .RETURNS
+    $true = 系统兼容可继续；$false = 系统不兼容（Windows 版本过低）须中止
+    #>
+    param()
+
+    Write-Host ""
+    Write-UiPrimary "前置环境检测"
+    Write-Host ""
+
+    # 1. Windows 版本（硬性：过低则中止）
+    $minVersion = [Version]"10.0.18362"  # Windows 10 1903
+    try {
+        $osInfo = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+        $current = [Version]$osInfo.Version
+        if ($current -ge $minVersion) {
+            Write-UiSuccess "Windows 版本检查通过：$($osInfo.Caption)（$($osInfo.Version)）"
+        } else {
+            Write-UiDanger "Windows 版本过低：当前 $($osInfo.Version)，需要 Windows 10 1903 (10.0.18362) 或更高"
+            return $false
+        }
+    } catch {
+        # 检测失败保守放行，不阻断安装
+        Write-UiWarning "无法检测 Windows 版本（已跳过该检查）：$($_.Exception.Message)"
+    }
+
+    # 2. winget（缺失则自动安装；失败不中断，依赖 winget 的步骤走手动兜底）
+    if (Test-CommandAvailable -Command "winget") {
+        Write-UiSuccess "winget 已可用"
+    } else {
+        Write-UiWarning "winget 不可用，尝试自动安装..."
+        $wingetResult = Install-Winget
+        if (-not $wingetResult.Success) {
+            Write-UiWarning "winget 自动安装未完成，依赖 winget 的步骤可能需要手动安装（不影响后续流程）"
+        }
+    }
+
+    # 3. PowerShell 7（推荐组件，非阻塞）
+    Install-RecommendedPowerShell7
+
+    # 4. Windows Terminal（可选推荐组件）
+    Install-WindowsTerminal
+
+    return $true
+}
+
+
 # ─── 主函数 ──────────────────────────────────────────────────────────────────
 
 function Main {
@@ -882,151 +693,33 @@ function Main {
         # 欢迎横幅
         Show-CcqLogo -Subtitle "Claude Code Quickstart"
 
-        Write-UiInfo "支持一键搭建 Claude Code 的开发环境及进阶功能" -Level Detail
+        Write-UiInfo "一键搭建 Claude Code 基础开发环境（Node.js / Git / Claude Code）" -Level Detail
         Write-Host ""
 
-        # 创建新的安装状态（纯内存，不持久化）
+        # ── 前置环境检测（PS5.1 单运行时；PS7 / Windows Terminal 为非阻塞推荐组件）
+        if (-not (Invoke-InstallPreflight)) {
+            Write-UiDanger "系统不兼容，安装中止"
+            return
+        }
+
+        # ── 基础环境直装（NodeJS / Git / ClaudeCode），无顶层菜单
         $state = [InstallState]::new()
+        $state.Mode = "Install-Basic"
 
-        # ── 参数组合校验
-        if ($Mode -ne "" -and $Group -eq "") {
-            Write-UiDanger "参数错误：-Mode 必须与 -Group 一起使用"
-            return
-        }
-        if ($Group -eq "Basic" -and $Mode -eq "Select") {
-            Write-UiDanger "参数错误：基础环境仅支持一键安装（-Group Basic），不支持 -Mode Select"
-            return
-        }
+        Write-Host ""
+        Write-UiPrimary "开始安装基础环境"
+        Write-Host ""
 
-        # ── CLI 参数模式
-        if ($Group -ne "") {
-            $state.Mode = "Manage-$Group"
+        $basicStepIds = @($script:StepGroups["Basic"].StepIds)
+        $results = Invoke-GroupedInstall -StepIds $basicStepIds -State $state
 
-            if ($Group -eq "Basic") {
-                # 基础环境：直接一键安装
-                Write-UiPrimary "基础环境一键安装模式" -Level Detail
-                Write-Host ""
-                $basicStepIds = $script:StepGroups["Basic"].StepIds
-                $results = Invoke-GroupedInstall -StepIds $basicStepIds -State $state
-                if ($results.Total -gt 0) {
-                    Show-FinalSummary -State $state -Results $results
-                }
-            }
-            elseif ($Group -eq "Advanced") {
-                if ($Mode -eq "Select") {
-                    # 进阶：多选模式
-                    Write-UiPrimary "进阶扩展可选安装模式" -Level Detail
-                    Write-Host ""
-                    $selectedIds = @(Show-AdvancedSelectMenu)
-                    if ($selectedIds -and $selectedIds.Count -gt 0) {
-                        $results = Invoke-GroupedInstall -StepIds $selectedIds -State $state
-                        if ($results.Total -gt 0) {
-                            Show-FinalSummary -State $state -Results $results
-                        }
-                    } else {
-                        Write-UiWarning "未选择任何步骤"
-                    }
-                }
-                else {
-                    # 进阶：一键安装（默认，排除可选步骤）
-                    Write-UiPrimary "进阶扩展一键安装模式" -Level Detail
-                    Write-Host ""
-                    $advancedStepIds = @($script:StepGroups["Advanced"].StepIds | ForEach-Object {
-                        $sid = $_
-                        $stepCfg = Get-StepConfigById -StepId $sid
-                        if (-not $stepCfg.IsOptional) { $sid }
-                    })
-                    $results = Invoke-GroupedInstall -StepIds $advancedStepIds -State $state
-                    if ($results.Total -gt 0) {
-                        Show-FinalSummary -State $state -Results $results
-                    }
-                }
-            }
-
-            return
+        if ($results.Total -gt 0) {
+            Show-FinalSummary -State $state -Results $results
         }
 
-        # ── -Staged 参数：进入交互菜单
-        # ── 无参数：也进入交互菜单
-
-        $state.Mode = "Manage-Interactive"
-
-        while ($true) {
-            $topChoice = Select-TopLevelAction
-
-            if ($topChoice -eq -1) {
-                Write-Host ""
-                Write-UiPrimary "退出 CCQ" -Level Detail
-                break
-            }
-
-            if ($topChoice -eq 0) {
-                # 基础环境：直接一键安装
-                Write-Host ""
-                Write-UiPrimary "基础环境一键安装" -Level Detail
-                Write-Host ""
-
-                $basicStepIds = $script:StepGroups["Basic"].StepIds
-                $results = Invoke-GroupedInstall -StepIds $basicStepIds -State $state
-
-                if ($results.Total -gt 0) {
-                    Show-FinalSummary -State $state -Results $results
-                }
-
-                Write-Host ""
-                Write-UiDim "按任意键返回主菜单..."
-                $null = [Console]::ReadKey($true)
-            }
-            elseif ($topChoice -eq 1) {
-                # 进阶扩展：显示子菜单
-                $advChoice = Select-AdvancedAction
-
-                if ($advChoice -eq -1) {
-                    continue
-                }
-
-                if ($advChoice -eq 0) {
-                    # 一键安装（排除可选步骤）
-                    Write-Host ""
-                    Write-UiPrimary "进阶扩展一键安装" -Level Detail
-                    Write-Host ""
-
-                    $advancedStepIds = @($script:StepGroups["Advanced"].StepIds | ForEach-Object {
-                        $sid = $_
-                        $stepCfg = Get-StepConfigById -StepId $sid
-                        if (-not $stepCfg.IsOptional) { $sid }
-                    })
-                    $results = Invoke-GroupedInstall -StepIds $advancedStepIds -State $state
-
-                    if ($results.Total -gt 0) {
-                        Show-FinalSummary -State $state -Results $results
-                    }
-
-                    Write-Host ""
-                    Write-UiDim "按任意键返回主菜单..."
-                    $null = [Console]::ReadKey($true)
-                }
-                elseif ($advChoice -eq 1) {
-                    # 可选安装
-                    Write-Host ""
-                    $selectedIds = @(Show-AdvancedSelectMenu)
-
-                    if ($selectedIds -and $selectedIds.Count -gt 0) {
-                        $results = Invoke-GroupedInstall -StepIds $selectedIds -State $state
-
-                        if ($results.Total -gt 0) {
-                            Show-FinalSummary -State $state -Results $results
-                        }
-                    } else {
-                        Write-UiWarning "未选择任何步骤"
-                    }
-
-                    Write-Host ""
-                    Write-UiDim "按任意键返回主菜单..."
-                    $null = [Console]::ReadKey($true)
-                }
-            }
-        }
+        # ── ccq 可执行文件下载确认（TDR-6）
+        Write-Host ""
+        Confirm-CcqExecutableDownload
 
     } catch {
         Write-UiDanger "CCQ 运行中发生严重错误: $($_.Exception.Message)"

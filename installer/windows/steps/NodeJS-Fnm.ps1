@@ -1,4 +1,4 @@
-# NodeJS-Fnm.ps1 - fnm 专属安装层
+﻿# NodeJS-Fnm.ps1 - fnm 专属安装层
 # 职责：fnm 安装、卸载
 
 #Requires -Version 5.1

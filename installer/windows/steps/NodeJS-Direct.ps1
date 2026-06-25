@@ -1,4 +1,4 @@
-# NodeJS-Direct.ps1 - Node.js 专属安装层
+﻿# NodeJS-Direct.ps1 - Node.js 专属安装层
 # 职责：直接安装 Node.js（通过 winget 或 MSI）
 
 #Requires -Version 5.1

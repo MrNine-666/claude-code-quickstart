@@ -338,6 +338,147 @@ function Invoke-WingetInstall {
     }
 }
 
+function Get-LatestWingetBundleUrl {
+    <#
+    .SYNOPSIS
+    解析 winget-cli 最新 Release 的 .msixbundle 下载地址
+    .DESCRIPTION
+    经 GitHub API 获取 microsoft/winget-cli latest release，
+    返回 assets 中以 .msixbundle 结尾的下载 URL；失败返回 $null。
+    PS5.1 兼容（Invoke-RestMethod 原生可用）。
+    .RETURNS
+    string（下载 URL）或 $null
+    #>
+    param()
+
+    try {
+        $api = "https://api.github.com/repos/microsoft/winget-cli/releases/latest"
+        $release = Invoke-RestMethod -Uri $api -Headers @{ "User-Agent" = "ccq-installer" } -TimeoutSec 30
+        $bundle = $release.assets | Where-Object { $_.browser_download_url -like "*.msixbundle" } | Select-Object -First 1
+        if ($bundle) {
+            return $bundle.browser_download_url
+        }
+    } catch {
+        Write-UiWarning "⚠ 无法获取 winget 最新版本信息: $($_.Exception.Message)"
+    }
+
+    return $null
+}
+
+function Install-Winget {
+    <#
+    .SYNOPSIS
+    检测并自动安装 winget（Microsoft.DesktopAppInstaller / App Installer）
+    .DESCRIPTION
+    winget 缺失时自动安装：按 CPU 架构下载 VCLibs + Microsoft.UI.Xaml 依赖与
+    winget 主包 .msixbundle，按「依赖先于主包」顺序经 Add-AppxPackage 安装；
+    系统不支持 Add-AppxPackage 或安装失败时回退打开 Microsoft Store + 手动指引。
+
+    可复用资产：供 Install.ps1 PS5.1 入口段与 Install-PowerShell7 复用（DRY）。
+    PS5.1 兼容（不使用 PS7 专有语法，预期在 PS7 加载前的入口段上下文调用，
+    Add-AppxPackage 原生可用）；HC-15：下载落 $env:TEMP，不依赖 $PSScriptRoot。
+
+    接入点（Phase 2 install 瘦身）：入口段 winget 检测分支 + Install-PowerShell7
+    winget 缺失分支。本函数仅用警告级输出，不抛致命错误，由调用方决定后续流程。
+    .PARAMETER Force
+    即使 winget 已可用也强制重新安装
+    .RETURNS
+    @{ Success; AlreadyInstalled; Method; ErrorMessage }
+    Method: "already" | "appx" | "store-fallback" | "failed"
+    #>
+    param(
+        [switch]$Force
+    )
+
+    $result = @{
+        Success          = $false
+        AlreadyInstalled = $false
+        Method           = "failed"
+        ErrorMessage     = ""
+    }
+
+    # 1. 已可用则跳过（除非 -Force）
+    if (-not $Force -and (Test-CommandAvailable -Command "winget")) {
+        $result.Success          = $true
+        $result.AlreadyInstalled = $true
+        $result.Method           = "already"
+        Write-UiSuccess "✓ winget 已可用" -Level Detail
+        return $result
+    }
+
+    Write-UiPrimary "正在安装 winget (App Installer)..."
+
+    # 2. Add-AppxPackage 自动安装路径
+    try {
+        if (Get-Command -Name "Add-AppxPackage" -ErrorAction SilentlyContinue) {
+            # 按 CPU 架构选择依赖包（ARM64 / x64）
+            if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
+                $vcLibsUrl = "https://aka.ms/Microsoft.VCLibs.arm64.14.00.Desktop.appx"
+                $uiXamlUrl = "https://github.com/microsoft/microsoft-ui-xaml/releases/download/v2.8.6/Microsoft.UI.Xaml.2.8.arm64.appx"
+            } else {
+                $vcLibsUrl = "https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx"
+                $uiXamlUrl = "https://github.com/microsoft/microsoft-ui-xaml/releases/download/v2.8.6/Microsoft.UI.Xaml.2.8.x64.appx"
+            }
+
+            # HC-15：下载目录固定 $env:TEMP，不依赖源码路径
+            $tmpDir = Join-Path $env:TEMP "ccq-winget"
+            if (-not (Test-Path -Path $tmpDir)) {
+                New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+            }
+
+            $vcLibsPath = Join-Path $tmpDir "Microsoft.VCLibs.Desktop.appx"
+            $uiXamlPath = Join-Path $tmpDir "Microsoft.UI.Xaml.appx"
+            $wingetPath = Join-Path $tmpDir "Microsoft.DesktopAppInstaller.msixbundle"
+
+            $wingetUrl = Get-LatestWingetBundleUrl
+            if (-not $wingetUrl) {
+                throw "无法解析 winget 主包下载地址"
+            }
+
+            # 下载依赖与主包（-UseBasicParsing：PS5.1 兼容且不依赖 IE 引擎）
+            Write-UiInfo "下载 winget 依赖与主包..."
+            Invoke-WebRequest -Uri $vcLibsUrl -OutFile $vcLibsPath -UseBasicParsing -ErrorAction Stop
+            Invoke-WebRequest -Uri $uiXamlUrl -OutFile $uiXamlPath -UseBasicParsing -ErrorAction Stop
+            Invoke-WebRequest -Uri $wingetUrl -OutFile $wingetPath -UseBasicParsing -ErrorAction Stop
+
+            # 安装顺序强约束：依赖先于主包（否则 HRESULT 0x80073CF3 依赖缺失）
+            Add-AppxPackage -Path $vcLibsPath -ErrorAction Stop
+            Add-AppxPackage -Path $uiXamlPath -ErrorAction Stop
+            Add-AppxPackage -Path $wingetPath -DependencyPath @($vcLibsPath, $uiXamlPath) -ErrorAction Stop
+
+            # 刷新 PATH 并复检
+            Refresh-SessionPath
+            if (Test-CommandAvailable -Command "winget") {
+                $result.Success = $true
+                $result.Method  = "appx"
+                Write-UiSuccess "✓ winget 安装成功"
+                return $result
+            }
+
+            throw "安装后 winget 命令仍不可用"
+        } else {
+            Write-UiWarning "⚠ 当前系统不支持 Add-AppxPackage（可能为 Server Core 或 AppX 策略受限）"
+        }
+    } catch {
+        Write-UiWarning "⚠ winget 自动安装失败: $($_.Exception.Message)"
+    }
+
+    # 3. Microsoft Store 兜底（不中断整体流程）
+    try {
+        Write-UiInfo "尝试打开 Microsoft Store 安装『应用安装程序 (App Installer)』..."
+        Start-Process -FilePath "ms-windows-store://pdp/?productid=9NBLGGH4NNS1" -ErrorAction Stop
+        $result.Method       = "store-fallback"
+        $result.ErrorMessage = "已打开 Microsoft Store，请手动安装 App Installer 后重新运行脚本"
+        Write-UiInfo "已打开 Microsoft Store，请手动安装『应用安装程序』后重新运行脚本"
+    } catch {
+        $result.Method       = "failed"
+        $result.ErrorMessage = "winget 不可用且无法自动安装；请手动安装 App Installer：https://aka.ms/getwinget"
+        Write-UiWarning "⚠ $($result.ErrorMessage)"
+    }
+
+    return $result
+}
+
 function Invoke-NpmGlobalInstall {
     <#
     .SYNOPSIS
@@ -459,7 +600,7 @@ function Get-NpmOutdatedGlobal {
 
         $jsonText = if ($jsonOutput) { ($jsonOutput -join "`n").Trim() } else { "" }
         if (-not [string]::IsNullOrWhiteSpace($jsonText)) {
-            $parsed = $jsonText | ConvertFrom-Json -AsHashtable -ErrorAction SilentlyContinue
+            $parsed = $jsonText | ConvertFrom-JsonToHashtable -ErrorAction SilentlyContinue
             if ($null -ne $parsed) {
                 foreach ($pkg in $parsed.Keys) {
                     $info = $parsed[$pkg]
@@ -1155,7 +1296,7 @@ function Test-JsonConfig {
     try {
         $rawContent = Get-Content $FilePath -Raw -ErrorAction Stop
         if ($AsHashtable) {
-            $json = $rawContent | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+            $json = $rawContent | ConvertFrom-JsonToHashtable -ErrorAction Stop
         } else {
             $json = $rawContent | ConvertFrom-Json -ErrorAction Stop
         }
@@ -1399,6 +1540,211 @@ function Complete-UnifiedCheck {
     }
 
     return $Result
+}
+
+# ─── CCQ 可执行文件管理 ──────────────────────────────────────────────────────
+
+function Get-CcqArchitecture {
+    <#
+    .SYNOPSIS
+    检测当前平台架构，返回 ccq 可执行文件对应的 target 名称
+    .OUTPUTS
+    "windows-x64" | "windows-arm64"
+    #>
+    param()
+
+    $arch = $env:PROCESSOR_ARCHITECTURE
+    if ($arch -eq "ARM64") {
+        return "windows-arm64"
+    } else {
+        # x64 / AMD64 / EM64T 统一为 x64
+        return "windows-x64"
+    }
+}
+
+function Get-CcqExecutablePath {
+    <#
+    .SYNOPSIS
+    返回 ccq 可执行文件应安装的目标路径（Windows: %USERPROFILE%\.local\bin\ccq.exe）
+    .OUTPUTS
+    完整的可执行文件路径（含 .exe）
+    #>
+    param()
+
+    $ccqBinDir = Join-Path $env:USERPROFILE ".local\bin"
+    return Join-Path $ccqBinDir "ccq.exe"
+}
+
+function Test-CcqExecutableInstalled {
+    <#
+    .SYNOPSIS
+    检测 ccq 可执行文件是否已安装且可用
+    .OUTPUTS
+    @{ IsInstalled = $true/$false; Version = "x.y.z" | ""; Path = "..." }
+    #>
+    param()
+
+    $result = @{
+        IsInstalled = $false
+        Version     = ""
+        Path        = ""
+    }
+
+    $ccqPath = Get-CcqExecutablePath
+    if (Test-Path $ccqPath) {
+        $result.IsInstalled = $true
+        $result.Path = $ccqPath
+        # 尝试获取版本（通过 ccq --version，若可执行文件支持）
+        try {
+            $versionOutput = & $ccqPath --version 2>&1
+            if ($LASTEXITCODE -eq 0 -and $versionOutput) {
+                $result.Version = $versionOutput -replace '^ccq\s+', '' -replace '\s+$', ''
+            }
+        } catch {
+            # 版本获取失败不影响安装检测
+        }
+    }
+
+    return $result
+}
+
+function Install-CcqExecutable {
+    <#
+    .SYNOPSIS
+    下载并安装 ccq 可执行文件到 %USERPROFILE%\.local\bin\ccq.exe，并确保该目录在用户 PATH
+    .PARAMETER DownloadUrl
+    可执行文件下载 URL（如 https://github.com/.../releases/latest/download/ccq-windows-x64.exe）
+    .OUTPUTS
+    @{ Success = $true/$false; ErrorMessage = ""; Path = "..." }
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$DownloadUrl
+    )
+
+    $result = @{
+        Success      = $false
+        ErrorMessage = ""
+        Path         = ""
+    }
+
+    try {
+        $ccqPath = Get-CcqExecutablePath
+        $ccqBinDir = Split-Path -Parent $ccqPath
+
+        # 1. 创建目标目录
+        if (-not (Test-Path $ccqBinDir)) {
+            New-Item -ItemType Directory -Path $ccqBinDir -Force | Out-Null
+            Write-UiInfo "创建 ccq 目录: $ccqBinDir"
+        }
+
+        # 2. 下载可执行文件
+        Write-UiInfo "正在下载 ccq 可执行文件..."
+        Write-UiDim "  URL: $DownloadUrl"
+
+        Invoke-WebRequest -Uri $DownloadUrl -OutFile $ccqPath -UseBasicParsing -ErrorAction Stop
+
+        # 3. 验证文件存在且非空
+        if (-not (Test-Path $ccqPath)) {
+            throw "下载后文件不存在: $ccqPath"
+        }
+        $fileInfo = Get-Item $ccqPath
+        if ($fileInfo.Length -eq 0) {
+            throw "下载的文件为空"
+        }
+
+        Write-UiSuccess "✓ ccq 可执行文件已下载到: $ccqPath"
+        Write-UiDim "  文件大小: $([math]::Round($fileInfo.Length / 1MB, 2)) MB"
+
+        # 4. 确保目录在用户 PATH（通过注册表 HKCU\Environment）
+        $pathResult = Add-DirectoryToUserPath -DirectoryPath $ccqBinDir
+        if ($pathResult.Success -and $pathResult.AlreadyPresent) {
+            Write-UiSuccess "✓ $ccqBinDir 已在用户 PATH，跳过环境变量写入"
+            Write-UiDim "  如当前终端无法直接运行 ccq，请开启新终端或直接运行: $ccqPath"
+        } elseif ($pathResult.Success -and $pathResult.Added) {
+            Write-UiSuccess "✓ $ccqBinDir 已添加到用户 PATH"
+            Write-UiWarning "⚠ 请开启新终端后使用 ccq 命令（当前会话 PATH 尚未刷新）"
+        } else {
+            Write-UiWarning "⚠ 无法自动添加到 PATH，请手动添加以下目录到系统环境变量 PATH："
+            Write-UiInfo "  $ccqBinDir"
+            Write-UiDim "  或直接运行: $ccqPath"
+        }
+
+        $result.Success = $true
+        $result.Path = $ccqPath
+
+    } catch {
+        $result.ErrorMessage = $_.Exception.Message
+        Write-UiDanger "ccq 可执行文件安装失败: $($result.ErrorMessage)"
+    }
+
+    return $result
+}
+
+function Add-DirectoryToUserPath {
+    <#
+    .SYNOPSIS
+    将目录添加到用户级 PATH（通过注册表 HKCU\Environment，非 Profile）。
+    .PARAMETER DirectoryPath
+    要添加的目录绝对路径。
+    .OUTPUTS
+    @{ Success; Added; AlreadyPresent; ErrorMessage }
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$DirectoryPath
+    )
+
+    $result = @{
+        Success        = $false
+        Added          = $false
+        AlreadyPresent = $false
+        ErrorMessage   = ""
+    }
+
+    try {
+        # 1. 读取当前用户 PATH
+        $currentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+        if ([string]::IsNullOrWhiteSpace($currentPath)) {
+            $currentPath = ""
+        }
+
+        # 2. 检查是否已存在（兼容 %USERPROFILE%\.local\bin 这类未展开写法）
+        $pathEntries = @($currentPath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $normalizedTarget = [Environment]::ExpandEnvironmentVariables($DirectoryPath).TrimEnd('\')
+
+        foreach ($entry in $pathEntries) {
+            $normalizedEntry = [Environment]::ExpandEnvironmentVariables([string]$entry).TrimEnd('\')
+            if ($normalizedEntry -ieq $normalizedTarget) {
+                Write-Verbose "目录已在用户 PATH: $DirectoryPath"
+                $result.Success = $true
+                $result.AlreadyPresent = $true
+                return $result
+            }
+        }
+
+        # 3. 追加到 PATH（尾部）
+        $newPath = if ([string]::IsNullOrWhiteSpace($currentPath)) {
+            $DirectoryPath
+        } elseif ($currentPath.EndsWith(';')) {
+            "${currentPath}${DirectoryPath}"
+        } else {
+            "${currentPath};${DirectoryPath}"
+        }
+
+        # 4. 写入注册表
+        [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
+        Write-Verbose "已将 $DirectoryPath 添加到用户 PATH"
+
+        $result.Success = $true
+        $result.Added = $true
+        return $result
+
+    } catch {
+        $result.ErrorMessage = $_.Exception.Message
+        Write-Verbose "添加到用户 PATH 失败: $($result.ErrorMessage)"
+        return $result
+    }
 }
 
 # 注意：此脚本通过 dot-source 加载，不需要 Export-ModuleMember

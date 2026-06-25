@@ -26,11 +26,9 @@ check_build_script() {
   script_path="${script_dir}/build.sh"
   [ -f "${script_path}" ] || { printf '%s\n' "[FAIL] build.sh 不存在: ${script_path}" >&2; exit 1; }
   grep -q "^#!/bin/sh" "${script_path}" || { printf '%s\n' '[FAIL] build.sh 缺少 #!/bin/sh shebang' >&2; exit 1; }
-  grep -q "readJson('contracts/build.json')" "${script_path}" || { printf '%s\n' '[FAIL] build.sh 未读取共享构建清单 contracts/build.json' >&2; exit 1; }
+  grep -q "readJson('installer/contracts/build.json')" "${script_path}" || { printf '%s\n' '[FAIL] build.sh 未读取共享构建清单 installer/contracts/build.json' >&2; exit 1; }
   grep -q "buildMacOSArtifact" "${script_path}" || { printf '%s\n' '[FAIL] build.sh 缺少 macOS artifact 构建函数' >&2; exit 1; }
   grep -q "validateMacOSArtifact" "${script_path}" || { printf '%s\n' '[FAIL] build.sh 缺少 macOS artifact 结构检查' >&2; exit 1; }
-  grep -q "CCQ_SKILLS_CONTRACT" "${script_path}" || { printf '%s\n' '[FAIL] build.sh 未声明 Skills contract 嵌入' >&2; exit 1; }
-  grep -q "CCQ_UI_CONTRACT" "${script_path}" || { printf '%s\n' '[FAIL] build.sh 未声明 UI contract 嵌入' >&2; exit 1; }
 
   if command -v zsh >/dev/null 2>&1; then
     zsh -n "${script_path}"
@@ -84,7 +82,7 @@ if [ "${check_only}" -eq 1 ]; then
 fi
 
 if ! command -v node >/dev/null 2>&1; then
-  printf '%s\n' '缺少 node 命令，无法解析 installer/contracts/*.json 构建清单。' >&2
+  printf '%s\n' '缺少 node 命令，无法解析 contracts/*.json 构建清单。' >&2
   exit 1
 fi
 
@@ -96,6 +94,8 @@ const childProcess = require('child_process');
 const installerRoot = path.resolve(process.argv[2]);
 const outputDir = path.resolve(process.argv[3]);
 const platform = process.argv[4];
+// contracts 已上升为根级目录（与 installer/ 平级），契约/清单从 repo 根定位
+const repoRoot = path.dirname(installerRoot);
 
 function fail(message) {
   console.error(`[FAIL] ${message}`);
@@ -115,7 +115,7 @@ function readText(filePath) {
 }
 
 function readJson(relativePath) {
-  const fullPath = path.join(installerRoot, relativePath);
+  const fullPath = path.join(repoRoot, relativePath);
   if (!fs.existsSync(fullPath)) fail(`JSON 文件不存在: ${fullPath}`);
   return JSON.parse(readText(fullPath));
 }
@@ -160,15 +160,9 @@ function macOSBuildOrder(manifest, stepsContract, role) {
 }
 
 function contractEmbeds() {
+  // install artifact 只需要安装链 steps 契约；TUI 契约由 ccq 可执行文件内嵌。
   return [
-    { file: 'steps.json', marker: 'CCQ_CONTRACT_STEPS_JSON', env: 'CCQ_STEPS_CONTRACT' },
-    { file: 'providers.json', marker: 'CCQ_CONTRACT_PROVIDERS_JSON', env: 'CCQ_PROVIDER_CONTRACT' },
-    { file: 'mcp-servers.json', marker: 'CCQ_CONTRACT_MCP_SERVERS_JSON', env: 'CCQ_MCP_CONTRACT' },
-    { file: 'claude-config.json', marker: 'CCQ_CONTRACT_CLAUDE_CONFIG_JSON', env: 'CCQ_CLAUDE_CONFIG_CONTRACT' },
-    { file: 'skills.json', marker: 'CCQ_CONTRACT_SKILLS_JSON', env: 'CCQ_SKILLS_CONTRACT' },
-    { file: 'ui.json', marker: 'CCQ_CONTRACT_UI_JSON', env: 'CCQ_UI_CONTRACT' },
-    { file: 'scripts/claude-config-drift.js', marker: 'CCQ_SCRIPT_CLAUDE_CONFIG_DRIFT_JS', env: null },
-    { file: 'scripts/skills-discovery.js', marker: 'CCQ_SCRIPT_SKILLS_DISCOVERY_JS', env: null },
+    { file: 'steps.json', sourceDir: 'installer/contracts', marker: 'CCQ_CONTRACT_STEPS_JSON', env: 'CCQ_STEPS_CONTRACT' },
   ];
 }
 
@@ -209,9 +203,9 @@ function appendMacOSWrapper(lines) {
     }
   }
 
-  // 嵌入所有契约和脚本文件
+  // 嵌入所有契约和脚本文件（每项经 sourceDir 定位拆分后的契约目录）
   for (const contract of contractEmbeds()) {
-    const contractPath = path.join(installerRoot, 'contracts', contract.file);
+    const contractPath = path.join(repoRoot, contract.sourceDir, contract.file);
     if (!fs.existsSync(contractPath)) fail(`契约文件不存在，无法生成自包含 macOS artifact: ${contractPath}`);
 
     // 确保目标目录存在（处理 scripts/ 子目录）
@@ -261,25 +255,78 @@ function filterZshSource(relativePath) {
   return lines;
 }
 
-function buildManageBundle() {
-  // P10 方案 3：调用 esbuild 将 manage.js + 子管理器打包为单文件 dist/manage.js（取代 base64 内嵌）
-  // esbuild 不可用时告警跳过（不阻断 .sh 产物构建；CI 在 npm ci 后产出 bundle）
-  const esbuildConfig = path.join(installerRoot, 'contracts', 'scripts', 'esbuild.config.js');
-  if (!fs.existsSync(esbuildConfig)) {
-    console.warn('[WARN] 未找到 esbuild 配置，跳过 manage.js bundle 构建');
+function buildManageTuiPackage() {
+  // Phase 6：构建 TUI 可执行文件（4 平台交叉编译）到 dist/ 目录。
+  // 构建 OpenTUI TUI 可执行文件（4 平台交叉编译）。流程：
+  //   1. 确保 Bun 可用（>=1.2.0）；
+  //   2. 在 tui/ 子项目中执行 bun run build（调用 scripts/build.ts）；
+  //   3. 产出 4 个可执行文件到 dist/。
+  // 契约已通过 src/core/embedded-contracts.ts 静态 import 内嵌进可执行文件（TDR-4）。
+  // Bun 不可用时 warn 跳过（不阻断 .sh 产物；CI 通过 release artifact 校验强制可执行文件）。
+
+  const tuiDir = path.join(repoRoot, 'tui');
+  if (!fs.existsSync(tuiDir)) {
+    console.warn('[WARN] 未找到 tui 子项目，跳过可执行文件构建');
     return false;
   }
-  const esbuildModule = path.join(path.dirname(installerRoot), 'node_modules', 'esbuild');
-  if (!fs.existsSync(esbuildModule)) {
-    console.warn('[WARN] 未安装 esbuild 依赖（请先 npm ci），跳过 manage.js bundle 构建');
+
+  // 检查 Bun（>=1.2.0）
+  const bunCheck = childProcess.spawnSync('bun', ['--version'], { stdio: 'pipe', encoding: 'utf8' });
+  if (bunCheck.status !== 0) {
+    console.warn('[WARN] 未检测到 Bun，跳过 TUI 可执行文件构建');
+    console.warn('       请安装 Bun (https://bun.sh) 并确保在 PATH 中');
     return false;
   }
-  const result = childProcess.spawnSync('node', [esbuildConfig], { stdio: 'inherit' });
-  if (result.status !== 0) {
-    console.warn(`[WARN] manage.js bundle 构建失败（esbuild 退出码 ${result.status}）`);
+
+  const bunVersion = (bunCheck.stdout || '').trim();
+  console.log(`正在构建 TUI 可执行文件（Bun ${bunVersion}）...`);
+  console.log(`工作目录: ${tuiDir}`);
+
+  // 执行 bun run build（调用 scripts/build.ts）
+  const useShell = process.platform === 'win32';
+  const build = childProcess.spawnSync('bun', ['run', 'build'], {
+    cwd: tuiDir,
+    stdio: 'inherit',
+    shell: useShell
+  });
+
+  if (build.status !== 0) {
+    console.warn(`[WARN] TUI 可执行文件构建失败（退出码 ${build.status}）`);
     return false;
   }
-  pass('manage.js 单文件 bundle 已生成');
+
+  // 验证产物并复制到 outputDir
+  const tuiDistDir = path.join(tuiDir, 'dist');
+  const expectedFiles = [
+    'ccq-windows-x64.exe',
+    'ccq-windows-arm64.exe',
+    'ccq-darwin-x64',
+    'ccq-darwin-arm64'
+  ];
+
+  let allSuccess = true;
+  for (const fileName of expectedFiles) {
+    const srcPath = path.join(tuiDistDir, fileName);
+    const destPath = path.join(outputDir, fileName);
+
+    if (!fs.existsSync(srcPath)) {
+      console.warn(`[WARN] 缺失可执行文件: ${fileName}`);
+      allSuccess = false;
+      continue;
+    }
+
+    // 复制到输出目录
+    fs.copyFileSync(srcPath, destPath);
+    const sizeKB = Math.round((fs.statSync(destPath).size / 1024) * 10) / 10;
+    pass(`${fileName} 已生成（${sizeKB} KB）`);
+  }
+
+  if (!allSuccess) {
+    console.warn('[WARN] 部分可执行文件构建失败');
+    return false;
+  }
+
+  pass('所有 TUI 可执行文件构建完成');
   return true;
 }
 
@@ -319,8 +366,6 @@ function validateMacOSArtifact(outputPath) {
   if (!content.startsWith('#!/usr/bin/env bash')) fail(`${path.basename(outputPath)} 缺少 bash wrapper shebang`);
   if (!content.includes('export CCQ_BUILT_MODE=1')) fail(`${path.basename(outputPath)} 缺少 CCQ_BUILT_MODE`);
   if (!content.includes('CCQ_CONTRACT_STEPS_JSON')) fail(`${path.basename(outputPath)} 未嵌入 steps contract`);
-  if (!content.includes('CCQ_CONTRACT_SKILLS_JSON')) fail(`${path.basename(outputPath)} 未嵌入 skills contract`);
-  if (!content.includes('CCQ_CONTRACT_UI_JSON')) fail(`${path.basename(outputPath)} 未嵌入 ui contract`);
   const forbiddenSourceLines = content.split(/\r?\n/).filter((line) => {
     const trimmed = line.trim();
     return trimmed === 'source "${file_path}"' || trimmed === 'source "${full_path}"'
@@ -355,8 +400,8 @@ function ensureExpectedOutputs(manifest) {
   pass(`输出文件集合检查通过: ${expected.join(', ')}`);
 }
 
-const manifest = readJson('contracts/build.json');
-const stepsContract = readJson(manifest.MacOS.StepContract || 'contracts/steps.json');
+const manifest = readJson('installer/contracts/build.json');
+const stepsContract = readJson(manifest.MacOS.StepContract || 'installer/contracts/steps.json');
 fs.mkdirSync(outputDir, { recursive: true });
 clearKnownBuildArtifacts();
 
@@ -367,10 +412,10 @@ console.log(`安装器根目录: ${installerRoot}`);
 console.log(`输出目录:     ${outputDir}`);
 console.log(`构建平台:     ${platform}`);
 
-// 构建 manage.js 单文件 bundle（P10 方案 3：esbuild 打包，取代 base64 内嵌）
+// 构建 TUI 可执行文件（4 平台交叉编译）
 console.log('');
-console.log('─── 构建 manage.js 单文件 bundle ──────────────────────────');
-buildManageBundle();
+console.log('─── 构建 TUI 可执行文件（4 平台） ─────────────────────────');
+buildManageTuiPackage();
 console.log('');
 
 buildMacOSArtifact(manifest, stepsContract, 'Install');

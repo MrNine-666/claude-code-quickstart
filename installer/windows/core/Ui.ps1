@@ -10,35 +10,60 @@ Set-StrictMode -Version Latest
 # 终端能力检测
 $script:IsWindowsTerminal = $false
 $script:SupportsAnsi = $false
+$script:SupportsEmoji = $false
+
+function Enable-VirtualTerminalProcessing {
+    <#
+    .SYNOPSIS
+    经 kernel32 SetConsoleMode 启用控制台 VT 处理（PS5.1 普通 conhost 默认关闭）
+    .DESCRIPTION
+    置位 ENABLE_VIRTUAL_TERMINAL_PROCESSING (0x0004)，使 ANSI 转义（菜单箭头键重绘 / 彩色输出）
+    在 PS5.1 conhost 生效（Win10 1607+）。已启用或 PS6+ 返回 $true；无控制台 / 输出重定向返回 $false。
+    .OUTPUTS
+    [bool] VT 是否可用
+    #>
+    try {
+        if (-not ([System.Management.Automation.PSTypeName]'_CcqKernel32Vt').Type) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public class _CcqKernel32Vt {
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern System.IntPtr GetStdHandle(int nStdHandle);
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetConsoleMode(System.IntPtr hConsoleHandle, out uint lpMode);
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetConsoleMode(System.IntPtr hConsoleHandle, uint dwMode);
+    public const int STD_OUTPUT_HANDLE = -11;
+    public const uint ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004;
+    public static bool TryEnable() {
+        System.IntPtr handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (handle == System.IntPtr.Zero || handle == new System.IntPtr(-1)) { return false; }
+        uint mode;
+        if (!GetConsoleMode(handle, out mode)) { return false; }
+        if ((mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0) { return true; }
+        return SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    }
+}
+'@ -ErrorAction SilentlyContinue
+        }
+        return [_CcqKernel32Vt]::TryEnable()
+    } catch {
+        return $false
+    }
+}
 
 function Initialize-TerminalCapabilities {
     <#
     .SYNOPSIS
-    检测终端能力并初始化 ANSI 支持
+    检测终端能力并初始化 ANSI / Emoji 支持（不以 PS 版本为准，按 VT 启用结果判定）
     #>
 
     # 检测 Windows Terminal
-    $script:IsWindowsTerminal = $env:WT_SESSION -ne $null
+    $script:IsWindowsTerminal = $null -ne $env:WT_SESSION
 
-    # 检测 ANSI 支持
-    try {
-        if ($PSVersionTable.PSVersion.Major -ge 6) {
-            # PowerShell 6+ 默认支持 ANSI
-            $script:SupportsAnsi = $true
-        } elseif ($script:IsWindowsTerminal) {
-            # Windows Terminal 支持 ANSI
-            $script:SupportsAnsi = $true
-        } else {
-            # PowerShell 5.1 在普通控制台中不支持 ANSI
-            # 只有在 Windows Terminal 或 VS Code 终端中才支持
-            $script:SupportsAnsi = $false
-        }
-    } catch {
-        $script:SupportsAnsi = $false
-    }
+    # 启用并检测 ANSI 支持：主动启用控制台 VT；成功或 Windows Terminal 即支持
+    $script:SupportsAnsi = (Enable-VirtualTerminalProcessing) -or $script:IsWindowsTerminal
 
-    # 检测 Emoji 支持（只有 Windows Terminal 和 PowerShell 7+ 支持）
-    $script:SupportsEmoji = $script:IsWindowsTerminal -or ($PSVersionTable.PSVersion.Major -ge 7)
+    # Emoji 仅 Windows Terminal 字体可靠渲染（普通 conhost / PS7 conhost 不保证，避免乱码）
+    $script:SupportsEmoji = $script:IsWindowsTerminal
 }
 
 # Emoji 映射表（Emoji -> 纯文本替代）

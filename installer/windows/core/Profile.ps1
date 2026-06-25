@@ -27,7 +27,8 @@ function Get-CleanupPolicyContractsRoot {
             break
         }
 
-        $contractsDir = Join-Path $currentDir "installer\contracts"
+        # installer 契约位于 installer/contracts/（TDR-10 拆分）；从 core/ 上溯命中（i=1 = installer/contracts/）
+        $contractsDir = Join-Path $currentDir "contracts"
         if (Test-Path $contractsDir) {
             return $contractsDir
         }
@@ -51,7 +52,7 @@ function Get-CleanupPolicyContract {
     }
     try {
         $contractRaw = Get-Content $contractPath -Raw -ErrorAction Stop
-        $contractObj = $contractRaw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        $contractObj = $contractRaw | ConvertFrom-JsonToHashtable -ErrorAction Stop
         if ($contractObj -and $contractObj.ContainsKey("contract")) {
             return $contractObj["contract"]
         }
@@ -524,172 +525,7 @@ function Convert-LegacyManagedBlockContentToSubsection {
     return $result.ToArray()
 }
 
-function Remove-CcqFunctionBlocksFromContent {
-    <#
-    .SYNOPSIS
-    从托管块内容中移除标准 ccq 函数定义
-    .DESCRIPTION
-    用于收敛历史重复写入或误迁移到其他子段中的 ccq 快捷函数，
-    仅删除标准的 function ccq { ... } 块，不影响其他配置内容。
-    .PARAMETER Content
-    托管块内容数组
-    .RETURNS
-    清理后的内容数组
-    #>
-    param(
-        [AllowEmptyString()]
-        [string[]]$Content
-    )
 
-    $lines = @()
-    if ($null -ne $Content) {
-        $lines = @($Content)
-    }
-
-    $result = [System.Collections.ArrayList]::new()
-    $skippingCcqFunction = $false
-    $braceDepth = 0
-
-    foreach ($line in $lines) {
-        $text = [string]$line
-        $trimmed = $text.Trim()
-
-        if (-not $skippingCcqFunction -and $trimmed -match '^function\s+ccq\s*\{\s*$') {
-            $skippingCcqFunction = $true
-            $openCount = @($text.ToCharArray() | Where-Object { $_ -eq '{' }).Count
-            $closeCount = @($text.ToCharArray() | Where-Object { $_ -eq '}' }).Count
-            $braceDepth = $openCount - $closeCount
-
-            if ($braceDepth -le 0) {
-                $skippingCcqFunction = $false
-                $braceDepth = 0
-            }
-            continue
-        }
-
-        if ($skippingCcqFunction) {
-            $openCount = @($text.ToCharArray() | Where-Object { $_ -eq '{' }).Count
-            $closeCount = @($text.ToCharArray() | Where-Object { $_ -eq '}' }).Count
-            $braceDepth += $openCount - $closeCount
-
-            if ($braceDepth -le 0) {
-                $skippingCcqFunction = $false
-                $braceDepth = 0
-            }
-            continue
-        }
-
-        $null = $result.Add($text)
-    }
-
-    return $result.ToArray()
-}
-
-function Set-CcqShortcutSubsectionInFile {
-    <#
-    .SYNOPSIS
-    规范化并写入 SHORTCUTS 子段
-    .DESCRIPTION
-    在写入前清理历史残留的 SHORTCUTS 子段、损坏标记和裸 ccq 函数定义，
-    最终收敛为单个标准 SHORTCUTS 子段，同时保留 FNM 等其他子段内容。
-    .PARAMETER FilePath
-    Profile 文件路径
-    .PARAMETER ShortcutContent
-    SHORTCUTS 子段内容数组
-    .RETURNS
-    操作成功返回 $true，失败返回 $false
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$FilePath,
-
-        [Parameter(Mandatory = $true)]
-        [AllowEmptyString()]
-        [string[]]$ShortcutContent
-    )
-
-    try {
-        $blockInfo = Get-ManagedBlockContent -FilePath $FilePath
-        if (-not $blockInfo.Found) {
-            return $false
-        }
-
-        $sourceLines = Remove-CcqFunctionBlocksFromContent -Content $blockInfo.Content.ToArray()
-        $normalizedLines = [System.Collections.ArrayList]::new()
-        $inShortcutsSection = $false
-
-        foreach ($line in $sourceLines) {
-            $text = [string]$line
-            $trimmed = $text.Trim()
-
-            if ($trimmed -match '^#\s*\[CCQ:\s*\]$') {
-                continue
-            }
-
-            if ($inShortcutsSection) {
-                if ($trimmed -eq '# [CCQ:SHORTCUTS:END]') {
-                    $inShortcutsSection = $false
-                    continue
-                }
-
-                if ($trimmed -match '^#\s*\[CCQ:([A-Za-z0-9_-]+):(BEGIN|END)\]$' -and $matches[1] -ne 'SHORTCUTS') {
-                    $inShortcutsSection = $false
-                } else {
-                    continue
-                }
-            }
-
-            if ($trimmed -eq '# [CCQ:SHORTCUTS:BEGIN]') {
-                $inShortcutsSection = $true
-                continue
-            }
-
-            if ($trimmed -eq '# [CCQ:SHORTCUTS:END]') {
-                continue
-            }
-
-            $null = $normalizedLines.Add($text)
-        }
-
-
-        while ($normalizedLines.Count -gt 0 -and [string]::IsNullOrWhiteSpace([string]$normalizedLines[$normalizedLines.Count - 1])) {
-            $normalizedLines.RemoveAt($normalizedLines.Count - 1)
-        }
-
-        if ($normalizedLines.Count -gt 0) {
-            $null = $normalizedLines.Add("")
-        }
-
-        $null = $normalizedLines.Add('# [CCQ:SHORTCUTS:BEGIN]')
-        foreach ($line in @($ShortcutContent)) {
-            $null = $normalizedLines.Add($line)
-        }
-        $null = $normalizedLines.Add('# [CCQ:SHORTCUTS:END]')
-
-        # 内容相等短路：避免无意义的备份和重写（跨进程幂等）
-        $finalContent = $normalizedLines.ToArray()
-        $existingContent = @($blockInfo.Content)
-        $contentEqual = $false
-        if ($finalContent.Count -eq $existingContent.Count) {
-            $contentEqual = $true
-            for ($ci = 0; $ci -lt $finalContent.Count; $ci++) {
-                if ([string]$finalContent[$ci] -ne [string]$existingContent[$ci]) {
-                    $contentEqual = $false
-                    break
-                }
-            }
-        }
-        if ($contentEqual) {
-            return $true
-        }
-
-        return (Set-ManagedBlockInFile -FilePath $FilePath -Content $finalContent)
-
-    } catch {
-        Write-UiWarning "⚠ SHORTCUTS 子段规范化写入失败: $($_.Exception.Message)" -Level Debug
-        return $false
-    }
-}
 
 function Migrate-ManagedBlockToSubsections {
     <#

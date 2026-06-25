@@ -1,4 +1,4 @@
-# NodeJS-Common.ps1 - Node.js 通用工具层
+﻿# NodeJS-Common.ps1 - Node.js 通用工具层
 # 职责：备份/恢复、卸载、菜单、安装后配置等通用功能
 
 #Requires -Version 5.1

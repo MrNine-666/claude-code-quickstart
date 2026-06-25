@@ -34,9 +34,6 @@ CCQ_INSTALLER_ROOT="$(cd "${CCQ_MACOS_ROOT}/.." && pwd)"
 export CCQ_MACOS_ROOT CCQ_INSTALLER_ROOT
 
 CCQ_PARAM_LIST_STEPS=0
-CCQ_PARAM_GROUP=""
-CCQ_PARAM_MODE=""
-CCQ_PARAM_STAGED=0
 CCQ_PARAM_OUTPUT_MODE="normal"
 CCQ_SHORTCUT_REGISTERED=0
 
@@ -46,9 +43,6 @@ Usage: Install.zsh [OPTIONS]
 
 Options:
   -ListSteps, --list-steps        列出已注册步骤后退出
-  -Group, --group <Basic|Advanced> 指定安装分组
-  -Mode, --mode <OneClick|Select>  指定 Advanced 安装模式
-  -Staged, --staged              兼容参数，等同 Advanced Select
   -OutputMode, --output-mode <Normal|Developer>
   -h, --help                     显示帮助
 EOF
@@ -59,18 +53,6 @@ ccq_parse_args() {
     case "$1" in
       -ListSteps|--list-steps)
         CCQ_PARAM_LIST_STEPS=1
-        shift
-        ;;
-      -Group|--group)
-        CCQ_PARAM_GROUP="${2:-}"
-        shift 2
-        ;;
-      -Mode|--mode)
-        CCQ_PARAM_MODE="${2:-}"
-        shift 2
-        ;;
-      -Staged|--staged)
-        CCQ_PARAM_STAGED=1
         shift
         ;;
       -OutputMode|--output-mode)
@@ -88,11 +70,6 @@ ccq_parse_args() {
         ;;
     esac
   done
-
-  if [ "${CCQ_PARAM_STAGED}" = "1" ]; then
-    CCQ_PARAM_GROUP="Advanced"
-    CCQ_PARAM_MODE="Select"
-  fi
 
   case "${CCQ_PARAM_OUTPUT_MODE:l}" in
     developer) CCQ_PARAM_OUTPUT_MODE="developer" ;;
@@ -114,7 +91,7 @@ ccq_load_core() {
 
   local core_dir="${CCQ_MACOS_ROOT}/core"
   local core_file
-  for core_file in Ui Process Profile Platform PackageManager Json Registry Bootstrap Provider Update; do
+  for core_file in Ui Process Profile Platform PackageManager Json Registry Bootstrap Update; do
     ccq_source_file "${core_dir}/${core_file}.zsh" || {
       printf '无法加载 macOS core: %s\n' "${core_file}.zsh" >&2
       return 1
@@ -260,20 +237,11 @@ ccq_prompt_multi() {
   ccq_show_multi_select_menu "${title}" "${default_indices}" "$@"
 }
 
-ccq_silent_step_installed() {
-  local test_function="${1:-}"
-  local result
-  [ -n "${test_function}" ] || return 1
-  command -v "${test_function}" >/dev/null 2>&1 || return 1
-  result="$(${test_function} 2>/dev/null || true)"
-  ccq_result_is_installed "${result}"
-}
-
 ccq_show_step_list() {
   local group_name step_ids step_id step_name description optional deps tag group_label group_desc index=0
   ccq_ui_primary "已注册的安装步骤："
   printf '\n'
-  for group_name in Basic Advanced; do
+  for group_name in Basic; do
     step_ids="$(ccq_get_group_step_ids "${group_name}" 2>/dev/null || true)"
     [ -n "${step_ids}" ] || continue
     group_label="$(ccq_get_group_field "${group_name}" Label 2>/dev/null || printf '%s' "${group_name}")"
@@ -341,157 +309,6 @@ ccq_confirm_execution_plan() {
   [ "${choice}" = "0" ]
 }
 
-ccq_show_advanced_select_menu() {
-  local step_ids step_id step_name description test_function optional installed tag options=() map=() defaults=() selected_indices selected_index
-  step_ids="$(ccq_get_group_step_ids Advanced 2>/dev/null || true)"
-  [ -n "${step_ids}" ] || return 1
-
-  for step_id in ${step_ids}; do
-    step_name="$(ccq_get_step_field "${step_id}" StepName 2>/dev/null || printf '%s' "${step_id}")"
-    description="$(ccq_get_step_field "${step_id}" Description 2>/dev/null || true)"
-    test_function="$(ccq_get_step_field "${step_id}" TestFunction 2>/dev/null || true)"
-    optional="$(ccq_get_step_field "${step_id}" IsOptional 2>/dev/null || printf 'false')"
-    if ccq_silent_step_installed "${test_function}"; then
-      tag="【已安装】"
-      installed=1
-    else
-      tag="【未安装】"
-      installed=0
-    fi
-    options+=("${step_name}${tag} - ${description}")
-    map+=("${step_id}")
-    if [ "${installed}" = "0" ] && ! ccq_bool_true "${optional}"; then
-      defaults+=("$(( ${#map[@]} - 1 ))")
-    fi
-  done
-
-  selected_indices="$(ccq_prompt_multi "进阶扩展 - 选择要安装的组件：" "${defaults[*]}" "${options[@]}")" || return 1
-  for selected_index in ${selected_indices}; do
-    printf '%s\n' "${map[$((selected_index + 1))]}"
-  done
-}
-
-ccq_register_ccq_shortcut() {
-  [ "${CCQ_SHORTCUT_REGISTERED}" = "1" ] && return 0
-
-  local install_url="https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/install.sh"
-  local manage_url="https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/manage.sh"
-  local zshrc_path shortcut_content
-  zshrc_path="$(ccq_zshrc_path)"
-
-  shortcut_content="$(cat <<'CCQ_SHORTCUT'
-function ccq() {
-  local panel="${1:-}"
-  local install_script_url="__INSTALL_SCRIPT_URL__"
-  local manage_script_url="__MANAGE_SCRIPT_URL__"
-
-  local run_remote_panel
-  run_remote_panel() {
-    local url="${1:-}"
-    if ! command -v curl >/dev/null 2>&1; then
-      printf '%s\n' 'curl 不可用，无法下载 CCQ 远程脚本' >&2
-      return 1
-    fi
-    curl -fsSL "${url}" | bash
-  }
-
-  local show_ccq_panel_menu
-  show_ccq_panel_menu() {
-    local selected_index=1
-    local options=('安装面板' '管理面板')
-    local values=('Install' 'Manage')
-    local count="${#options[@]}"
-    local line_count=$((4 + count))
-    local key next third i
-
-    if [ ! -r /dev/tty ] || [ ! -w /dev/tty ] || [ "${TERM:-dumb}" = "dumb" ]; then
-      printf '%s\n' "${values[$((selected_index + 1))]}"
-      return 0
-    fi
-
-    local render_menu
-    render_menu() {
-      printf '\n%s\n' 'CCQ 面板选择' > /dev/tty
-      printf '%s\n\n' '使用 ↑/↓ 选择，Enter 确认，Esc 取消' > /dev/tty
-      i=1
-      while [ "${i}" -le "${count}" ]; do
-        if [ $((i - 1)) -eq "${selected_index}" ]; then
-          printf '> %s\n' "${options[$i]}" > /dev/tty
-        else
-          printf '  %s\n' "${options[$i]}" > /dev/tty
-        fi
-        i=$((i + 1))
-      done
-    }
-
-    local redraw_menu
-    redraw_menu() {
-      printf '\033[%sA\033[J' "${line_count}" > /dev/tty
-      render_menu
-    }
-
-    local read_menu_key
-    read_menu_key() {
-      IFS= read -r -s -k 1 key < /dev/tty || return 1
-      case "${key}" in
-        $'\033')
-          if IFS= read -r -s -k 1 -t 0.08 next < /dev/tty 2>/dev/null; then
-            if [ "${next}" = "[" ]; then
-              IFS= read -r -s -k 1 -t 0.08 third < /dev/tty 2>/dev/null || third=""
-              case "${third}" in
-                A) printf 'up\n' ;;
-                B) printf 'down\n' ;;
-                *) printf 'escape\n' ;;
-              esac
-            else
-              printf 'escape\n'
-            fi
-          else
-            printf 'escape\n'
-          fi
-          ;;
-        $'\n'|$'\r') printf 'enter\n' ;;
-        q|Q) printf 'escape\n' ;;
-        *) printf 'other\n' ;;
-      esac
-    }
-
-    printf '\033[?25l' > /dev/tty
-    render_menu
-    while true; do
-      key="$(read_menu_key || printf 'escape')"
-      case "${key}" in
-        up)
-          selected_index=$(((selected_index - 1 + count) % count))
-          redraw_menu
-          ;;
-        down)
-          selected_index=$(((selected_index + 1) % count))
-          redraw_menu
-          ;;
-        enter)
-          printf '\n\033[?25h' > /dev/tty
-          printf '%s\n' "${values[$((selected_index + 1))]}"
-          return 0
-          ;;
-        escape)
-          printf '\n\033[?25h' > /dev/tty
-          return 1
-          ;;
-      esac
-    done
-  }
-
-  if [ -z "${panel}" ]; then
-    panel="$(show_ccq_panel_menu)" || { printf '%s\n' '已取消'; return 0; }
-  fi
-
-  case "${panel}" in
-    Install|安装面板) run_remote_panel "${install_script_url}" ;;
-    Manage|管理面板) run_remote_panel "${manage_script_url}" ;;
-    *) printf '未知面板: %s\n' "${panel}" >&2; return 1 ;;
-  esac
-}
 CCQ_SHORTCUT
 )"
   shortcut_content="${shortcut_content//__INSTALL_SCRIPT_URL__/${install_url}}"
@@ -507,38 +324,6 @@ CCQ_SHORTCUT
 
   ccq_ui_warning "ccq 快捷函数持久化失败（不影响本次安装流程）" "developer"
   return 1
-}
-
-ccq_seed_fingerprints_after_install() {
-  local executed=("$@")
-  local fp_managed_steps=("ClaudeMd" "ClaudeConfig" "CcgWorkflow")
-  local manifest step_id step_status fn_name fp seeded=0
-
-  command -v ccq_profile_read_manifest >/dev/null 2>&1 || return 0
-  manifest="$(ccq_profile_read_manifest 2>/dev/null || true)"
-  [ -n "${manifest}" ] || manifest='{"schemaVersion":1,"steps":{}}'
-
-  for step_id in "${executed[@]}"; do
-    printf '%s\n' "${fp_managed_steps[@]}" | grep -qxF "${step_id}" || continue
-    step_status="$(ccq_state_get_status "${step_id}" 2>/dev/null || true)"
-    [ "${step_status}" = "Success" ] || [ "${step_status}" = "Skipped" ] || continue
-    fn_name="Get-${step_id}Fingerprint"
-    command -v "${fn_name}" >/dev/null 2>&1 || continue
-    fp="$("${fn_name}" 2>/dev/null || true)"
-    [ -n "${fp}" ] || continue
-    manifest="$(printf '%s' "${manifest}" | STEP_ID="${step_id}" FP="${fp}" APPLIED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" node -e '
-const m = JSON.parse(require("fs").readFileSync(0, "utf8"));
-if (!m.steps) m.steps = {};
-m.steps[process.env.STEP_ID] = {
-  fingerprint: process.env.FP,
-  appliedAt: process.env.APPLIED_AT
-};
-console.log(JSON.stringify(m));
-' 2>/dev/null)" || continue
-    seeded=1
-  done
-
-  [ "${seeded}" = "1" ] && ccq_profile_write_manifest "${manifest}" 2>/dev/null || true
 }
 
 ccq_show_final_summary() {
@@ -579,16 +364,15 @@ ccq_show_final_summary() {
     ccq_ui_warning "  需手动处理: $((unsupported + manual))"
   fi
 
-  # 指纹种子写入（Success/Skipped 步骤）
-  ccq_seed_fingerprints_after_install "${executed[@]}"
-
   if [ "${failed}" -eq 0 ]; then
-    ccq_register_ccq_shortcut >/dev/null 2>&1 || true
     printf '\n'
     ccq_ui_primary "快速开始：" "developer"
-    ccq_ui_info "  ccq             - CCQ 面板入口（安装面板/管理面板）" "developer"
     ccq_ui_info "  claude          - 启动 Claude Code" "developer"
     ccq_ui_info "  claude --help   - 查看帮助信息" "developer"
+    printf '\n'
+    ccq_ui_primary "管理面板（可选）：" "developer"
+    ccq_ui_info "  方式 1: curl -fsSL https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/manage.sh | bash" "developer"
+    ccq_ui_info "  方式 2: npm install -g ccq && ccq" "developer"
   else
     printf '\n'
     ccq_ui_warning "安装完成，但有 ${failed} 个步骤失败"
@@ -609,7 +393,6 @@ ccq_invoke_grouped_install() {
 
   if [ "${#ordered[@]}" -eq 0 ]; then
     ccq_ui_success "所有选定步骤已安装，无需操作"
-    ccq_register_ccq_shortcut >/dev/null 2>&1 || true
     return 0
   fi
 
@@ -630,34 +413,6 @@ ccq_invoke_grouped_install() {
   ccq_show_final_summary "${ordered[@]}"
 }
 
-ccq_select_top_level_action() {
-  ccq_prompt_single "请选择操作：" 0 \
-    "基础环境 - Node.js, Git, Claude Code, 第三方供应商配置" \
-    "进阶扩展 - 增强配置，MCP，Workflow"
-}
-
-ccq_select_advanced_action() {
-  ccq_prompt_single "进阶扩展 - 请选择安装模式：" 0 \
-    "一键安装 - 安装全部必选进阶组件（不含可选的 cc-switch/Codex/Antigravity CLI）" \
-    "可选安装 - 选择要安装的组件"
-}
-
-ccq_advanced_required_step_ids() {
-  local step_ids step_id optional
-  step_ids="$(ccq_get_group_step_ids Advanced 2>/dev/null || true)"
-  for step_id in ${step_ids}; do
-    optional="$(ccq_get_step_field "${step_id}" IsOptional 2>/dev/null || printf 'false')"
-    ccq_bool_true "${optional}" || printf '%s\n' "${step_id}"
-  done
-}
-
-ccq_pause_for_main_menu() {
-  local _ccq_pause_key
-  [ -r /dev/tty ] || return 0
-  printf '\n'
-  ccq_ui_dim "按任意键返回主菜单..."
-  IFS= read -r -s -k 1 _ccq_pause_key < /dev/tty || true
-}
 
 ccq_main() {
   ccq_parse_args "$@"
@@ -670,82 +425,102 @@ ccq_main() {
   fi
 
   ccq_show_banner "Claude Code Quickstart"
-  ccq_ui_info "支持一键搭建 Claude Code 的开发环境及进阶功能" "developer"
+  ccq_ui_info "一键搭建 Claude Code 基础开发环境（Node.js / Git / Claude Code）" "developer"
 
+  # 前置环境检测（macOS 12+ / Homebrew / nvm，zsh 单运行时）
   ccq_preflight || return 1
 
-  if [ -n "${CCQ_PARAM_MODE}" ] && [ -z "${CCQ_PARAM_GROUP}" ]; then
-    ccq_ui_danger "参数错误：-Mode 必须与 -Group 一起使用"
-    return 2
-  fi
-  if [ "${CCQ_PARAM_GROUP}" = "Basic" ] && [ "${CCQ_PARAM_MODE}" = "Select" ]; then
-    ccq_ui_danger "参数错误：基础环境仅支持一键安装"
-    return 2
-  fi
+  # 基础环境直装（NodeJS / Git / ClaudeCode），无顶层菜单
+  ccq_ui_primary "开始安装基础环境" "developer"
+  ccq_invoke_grouped_install $(ccq_get_group_step_ids Basic)
 
-  if [ -n "${CCQ_PARAM_GROUP}" ]; then
-    case "${CCQ_PARAM_GROUP}" in
-      Basic)
-        ccq_ui_primary "基础环境一键安装模式" "developer"
-        ccq_invoke_grouped_install $(ccq_get_group_step_ids Basic)
-        ;;
-      Advanced)
-        case "${CCQ_PARAM_MODE}" in
-          Select)
-            ccq_ui_primary "进阶扩展可选安装模式" "developer"
-            ccq_invoke_grouped_install $(ccq_show_advanced_select_menu)
-            ;;
-          OneClick|oneclick|"")
-            ccq_ui_primary "进阶扩展一键安装模式" "developer"
-            ccq_invoke_grouped_install $(ccq_advanced_required_step_ids)
-            ;;
-          *)
-            ccq_ui_danger "参数错误：-Mode 仅支持 OneClick 或 Select"
-            return 2
-            ;;
-        esac
-        ;;
-      *)
-        ccq_ui_danger "参数错误：-Group 仅支持 Basic 或 Advanced"
-        return 2
-        ;;
-    esac
+  # ccq 可执行文件下载确认（TDR-6）
+  printf '\n'
+  ccq_confirm_executable_download
+}
+
+ccq_confirm_executable_download() {
+  # 在 install 末尾弹出确认，询问用户是否下载 ccq 可执行文件到 ~/.local/bin
+  # 遵守 TDR-6：用户拒绝则跳过；确认则按平台架构下载并设置可执行权限
+
+  ccq_ui_primary "ccq 管理工具安装"
+  printf '\n'
+  ccq_ui_info "ccq 是 Claude Code Quickstart 的管理控制台，提供以下功能："
+  ccq_ui_info "  • 供应商管理（Provider 配置）"
+  ccq_ui_info "  • MCP Server 管理"
+  ccq_ui_info "  • Skills 管理"
+  ccq_ui_info "  • 提示词配置"
+  ccq_ui_info "  • 配置文件管理"
+  ccq_ui_info "  • 工具管理（ClaudeCode / Ccline / OpenSpec 等）"
+  printf '\n'
+  ccq_ui_warning "是否现在下载 ccq 可执行文件到 ~/.local/bin ？"
+  ccq_ui_dim "  （拒绝则跳过，可稍后手动安装）"
+  printf '\n'
+
+  # 确认选择
+  printf '%s' "请选择 [Y/n]: "
+  read -r decision
+  case "${decision}" in
+    [Nn]*)
+      printf '\n'
+      ccq_ui_info "已跳过 ccq 可执行文件下载"
+      ccq_ui_dim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
+      return 0
+      ;;
+  esac
+
+  printf '\n'
+  ccq_ui_info "正在准备下载 ccq 可执行文件..."
+
+  # 1. 检测是否已安装
+  local installed_json installed_status
+  installed_json="$(ccq_test_executable_installed)"
+  installed_status="$(printf '%s' "${installed_json}" | grep -o '"isInstalled":[^,}]*' | cut -d: -f2)"
+
+  if [ "${installed_status}" = "1" ] || [ "${installed_status}" = "true" ]; then
+    local installed_path installed_version
+    installed_path="$(printf '%s' "${installed_json}" | grep -o '"path":"[^"]*"' | cut -d'"' -f4)"
+    installed_version="$(printf '%s' "${installed_json}" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)"
+
+    ccq_ui_success "✓ ccq 可执行文件已安装: ${installed_path}"
+    [ -n "${installed_version}" ] && ccq_ui_info "  当前版本: ${installed_version}"
+    ccq_ui_dim "  如需更新，请在新终端运行: ccq"
     return 0
   fi
 
-  if [ ! -r /dev/tty ]; then
-    ccq_ui_warning "非交互环境请使用 -Group Basic 或 -Group Advanced -Mode OneClick/Select"
-    return 1
-  fi
+  # 2. 检测平台架构
+  local arch
+  arch="$(ccq_get_architecture)"
+  ccq_ui_info "检测到平台架构: ${arch}"
 
-  local top_choice adv_choice selected_ids
-  while true; do
-    top_choice="$(ccq_select_top_level_action)" || { ccq_ui_primary "退出 CCQ" "developer"; break; }
-    case "${top_choice}" in
-      0)
-        ccq_invoke_grouped_install $(ccq_get_group_step_ids Basic)
-        ccq_pause_for_main_menu
-        ;;
-      1)
-        adv_choice="$(ccq_select_advanced_action)" || continue
-        case "${adv_choice}" in
-          0)
-            ccq_invoke_grouped_install $(ccq_advanced_required_step_ids)
-            ccq_pause_for_main_menu
-            ;;
-          1)
-            selected_ids="$(ccq_show_advanced_select_menu || true)"
-            if [ -n "${selected_ids}" ]; then
-              ccq_invoke_grouped_install ${selected_ids}
-            else
-              ccq_ui_warning "未选择任何步骤"
-            fi
-            ccq_pause_for_main_menu
-            ;;
-        esac
-        ;;
-    esac
-  done
+  # 3. 构建下载 URL
+  local base_url exe_name download_url
+  base_url="https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download"
+  exe_name="ccq-${arch}"
+  download_url="${base_url}/${exe_name}"
+
+  ccq_ui_dim "  下载 URL: ${download_url}"
+
+  # 4. 执行下载与安装
+  if ccq_install_executable "${download_url}"; then
+    printf '\n'
+    ccq_ui_success "════════════════════════════════════════════════════════════"
+    ccq_ui_success " ccq 可执行文件安装成功！"
+    ccq_ui_success "════════════════════════════════════════════════════════════"
+    printf '\n'
+    ccq_ui_info "下次启动新终端后，可直接运行以下命令进入管理控制台："
+    printf '\n'
+    ccq_ui_primary "    ccq"
+    printf '\n'
+    ccq_ui_dim "（当前会话 PATH 尚未刷新，请开启新终端）"
+  else
+    printf '\n'
+    ccq_ui_warning "ccq 可执行文件下载失败，但不影响 Claude Code 基础环境"
+    ccq_ui_info "您可以稍后手动下载："
+    ccq_ui_info "  1. 访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
+    ccq_ui_info "  2. 下载对应平台的可执行文件（${exe_name}）"
+    ccq_ui_info "  3. 放置到 ~/.local/bin 并设置可执行权限（chmod +x）"
+  fi
 }
 
 ccq_main "$@"

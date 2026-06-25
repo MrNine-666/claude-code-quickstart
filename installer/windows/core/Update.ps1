@@ -1,11 +1,11 @@
-# 更新状态管理 - CCQ
+﻿# 更新状态管理 - CCQ
 # 作者: 哈雷酱 (本小姐的更新基础设施杰作！)
 # 功能: 提供更新清单、内容指纹、更新快照等更新状态管理基础设施
 # 与 macOS Update.zsh 对称的集中式 Update core（消除组织不对称，非功能变更）
 # 依赖: Profile.ps1（Get-UserHome / Initialize-BackupDirectory / Write-FileAtomically / Get-CleanupPolicyContract / $script:BackupDirectory）,
-#       Ui.ps1（Write-Ui*）。必须在 Profile.ps1 之后、Provider.ps1 之前加载。
+#       Ui.ps1（Write-Ui*）。必须在 Profile.ps1 之后加载（依赖 Profile 函数，无 core 内上界约束）。
 
-#Requires -Version 7.0
+#Requires -Version 5.1
 
 # 严格模式
 Set-StrictMode -Version Latest
@@ -46,7 +46,7 @@ function Read-UpdateManifest {
             return $emptyManifest
         }
 
-        $obj = $raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        $obj = $raw | ConvertFrom-JsonToHashtable -ErrorAction Stop
         if (-not $obj -or -not $obj.ContainsKey("steps")) {
             return $emptyManifest
         }

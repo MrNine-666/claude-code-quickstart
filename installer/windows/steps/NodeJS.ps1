@@ -1,4 +1,4 @@
-# NodeJS.ps1 - Node.js 安装和配置（主入口）
+﻿# NodeJS.ps1 - Node.js 安装和配置（主入口）
 # 作者: 哈雷酱 (本小姐的 Node.js 管理杰作！)
 # 功能: 支持 fnm / nvm-windows / Node.js 直装，统一 Node.js 安装与迁移
 

@@ -2,19 +2,26 @@
 # 作者: 哈雷酱 (本小姐的专业测试工具！)
 
 param(
-    [string]$Path = "installer"
+    [string]$Path
 )
 
 Write-Host "🔍 开始检查 PowerShell 脚本语法..." -ForegroundColor Cyan
 
-# 收集所有需要检查的文件
+# 以脚本所在目录（repo 根）为锚点，无论 CWD 在哪都正确定位各 .ps1 来源
+$repoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+$installerRoot = if ($Path) { $Path } else { Join-Path $repoRoot 'installer' }
+
+# 收集所有需要检查的文件：
+#   installer/windows/**、installer/build.ps1、根级 contracts/**（含 Test-Contracts.ps1）、manage/scripts/**
+#   注：contracts 已上升为根级，旧 installer/contracts 已不存在，必须扫根级 contracts 与 manage/scripts
 $scriptFiles = @()
-$scriptFiles += Get-ChildItem "$Path/windows" -Recurse -Filter "*.ps1" -ErrorAction SilentlyContinue
-$scriptFiles += Get-ChildItem "$Path/contracts" -Recurse -Filter "*.ps1" -ErrorAction SilentlyContinue
-$buildScript = Get-Item "$Path/build.ps1" -ErrorAction SilentlyContinue
+$scriptFiles += Get-ChildItem (Join-Path $installerRoot 'windows') -Recurse -Filter "*.ps1" -ErrorAction SilentlyContinue
+$buildScript = Get-Item (Join-Path $installerRoot 'build.ps1') -ErrorAction SilentlyContinue
 if ($buildScript) {
     $scriptFiles += $buildScript
 }
+$scriptFiles += Get-ChildItem (Join-Path $repoRoot 'contracts') -Recurse -Filter "*.ps1" -ErrorAction SilentlyContinue
+$scriptFiles += Get-ChildItem (Join-Path $repoRoot 'manage/scripts') -Recurse -Filter "*.ps1" -ErrorAction SilentlyContinue
 
 $totalFiles = $scriptFiles.Count
 $passedFiles = 0

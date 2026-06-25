@@ -8,6 +8,7 @@ fi
 CCQ_REGISTRY_ZSH_LOADED=1
 
 : "${CCQ_INSTALLER_ROOT:=$(cd "${0:A:h}/../.." 2>/dev/null && pwd)}"
+# installer 契约位于 installer/contracts/（TDR-10 拆分：steps/build/cleanup-policy 归 installer）
 : "${CCQ_CONTRACTS_DIR:=${CCQ_INSTALLER_ROOT}/contracts}"
 CCQ_STEPS_CONTRACT="${CCQ_CONTRACTS_DIR}/steps.json"
 
@@ -24,44 +25,20 @@ typeset -gA CCQ_BOOTSTRAP_STEP_OPTIONAL
 typeset -gA CCQ_BOOTSTRAP_STEP_ORDER
 typeset -gA CCQ_BOOTSTRAP_STEP_DEPS
 typeset -ga CCQ_BOOTSTRAP_GROUP_BASIC
-typeset -ga CCQ_BOOTSTRAP_GROUP_ADVANCED
 
 ccq_registry_init_bootstrap_snapshot() {
   [ "${#CCQ_BOOTSTRAP_STEP_IDS[@]}" -gt 0 ] && return 0
 
-  CCQ_BOOTSTRAP_GROUP_BASIC=(NodeJS Git ClaudeCode ApiKey)
-  CCQ_BOOTSTRAP_GROUP_ADVANCED=(Ccline ClaudeConfig ClaudeMd Mcp CcgWorkflow OpenSpec CcSwitch CodexCli AntigravityCli)
-  CCQ_BOOTSTRAP_STEP_IDS=(NodeJS Git ClaudeCode ApiKey Ccline ClaudeConfig ClaudeMd Mcp CcgWorkflow Skills OpenSpec CcSwitch CodexCli AntigravityCli)
+  CCQ_BOOTSTRAP_GROUP_BASIC=(NodeJS Git ClaudeCode)
+  CCQ_BOOTSTRAP_STEP_IDS=(NodeJS Git ClaudeCode)
 
   CCQ_BOOTSTRAP_STEP_NAME[NodeJS]="Node.js"
   CCQ_BOOTSTRAP_STEP_NAME[Git]="Git"
   CCQ_BOOTSTRAP_STEP_NAME[ClaudeCode]="Claude Code"
-  CCQ_BOOTSTRAP_STEP_NAME[ApiKey]="第三方供应商配置"
-  CCQ_BOOTSTRAP_STEP_NAME[Ccline]="CCometixLine"
-  CCQ_BOOTSTRAP_STEP_NAME[ClaudeConfig]="Claude 基础配置"
-  CCQ_BOOTSTRAP_STEP_NAME[ClaudeMd]="CLAUDE.md 配置"
-  CCQ_BOOTSTRAP_STEP_NAME[Mcp]="MCP Server 配置"
-  CCQ_BOOTSTRAP_STEP_NAME[CcgWorkflow]="CCG 工作流"
-  CCQ_BOOTSTRAP_STEP_NAME[Skills]="Skills"
-  CCQ_BOOTSTRAP_STEP_NAME[OpenSpec]="OpenSpec CLI"
-  CCQ_BOOTSTRAP_STEP_NAME[CcSwitch]="cc-switch"
-  CCQ_BOOTSTRAP_STEP_NAME[CodexCli]="Codex CLI"
-  CCQ_BOOTSTRAP_STEP_NAME[AntigravityCli]="Antigravity CLI"
 
   CCQ_BOOTSTRAP_STEP_DESCRIPTION[NodeJS]="通过 nvm 官方脚本安装 Node.js LTS 并验证 node/npm"
   CCQ_BOOTSTRAP_STEP_DESCRIPTION[Git]="通过 Homebrew 安装 Git 并应用推荐配置"
   CCQ_BOOTSTRAP_STEP_DESCRIPTION[ClaudeCode]="通过 npm 全局安装 Claude Code CLI"
-  CCQ_BOOTSTRAP_STEP_DESCRIPTION[ApiKey]="配置第三方 AI 供应商连接到 ~/.claude/settings.json"
-  CCQ_BOOTSTRAP_STEP_DESCRIPTION[Ccline]="安装 CCometixLine 状态栏增强工具"
-  CCQ_BOOTSTRAP_STEP_DESCRIPTION[ClaudeConfig]="写入 Claude Code 常用配置"
-  CCQ_BOOTSTRAP_STEP_DESCRIPTION[ClaudeMd]="创建全局 CLAUDE.md 配置文件"
-  CCQ_BOOTSTRAP_STEP_DESCRIPTION[Mcp]="配置 MCP 插件服务器"
-  CCQ_BOOTSTRAP_STEP_DESCRIPTION[CcgWorkflow]="安装 CCG 工作流脚本和 Slash Commands"
-  CCQ_BOOTSTRAP_STEP_DESCRIPTION[Skills]="Skills 管理模块（仅通过 Manage → Skills 管理安装/更新/卸载）"
-  CCQ_BOOTSTRAP_STEP_DESCRIPTION[OpenSpec]="安装 OpenSpec CLI"
-  CCQ_BOOTSTRAP_STEP_DESCRIPTION[CcSwitch]="安装 cc-switch 或显示 macOS 平台状态"
-  CCQ_BOOTSTRAP_STEP_DESCRIPTION[CodexCli]="安装 OpenAI Codex CLI"
-  CCQ_BOOTSTRAP_STEP_DESCRIPTION[AntigravityCli]="安装 Google Antigravity CLI 或显示 macOS 平台状态"
 
   local step_id order=10
   for step_id in "${CCQ_BOOTSTRAP_STEP_IDS[@]}"; do
@@ -77,34 +54,8 @@ ccq_registry_init_bootstrap_snapshot() {
     order=$((order + 10))
   done
 
-  CCQ_BOOTSTRAP_STEP_SKIP[Mcp]="false"
-  CCQ_BOOTSTRAP_STEP_SKIP[Skills]="false"
-  CCQ_BOOTSTRAP_STEP_OPTIONAL[Skills]="true"
-  CCQ_BOOTSTRAP_STEP_OPTIONAL[CcSwitch]="true"
-  CCQ_BOOTSTRAP_STEP_OPTIONAL[CodexCli]="true"
-  CCQ_BOOTSTRAP_STEP_OPTIONAL[AntigravityCli]="true"
-
   CCQ_BOOTSTRAP_STEP_DEPS[ClaudeCode]="NodeJS"
-  CCQ_BOOTSTRAP_STEP_DEPS[ApiKey]="ClaudeCode"
-  CCQ_BOOTSTRAP_STEP_DEPS[Ccline]="ClaudeCode"
-  CCQ_BOOTSTRAP_STEP_DEPS[ClaudeConfig]="ClaudeCode"
-  CCQ_BOOTSTRAP_STEP_DEPS[Mcp]="ClaudeCode"
-  CCQ_BOOTSTRAP_STEP_DEPS[CcgWorkflow]="NodeJS"
-  CCQ_BOOTSTRAP_STEP_DEPS[Skills]="NodeJS ClaudeCode"
-  CCQ_BOOTSTRAP_STEP_DEPS[OpenSpec]="NodeJS"
-  CCQ_BOOTSTRAP_STEP_DEPS[CcSwitch]="ClaudeCode"
-  CCQ_BOOTSTRAP_STEP_DEPS[CodexCli]="NodeJS"
-
   CCQ_BOOTSTRAP_STEP_UPDATE[ClaudeCode]="Update-ClaudeCode"
-  CCQ_BOOTSTRAP_STEP_UPDATE[ClaudeConfig]="Update-ClaudeConfig"
-  CCQ_BOOTSTRAP_STEP_UPDATE[ClaudeMd]="Update-ClaudeMd"
-  CCQ_BOOTSTRAP_STEP_UPDATE[Ccline]="Update-Ccline"
-  CCQ_BOOTSTRAP_STEP_UPDATE[CcgWorkflow]="Update-CcgWorkflow"
-  CCQ_BOOTSTRAP_STEP_UPDATE[Skills]=""
-  CCQ_BOOTSTRAP_STEP_UPDATE[OpenSpec]="Update-OpenSpec"
-  CCQ_BOOTSTRAP_STEP_UPDATE[CcSwitch]="Update-CcSwitch"
-  CCQ_BOOTSTRAP_STEP_UPDATE[CodexCli]="Update-CodexCli"
-  CCQ_BOOTSTRAP_STEP_UPDATE[AntigravityCli]="Update-AntigravityCli"
 }
 
 ccq_registry_node() {
@@ -195,9 +146,8 @@ ccq_get_bootstrap_step_field() {
       ;;
     Group)
       case "${step_id}" in
-        NodeJS|Git|ClaudeCode|ApiKey) printf 'Basic' ;;
-        Skills) printf 'Manage' ;;
-        *) printf 'Advanced' ;;
+        NodeJS|Git|ClaudeCode) printf 'Basic' ;;
+        *) return 1 ;;
       esac
       ;;
     *) return 1 ;;
@@ -247,7 +197,6 @@ process.stdout.write((group.StepIds || []).join("\n"));
   ccq_registry_init_bootstrap_snapshot
   case "${group_name}" in
     Basic) printf '%s\n' "${CCQ_BOOTSTRAP_GROUP_BASIC[@]}" ;;
-    Advanced) printf '%s\n' "${CCQ_BOOTSTRAP_GROUP_ADVANCED[@]}" ;;
     *) return 1 ;;
   esac
 }
@@ -277,14 +226,6 @@ else process.stdout.write(String(value));
         Label) printf '基础环境' ;;
         Description) printf 'Claude Code 最小可用环境' ;;
         InstallMode) printf 'OneClickOnly' ;;
-        *) return 1 ;;
-      esac
-      ;;
-    Advanced)
-      case "${field}" in
-        Label) printf '进阶扩展' ;;
-        Description) printf '增强配置，MCP，Workflow' ;;
-        InstallMode) printf 'OneClickOrSelect' ;;
         *) return 1 ;;
       esac
       ;;

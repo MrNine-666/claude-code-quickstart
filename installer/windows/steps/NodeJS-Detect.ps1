@@ -1,4 +1,4 @@
-# NodeJS-Detect.ps1 - Node.js 环境检测层
+﻿# NodeJS-Detect.ps1 - Node.js 环境检测层
 # 职责：检测 fnm/nvm/direct/portable 四种 provider 的安装状态
 
 #Requires -Version 5.1

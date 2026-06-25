@@ -1,4 +1,4 @@
-# 步骤契约和状态模型 - CCQ
+﻿# 步骤契约和状态模型 - CCQ
 # 作者: 哈雷酱 (本小姐的架构设计杰作！)
 # 功能: 定义统一步骤接口、状态模型、调度骨架（纯内存，实时检测）
 
@@ -48,7 +48,7 @@ class StepResult {
 # 安装状态类型（纯内存，不持久化）
 class InstallState {
     [datetime]$StartTime
-    [string]$Mode  # "OneClick" 或 "Staged" 或 "Manage-Basic" 或 "Manage-Advanced"
+    [string]$Mode  # "OneClick" 或 "Staged" 或 "Manage-Basic"
     [hashtable]$StepResults
     [hashtable]$GlobalData
     [string]$CurrentStep
@@ -676,24 +676,6 @@ function Build-UpdatePlan {
     foreach ($id in $planStepIds) {
         if ($closureIds -notcontains $id) {
             [void]$closureIds.Add($id)
-        }
-    }
-
-    # 后置联动注入：ClaudeCode 在列表中且 Ccline 已安装 → 追加 Ccline
-    if ($closureIds -contains "ClaudeCode" -and $closureIds -notcontains "Ccline") {
-        $cclineStep = $updatableSteps | Where-Object { $_.StepId -eq "Ccline" }
-        if ($cclineStep) {
-            # 检测 Ccline 是否已安装
-            try {
-                $cclineTestResult = & $cclineStep.TestFunction 2>$null 3>$null 4>$null 5>$null 6>$null
-                $cclineInstalled = Resolve-TestResultBool -TestResult $cclineTestResult -PropertyName "IsInstalled"
-                if ($cclineInstalled) {
-                    [void]$closureIds.Add("Ccline")
-                    Write-UiOutput "  ⚡ 联动追加: CCometixLine（ClaudeCode 更新后需重新 patch）" -Level Essential -Type Info
-                }
-            } catch {
-                # 检测失败，不追加
-            }
         }
     }
 

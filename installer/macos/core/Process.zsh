@@ -674,3 +674,111 @@ ccq_invoke_unified_check() {
 
   printf '%s\n' "${final_result}"
 }
+
+# ─── CCQ 可执行文件管理 ──────────────────────────────────────────────────────
+
+ccq_get_architecture() {
+  # 检测当前平台架构，返回 ccq 可执行文件对应的 target 名称
+  # 输出: "darwin-x64" | "darwin-arm64"
+  local arch
+  arch="$(uname -m 2>/dev/null || true)"
+
+  case "${arch}" in
+    arm64|aarch64)
+      printf 'darwin-arm64'
+      ;;
+    x86_64|amd64)
+      printf 'darwin-x64'
+      ;;
+    *)
+      # 默认 x64
+      printf 'darwin-x64'
+      ;;
+  esac
+}
+
+ccq_get_executable_path() {
+  # 返回 ccq 可执行文件应安装的目标路径（macOS: ~/.local/bin/ccq）
+  printf '%s/.local/bin/ccq' "${HOME}"
+}
+
+ccq_test_executable_installed() {
+  # 检测 ccq 可执行文件是否已安装且可用
+  # 输出 JSON: {"isInstalled":true/false,"version":"x.y.z","path":"..."}
+  local ccq_path is_installed=0 version=""
+  ccq_path="$(ccq_get_executable_path)"
+
+  if [ -f "${ccq_path}" ] && [ -x "${ccq_path}" ]; then
+    is_installed=1
+    # 尝试获取版本
+    if version="$("${ccq_path}" --version 2>/dev/null | head -1)"; then
+      version="${version#ccq }"
+    fi
+  fi
+
+  printf '{"isInstalled":%s,"version":"%s","path":"%s"}\n' "${is_installed}" "${version}" "${ccq_path}"
+}
+
+ccq_install_executable() {
+  # 下载并安装 ccq 可执行文件到 ~/.local/bin/ccq，并确保该目录在 PATH
+  # 参数: $1 = 下载 URL
+  # 返回: 0 = 成功; 1 = 失败
+  local download_url="$1"
+  [ -z "${download_url}" ] && { printf 'Error: download_url required\n' >&2; return 1; }
+
+  local ccq_path ccq_bin_dir
+  ccq_path="$(ccq_get_executable_path)"
+  ccq_bin_dir="$(dirname "${ccq_path}")"
+
+  # 1. 创建目标目录
+  if [ ! -d "${ccq_bin_dir}" ]; then
+    mkdir -p "${ccq_bin_dir}" || { printf 'Error: 无法创建目录 %s\n' "${ccq_bin_dir}" >&2; return 1; }
+    command -v ccq_ui_info >/dev/null 2>&1 && ccq_ui_info "创建 ccq 目录: ${ccq_bin_dir}"
+  fi
+
+  # 2. 下载可执行文件
+  command -v ccq_ui_info >/dev/null 2>&1 && ccq_ui_info "正在下载 ccq 可执行文件..."
+  command -v ccq_ui_dim >/dev/null 2>&1 && ccq_ui_dim "  URL: ${download_url}"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "${ccq_path}" "${download_url}" || { printf 'Error: curl 下载失败\n' >&2; return 1; }
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "${ccq_path}" "${download_url}" || { printf 'Error: wget 下载失败\n' >&2; return 1; }
+  else
+    printf 'Error: curl 和 wget 均不可用\n' >&2
+    return 1
+  fi
+
+  # 3. 验证文件存在且非空
+  if [ ! -f "${ccq_path}" ]; then
+    printf 'Error: 下载后文件不存在: %s\n' "${ccq_path}" >&2
+    return 1
+  fi
+
+  local file_size
+  file_size="$(stat -f%z "${ccq_path}" 2>/dev/null || stat -c%s "${ccq_path}" 2>/dev/null || echo 0)"
+  if [ "${file_size}" -eq 0 ]; then
+    printf 'Error: 下载的文件为空\n' >&2
+    return 1
+  fi
+
+  # 4. 设置可执行权限
+  chmod +x "${ccq_path}" || { printf 'Error: 无法设置可执行权限\n' >&2; return 1; }
+
+  command -v ccq_ui_success >/dev/null 2>&1 && ccq_ui_success "✓ ccq 可执行文件已下载到: ${ccq_path}"
+  command -v ccq_ui_dim >/dev/null 2>&1 && ccq_ui_dim "  文件大小: $(awk "BEGIN {printf \"%.2f\", ${file_size}/1024/1024}") MB"
+
+  # 5. 确保 ~/.local/bin 在 PATH（复用现有逻辑 Process.zsh:220-222）
+  if ! printf '%s\n' "${PATH}" | grep -q "${ccq_bin_dir}"; then
+    # 添加到 ~/.zprofile（login shell）
+    if [ -f "${HOME}/.zprofile" ]; then
+      if ! grep -q "${ccq_bin_dir}" "${HOME}/.zprofile" 2>/dev/null; then
+        printf '\n# ccq executable path\nexport PATH="%s:${PATH}"\n' "${ccq_bin_dir}" >> "${HOME}/.zprofile"
+        command -v ccq_ui_success >/dev/null 2>&1 && ccq_ui_success "✓ ${ccq_bin_dir} 已添加到 ~/.zprofile"
+      fi
+    fi
+    command -v ccq_ui_warning >/dev/null 2>&1 && ccq_ui_warning "⚠ 请开启新终端后使用 ccq 命令（当前会话 PATH 尚未刷新）"
+  fi
+
+  return 0
+}

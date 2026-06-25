@@ -13,6 +13,7 @@ function Get-BuildManifest {
     #>
     param()
 
+    # 构建清单位于 installer/contracts/（TDR-10 拆分：build.json 归 installer）
     $manifestPath = Join-Path $PSScriptRoot 'contracts\build.json'
     if (-not (Test-Path $manifestPath -PathType Leaf)) {
         throw "构建清单不存在: $manifestPath"
@@ -80,17 +81,6 @@ function ConvertTo-WindowsBuildPath {
         return $normalized
     }
     return "windows/$normalized"
-}
-
-function Get-BootstrapBuildOrder {
-    <#
-    .SYNOPSIS
-    返回 Bootstrap 脚本构建时需要按顺序拼接的文件路径数组。
-    #>
-    $artifact = Get-BuildArtifactConfig -Platform Windows -Role Bootstrap
-    $coreFiles = Get-BuildArtifactPathList -Artifact $artifact -FieldName 'CoreFiles'
-    $order = @($coreFiles + @([string]$artifact['EntryFile']))
-    return $order
 }
 
 function Get-InstallBuildOrder {
@@ -164,49 +154,103 @@ function Get-ScriptParamBlockInfo {
     }
 }
 
-function Invoke-ManageBundleBuild {
+function Invoke-ManageTuiPackage {
     <#
     .SYNOPSIS
-    调用 esbuild 将 manage.js + 子管理器打包为单文件 bundle dist/manage.js（P10 方案 3）。
+    构建 TUI 可执行文件（4 平台交叉编译）到 dist/ 目录。
 
     .DESCRIPTION
-    取代 base64 多文件内嵌：manage.js 经 esbuild 静态打包全部子模块，由 wrapper 缓存到
-    $TMPDIR/.ccq/manage.js 后运行。需要 node + esbuild（devDependency）。
-    esbuild 不可用时告警跳过（不阻断 .ps1 产物构建；CI 在 npm ci 后产出 bundle）。
+    构建 OpenTUI TUI 可执行文件（4 平台交叉编译）。流程：
+      1. 确保 Bun 可用（>=1.2.0）；
+      2. 在 tui/ 子项目中执行 bun run build（调用 scripts/build.ts）；
+      3. 产出 4 个可执行文件到 dist/:
+         - ccq-windows-x64.exe
+         - ccq-windows-arm64.exe
+         - ccq-darwin-x64
+         - ccq-darwin-arm64
+    契约已通过 src/core/embedded-contracts.ts 静态 import 内嵌进可执行文件（TDR-4）。
+    Bun 不可用时 warn 跳过（不阻断平台 .ps1 产物构建；CI 通过 release artifact 校验强制可执行文件）。
 
     .OUTPUTS
     System.Boolean - 构建成功返回 $true，跳过或失败返回 $false
     #>
     param(
         [Parameter(Mandatory)]
-        [string]$InstallerRoot
+        [string]$InstallerRoot,
+
+        [Parameter(Mandatory)]
+        [string]$OutputDir
     )
 
-    $esbuildConfig = Join-Path $InstallerRoot 'contracts' 'scripts' 'esbuild.config.js'
-    if (-not (Test-Path $esbuildConfig -PathType Leaf)) {
-        Write-Host "[WARN] 未找到 esbuild 配置，跳过 manage.js bundle 构建: $esbuildConfig" -ForegroundColor Yellow
-        return $false
-    }
-
-    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-        Write-Host "[WARN] 未检测到 node，跳过 manage.js bundle 构建" -ForegroundColor Yellow
-        return $false
-    }
-
     $repoRoot = Split-Path $InstallerRoot -Parent
-    $esbuildModule = Join-Path $repoRoot 'node_modules' 'esbuild'
-    if (-not (Test-Path $esbuildModule -PathType Container)) {
-        Write-Host "[WARN] 未安装 esbuild 依赖（请先 npm ci），跳过 manage.js bundle 构建" -ForegroundColor Yellow
+    $tuiDir = Join-Path $repoRoot 'tui'
+    if (-not (Test-Path $tuiDir -PathType Container)) {
+        Write-Host "[WARN] 未找到 tui 子项目，跳过可执行文件构建: $tuiDir" -ForegroundColor Yellow
         return $false
     }
 
-    Write-Host '正在构建 manage.js 单文件 bundle (esbuild)...'
-    & node $esbuildConfig
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[FAIL] manage.js bundle 构建失败（esbuild 退出码 $LASTEXITCODE）" -ForegroundColor Red
+    # 检查 Bun（>=1.2.0）
+    $bunCmd = Get-Command bun -ErrorAction SilentlyContinue
+    if (-not $bunCmd) {
+        Write-Host "[WARN] 未检测到 Bun，跳过 TUI 可执行文件构建" -ForegroundColor Yellow
+        Write-Host "       请安装 Bun (https://bun.sh) 并确保在 PATH 中" -ForegroundColor Yellow
         return $false
     }
-    Write-Host '[PASS] manage.js 单文件 bundle 已生成' -ForegroundColor Green
+
+    # 验证 Bun 版本
+    $bunVersion = & bun --version 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[WARN] 无法获取 Bun 版本，跳过 TUI 可执行文件构建" -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host "正在构建 TUI 可执行文件（Bun $bunVersion）..."
+    Write-Host "工作目录: $tuiDir"
+
+    # 执行 bun run build（调用 scripts/build.ts）
+    Push-Location $tuiDir
+    try {
+        & bun run build
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[FAIL] TUI 可执行文件构建失败（退出码 $LASTEXITCODE）" -ForegroundColor Red
+            return $false
+        }
+    } finally {
+        Pop-Location
+    }
+
+    # 验证产物并复制到 OutputDir
+    $tuiDistDir = Join-Path $tuiDir 'dist'
+    $expectedFiles = @(
+        'ccq-windows-x64.exe',
+        'ccq-windows-arm64.exe',
+        'ccq-darwin-x64',
+        'ccq-darwin-arm64'
+    )
+
+    $allSuccess = $true
+    foreach ($fileName in $expectedFiles) {
+        $srcPath = Join-Path $tuiDistDir $fileName
+        $destPath = Join-Path $OutputDir $fileName
+
+        if (-not (Test-Path $srcPath -PathType Leaf)) {
+            Write-Host "[FAIL] 缺失可执行文件: $fileName" -ForegroundColor Red
+            $allSuccess = $false
+            continue
+        }
+
+        # 复制到输出目录
+        Copy-Item -Path $srcPath -Destination $destPath -Force
+        $sizeKB = [math]::Round((Get-Item $destPath).Length / 1KB, 1)
+        Write-Host "[PASS] $fileName 已生成（$sizeKB KB）" -ForegroundColor Green
+    }
+
+    if (-not $allSuccess) {
+        Write-Host "[FAIL] 部分可执行文件构建失败" -ForegroundColor Red
+        return $false
+    }
+
+    Write-Host "[PASS] 所有 TUI 可执行文件构建完成" -ForegroundColor Green
     return $true
 }
 
@@ -301,10 +345,25 @@ function Build-SingleFileScript {
         New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
     }
 
-    $tempPath = Join-Path $outputDir ("_tmp_" + [System.IO.Path]::GetRandomFileName() + ".ps1")
+    # 临时文件用 .tmp 而非 .ps1 扩展名：含 irm|iex 下载-执行特征的 manage.ps1，其 .ps1 临时文件
+    # 可能被 Windows Defender 在 Move 前直接删除/隔离，导致 "Cannot find path"（重试无法挽回）。
+    # .tmp 不触发 Defender 对 PowerShell 脚本的启发式扫描，规避临时阶段被删；Move 后才成为 .ps1。
+    $tempPath = Join-Path $outputDir ("_tmp_" + [System.IO.Path]::GetRandomFileName() + ".tmp")
     try {
         $buffer -join "`r`n" | Set-Content -Path $tempPath -Encoding $OutputEncoding -NoNewline
-        Move-Item -Path $tempPath -Destination $OutputPath -Force
+        # Move 重试：Windows Defender 实时扫描可能瞬时锁定刚写入的大文件（尤其含下载-执行模式的
+        # manage.ps1），触发 Access denied。重试 5 次（间隔 300ms）让扫描句柄释放后再 Move。
+        for ($moveAttempt = 1; ; $moveAttempt++) {
+            try {
+                Move-Item -Path $tempPath -Destination $OutputPath -Force
+                break
+            } catch {
+                # 临时文件已不存在（被 Defender 删除等）则重试无意义，立即抛出清晰错误
+                if (-not (Test-Path $tempPath)) { throw }
+                if ($moveAttempt -ge 5) { throw }
+                Start-Sleep -Milliseconds 300
+            }
+        }
     }
     catch {
         if (Test-Path $tempPath) {
@@ -367,9 +426,10 @@ function Clear-KnownBuildArtifacts {
     )
 
     $filesToClean = if ($Platform -eq 'Windows') {
-        @('bootstrap.ps1', 'install.ps1', 'manage.ps1')
+        # Windows 产物：install.ps1 + 4 个 ccq 可执行文件
+        @('install.ps1')
     } else {
-        @('install.sh', 'manage.sh')
+        @('install.sh')
     }
 
     foreach ($fileName in $filesToClean) {
@@ -383,7 +443,7 @@ function Clear-KnownBuildArtifacts {
 function Assert-ExpectedWindowsOutputs {
     <#
     .SYNOPSIS
-    确认 Windows 构建入口生成了 Windows 三个 artifact。
+    确认 Windows 构建入口生成了 Windows artifact（install.ps1 + 2 个 ccq 可执行文件）。
     .DESCRIPTION
     不再禁止 macOS 产物存在，允许两个平台产物共存。
     #>
@@ -392,7 +452,7 @@ function Assert-ExpectedWindowsOutputs {
         [string]$OutputDir
     )
 
-    $expected = @('bootstrap.ps1', 'install.ps1', 'manage.ps1')
+    $expected = @('install.ps1', 'ccq-windows-x64.exe', 'ccq-windows-arm64.exe')
     foreach ($fileName in $expected) {
         $path = Join-Path $OutputDir $fileName
         if (-not (Test-Path $path -PathType Leaf)) {
@@ -404,7 +464,7 @@ function Assert-ExpectedWindowsOutputs {
 function Main {
     <#
     .SYNOPSIS
-    Windows 构建入口：只生成 bootstrap.ps1、install.ps1、manage.ps1。
+    Windows 构建入口：生成 install.ps1 + 从 tui/dist 拷贝 2 个 ccq 可执行文件。
     .PARAMETER InstallerRoot
     installer/ 目录的绝对路径。
     .PARAMETER OutputDir
@@ -438,25 +498,13 @@ function Main {
     }
     Clear-KnownBuildArtifacts -OutputDir $OutputDir -Platform $Platform
 
-    # 构建 manage.js 单文件 bundle（P10 方案 3：esbuild 打包，取代 base64 内嵌）
+    # 构建 TUI 可执行文件（4 平台交叉编译）
     Write-Host ''
-    Write-Host '─── 构建 manage.js 单文件 bundle ──────────────────────────' -ForegroundColor Yellow
-    $null = Invoke-ManageBundleBuild -InstallerRoot $InstallerRoot
+    Write-Host '─── 构建 TUI 可执行文件（4 平台） ─────────────────────────' -ForegroundColor Yellow
+    $null = Invoke-ManageTuiPackage -InstallerRoot $InstallerRoot -OutputDir $OutputDir
 
     $builtItems = [System.Collections.Generic.List[hashtable]]::new()
     $allOk = $true
-
-    Write-Host ''
-    Write-Host '─── 构建 Windows Bootstrap 单文件版本 ──────────────────────' -ForegroundColor Yellow
-    $bootstrapArtifact = Get-BuildArtifactConfig -Platform Windows -Role Bootstrap
-    $bootstrapOrder = @(Get-BootstrapBuildOrder)
-    $bootstrapOutput = Join-Path $OutputDir ([string]$bootstrapArtifact['OutputFile'])
-    Build-SingleFileScript `
-        -InstallerRoot $InstallerRoot `
-        -FileOrder $bootstrapOrder `
-        -OutputPath $bootstrapOutput `
-        -RequiresHeader ([string]$bootstrapArtifact['RequiresHeader']) `
-        -OutputEncoding ([string]$bootstrapArtifact['OutputEncoding'])
 
     Write-Host ''
     Write-Host '─── 构建 Windows Install 单文件版本 ───────────────────────' -ForegroundColor Yellow
@@ -472,28 +520,11 @@ function Main {
         -OutputEncoding ([string]$installArtifact['OutputEncoding'])
 
     Write-Host ''
-    Write-Host '─── 构建 Windows Manage 单文件版本 ────────────────────────' -ForegroundColor Yellow
-    $manageArtifact = Get-BuildArtifactConfig -Platform Windows -Role Manage
-    $manageOrder = @(Get-ManageBuildOrder)
-    $manageOutput = Join-Path $OutputDir ([string]$manageArtifact['OutputFile'])
-    Build-SingleFileScript `
-        -InstallerRoot $InstallerRoot `
-        -FileOrder $manageOrder `
-        -OutputPath $manageOutput `
-        -RequiresHeader ([string]$manageArtifact['RequiresHeader']) `
-        -HoistParamFromRelativePath ([string]$manageArtifact['HoistParamFrom']) `
-        -OutputEncoding ([string]$manageArtifact['OutputEncoding'])
-
-    Write-Host ''
     Write-Host '─── Windows 语法检查 ──────────────────────────────────────' -ForegroundColor Yellow
-    $bootstrapOk = Test-BuiltScriptSyntax -ScriptPath $bootstrapOutput
     $installOk = Test-BuiltScriptSyntax -ScriptPath $installOutput
-    $manageOk = Test-BuiltScriptSyntax -ScriptPath $manageOutput
-    $allOk = $allOk -and $bootstrapOk -and $installOk -and $manageOk
+    $allOk = $allOk -and $installOk
 
-    $builtItems.Add(@{ Name = 'Windows Bootstrap'; Path = $bootstrapOutput; Ok = $bootstrapOk })
     $builtItems.Add(@{ Name = 'Windows Install'; Path = $installOutput; Ok = $installOk })
-    $builtItems.Add(@{ Name = 'Windows Manage'; Path = $manageOutput; Ok = $manageOk })
 
     Assert-ExpectedWindowsOutputs -OutputDir $OutputDir
 

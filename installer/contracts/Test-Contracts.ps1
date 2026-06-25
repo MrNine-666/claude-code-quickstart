@@ -1,6 +1,7 @@
 #Requires -Version 7.0
 # Test-Contracts.ps1 - 跨平台契约一致性检查
-# 功能: 验证 installer/contracts JSON 契约与 Windows/macOS canonical runtime 不冲突
+# 功能: 验证 installer/contracts/ + tui/contracts/ 契约与 Windows/macOS canonical runtime 不冲突
+# 位置：installer/contracts/（TDR-10 拆分后 installer 契约本地，TUI 契约跨目录读 tui/contracts/）
 
 param(
     [string]$InstallerRoot = (Resolve-Path "$PSScriptRoot\..").Path
@@ -12,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 $script:Issues = [System.Collections.Generic.List[string]]::new()
 $script:InstallerRoot = (Resolve-Path $InstallerRoot).Path
 $script:RepoRoot = (Split-Path -Parent $script:InstallerRoot)
+$script:TuiContractsRoot = Join-Path $script:RepoRoot 'tui\contracts'
 $script:WindowsRoot = Join-Path $script:InstallerRoot 'windows'
 $script:CoreRoot = Join-Path $script:WindowsRoot 'core'
 $script:StepsRoot = Join-Path $script:WindowsRoot 'steps'
@@ -19,9 +21,22 @@ $script:StepsRoot = Join-Path $script:WindowsRoot 'steps'
 function Read-ContractJson {
     param([Parameter(Mandatory)][string]$RelativePath)
 
+    # installer 契约（steps/build/cleanup-policy）位于 installer/contracts/（$PSScriptRoot）
     $path = Join-Path $PSScriptRoot $RelativePath
     if (-not (Test-Path $path -PathType Leaf)) {
-        throw "契约文件不存在: $path"
+        throw "installer 契约文件不存在: $path"
+    }
+
+    return (Get-Content -Path $path -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable -ErrorAction Stop)
+}
+
+function Read-TuiContractJson {
+    param([Parameter(Mandatory)][string]$RelativePath)
+
+    # TUI 契约（claude-config/mcp-servers/providers/templates）位于 tui/contracts/（TDR-10 拆分）
+    $path = Join-Path $script:TuiContractsRoot $RelativePath
+    if (-not (Test-Path $path -PathType Leaf)) {
+        throw "TUI 契约文件不存在: $path"
     }
 
     return (Get-Content -Path $path -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable -ErrorAction Stop)
@@ -219,46 +234,11 @@ function Test-StepsContract {
     Assert-Equal 'groups.Basic.Description' $groups['Basic']['Description'] $Contract['Groups']['Basic']['Description']
     Assert-Equal 'groups.Basic.InstallMode' $groups['Basic']['InstallMode'] $Contract['Groups']['Basic']['InstallMode']
     Assert-Equal 'groups.Basic.StepIds' @($groups['Basic']['StepIds']) @($Contract['Groups']['Basic']['StepIds'])
-    Assert-Equal 'groups.Advanced.Label' $groups['Advanced']['Label'] $Contract['Groups']['Advanced']['Label']
-    Assert-Equal 'groups.Advanced.Description' $groups['Advanced']['Description'] $Contract['Groups']['Advanced']['Description']
-    Assert-Equal 'groups.Advanced.InstallMode' $groups['Advanced']['InstallMode'] $Contract['Groups']['Advanced']['InstallMode']
-    Assert-Equal 'groups.Advanced.StepIds' @($groups['Advanced']['StepIds']) @($Contract['Groups']['Advanced']['StepIds'])
 
     Assert-Equal 'directory.installer-root' 'installer' $Contract['DirectoryPolicy']['InstallerRoot']
     Assert-Equal 'directory.must-not-rename' 'src' $Contract['DirectoryPolicy']['MustNotRenameTo']
     Assert-Equal 'directory.runtime-core.windows' 'installer/windows/core' $Contract['DirectoryPolicy']['RuntimeCoreDirectories']['Windows']
     Assert-Equal 'directory.runtime-core.macos' 'installer/macos/core' $Contract['DirectoryPolicy']['RuntimeCoreDirectories']['MacOS']
-}
-
-function Test-ProvidersContract {
-    param([Parameter(Mandatory)][hashtable]$Contract)
-
-    $managedEnv = $Contract['ManagedEnv']
-    Assert-Equal 'providers.model-env-keys' @($script:ProviderManagedModelEnvKeys) @($managedEnv['ProviderManagedModelEnvKeys'])
-    Assert-Equal 'providers.model-env-labels' $script:ProviderModelEnvLabels $managedEnv['ProviderModelEnvLabels']
-    Assert-Equal 'providers.extra-env-keys' @($script:ProviderManagedExtraEnvKeys) @($managedEnv['ProviderManagedExtraEnvKeys'])
-    Assert-Equal 'providers.legacy-model-key' $script:LegacyProviderModelKey $managedEnv['LegacyProviderModelKey']
-
-    $providerFields = @(
-        'Name', 'Description', 'BaseUrl', 'PlatformUrl',
-        'ModelEnv', 'ExtraEnv', 'RequireModelConfig'
-    )
-    $contractProviders = $Contract['BuiltinProviders']
-    Assert-Equal 'providers.keys' @($script:BuiltinProviders.Keys | Sort-Object) @($contractProviders.Keys | Sort-Object)
-
-    foreach ($key in @($script:BuiltinProviders.Keys | Sort-Object)) {
-        if (-not $contractProviders.ContainsKey($key)) {
-            Add-Issue "providers.$key 缺少 contracts 条目"
-            continue
-        }
-        $expected = Select-HashtableFields -Item $script:BuiltinProviders[$key] -Fields $providerFields
-        $actual = Select-HashtableFields -Item $contractProviders[$key] -Fields $providerFields
-        Assert-Equal "providers.$key" $expected $actual
-    }
-
-    Invoke-ContractCheck 'providers.fallback' {
-        Assert-ProviderFallbackConsistency -ContractConfig (ConvertTo-ProviderRuntimeConfig -Contract $Contract)
-    }
 }
 
 function Resolve-McpServerComparable {
@@ -287,7 +267,6 @@ function Test-McpContract {
     # 契约即真理:直接从契约读取期望值,不依赖已删除的 McpManager.ps1 脚本级常量
     $mcpMeta = $Contract['McpMeta']
     $contractServers = $Contract['McpServers']
-    $contractCategories = $Contract['McpRulesCategories']
     $contractRuntimeDeps = $Contract['DefaultMcpRuntimeDeps']
 
     # 验证 McpMeta 结构完整性
@@ -312,26 +291,58 @@ function Test-McpContract {
         Add-Issue "mcp.servers: 未定义"
         return
     }
+}
 
-    # 验证 McpRulesCategories
-    if (-not $contractCategories -or $contractCategories.Count -eq 0) {
-        Add-Issue "mcp.rules: 未定义"
+function Assert-ClaudeConfigDescriptionsCoverMap {
+    <#
+    .SYNOPSIS
+    校验 description 映射覆盖受管 key 的每一项且非空，且无多余项。
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Source,
+        [AllowNull()][object]$Descriptions
+    )
+
+    if ($null -eq $Descriptions -or $Descriptions -isnot [System.Collections.IDictionary]) {
+        Add-Issue "$Name 缺少 description 映射"
         return
+    }
+
+    foreach ($key in @($Source.Keys)) {
+        $keyName = [string]$key
+        if (-not $Descriptions.ContainsKey($keyName)) {
+            Add-Issue "$Name.$keyName 缺少 description"
+        } elseif ([string]::IsNullOrWhiteSpace([string]$Descriptions[$keyName])) {
+            Add-Issue "$Name.$keyName 的 description 为空"
+        }
+    }
+
+    foreach ($key in @($Descriptions.Keys)) {
+        if (-not $Source.ContainsKey([string]$key)) {
+            Add-Issue "$Name.$([string]$key) 的 description 无对应配置项"
+        }
     }
 }
 
 function Test-ClaudeConfigContract {
     param([Parameter(Mandatory)][hashtable]$Contract)
 
-    Assert-Equal 'claude-config.env-defaults' $script:ClaudeConfigEnvDefaults $Contract['ClaudeConfigEnvDefaults']
-    Assert-Equal 'claude-config.deprecated-env-keys' @($script:ClaudeConfigDeprecatedEnvKeys) @($Contract['ClaudeConfigDeprecatedEnvKeys'])
-    Assert-Equal 'claude-config.base-permissions' @($script:ClaudeConfigBasePermissions) @($Contract['ClaudeConfigBasePermissions'])
+    # claude-config 为 TUI 链契约（由 tui/ runtime 消费），installer 侧仅做 JSON 自洽校验，
+    # 不再 dot-source 已迁移的 ClaudeConfig 步骤做 runtime fallback 对照。
     Assert-Equal 'claude-config.language' '简体中文' $Contract['TopLevelDefaults']['language']
     Assert-Equal 'claude-config.always-thinking' $true $Contract['TopLevelDefaults']['alwaysThinkingEnabled']
     Assert-Equal 'claude-config.plans-directory' '.claude/plan' $Contract['TopLevelDefaults']['plansDirectory']
 
-    Invoke-ContractCheck 'claude-config.fallback' {
-        Assert-ClaudeConfigFallbackConsistency -ContractConfig (ConvertTo-ClaudeConfigRuntimeConfig -Contract $Contract)
+    $descriptions = $Contract['Descriptions']
+    if ($null -eq $descriptions -or $descriptions -isnot [System.Collections.IDictionary]) {
+        Add-Issue 'claude-config.descriptions 缺少 Descriptions 节'
+        return
+    }
+    Assert-ClaudeConfigDescriptionsCoverMap 'claude-config.descriptions.top-level' $Contract['TopLevelDefaults'] $descriptions['TopLevelDefaults']
+    Assert-ClaudeConfigDescriptionsCoverMap 'claude-config.descriptions.env-defaults' $Contract['ClaudeConfigEnvDefaults'] $descriptions['ClaudeConfigEnvDefaults']
+    if (-not $descriptions.ContainsKey('ClaudeConfigBasePermissions') -or [string]::IsNullOrWhiteSpace([string]$descriptions['ClaudeConfigBasePermissions'])) {
+        Add-Issue 'claude-config.descriptions.base-permissions 缺少或为空'
     }
 }
 
@@ -340,11 +351,9 @@ function Test-TemplatesContract {
 
     $templateIds = @($Contract['Templates'] | ForEach-Object { [string]$_['Id'] })
     foreach ($requiredId in @(
-        'claude-md.global.windows',
-        'claude-md.global.macos',
-        'mcp-rules.search',
-        'mcp-rules.documentation',
-        'mcp-rules.development'
+        'claude-md-template.base',
+        'claude-md-template.platform-windows',
+        'claude-md-template.platform-macos'
     )) {
         if ($templateIds -notcontains $requiredId) {
             Add-Issue "templates 缺少条目: $requiredId"
@@ -355,10 +364,10 @@ function Test-TemplatesContract {
         $id = [string]$template['Id']
         $source = [string]$template['Source']
         if ($source -match '^installer/(core|steps)/') {
-            Add-Issue "templates.$id Source 仍引用旧 Windows 路径: $source"
+            Add-Issue "templates.$id Source 仍引用旧 installer 路径: $source"
             continue
         }
-        if ($source -match '^installer/windows/' -or $source -match '^installer/macos/') {
+        if ($source -match '^tui/') {
             Assert-PathExists "templates.$id Source" (Join-Path $script:RepoRoot $source)
         }
     }
@@ -378,174 +387,6 @@ function Get-MapValue {
     return $DefaultValue
 }
 
-function ConvertTo-NormalizedSkillsEntry {
-    param([Parameter(Mandatory)][System.Collections.IDictionary]$Entry)
-
-    return [ordered]@{
-        Id              = [string](Get-MapValue -Item $Entry -Key 'Id' -DefaultValue '')
-        Name            = [string](Get-MapValue -Item $Entry -Key 'Name' -DefaultValue '')
-        Source          = [string](Get-MapValue -Item $Entry -Key 'Source' -DefaultValue '')
-        SkillName       = [string](Get-MapValue -Item $Entry -Key 'SkillName' -DefaultValue '')
-        StaticSkillName = [string](Get-MapValue -Item $Entry -Key 'StaticSkillName' -DefaultValue '')
-        SkipDiscovery   = [bool](Get-MapValue -Item $Entry -Key 'SkipDiscovery' -DefaultValue $false)
-        Description     = [string](Get-MapValue -Item $Entry -Key 'Description' -DefaultValue '')
-        Default         = [bool](Get-MapValue -Item $Entry -Key 'Default' -DefaultValue $false)
-        Order           = [int](Get-MapValue -Item $Entry -Key 'Order' -DefaultValue 9999)
-    }
-}
-
-function ConvertTo-NormalizedSkillsCatalogue {
-    param([Parameter(Mandatory)][array]$Catalogue)
-
-    return @($Catalogue | ForEach-Object { ConvertTo-NormalizedSkillsEntry -Entry $_ } | Sort-Object { [int]$_['Order'] })
-}
-
-function Get-MacOSSkillsContent {
-    $skillsPath = Join-Path $script:InstallerRoot 'macos/steps/Skills.zsh'
-    Assert-PathExists 'macos.skills' $skillsPath
-    if (-not (Test-Path $skillsPath -PathType Leaf)) { return '' }
-    return (Get-Content -Path $skillsPath -Raw -Encoding UTF8)
-}
-
-function ConvertFrom-MacOSSkillsFallback {
-    $content = Get-MacOSSkillsContent
-    if ([string]::IsNullOrWhiteSpace($content)) { return @() }
-
-    $match = [regex]::Match($content, "(?ms)ccq_skills_catalogue_fallback\(\)\s*\{.*?cat <<'EOF'\r?\n(?<Body>.*?)\r?\nEOF")
-    if (-not $match.Success) {
-        Add-Issue 'macos.skills fallback catalogue 未找到 ccq_skills_catalogue_fallback here-doc'
-        return @()
-    }
-
-    $items = @()
-    foreach ($line in @($match.Groups['Body'].Value -split "\r?\n")) {
-        if ([string]::IsNullOrWhiteSpace($line)) { continue }
-        $parts = @($line -split "`t")
-        if ($parts.Count -lt 9) {
-            Add-Issue "macos.skills fallback 行字段不足: $line"
-            continue
-        }
-        $items += [ordered]@{
-            Id              = [string]$parts[0]
-            Name            = [string]$parts[1]
-            Source          = [string]$parts[2]
-            SkillName       = [string]$parts[3]
-            Description     = [string]$parts[4]
-            Default         = ([string]$parts[5] -eq 'true')
-            StaticSkillName = [string]$parts[6]
-            SkipDiscovery   = ([string]$parts[7] -eq 'true')
-            Order           = [int]$parts[8]
-        }
-    }
-    return @($items)
-}
-
-function ConvertFrom-MacOSSkillsIgnoredNamesFallback {
-    $content = Get-MacOSSkillsContent
-    if ([string]::IsNullOrWhiteSpace($content)) { return @() }
-
-    $match = [regex]::Match($content, "(?ms)ccq_skills_ignored_names_fallback\(\)\s*\{.*?cat <<'EOF'\r?\n(?<Body>.*?)\r?\nEOF")
-    if (-not $match.Success) {
-        Add-Issue 'macos.skills ignored names fallback 未找到 ccq_skills_ignored_names_fallback here-doc'
-        return @()
-    }
-
-    return @($match.Groups['Body'].Value -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { [string]$_.Trim() })
-}
-
-function Test-SkillsContract {
-    param([Parameter(Mandatory)][hashtable]$Contract)
-
-    Assert-Equal 'skills.schema-version' 1 $Contract['SchemaVersion']
-
-    if (-not $Contract.ContainsKey('IgnoredSkillNames')) {
-        Add-Issue 'skills.IgnoredSkillNames 缺失'
-    } else {
-        $ignoredNames = @($Contract['IgnoredSkillNames'] | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-        if ($ignoredNames.Count -eq 0) {
-            Add-Issue 'skills.IgnoredSkillNames 不能为空'
-        }
-        Assert-Equal 'skills.windows-ignored-names-fallback' @($script:SkillsIgnoredNames) $ignoredNames
-        Assert-Equal 'skills.macos-ignored-names-fallback' $ignoredNames @(ConvertFrom-MacOSSkillsIgnoredNamesFallback)
-    }
-
-    $catalogue = @(ConvertTo-NormalizedSkillsCatalogue -Catalogue @($Contract['Catalogue']))
-    if ($catalogue.Count -eq 0) {
-        Add-Issue 'skills.catalogue 不能为空'
-        return
-    }
-
-    $seenIds = @{}
-    $seenOrders = @{}
-    foreach ($entry in $catalogue) {
-        $id = [string]$entry['Id']
-        if ([string]::IsNullOrWhiteSpace($id) -or $id -notmatch '^[a-z0-9-]+$') {
-            Add-Issue "skills.$id Id 不合法"
-        }
-        if ($seenIds.ContainsKey($id)) {
-            Add-Issue "skills.$id Id 重复"
-        }
-        $seenIds[$id] = $true
-
-        $order = [string]$entry['Order']
-        if ($seenOrders.ContainsKey($order)) {
-            Add-Issue "skills.$id Order 重复: $order"
-        }
-        $seenOrders[$order] = $true
-
-        foreach ($field in @('Name', 'Source', 'Description')) {
-            if ([string]::IsNullOrWhiteSpace([string]$entry[$field])) {
-                Add-Issue "skills.$id $field 不能为空"
-            }
-        }
-        if ([bool]$entry['SkipDiscovery'] -and [string]::IsNullOrWhiteSpace([string]$entry['StaticSkillName']) -and [string]::IsNullOrWhiteSpace([string]$entry['SkillName'])) {
-            Add-Issue "skills.$id SkipDiscovery=true 时必须提供 StaticSkillName 或 SkillName"
-        }
-    }
-
-    $windowsFallback = @(ConvertTo-NormalizedSkillsCatalogue -Catalogue @($script:SkillsCatalogueFallback))
-    Assert-Equal 'skills.windows-fallback' $catalogue $windowsFallback
-
-    $macOSFallback = @(ConvertTo-NormalizedSkillsCatalogue -Catalogue @(ConvertFrom-MacOSSkillsFallback))
-    Assert-Equal 'skills.macos-fallback' $catalogue $macOSFallback
-}
-
-function Test-UiContract {
-    param([Parameter(Mandatory)][hashtable]$Contract)
-
-    Assert-Equal 'ui.schema-version' 1 $Contract['SchemaVersion']
-    $menus = $Contract['Menus']
-    if (-not $menus.ContainsKey('AdvancedSelect')) {
-        Add-Issue 'ui.Menus 缺少 AdvancedSelect'
-        return
-    }
-
-    $advanced = $menus['AdvancedSelect']
-    Assert-Equal 'ui.advanced.installed-badge' '【已安装】' $advanced['InstalledBadgeInSelectMenu']
-    Assert-Equal 'ui.advanced.uninstalled-badge' '【未安装】' $advanced['UninstalledBadgeInSelectMenu']
-    Assert-Equal 'ui.advanced.forbidden-badges' @('[PASS]', '[    ]') @($advanced['ForbiddenLegacyBadges'])
-
-    if (-not $menus.ContainsKey('Skills')) {
-        Add-Issue 'ui.Menus 缺少 Skills'
-    } else {
-        $copyOptions = @($menus['Skills']['CopyModeOptions'])
-        Assert-Equal 'ui.skills.copy-options.count' 2 $copyOptions.Count
-    }
-
-    foreach ($relativePath in @('windows/Install.ps1', 'macos/Install.zsh')) {
-        $path = Join-Path $script:InstallerRoot $relativePath
-        Assert-PathExists "ui.$relativePath" $path
-        if (-not (Test-Path $path -PathType Leaf)) { continue }
-        $content = Get-Content -Path $path -Raw -Encoding UTF8
-        if ($content -notmatch '【已安装】' -or $content -notmatch '【未安装】') {
-            Add-Issue "ui.$relativePath Advanced Select 未使用中文状态徽标"
-        }
-        if ($content -match '\[\s{4}\]' -or $content -match '\[PASS\]') {
-            Add-Issue "ui.$relativePath Advanced Select 仍包含旧式选择菜单徽标"
-        }
-    }
-}
-
 function Test-BuildManifestContract {
     param([Parameter(Mandatory)][hashtable]$Contract)
 
@@ -556,22 +397,25 @@ function Test-BuildManifestContract {
     $windowsOutputs = @($windowsArtifacts | ForEach-Object { [string]$_['OutputFile'] })
     $macOSOutputs = @($macOSArtifacts | ForEach-Object { [string]$_['OutputFile'] })
     $allOutputs = @($windowsOutputs + $macOSOutputs)
+    $windowsExeArtifacts = @('ccq-windows-x64.exe', 'ccq-windows-arm64.exe')
+    $macOSExeArtifacts = @('ccq-darwin-x64', 'ccq-darwin-arm64')
+    $releaseOutputs = @($allOutputs + $windowsExeArtifacts + $macOSExeArtifacts)
 
-    Assert-Equal 'build.windows.outputs' @('bootstrap.ps1', 'install.ps1', 'manage.ps1') $windowsOutputs
-    Assert-Equal 'build.macos.outputs' @('install.sh', 'manage.sh') $macOSOutputs
-    Assert-Equal 'build.release.outputs' @('bootstrap.ps1', 'install.ps1', 'manage.ps1', 'install.sh', 'manage.sh') $allOutputs
+    Assert-Equal 'build.windows.outputs' @('install.ps1') $windowsOutputs
+    Assert-Equal 'build.macos.outputs' @('install.sh') $macOSOutputs
+    Assert-Equal 'build.release.outputs' @('install.ps1', 'install.sh', 'ccq-windows-x64.exe', 'ccq-windows-arm64.exe', 'ccq-darwin-x64', 'ccq-darwin-arm64') $releaseOutputs
 
     $entrypoints = $Contract['BuildEntrypoints']
     Assert-Equal 'build.entrypoints.windows.script' 'installer/build.ps1' $entrypoints['Windows']['Script']
     Assert-Equal 'build.entrypoints.windows.allowed' @('Windows') @($entrypoints['Windows']['AllowedPlatforms'])
-    Assert-Equal 'build.entrypoints.windows.artifacts' @('bootstrap.ps1', 'install.ps1', 'manage.ps1') @($entrypoints['Windows']['Artifacts'])
+    Assert-Equal 'build.entrypoints.windows.artifacts' @('install.ps1', 'ccq-windows-x64.exe', 'ccq-windows-arm64.exe') @($entrypoints['Windows']['Artifacts'])
     Assert-Equal 'build.entrypoints.macos.script' 'installer/build.sh' $entrypoints['MacOS']['Script']
     Assert-Equal 'build.entrypoints.macos.allowed' @('macos') @($entrypoints['MacOS']['AllowedPlatforms'])
-    Assert-Equal 'build.entrypoints.macos.artifacts' @('install.sh', 'manage.sh') @($entrypoints['MacOS']['Artifacts'])
-    Assert-Equal 'build.entrypoints.release-artifacts' $allOutputs @($entrypoints['ReleaseArtifacts'])
+    Assert-Equal 'build.entrypoints.macos.artifacts' @('install.sh', 'ccq-darwin-x64', 'ccq-darwin-arm64') @($entrypoints['MacOS']['Artifacts'])
+    Assert-Equal 'build.entrypoints.release-artifacts' $releaseOutputs @($entrypoints['ReleaseArtifacts'])
 
-    foreach ($output in $allOutputs) {
-        if ($output -in @('ccq.ps1', 'ccq.sh') -or $output -match '^ccq-' -or $output -match '\.built\.') {
+    foreach ($output in $releaseOutputs) {
+        if ($output -in @('ccq.ps1', 'ccq.sh') -or $output -match '\.built\.') {
             Add-Issue "build artifact 名称不应使用旧支持形态: $output"
         }
     }
@@ -612,8 +456,8 @@ function Test-BuildManifestContract {
     if ($buildPs1 -notmatch 'contracts[\\/]build\.json') {
         Add-Issue 'installer/build.ps1 未读取共享构建清单 contracts/build.json'
     }
-    if ($buildSh -notmatch "readJson\('contracts/build\.json'\)") {
-        Add-Issue 'installer/build.sh 未读取共享构建清单 contracts/build.json'
+    if ($buildSh -notmatch "readJson\('installer/contracts/build\.json'\)") {
+        Add-Issue 'installer/build.sh 未读取共享构建清单 installer/contracts/build.json'
     }
 
     if ($buildPs1 -match "ValidateSet\('All'|ValidateSet\('MacOS'|Get-BuildArtifactConfig\s+-Platform\s+MacOS|Build-ZshSingleFileScript") {
@@ -621,9 +465,6 @@ function Test-BuildManifestContract {
     }
     if ($buildSh -match 'buildPowerShellArtifact|validatePowerShellArtifact|selectedPlatform === ''all''|selectedPlatform === ''windows''') {
         Add-Issue 'installer/build.sh 仍包含 Windows/all 构建路径'
-    }
-    if ($buildSh -notmatch 'CCQ_SKILLS_CONTRACT' -or $buildSh -notmatch 'CCQ_UI_CONTRACT') {
-        Add-Issue 'installer/build.sh 未嵌入新增 skills/ui contracts'
     }
 }
 
@@ -644,8 +485,10 @@ function Test-CanonicalSourceLayout {
     }
 
     $distPath = Join-Path $script:RepoRoot 'dist'
+    $validReleaseArtifacts = @('ccq-windows-x64.exe', 'ccq-windows-arm64.exe', 'ccq-darwin-x64', 'ccq-darwin-arm64')
     if (Test-Path $distPath -PathType Container) {
         foreach ($file in @(Get-ChildItem -Path $distPath -File)) {
+            if ($file.Name -in $validReleaseArtifacts) { continue }
             if ($file.Name -in @('ccq.ps1', 'ccq.sh') -or $file.Name -match '^ccq-' -or $file.Name -match '\.built\.') {
                 Add-Issue "dist 中存在旧 artifact: $($file.Name)"
             }
@@ -653,58 +496,16 @@ function Test-CanonicalSourceLayout {
     }
 }
 
-# dot-source 必须发生在脚本作用域；若放在函数内，Registry/Provider 等函数会随函数返回而失效。
+# dot-source 必须发生在脚本作用域；若放在函数内，Registry 等函数会随函数返回而失效。
+# 注意：claude-config 现为纯 TUI 链契约（runtime 实现在 tui/src/core/config-recommend.ts，
+#       由 tui/scripts/verify-contracts.mjs 校验），installer 侧不再 dot-source 已删除的
+#       windows/steps/ClaudeConfig.ps1，仅做 JSON 自洽校验。
 . (Join-Path $script:CoreRoot 'Ui.ps1')
 . (Join-Path $script:CoreRoot 'Process.ps1')
 . (Join-Path $script:CoreRoot 'Profile.ps1')
 . (Join-Path $script:CoreRoot 'Admin.ps1')
 . (Join-Path $script:CoreRoot 'Net.ps1')
 . (Join-Path $script:CoreRoot 'Registry.ps1')
-. (Join-Path $script:CoreRoot 'Provider.ps1')
-. (Join-Path $script:StepsRoot 'ClaudeConfig.ps1')
-. (Join-Path $script:StepsRoot 'Skills.ps1')
-. (Join-Path $script:StepsRoot 'CcgWorkflow.ps1')
-
-function Test-CcgWorkflowContract {
-    param([Parameter(Mandatory)][hashtable]$Contract)
-
-    if (-not $Contract.ContainsKey('contract')) {
-        Add-Issue "ccg-workflow.json: 缺少 contract 节"
-        return
-    }
-
-    $c = $Contract['contract']
-
-    # 验证 managedEnvDefaults 与 CcgWorkflow.ps1 fallback 一致
-    if ($c.ContainsKey('managedEnvDefaults')) {
-        $expected = @{
-            "CODEAGENT_POST_MESSAGE_DELAY" = "1"
-            "CODEX_TIMEOUT"                = "7200"
-            "BASH_DEFAULT_TIMEOUT_MS"      = "600000"
-            "BASH_MAX_TIMEOUT_MS"          = "3600000"
-        }
-        Assert-Equal 'CcgWorkflow managedEnvDefaults' $expected $c['managedEnvDefaults']
-    } else {
-        Add-Issue "ccg-workflow.json: 缺少 managedEnvDefaults 字段"
-    }
-
-    # 验证 managedRuleFiles 与 CcgWorkflow.ps1 fallback 一致
-    if ($c.ContainsKey('managedRuleFiles')) {
-        $expected = @('ccq-ccgworkflow.md', 'ccq-multimodel.md', 'ccq-tools.md', 'ccq-workflow.md')
-        Assert-Equal 'CcgWorkflow managedRuleFiles' $expected $c['managedRuleFiles']
-    } else {
-        Add-Issue "ccg-workflow.json: 缺少 managedRuleFiles 字段"
-    }
-
-    # 验证 verifyItems 结构
-    if ($c.ContainsKey('verifyItems')) {
-        if ($c['verifyItems'] -isnot [array] -or $c['verifyItems'].Count -lt 7) {
-            Add-Issue "ccg-workflow.json: verifyItems 应为至少 7 项的数组"
-        }
-    } else {
-        Add-Issue "ccg-workflow.json: 缺少 verifyItems 字段"
-    }
-}
 
 function Test-CleanupPolicyContract {
     param([Parameter(Mandatory)][hashtable]$Contract)
@@ -739,57 +540,20 @@ function Test-CleanupPolicyContract {
     }
 }
 
-function Test-CjkWidthRangesContract {
-    param([Parameter(Mandatory)][hashtable]$Contract)
-
-    if (-not $Contract.ContainsKey('contract')) {
-        Add-Issue "cjk-width-ranges.json: 缺少 contract 节"
-        return
-    }
-
-    $c = $Contract['contract']
-
-    # 验证 ranges 数组
-    if (-not $c.ContainsKey('ranges') -or $c['ranges'] -isnot [array]) {
-        Add-Issue "cjk-width-ranges.json: 缺少 ranges 数组"
-        return
-    }
-
-    # 应有 8 段（7 段 CJK + 1 段 Emoji）
-    if ($c['ranges'].Count -lt 8) {
-        Add-Issue "cjk-width-ranges.json: ranges 应至少包含 8 段（含 Emoji 0x1F300-0x1FAFF）"
-    }
-
-    # 验证 Emoji 段存在
-    $hasEmoji = $false
-    foreach ($range in $c['ranges']) {
-        if ($range['start'] -eq '0x1F300' -and $range['end'] -eq '0x1FAFF') {
-            $hasEmoji = $true
-            break
-        }
-    }
-    if (-not $hasEmoji) {
-        Add-Issue "cjk-width-ranges.json: 缺少 Emoji 段 0x1F300-0x1FAFF"
-    }
-}
-
 function Main {
     if (-not (Test-Path $script:InstallerRoot -PathType Container)) {
         throw "InstallerRoot 不是有效目录: $script:InstallerRoot"
     }
 
     Test-CanonicalSourceLayout
+    # installer 契约（installer/contracts/）
     Test-StepsContract -Contract (Read-ContractJson 'steps.json')
-    Test-ProvidersContract -Contract (Read-ContractJson 'providers.json')
-    Test-McpContract -Contract (Read-ContractJson 'mcp-servers.json')
-    Test-ClaudeConfigContract -Contract (Read-ContractJson 'claude-config.json')
-    Test-TemplatesContract -Contract (Read-ContractJson 'templates/index.json')
     Test-BuildManifestContract -Contract (Read-ContractJson 'build.json')
-    Test-SkillsContract -Contract (Read-ContractJson 'skills.json')
-    Test-UiContract -Contract (Read-ContractJson 'ui.json')
-    Test-CcgWorkflowContract -Contract (Read-ContractJson 'ccg-workflow.json')
     Test-CleanupPolicyContract -Contract (Read-ContractJson 'cleanup-policy.json')
-    Test-CjkWidthRangesContract -Contract (Read-ContractJson 'cjk-width-ranges.json')
+    # TUI 契约（tui/contracts/，TDR-10 拆分）
+    Test-McpContract -Contract (Read-TuiContractJson 'mcp-servers.json')
+    Test-ClaudeConfigContract -Contract (Read-TuiContractJson 'claude-config.json')
+    Test-TemplatesContract -Contract (Read-TuiContractJson 'templates/index.json')
 
     if ($script:Issues.Count -gt 0) {
         Write-Host "[FAIL] contracts 一致性检查失败 ($($script:Issues.Count) 项)" -ForegroundColor Red

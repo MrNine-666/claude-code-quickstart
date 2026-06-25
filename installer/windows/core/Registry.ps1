@@ -1,8 +1,8 @@
-# Registry.ps1 - 共享步骤注册表模块
+﻿# Registry.ps1 - 共享步骤注册表模块
 # 功能: 统一管理步骤元数据、分组定义、依赖关系
 #        消除 Install.ps1 与 Manage.ps1 之间的重复定义
 
-#Requires -Version 7.0
+#Requires -Version 5.1
 
 Set-StrictMode -Version Latest
 
@@ -70,6 +70,7 @@ function Get-RegistryContractsRoot {
         return $env:CCQ_CONTRACTS_DIR
     }
 
+    # installer 契约位于 installer/contracts/（TDR-10 拆分：steps/build/cleanup-policy 归 installer）
     $installerRoot = Get-RegistryInstallerRoot
     if ([string]::IsNullOrWhiteSpace($installerRoot)) {
         return ''
@@ -121,7 +122,7 @@ function Get-RegistryValue {
 function Get-StepContract {
     <#
     .SYNOPSIS
-    优先读取 installer/contracts/steps.json；不可用时返回 $null。
+    优先读取 contracts/steps.json；不可用时返回 $null。
     #>
     param()
 
@@ -135,7 +136,7 @@ function Get-StepContract {
     }
 
     try {
-        $script:_stepContractCache = Get-Content -Path $contractPath -Encoding UTF8 -Raw | ConvertFrom-Json -AsHashtable
+        $script:_stepContractCache = Get-Content -Path $contractPath -Encoding UTF8 -Raw | ConvertFrom-JsonToHashtable
         return $script:_stepContractCache
     } catch {
         Write-Verbose "读取 steps 契约失败，改用 Registry 内联 fallback: $($_.Exception.Message)"
@@ -205,7 +206,7 @@ function ConvertTo-StepGroupsFromContract {
     }
 
     $groups = @{}
-    foreach ($groupName in @('Basic', 'Advanced')) {
+    foreach ($groupName in @('Basic')) {
         if (-not $groupsNode.Contains($groupName)) {
             continue
         }
@@ -268,7 +269,7 @@ function Assert-StepRegistryFallbackConsistency {
     $contractJson = Convert-StepRegistryToComparableJson -Registry $ContractRegistry
     $fallbackJson = Convert-StepRegistryToComparableJson -Registry (Get-InlineStepRegistry)
     if ($contractJson -ne $fallbackJson) {
-        throw 'installer/contracts/steps.json 与 Registry.ps1 内联 fallback 不一致，请同步更新二者。'
+        throw 'contracts/steps.json 与 Registry.ps1 内联 fallback 不一致，请同步更新二者。'
     }
 }
 
@@ -352,171 +353,6 @@ function Get-InlineStepRegistry {
             Order           = 30
             Dependencies    = @("NodeJS")
             Group           = "Basic"
-        },
-        @{
-            StepId          = "ApiKey"
-            StepName        = "第三方供应商配置"
-            Description     = "配置第三方 AI 供应商连接到 ~/.claude/settings.json (env.ANTHROPIC_AUTH_TOKEN)"
-            StepFile        = "windows/steps/ApiKey.ps1"
-            TestFunction    = "Test-ApiKeyInstalled"
-            InstallFunction = "Install-ApiKey"
-            VerifyFunction  = "Verify-ApiKey"
-            UpdateFunction  = ""
-            SkipIfInstalled = $true
-            IsOptional      = $false
-            Order           = 40
-            Dependencies    = @("ClaudeCode")
-            Group           = "Basic"
-        },
-        @{
-            StepId          = "Ccline"
-            StepName        = "CCometixLine"
-            Description     = "安装 CCometixLine 状态栏增强工具"
-            StepFile        = "windows/steps/Ccline.ps1"
-            TestFunction    = "Test-CclineInstalled"
-            InstallFunction = "Install-Ccline"
-            VerifyFunction  = "Verify-Ccline"
-            UpdateFunction  = "Update-Ccline"
-            SkipIfInstalled = $true
-            IsOptional      = $false
-            Order           = 50
-            Dependencies    = @("ClaudeCode")
-            Group           = "Advanced"
-        },
-        @{
-            StepId          = "ClaudeConfig"
-            StepName        = "Claude 基础配置"
-            Description     = "写入 Claude Code 常用配置（语言、模型、权限、超时、归因等）"
-            StepFile        = "windows/steps/ClaudeConfig.ps1"
-            TestFunction    = "Test-ClaudeConfigInstalled"
-            InstallFunction = "Install-ClaudeConfig"
-            VerifyFunction  = "Verify-ClaudeConfig"
-            UpdateFunction  = "Update-ClaudeConfig"
-            SkipIfInstalled = $true
-            IsOptional      = $false
-            Order           = 60
-            Dependencies    = @("ClaudeCode")
-            Group           = "Advanced"
-        },
-        @{
-            StepId          = "ClaudeMd"
-            StepName        = "CLAUDE.md 配置"
-            Description     = "创建全局 CLAUDE.md 配置文件，定义 Claude Code 工作规范"
-            StepFile        = "windows/steps/ClaudeMd.ps1"
-            TestFunction    = "Test-ClaudeMdInstalled"
-            InstallFunction = "Install-ClaudeMd"
-            VerifyFunction  = "Verify-ClaudeMd"
-            UpdateFunction  = "Update-ClaudeMd"
-            SkipIfInstalled = $true
-            IsOptional      = $false
-            Order           = 70
-            Dependencies    = @()
-            Group           = "Advanced"
-        },
-        @{
-            StepId          = "Mcp"
-            StepName        = "MCP Server 配置"
-            Description     = "配置 MCP (Model Context Protocol) 插件服务器"
-            StepFile        = "windows/steps/Mcp.ps1"
-            TestFunction    = "Test-McpInstalled"
-            InstallFunction = "Install-Mcp"
-            VerifyFunction  = "Verify-Mcp"
-            UpdateFunction  = ""
-            SkipIfInstalled = $false
-            IsOptional      = $false
-            Order           = 80
-            Dependencies    = @("ClaudeCode")
-            Group           = "Advanced"
-        },
-        @{
-            StepId          = "CcgWorkflow"
-            StepName        = "CCG 工作流"
-            Description     = "安装 Claude Code Generator 工作流脚本和 Slash Commands"
-            StepFile        = "windows/steps/CcgWorkflow.ps1"
-            TestFunction    = "Test-CcgWorkflowInstalled"
-            InstallFunction = "Install-CcgWorkflow"
-            VerifyFunction  = "Verify-CcgWorkflow"
-            UpdateFunction  = "Update-CcgWorkflow"
-            SkipIfInstalled = $true
-            IsOptional      = $false
-            Order           = 90
-            Dependencies    = @("NodeJS")
-            Group           = "Advanced"
-        },
-        @{
-            StepId          = "Skills"
-            StepName        = "Skills"
-            Description     = "Skills 管理模块（仅通过 Manage → Skills 管理安装/更新/卸载，不参与安装流程与统一更新）"
-            StepFile        = "windows/steps/Skills.ps1"
-            TestFunction    = "Test-SkillsInstalled"
-            InstallFunction = "Install-Skills"
-            VerifyFunction  = "Verify-Skills"
-            UpdateFunction  = ""
-            SkipIfInstalled = $false
-            IsOptional      = $true
-            Order           = 95
-            Dependencies    = @("NodeJS", "ClaudeCode")
-            Group           = "Manage"
-        },
-        @{
-            StepId          = "OpenSpec"
-            StepName        = "OpenSpec CLI"
-            Description     = "安装 OpenSpec CLI（规范驱动开发工具）"
-            StepFile        = "windows/steps/OpenSpec.ps1"
-            TestFunction    = "Test-OpenSpecInstalled"
-            InstallFunction = "Install-OpenSpec"
-            VerifyFunction  = "Verify-OpenSpec"
-            UpdateFunction  = "Update-OpenSpec"
-            SkipIfInstalled = $true
-            IsOptional      = $false
-            Order           = 100
-            Dependencies    = @("NodeJS")
-            Group           = "Advanced"
-        },
-        @{
-            StepId          = "CcSwitch"
-            StepName        = "cc-switch"
-            Description     = "安装 cc-switch，Claude Code / Codex / Gemini CLI 全方位辅助工具"
-            StepFile        = "windows/steps/CcSwitch.ps1"
-            TestFunction    = "Test-CcSwitchInstalled"
-            InstallFunction = "Install-CcSwitch"
-            VerifyFunction  = "Verify-CcSwitch"
-            UpdateFunction  = ""
-            SkipIfInstalled = $true
-            IsOptional      = $true
-            Order           = 110
-            Dependencies    = @("ClaudeCode")
-            Group           = "Advanced"
-        },
-        @{
-            StepId          = "CodexCli"
-            StepName        = "Codex CLI"
-            Description     = "安装 OpenAI Codex CLI（多模型协作可选工具）"
-            StepFile        = "windows/steps/CodexCli.ps1"
-            TestFunction    = "Test-CodexCliInstalled"
-            InstallFunction = "Install-CodexCli"
-            VerifyFunction  = "Verify-CodexCli"
-            UpdateFunction  = "Update-CodexCli"
-            SkipIfInstalled = $true
-            IsOptional      = $true
-            Order           = 120
-            Dependencies    = @("NodeJS")
-            Group           = "Advanced"
-        },
-        @{
-            StepId          = "AntigravityCli"
-            StepName        = "Antigravity CLI"
-            Description     = "安装 Google Antigravity CLI（多模型协作可选工具）"
-            StepFile        = "windows/steps/AntigravityCli.ps1"
-            TestFunction    = "Test-AntigravityCliInstalled"
-            InstallFunction = "Install-AntigravityCli"
-            VerifyFunction  = "Verify-AntigravityCli"
-            UpdateFunction  = "Update-AntigravityCli"
-            SkipIfInstalled = $true
-            IsOptional      = $true
-            Order           = 130
-            Dependencies    = @()
-            Group           = "Advanced"
         }
     )
 }
@@ -526,7 +362,7 @@ function Get-StepRegistry {
     .SYNOPSIS
     返回步骤注册表数组（含 Order 字段用于拓扑排序 tie-break）
     .DESCRIPTION
-    源码模式优先读取 installer/contracts/steps.json；release artifact 或 contracts 不可用时使用内联 fallback。
+    源码模式优先读取 contracts/steps.json；release artifact 或 contracts 不可用时使用内联 fallback。
     .RETURNS
     hashtable[] - 每条记录包含步骤的完整元数据
     #>
@@ -577,7 +413,7 @@ function Get-StepConfigById {
 function Get-StepGroups {
     <#
     .SYNOPSIS
-    返回 Basic/Advanced 分组定义
+    返回 Basic 分组定义
     .RETURNS
     hashtable - 分组名称 → 分组配置
     #>
@@ -589,7 +425,6 @@ function Get-StepGroups {
     }
 
     $basicIds = @($registry | Where-Object { $_['Group'] -eq "Basic" } | ForEach-Object { $_['StepId'] })
-    $advancedIds = @($registry | Where-Object { $_['Group'] -eq "Advanced" } | ForEach-Object { $_['StepId'] })
 
     return @{
         Basic = @{
@@ -597,12 +432,6 @@ function Get-StepGroups {
             Description = "Claude Code 最小可用环境"
             InstallMode = "OneClickOnly"
             StepIds     = $basicIds
-        }
-        Advanced = @{
-            Label       = "进阶扩展"
-            Description = "增强配置，MCP，Workflow"
-            InstallMode = "OneClickOrSelect"
-            StepIds     = $advancedIds
         }
     }
 }

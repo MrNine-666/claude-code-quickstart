@@ -1,6 +1,6 @@
 {
   "SchemaVersion": 1,
-  "Source": "installer/contracts/build.json",
+  "Source": "contracts/build.json",
   "DefaultOutputDirectory": "dist",
   "BuildEntrypoints": {
     "Windows": {
@@ -9,9 +9,9 @@
         "Windows"
       ],
       "Artifacts": [
-        "bootstrap.ps1",
         "install.ps1",
-        "manage.ps1"
+        "ccq-windows-x64.exe",
+        "ccq-windows-arm64.exe"
       ]
     },
     "MacOS": {
@@ -21,46 +21,32 @@
       ],
       "Artifacts": [
         "install.sh",
-        "manage.sh"
+        "ccq-darwin-x64",
+        "ccq-darwin-arm64"
       ]
     },
     "ReleaseArtifacts": [
-      "bootstrap.ps1",
       "install.ps1",
-      "manage.ps1",
       "install.sh",
-      "manage.sh"
+      "ccq-windows-x64.exe",
+      "ccq-windows-arm64.exe",
+      "ccq-darwin-x64",
+      "ccq-darwin-arm64"
     ]
   },
   "Windows": {
-    "StepContract": "contracts/steps.json",
+    "StepContract": "installer/contracts/steps.json",
     "CanonicalStepPrefix": "windows/",
-    "CommonStepFiles": [
-      "windows/steps/_NpmToolCommon.ps1"
-    ],
     "Artifacts": [
-      {
-        "Role": "Bootstrap",
-        "OutputFile": "bootstrap.ps1",
-        "RequiresHeader": "#Requires -Version 5.1",
-        "EntryFile": "windows/Bootstrap.ps1",
-        "HoistParamFrom": "",
-        "OutputEncoding": "UTF8",
-        "CoreFiles": [
-          "windows/core/Admin.ps1",
-          "windows/core/Ui.ps1",
-          "windows/core/Process.ps1"
-        ],
-        "IncludeSteps": false
-      },
       {
         "Role": "Install",
         "OutputFile": "install.ps1",
-        "RequiresHeader": "#Requires -Version 7.0",
+        "RequiresHeader": "#Requires -Version 5.1",
         "EntryFile": "windows/Install.ps1",
         "HoistParamFrom": "windows/Install.ps1",
         "OutputEncoding": "UTF8",
         "CoreFiles": [
+          "windows/core/Json.ps1",
           "windows/core/Ui.ps1",
           "windows/core/Process.ps1",
           "windows/core/Profile.ps1",
@@ -68,37 +54,14 @@
           "windows/core/Admin.ps1",
           "windows/core/Net.ps1",
           "windows/core/Registry.ps1",
-          "windows/core/Bootstrap.ps1",
-          "windows/core/Provider.ps1"
-        ],
-        "IncludeSteps": true
-      },
-      {
-        "Role": "Manage",
-        "OutputFile": "manage.ps1",
-        "RequiresHeader": "#Requires -Version 7.0",
-        "EntryFile": "windows/Manage.ps1",
-        "HoistParamFrom": "windows/Manage.ps1",
-        "OutputEncoding": "UTF8",
-        "CoreFiles": [
-          "windows/core/Ui.ps1",
-          "windows/core/Process.ps1",
-          "windows/core/Profile.ps1",
-          "windows/core/Update.ps1",
-          "windows/core/Admin.ps1",
-          "windows/core/Net.ps1",
-          "windows/core/Registry.ps1",
-          "windows/core/Bootstrap.ps1",
-          "windows/core/ManageCore.ps1",
-          "windows/core/Provider.ps1"
+          "windows/core/Bootstrap.ps1"
         ],
         "IncludeSteps": true
       }
     ]
   },
   "MacOS": {
-    "StepContract": "contracts/steps.json",
-    "CommonStepFile": "macos/steps/_NpmToolCommon.zsh",
+    "StepContract": "installer/contracts/steps.json",
     "Artifacts": [
       {
         "Role": "Install",
@@ -115,27 +78,6 @@
           "macos/core/Json.zsh",
           "macos/core/Registry.zsh",
           "macos/core/Bootstrap.zsh",
-          "macos/core/Provider.zsh",
-          "macos/core/Update.zsh"
-        ]
-      },
-      {
-        "Role": "Manage",
-        "OutputFile": "manage.sh",
-        "EntryFile": "macos/Manage.zsh",
-        "IncludeSteps": true,
-        "Wrapper": "bash-to-zsh",
-        "CoreFiles": [
-          "macos/core/Ui.zsh",
-          "macos/core/Process.zsh",
-          "macos/core/Profile.zsh",
-          "macos/core/Platform.zsh",
-          "macos/core/PackageManager.zsh",
-          "macos/core/Json.zsh",
-          "macos/core/Registry.zsh",
-          "macos/core/Bootstrap.zsh",
-          "macos/core/Provider.zsh",
-          "macos/core/ManageCore.zsh",
           "macos/core/Update.zsh"
         ]
       }
