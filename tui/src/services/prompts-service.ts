@@ -14,7 +14,7 @@ import {copyToClipboard, isClipboardSupported, type ClipboardResult} from '../co
 // Prompts service：TUI 视图唯一入口，包装 core 并统一进度上报。
 // Phase 5: 移除 external-editor 调用链，改用内嵌编辑器（OpenTUI textarea）
 
-/** 加载推荐提示词（供预览展示）。 */
+/** 加载推荐全局规则（供预览展示）。 */
 export function loadRecommendationForPreview(): PromptsRecommendation {
 	return loadRecommendation();
 }
@@ -24,12 +24,12 @@ export function readCurrentClaudeMd(): string | null {
 	return readInstalledClaudeMd();
 }
 
-/** 导入推荐提示词（整文件覆盖），带进度上报。 */
+/** 导入推荐全局规则（整文件覆盖），带进度上报。 */
 export async function importRecommendationWithProgress(onProgress?: ProgressCallback): Promise<ImportResult> {
-	onProgress?.({level: 'info', message: '正在导入推荐提示词...'});
+	onProgress?.({level: 'info', message: '正在导入推荐全局规则...'});
 	const result = importRecommendation();
 	if (result.ok) {
-		onProgress?.({level: 'success', message: `已导入 ${result.lineCount} 行推荐提示词`});
+		onProgress?.({level: 'success', message: `已导入 ${result.lineCount} 行推荐全局规则`});
 	} else {
 		onProgress?.({level: 'danger', message: `导入失败: ${result.error}`});
 	}
@@ -37,11 +37,11 @@ export async function importRecommendationWithProgress(onProgress?: ProgressCall
 	return result;
 }
 
-/** 复制推荐提示词到剪贴板，带进度上报。 */
+/** 复制推荐全局规则到剪贴板，带进度上报。 */
 export async function copyRecommendationToClipboard(onProgress?: ProgressCallback): Promise<ClipboardResult> {
 	const recommendation = assembleRecommendation();
 	if (!recommendation) {
-		const error = '推荐提示词模板不可用';
+		const error = '推荐全局规则模板不可用';
 		onProgress?.({level: 'danger', message: error});
 		return {ok: false, error};
 	}

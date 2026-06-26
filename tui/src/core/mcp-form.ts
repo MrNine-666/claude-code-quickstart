@@ -1,199 +1,192 @@
-import type {FormField, KeyValueEntry} from '../components/form/field-types.js';
-import type {McpServerDefinition} from './mcp-contract.js';
+import {loadMcpContract, type McpServerDefinition} from './mcp-contract.js';
+import {validateServerId, type McpConfigEntry} from './mcp-config-builder.js';
 
-// buildMcpFormFields：从契约/现有配置派生 MCP 表单字段（design D10）。
-// 覆盖 none / single-key / url-embedded / multi-field / args-multi / args-token /
-// custom stdio / custom http。env-file 返回只读字段 + 安装链提示。
+// MCP 表单 core（JSON 即真源范式）：模板生成、config↔JSON、保存校验。
+// 取代旧字段集/字段↔JSON 联动——表单直接编辑最终 config JSON，落盘前由 parseMcpFormInput 校验。
+// 内置 MCP 仅作「模板」提供初始 JSON；保存统一走 persistMcpServer（service 层）。
 
-export type McpFormMode = 'edit-builtin' | 'add-custom-stdio' | 'add-custom-http' | 'edit-custom';
-
-export type McpFormModel = {
-	readonly mode: McpFormMode;
-	readonly serverId: string;
-	readonly fields: readonly FormField[];
-	readonly editable: boolean;
-	readonly note?: string;
-};
-
-type ExistingConfig = {
-	command?: string;
-	args?: string[];
-	env?: Record<string, string>;
-	url?: string;
-} | null;
-
-function readonlyIdField(serverId: string): FormField {
-	return {id: '__serverId', type: 'readonly', label: 'Server ID', value: serverId};
+/** 内置 MCP 列表选项（模板 select 用）：label=Name，value=serverId，排除 software。 */
+export function listBuiltinMcpOptions(): {value: string; label: string}[] {
+	const servers = loadMcpContract().servers;
+	return Object.entries(servers)
+		.filter(([, def]) => def.McpType !== 'software')
+		.map(([id, def]) => ({value: id, label: def.Name || id}))
+		.sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function credentialValueFromConfig(existing: ExistingConfig, envKey: string): string {
-	return existing?.env?.[envKey] ?? '';
-}
-
-/** 从已有 args 中解析 `ArgName value` 形式的凭据值。 */
-function argValueFromConfig(existing: ExistingConfig, argName: string): string {
-	const args = existing?.args ?? [];
-	const index = args.indexOf(argName);
-	if (index >= 0 && index + 1 < args.length) {
-		return args[index + 1]!;
-	}
-
-	return '';
-}
-
-/** 从已有 args 中解析 `TokenArg=value` 形式的 token 值。 */
-function tokenValueFromConfig(existing: ExistingConfig, tokenArg: string): string {
-	const prefix = `${tokenArg}=`;
-	for (const arg of existing?.args ?? []) {
-		if (typeof arg === 'string' && arg.startsWith(prefix)) {
-			return arg.slice(prefix.length);
-		}
-	}
-
-	return '';
-}
-
-/** 构建内置 MCP Server 的编辑表单（Server ID 只读，字段由契约投影）。 */
-export function buildMcpFormFields(
-	serverId: string,
-	definition: McpServerDefinition,
-	existingConfig: ExistingConfig,
-	mode: McpFormMode
-): McpFormModel {
-	if (mode === 'add-custom-stdio') {
-		return buildCustomStdioFields(serverId, existingConfig);
-	}
-
-	if (mode === 'add-custom-http') {
-		return buildCustomHttpFields(serverId, existingConfig);
-	}
-
-	const credentialType = definition.CredentialType || 'none';
-
-	if (credentialType === 'env-file') {
-		return {
-			mode,
-			serverId,
-			editable: false,
-			note: '该 MCP 使用 env-file 凭据，由安装链管理，本面板仅展示，不支持编辑保存。',
-			fields: [
-				readonlyIdField(serverId),
-				{id: '__name', type: 'readonly', label: '名称', value: definition.Name ?? serverId},
-				{id: '__type', type: 'readonly', label: '类型', value: definition.McpType ?? 'stdio'}
-			]
-		};
-	}
-
-	const fields: FormField[] = [readonlyIdField(serverId)];
-
-	switch (credentialType) {
-		case 'single-key': {
-			const apiKeyName = String(definition.ApiKeyName ?? '');
-			fields.push({
-				id: apiKeyName,
-				type: 'secret',
-				label: definition.ApiKeyName ?? 'API Key',
-				value: credentialValueFromConfig(existingConfig, apiKeyName),
-				helpText: definition.ApiKeyUrl ? `获取地址: ${definition.ApiKeyUrl}` : undefined
-			});
-			break;
-		}
-
-		case 'url-embedded': {
-			for (const cred of definition.Credentials ?? []) {
-				const name = String(cred.Name ?? '');
-				fields.push({
-					id: name,
-					type: cred.Secret ? 'secret' : 'text',
-					label: cred.Label ?? name,
-					value: '',
-					helpText: cred.Url ? `获取地址: ${cred.Url}` : undefined
-				});
+/** 收集契约中 env 类凭据键（single-key/multi-field/url-embedded），用于模板预填占位。 */
+function collectEnvCredentialKeys(def: McpServerDefinition): Record<string, string> {
+	const env: Record<string, string> = {};
+	const credentialType = def.CredentialType;
+	if (credentialType === 'single-key' && def.ApiKeyName) {
+		env[def.ApiKeyName] = '';
+	} else if (credentialType === 'multi-field' || credentialType === 'url-embedded') {
+		for (const cred of def.Credentials ?? []) {
+			if (cred.Name) {
+				env[cred.Name] = '';
 			}
-
-			break;
 		}
-
-		case 'multi-field': {
-			for (const cred of definition.Credentials ?? []) {
-				const name = String(cred.Name ?? '');
-				fields.push({
-					id: name,
-					type: cred.Secret ? 'secret' : 'text',
-					label: cred.Label ?? name,
-					value: credentialValueFromConfig(existingConfig, name),
-					helpText: cred.Url ? `获取地址: ${cred.Url}` : undefined
-				});
-			}
-
-			break;
-		}
-
-		case 'args-multi': {
-			for (const cred of definition.ArgsCredentials ?? []) {
-				const argName = String(cred.ArgName ?? '');
-				fields.push({
-					id: argName,
-					type: cred.Secret ? 'secret' : 'text',
-					label: cred.Label ?? argName,
-					value: argValueFromConfig(existingConfig, argName),
-					helpText: cred.Url ? `获取地址: ${cred.Url}` : undefined
-				});
-			}
-
-			break;
-		}
-
-		case 'args-token': {
-			fields.push({
-				id: 'token',
-				type: 'secret',
-				label: definition.TokenLabel ?? 'Token',
-				value: tokenValueFromConfig(existingConfig, String(definition.TokenArg ?? '')),
-				helpText: definition.TokenUrl ? `获取地址: ${definition.TokenUrl}` : undefined
-			});
-			break;
-		}
-
-		default:
-			// none：无凭据字段，仅展示只读 ID。
-			break;
 	}
 
-	return {mode, serverId, fields, editable: true};
+	return env;
 }
 
-function buildCustomStdioFields(serverId: string, existing: ExistingConfig): McpFormModel {
-	const envEntries: KeyValueEntry[] = Object.entries(existing?.env ?? {}).map(([key, value]) => ({key, value}));
-	const idEditable = serverId === '';
+/** 收集凭据获取地址提示（按字段拼成「字段: URL」分号串）。 */
+function collectCredentialHint(def: McpServerDefinition): string | undefined {
+	const parts: string[] = [];
+	if (def.ApiKeyUrl) {
+		parts.push(`${def.ApiKeyName ?? 'API Key'}: ${def.ApiKeyUrl}`);
+	}
 
-	return {
-		mode: 'add-custom-stdio',
-		serverId,
-		editable: true,
-		fields: [
-			idEditable
-				? {id: '__serverId', type: 'text', label: 'Server ID', value: serverId, helpText: '保存后不可改名'}
-				: readonlyIdField(serverId),
-			{id: '__command', type: 'text', label: 'Command', value: existing?.command ?? 'npx'},
-			{id: '__args', type: 'text', label: 'Args（空格分隔）', value: (existing?.args ?? []).join(' ')},
-			{id: '__env', type: 'key-value', label: '环境变量', entries: envEntries}
-		]
+	for (const cred of def.Credentials ?? []) {
+		if (cred.Url) {
+			parts.push(`${cred.Label ?? cred.Name ?? '凭据'}: ${cred.Url}`);
+		}
+	}
+
+	for (const cred of def.ArgsCredentials ?? []) {
+		if (cred.Url) {
+			parts.push(`${cred.Label ?? cred.ArgName ?? '参数'}: ${cred.Url}`);
+		}
+	}
+
+	if (def.TokenUrl) {
+		parts.push(`${def.TokenLabel ?? 'Token'}: ${def.TokenUrl}`);
+	}
+
+	return parts.length > 0 ? parts.join('；') : undefined;
+}
+
+export type McpTemplateResult = {readonly json: string; readonly credHint?: string};
+
+/**
+ * 内置 MCP 模板：从契约 definition 派生初始 config JSON + 凭据提示。
+ * - stdio：{ command, args, env(凭据键占位) }
+ * - http：{ type:'http', url, env(凭据键占位) }
+ * - software / 无契约：返回 null（自定义场景由调用方给空白模板）
+ */
+export function getMcpTemplateJson(serverId: string): McpTemplateResult | null {
+	const def = loadMcpContract().servers[serverId];
+	if (!def) {
+		return null;
+	}
+
+	const mcpType = def.McpType || 'stdio';
+	if (mcpType === 'software') {
+		return null;
+	}
+
+	const credHint = collectCredentialHint(def);
+	const env = collectEnvCredentialKeys(def);
+
+	if (mcpType === 'http') {
+		const url = def.Url ?? def.UrlTemplate ?? '';
+		const config: McpConfigEntry = url ? {type: 'http', url} : {type: 'http'};
+		if (Object.keys(env).length > 0) {
+			config.env = env;
+		}
+
+		return {json: stringifyConfig(config), credHint};
+	}
+
+	const config: McpConfigEntry = {
+		command: def.Command ?? '',
+		args: [...(def.Args ?? [])]
 	};
+	if (Object.keys(env).length > 0) {
+		config.env = env;
+	}
+
+	return {json: stringifyConfig(config), credHint};
 }
 
-function buildCustomHttpFields(serverId: string, existing: ExistingConfig): McpFormModel {
-	const idEditable = serverId === '';
+/** config 对象 → pretty JSON 文本（末尾换行，便于 textarea 编辑）。 */
+export function configToJson(config: Record<string, unknown> | null): string {
+	if (!config || typeof config !== 'object' || Array.isArray(config)) {
+		return stringifyConfig({});
+	}
 
-	return {
-		mode: 'add-custom-http',
-		serverId,
-		editable: true,
-		fields: [
-			idEditable
-				? {id: '__serverId', type: 'text', label: 'Server ID', value: serverId, helpText: '保存后不可改名'}
-				: readonlyIdField(serverId),
-			{id: '__url', type: 'text', label: 'URL', value: existing?.url ?? '', helpText: '必须以 http:// 或 https:// 开头'}
-		]
-	};
+	return stringifyConfig(config);
+}
+
+function stringifyConfig(config: unknown): string {
+	return `${JSON.stringify(config, null, 2)}\n`;
+}
+
+export type McpFormPayload = {readonly serverId: string; readonly config: McpConfigEntry};
+
+export type McpFormParseResult =
+	| {readonly ok: true; readonly payload: McpFormPayload}
+	| {readonly ok: false; readonly error: string};
+
+/**
+ * 校验表单输入：serverId + JSON 文本 → 合法 payload。
+ * - JSON 必须为对象
+ * - 类型由内容判定：type==='http' 或含 url → http（需 url）；否则 stdio（需 command）
+ * - env 规整为 string→string，args 过滤为 string[]
+ */
+export function parseMcpFormInput(serverId: string, json: string): McpFormParseResult {
+	const trimmedId = serverId.trim();
+	const idError = validateServerId(trimmedId);
+	if (idError) {
+		return {ok: false, error: idError};
+	}
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(json);
+	} catch (error) {
+		return {ok: false, error: `JSON 格式错误: ${error instanceof Error ? error.message : String(error)}`};
+	}
+
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+		return {ok: false, error: '配置必须是 JSON 对象'};
+	}
+
+	const raw = parsed as Record<string, unknown>;
+	const isHttp = raw.type === 'http' || typeof raw.url === 'string';
+
+	if (isHttp) {
+		if (typeof raw.url !== 'string' || raw.url.trim() === '') {
+			return {ok: false, error: 'http 类型 MCP 必须提供 url'};
+		}
+
+		return {ok: true, payload: {serverId: trimmedId, config: {type: 'http', url: raw.url}}};
+	}
+
+	if (typeof raw.command !== 'string' || raw.command.trim() === '') {
+		return {ok: false, error: 'stdio 类型 MCP 必须提供 command'};
+	}
+
+	const config: McpConfigEntry = {command: raw.command};
+	if (Array.isArray(raw.args)) {
+		const args = raw.args.filter((item): item is string => typeof item === 'string');
+		if (args.length > 0) {
+			config.args = args;
+		}
+	}
+
+	const env = normalizeEnv(raw.env);
+	if (env) {
+		config.env = env;
+	}
+
+	return {ok: true, payload: {serverId: trimmedId, config}};
+}
+
+function normalizeEnv(value: unknown): Record<string, string> | undefined {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		return undefined;
+	}
+
+	const env: Record<string, string> = {};
+	for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+		if (val === undefined || val === null) {
+			continue;
+		}
+
+		env[key] = String(val);
+	}
+
+	return Object.keys(env).length > 0 ? env : undefined;
 }

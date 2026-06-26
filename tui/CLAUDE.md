@@ -7,7 +7,7 @@
 
 ## 项目概述
 
-**OpenTUI + Bun 单文件可执行 TUI**，实现 Claude Code Quickstart 的 6 菜单管理控制台（供应商 / MCP / Skills / 提示词 / 配置文件 / 工具管理），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-darwin-x64` / `ccq-darwin-arm64`），contracts 内嵌进可执行文件，安装后通过 `ccq` 命令天然可达（**不注入 Profile**）。
+**OpenTUI + Bun 单文件可执行 TUI**，实现 Claude Code Quickstart 的 6 菜单管理控制台（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-darwin-x64` / `ccq-darwin-arm64`），contracts 内嵌进可执行文件，安装后通过 `ccq` 命令天然可达（**不注入 Profile**）。
 
 ---
 
@@ -44,7 +44,7 @@ tui/
 │   │   ├── provider-view.tsx  # 供应商视图
 │   │   ├── mcp/               # MCP 视图
 │   │   ├── skills-view.tsx    # Skills 视图
-│   │   ├── prompts-view.tsx   # 提示词视图
+│   │   ├── prompts-view.tsx   # 全局规则视图
 │   │   ├── config-view.tsx    # 配置文件视图
 │   │   └── tools-view.tsx     # 工具管理视图
 │   ├── components/            # 共享组件
@@ -87,7 +87,7 @@ SHALL 保持 OpenTUI 官方脚手架结构完整性，禁止破坏官方结构�
 从 `manage/source/` 迁移到 `tui/src/` 的纯 TS 业务逻辑（`core/` / `services/` / `state/`）**零重写**，仅 import 路径 / 扩展名适配，无逻辑改写。
 
 ### HC-EDITOR-OPENTUI
-编辑器全部使用 OpenTUI 官方 `<textarea>` 和 `<code>`，替代 `react-ink-textarea` + `external-editor.ts`。四视图（供应商 extraEnv / MCP 字段 / 提示词 / 配置文件）改为内嵌编辑，删除外部编辑器调用链。
+编辑器全部使用 OpenTUI 官方 `<textarea>` 和 `<code>`，替代 `react-ink-textarea` + `external-editor.ts`。四视图（供应商 extraEnv / MCP 字段 / 全局规则 / 配置文件）改为内嵌编辑，删除外部编辑器调用链。
 
 ### HC-NON-TTY
 ccq 可执行文件 non-TTY（管道 / 重定向 / CI）输出只读提示、不进交互 TUI、退出码 0。`src/index.tsx` 入口实现：
@@ -102,6 +102,12 @@ if (!process.stdin.isTTY) {
 
 ### HC-DELETE-LEGACY
 删除旧链时必须全仓 grep 零业务引用确认（`manage-tui.tgz`/`ManageCore`/`ink`/`react-ink-textarea`/`external-editor`/`ccq-function`/`function ccq` 业务引用清零，测试 fixture/历史 plan 文档除外）。
+
+### HC-SHORTCUT-SINGLE-SOURCE（新增）
+快捷键说明**唯一**由 footer `ShortcutBar`（`app.tsx:178`）展示，按键文本从 `@opentui/keymap`（`config/keybindings.js` 绑定定义）经 `state/shortcuts.ts` 的 `formatCommandBindings` 动态解析——**单一数据源**。
+- **禁止**在视图/组件内硬编码键位字面量（`[I]`、`[Tab]`、`Ctrl+S` 等）；新增/改键一律走 `config/keybindings.js` 注册 + `shortcuts.ts` 映射，footer 自动同步。
+- 页面内 `ActionHint`（`components/action-hint.tsx`）**仅承载操作说明文字 + disabled 状态**（footer label 容纳不下的详细描述/禁用提示），**禁止带 `[hotkey]` 前缀**重复展示键位。
+- **理由**：键位变更只改 `keybindings.js` 一处，杜绝页面内硬编码与 footer 分裂（历史教训：PromptsView / ConfigView / SkillsView / provider-view 曾用 ActionHint `[hotkey]` 与 footer 双显重复）。
 
 ---
 
@@ -186,12 +192,12 @@ echo | ./dist/ccq-darwin-arm64
 
 | 菜单 | 文件 | 功能 |
 |------|------|------|
+| 工具管理 | `views/tools-view.tsx` | ClaudeCode + 5 工具全生命周期（安装/更新/卸载 + 卡片范式 + 2D 导航） |
 | 供应商 | `views/provider-view.tsx` + `provider-form.tsx` | 供应商 Profile CRUD + 设置默认 + extraEnv JSON 编辑 |
+| 配置文件 | `views/config-view.tsx` | Claude 配置项开关（fill-missing / remove-managed） |
+| 全局规则 | `views/prompts-view.tsx` | 全局规则推荐 + 自定义编辑（双区：上区只读 + 下区可编辑） |
 | MCP | `views/mcp/McpView.tsx` + `mcp-view-model.ts` | MCP Server 启用/禁用 + 凭据管理 + 字段↔JSON 双向联动 |
 | Skills | `views/skills-view.tsx` | Skills 安装 / 更新 / 卸载 |
-| 提示词 | `views/prompts-view.tsx` | 提示词推荐 + 自定义编辑（双区：上区只读 + 下区可编辑） |
-| 配置文件 | `views/config-view.tsx` | Claude 配置项开关（fill-missing / remove-managed） |
-| 工具管理 | `views/tools-view.tsx` | ClaudeCode + 5 工具全生命周期（安装/更新/卸载 + 卡片范式 + 2D 导航） |
 
 ---
 

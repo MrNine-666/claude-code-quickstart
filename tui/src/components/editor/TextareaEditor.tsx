@@ -1,12 +1,13 @@
 import React, { useRef, useState } from 'react';
 import { TextAttributes } from '@opentui/core';
-import type { TextareaRenderable, SyntaxStyle } from '@opentui/core';
-import { useKeyboard } from '@opentui/react';
+import type { TextareaRenderable, SyntaxStyle, KeyEvent } from '@opentui/core';
+import { useKeyboard, useRenderer } from '@opentui/react';
 import { colors, borderColors } from '../../theme/index.js';
 import { ErrorPanel } from '../error-panel.js';
+import { handleTextareaEditKeys, handleTextareaIndentKey } from './textarea-edit-keys.js';
 
 // TextareaEditor：编辑/预览双模式内嵌编辑器（HC-EDITOR-OPENTUI，零外部编辑器）
-// - 编辑模式：OpenTUI <textarea> 纯文本编辑，Ctrl+S 保存、Esc 取消、Ctrl+P/Tab 切预览
+// - 编辑模式：OpenTUI <textarea> 纯文本编辑，Ctrl/Cmd+S 保存、Ctrl/Cmd+Z 撤销、Ctrl/Cmd+C 复制选中、Esc 取消、Ctrl/Cmd+P 切预览、Tab 缩进（2 空格）
 // - 预览模式（只读）：markdown 用 <markdown>，代码/JSON 用 <line-number><code>（语法高亮 + 行号），Esc 返回编辑
 // - isJson 模式：保存前 JSON.parse 校验，失败显示错误但不退出（容忍中间态）
 
@@ -55,6 +56,7 @@ export function TextareaEditor({
 	onCancel
 }: TextareaEditorProps) {
 	const ref = useRef<TextareaRenderable>(null);
+	const renderer = useRenderer();
 	const [error, setError] = useState<string | null>(null);
 	const [mode, setMode] = useState<'edit' | 'preview'>('edit');
 	// 预览内容快照（进入预览时从 textarea 取最新文本）。
@@ -78,12 +80,43 @@ export function TextareaEditor({
 		onModeChange?.('edit');
 	};
 
+	// Ctrl/Cmd+S 保存：isJson 模式先校验 JSON，再回调 onSave。
+	const saveContent = (): void => {
+		const content = ref.current?.plainText ?? '';
+
+		if (isJson) {
+			try {
+				JSON.parse(content);
+			} catch (e) {
+				setError(`JSON 格式错误: ${e instanceof Error ? e.message : String(e)}`);
+				return;
+			}
+		}
+
+		const result = onSave(content);
+		if (!result.ok) {
+			setError(result.error ?? '保存失败');
+			return;
+		}
+
+		setError(null);
+	};
+
+	// 编辑模式 textarea onKeyDown（handleKeyPress 之前）：Tab 缩进 / Shift+Tab 反向缩进。
+	const handleEditorKey = (keyEvent: KeyEvent) => {
+		if (active && mode === 'edit') {
+			handleTextareaIndentKey(keyEvent, ref.current);
+		}
+	};
+
 	useKeyboard((keyEvent) => {
 		if (!active) {
 			return;
 		}
 
 		const name = keyEvent.name;
+		// 跨平台主修饰键：Windows/Linux=Ctrl，macOS=Cmd（KeyEvent.super，非 meta/Alt）。
+		const mod = keyEvent.ctrl || keyEvent.super === true;
 
 		// 预览模式：Esc 返回编辑（滚动由 scrollbox 自身处理）。
 		if (mode === 'preview') {
@@ -100,33 +133,14 @@ export function TextareaEditor({
 			return;
 		}
 
-		// Ctrl+P 或 Tab 切预览（仅 filetype 支持时）。
-		if (canPreview && ((name === 'p' && keyEvent.ctrl) || name === 'tab')) {
+		// Ctrl/Cmd+P 切预览（仅 filetype 支持时）；Tab 已归缩进（onKeyDown）。
+		if (canPreview && name === 'p' && mod) {
 			enterPreview();
 			return;
 		}
 
-		// Ctrl+S 保存。
-		if (name === 's' && keyEvent.ctrl) {
-			const content = ref.current?.plainText ?? '';
-
-			if (isJson) {
-				try {
-					JSON.parse(content);
-				} catch (e) {
-					setError(`JSON 格式错误: ${e instanceof Error ? e.message : String(e)}`);
-					return;
-				}
-			}
-
-			const result = onSave(content);
-			if (!result.ok) {
-				setError(result.error ?? '保存失败');
-				return;
-			}
-
-			setError(null);
-		}
+		// Ctrl/Cmd+S 保存 · Ctrl+Z 撤销 · Ctrl+Shift+Z/Y 重做 · Ctrl/Cmd+C 复制选中（OSC52）。
+		handleTextareaEditKeys(keyEvent, ref.current, renderer, saveContent, () => setError(null));
 	});
 
 	// ── 预览模式渲染 ──（enterPreview 已保证 syntaxStyle 非 null）
@@ -175,7 +189,7 @@ export function TextareaEditor({
 			</box>
 
 			<box flexGrow={1} borderStyle="rounded" borderColor={active ? borderColors.active : borderColors.inactive}>
-				<textarea ref={ref} initialValue={initialContent} focused={active} style={{ flexGrow: 1 }} />
+				<textarea ref={ref} initialValue={initialContent} focused={active} onKeyDown={handleEditorKey} style={{ flexGrow: 1 }} />
 			</box>
 
 			{error ? (
@@ -183,13 +197,6 @@ export function TextareaEditor({
 					<ErrorPanel message={error} />
 				</box>
 			) : null}
-
-			<box marginTop={1}>
-				<text attributes={TextAttributes.DIM}>
-					Ctrl+S 保存 · Esc 取消{canPreview ? ' · Ctrl+P/Tab 预览' : ''}
-					{isJson ? ' · 保存前校验 JSON' : ''}
-				</text>
-			</box>
 		</box>
 	);
 }

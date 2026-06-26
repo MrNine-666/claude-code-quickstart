@@ -52,29 +52,33 @@ export type ProviderSavePayload =
 			readonly extraEnv?: Record<string, string> | null;
 	  };
 
+const AUTH_TOKEN_KEY = 'ANTHROPIC_AUTH_TOKEN';
+const BASE_URL_KEY = 'ANTHROPIC_BASE_URL';
 const MODEL_KEY_ORDER = [
 	'ANTHROPIC_DEFAULT_HAIKU_MODEL',
 	'ANTHROPIC_DEFAULT_OPUS_MODEL',
 	'ANTHROPIC_DEFAULT_SONNET_MODEL'
 ];
 
-/** 自定义供应商类型标识（providerType select 的非内置选项值）。 */
+/** 自定义供应商类型标识（providerType radio 的非内置选项值）。 */
 export const PROVIDER_CUSTOM_TYPE = 'custom';
 
-/** providerType select 选项：内置供应商（label=name）+ 自定义。 */
+/** providerType radio 选项：内置供应商（label=name）+ 自定义。 */
 function buildProviderTypeOptions(): SelectOption[] {
 	const config = loadProviderContract();
-	const options: SelectOption[] = Object.entries(config.builtinProviders).map(([key, p]) => ({
-		value: key,
-		label: p.name || key
-	}));
+	const options: SelectOption[] = Object.entries(config.builtinProviders)
+		.filter(([key]) => key !== PROVIDER_CUSTOM_TYPE)
+		.map(([key, p]) => ({
+			value: key,
+			label: p.name || key
+		}));
 	options.push({value: PROVIDER_CUSTOM_TYPE, label: '自定义供应商'});
 	return options;
 }
 
 /** 默认供应商类型：首个内置供应商，无内置时回退自定义。 */
 function firstBuiltinKey(): string | undefined {
-	const keys = Object.keys(loadProviderContract().builtinProviders);
+	const keys = Object.keys(loadProviderContract().builtinProviders).filter((key) => key !== PROVIDER_CUSTOM_TYPE);
 	return keys.length > 0 ? keys[0] : undefined;
 }
 
@@ -120,14 +124,14 @@ function pickManagedModelDefaults(source: Record<string, string> | undefined): R
 	return result;
 }
 
-// 从 profile.env 提取 extra env（排除 token/baseUrl/受管模型键），供 edit 回填 key-value 区。
+// 从 profile.env 提取 extra env（排除 token/baseUrl/受管模型键），供 edit 回填 JSON 区。
 function pickExtraEnv(env: Record<string, string> | undefined): Record<string, string> {
 	const result: Record<string, string> = {};
 	if (!env) {
 		return result;
 	}
 
-	const reserved = new Set<string>(['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', ...MODEL_KEY_ORDER]);
+	const reserved = new Set<string>([AUTH_TOKEN_KEY, BASE_URL_KEY, ...MODEL_KEY_ORDER]);
 	for (const [k, v] of Object.entries(env)) {
 		if (!reserved.has(k) && !isNullOrWhiteSpace(v)) {
 			result[k] = String(v);
@@ -166,27 +170,26 @@ export function buildProviderFormModel(input: ProviderFormInput): ProviderFormMo
 		values.extraEnv = template.extraEnv;
 	} else if (input.profile) {
 		values.profileKey = input.profileKey ?? '';
-		values.baseUrl = input.profile.env?.ANTHROPIC_BASE_URL ?? '';
-		values.apiKey = input.profile.env?.ANTHROPIC_AUTH_TOKEN ?? '';
+		values.baseUrl = input.profile.env?.[BASE_URL_KEY] ?? '';
+		values.apiKey = input.profile.env?.[AUTH_TOKEN_KEY] ?? '';
 		values.modelEnv = getManagedModelEnv(input.profile);
 		values.extraEnv = pickExtraEnv(input.profile.env);
 	}
 
 	const fields: FormField[] = [];
 
-	// add 模式首字段：供应商类型选择（←/→ 切换，切换后覆盖其余字段为该类型模板）。
+	// add 模式首字段：供应商类型 radio（方向键切换，切换后覆盖其余字段为该类型模板）。
 	if (input.mode !== 'edit') {
 		fields.push({
 			id: 'providerType',
-			type: 'select',
+			type: 'radio',
 			label: '供应商类型',
 			value: providerType,
-			options: buildProviderTypeOptions(),
-			helpText: '←/→ 切换；切换后自动覆盖 Base URL / 模型 / 额外环境变量为该供应商模板'
+			options: buildProviderTypeOptions()
 		});
 	}
 
-	// 字段顺序：[providerType] → 文件名 → baseUrl → apiKey → 3 模型键 → extra env → activate
+	// 字段顺序：[providerType] → 文件名 → baseUrl → apiKey → 3 模型键 → activate
 	fields.push(
 		input.mode === 'edit'
 			? {id: 'profileKey', type: 'readonly', label: '文件名', value: values.profileKey}
@@ -194,15 +197,13 @@ export function buildProviderFormModel(input: ProviderFormInput): ProviderFormMo
 					id: 'profileKey',
 					type: 'text',
 					label: '文件名',
-					value: values.profileKey,
-					helpText: '英文文件名（字母/数字/. _ -），即 ~/.claude/providers/<文件名>.json'
+					value: values.profileKey
 			  },
 		{
 			id: 'baseUrl',
 			type: 'text',
 			label: 'Base URL',
-			value: values.baseUrl,
-			helpText: '必须以 http:// 或 https:// 开头'
+			value: values.baseUrl
 		},
 		{id: 'apiKey', type: 'secret', label: 'API Key', value: values.apiKey}
 	);
@@ -216,18 +217,10 @@ export function buildProviderFormModel(input: ProviderFormInput): ProviderFormMo
 		});
 	}
 
-	fields.push({
-		id: 'extraEnv',
-		type: 'key-value',
-		label: '额外环境变量',
-		entries: Object.entries(values.extraEnv).map(([key, value]) => ({key, value})),
-		helpText: '自由增删任意 env 键值对（写入 ~/.claude/providers/<文件名>.json 的 env）'
-	});
-
 	if (input.mode !== 'edit') {
 		fields.push({
 			id: 'activateAfterSave',
-			type: 'select',
+			type: 'radio',
 			label: '保存后激活',
 			value: values.activateAfterSave ? 'yes' : 'no',
 			options: [
@@ -238,6 +231,77 @@ export function buildProviderFormModel(input: ProviderFormInput): ProviderFormMo
 	}
 
 	return {mode: input.mode, fields, values};
+}
+
+export function providerValuesToProfile(values: ProviderFormValues): ProviderProfile {
+	const env: Record<string, string> = {};
+
+	if (!isNullOrWhiteSpace(values.apiKey)) {
+		env[AUTH_TOKEN_KEY] = values.apiKey;
+	}
+
+	if (!isNullOrWhiteSpace(values.baseUrl)) {
+		env[BASE_URL_KEY] = values.baseUrl;
+	}
+
+	for (const key of MODEL_KEY_ORDER) {
+		const value = values.modelEnv[key];
+		if (!isNullOrWhiteSpace(value)) {
+			env[key] = String(value);
+		}
+	}
+
+	for (const [key, value] of Object.entries(sanitizeExtraEnv(values.extraEnv))) {
+		env[key] = value;
+	}
+
+	return {env};
+}
+
+export function buildProviderProfileJson(values: ProviderFormValues): string {
+	return `${JSON.stringify(providerValuesToProfile(values), null, 2)}\n`;
+}
+
+export type ProviderProfileJsonResult =
+	| {readonly ok: true; readonly values: ProviderFormValues}
+	| {readonly ok: false; readonly error: string};
+
+export function valuesFromProviderProfileJson(baseValues: ProviderFormValues, raw: string): ProviderProfileJsonResult {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch (error) {
+		return {ok: false, error: `JSON 格式错误: ${error instanceof Error ? error.message : String(error)}`};
+	}
+
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+		return {ok: false, error: 'JSON 必须是对象'};
+	}
+
+	const env = (parsed as {env?: unknown}).env;
+	if (!env || typeof env !== 'object' || Array.isArray(env)) {
+		return {ok: false, error: 'JSON 必须包含 env 对象'};
+	}
+
+	const normalizedEnv: Record<string, string> = {};
+	for (const [key, value] of Object.entries(env as Record<string, unknown>)) {
+		if (value === undefined || value === null) {
+			continue;
+		}
+
+		normalizedEnv[key] = String(value);
+	}
+
+	return {
+		ok: true,
+		values: {
+			...baseValues,
+			apiKey: normalizedEnv[AUTH_TOKEN_KEY] ?? '',
+			baseUrl: normalizedEnv[BASE_URL_KEY] ?? '',
+			modelEnv: pickManagedModelDefaults(normalizedEnv),
+			extraEnv: pickExtraEnv(normalizedEnv)
+		}
+	};
 }
 
 /** 校验表单值（返回错误信息数组，空数组表示通过）。 */
@@ -256,15 +320,10 @@ export function validateProviderForm(mode: ProviderFormMode, values: ProviderFor
 		}
 	}
 
-	// 自定义供应商（mode=add-custom 或表单内选了 custom 类型）必须填合法 Base URL；
-	// 内置供应商的 Base URL 来自契约模板，不强制校验。
-	const isCustom = mode === 'add-custom' || values.providerType === PROVIDER_CUSTOM_TYPE;
-	if (mode !== 'edit' && isCustom) {
-		if (isNullOrWhiteSpace(values.baseUrl)) {
-			errors.push('Base URL 不能为空');
-		} else if (!/^https?:\/\//.test(values.baseUrl)) {
-			errors.push('Base URL 必须以 http:// 或 https:// 开头');
-		}
+	if (isNullOrWhiteSpace(values.baseUrl)) {
+		errors.push('Base URL 不能为空');
+	} else if (!/^https?:\/\//.test(values.baseUrl)) {
+		errors.push('Base URL 必须以 http:// 或 https:// 开头');
 	}
 
 	return errors;
@@ -294,10 +353,10 @@ export function toProviderSavePayload(input: ProviderFormInput, values: Provider
 		action: 'add',
 		builtinKey: isCustom ? undefined : effectiveType,
 		profileKey: values.profileKey.trim(),
-		baseUrl: isCustom ? values.baseUrl : undefined,
+		baseUrl: values.baseUrl,
 		apiKey: values.apiKey,
 		modelEnv: Object.keys(modelEnv).length > 0 ? modelEnv : undefined,
-		extraEnv: Object.keys(extraEnv).length > 0 ? extraEnv : undefined,
+		extraEnv,
 		activate: values.activateAfterSave
 	};
 }

@@ -86,7 +86,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		kind: 'npm',
 		command: 'codex',
 		versionArgs: ['--version'],
-		npmPackage: 'codex-cli',
+		npmPackage: '@openai/codex',
 		optional: true
 	},
 	{

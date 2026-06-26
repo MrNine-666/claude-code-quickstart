@@ -4,7 +4,7 @@ import {resolveContractsDir} from './contracts.js';
 import {atomicWrite} from './fs-utils.js';
 import {claudeDir} from './paths.js';
 
-// 提示词菜单 core：推荐 CLAUDE.md 加载（base + 平台段）+ 整文件覆盖导入。
+// 全局规则菜单 core：推荐 CLAUDE.md 加载（base + 平台段）+ 整文件覆盖导入。
 // 与 installer/windows/steps/ClaudeMd.ps1 / macos/steps/ClaudeMd.zsh 的拼装逻辑对齐：
 //   base.TrimEnd() + "\n\n" + platform.TrimEnd() + "\n"
 // Update 检测已收缩（HC-FU-08 不再检测 ClaudeMd），导入不写指纹种子。
@@ -49,7 +49,7 @@ export function assembleRecommendation(platform: PromptsPlatform = detectPlatfor
 	return `${base.trimEnd()}\n\n${platformContent.trimEnd()}\n`;
 }
 
-/** 加载推荐提示词（供视图预览）。 */
+/** 加载推荐全局规则（供视图预览）。 */
 export function loadRecommendation(platform?: PromptsPlatform): PromptsRecommendation {
 	const content = assembleRecommendation(platform);
 	if (content === null) {
@@ -73,7 +73,7 @@ export type ImportResult = {readonly ok: true; readonly lineCount: number} | {re
 export function importRecommendation(platform?: PromptsPlatform): ImportResult {
 	const content = assembleRecommendation(platform);
 	if (content === null) {
-		return {ok: false, error: '推荐提示词模板不可用（contracts/templates 缺失）'};
+		return {ok: false, error: '推荐全局规则模板不可用（contracts/templates 缺失）'};
 	}
 
 	try {

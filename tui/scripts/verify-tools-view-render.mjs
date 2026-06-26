@@ -29,7 +29,7 @@ await new Promise(resolve => setTimeout(resolve, 300));
 const frame = lastFrame();
 
 // 11.1/11.2：6 菜单，无「检查更新」、无旧「工具安装」label
-for (const label of ['供应商', 'MCP', 'Skills', '提示词', '配置文件', '工具管理']) {
+for (const label of ['供应商', 'MCP', 'Skills', '全局规则', '配置文件', '工具管理']) {
 	assert.ok(frame.includes(label), `左栏含菜单项: ${label}\n---\n${frame}`);
 }
 assert.equal(frame.includes('检查更新'), false, '无独立「检查更新」菜单（已并入工具管理）');

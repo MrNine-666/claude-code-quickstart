@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 import {
 	ConfirmModal,
@@ -7,10 +6,13 @@ import {
 	ScrollList,
 	StatusDot,
 	StatusLabel,
+	ViewHeader,
+	ActionHint,
 	type ScrollListItem
 } from '../components/index.js';
 import { ProviderForm } from './provider-form.js';
 import { truncateToWidth } from '../core/text-utils.js';
+import { clampMove } from '../core/list-utils.js';
 import {
 	buildForm,
 	getMigrationResult,
@@ -27,7 +29,7 @@ import { colors } from '../theme/index.js';
 
 // Provider TUI 视图（OpenTUI 适配）：
 // - 状态卡片列表：profile / 活跃圆点 / Base URL / 脱敏 API key / 模型摘要
-// - 新增（A）与编辑（E）统一走一屏表单，直接编辑、Enter 保存、Esc 返回列表（无独立详情屏）
+// - 新增（A）与编辑（E）统一走一屏表单，直接编辑、Ctrl/Cmd+S 保存、Esc 返回列表（无独立详情屏）
 // - Enter 切换活跃供应商、D 删除确认且禁止删除 active
 //
 // Phase 4 实现：列表屏 + 删除确认 Modal
@@ -97,13 +99,14 @@ export function ProviderView({
 		return next;
 	};
 
-	// 表单屏（add/edit 统一走 ProviderForm）：表单内编辑字段，Enter 保存、Esc 返回列表。
+	// 表单屏（add/edit 统一走 ProviderForm）：表单内编辑字段，Ctrl/Cmd+S 保存、Esc 返回列表。
 	if (screen.kind === 'add') {
 		const model = buildForm({ mode: 'add-builtin' });
 		return (
 			<ProviderForm
 				model={model}
 				active={active}
+				contentHeight={viewportHeight - 2}
 				buildForm={buildForm}
 				save={saveProviderForm}
 				validate={(values) => validateProviderForm(model.mode, values)}
@@ -124,6 +127,7 @@ export function ProviderView({
 			<ProviderForm
 				model={model}
 				active={active}
+				contentHeight={viewportHeight - 2}
 				buildForm={buildForm}
 				save={(input, values) => saveProviderForm({ ...input, profileKey: current.key, profile }, values)}
 				validate={(values) => validateProviderForm('edit', values)}
@@ -139,11 +143,8 @@ export function ProviderView({
 
 	// 列表屏（Phase 4 实现）
 	return (
-		<box flexDirection="column">
-			<box marginBottom={1}>
-				<text attributes={TextAttributes.BOLD}>供应商管理</text>
-				<text fg={colors.muted}>  共 {profiles.length} 个</text>
-			</box>
+		<box flexDirection="column" flexGrow={1}>
+			<ViewHeader title="供应商管理" subtitle={`共 ${profiles.length} 个`} />
 
 			{migrationFailed.length > 0 ? (
 				<box marginBottom={1}>
@@ -156,9 +157,14 @@ export function ProviderView({
 			) : null}
 
 			{profiles.length === 0 ? (
-				<text fg={colors.muted}>
-					暂无供应商配置，按 A 添加供应商（可在表单内选择类型，含自定义）。
-				</text>
+				<box flexDirection="column" flexGrow={1} justifyContent="center">
+					<box flexDirection="column" marginBottom={1}>
+						<text fg={colors.muted}>暂无供应商配置</text>
+						<box marginTop={1}>
+							<ActionHint label="添加第一个供应商（可在表单内选择类型，含自定义）" enabled />
+						</box>
+					</box>
+				</box>
 			) : (
 				<ProviderTable
 					profiles={profiles}
@@ -190,6 +196,7 @@ export function ProviderView({
 						}
 						confirmLabel={current.isActive ? '（已禁用）' : 'Enter 确认删除'}
 						cancelLabel="Esc 取消"
+						tone="danger"
 					/>
 				</box>
 			) : null}
@@ -312,7 +319,6 @@ type ListInputProps = {
 
 function ListInput(props: ListInputProps) {
 	useKeyboard((keyEvent) => {
-		console.log('[ListInput] keyEvent.name:', keyEvent.name, 'active:', props.active); // 调试日志
 		if (!props.active) return;
 
 		switch (keyEvent.name.toLowerCase()) {
@@ -373,20 +379,3 @@ function DeleteInput({
 }
 
 // ── 工具 ──────────────────────────────────────────────────────────────────────
-
-function clampMove(prev: number, delta: number, length: number): number {
-	if (length === 0) {
-		return 0;
-	}
-
-	const next = prev + delta;
-	if (next < 0) {
-		return length - 1;
-	}
-
-	if (next >= length) {
-		return 0;
-	}
-
-	return next;
-}

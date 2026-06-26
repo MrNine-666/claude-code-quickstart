@@ -2,7 +2,7 @@
 
 > 生成时间：2026-06-19 | 最近更新：Manage TUI 从 Ink 迁移到 OpenTUI + Bun 单文件可执行分发 + ccq 直跑（不注入 Profile）+ 整可执行文件热更新（migrate-tui-to-opentui）
 
-Windows 10/11 与 macOS 12+ 双平台的 **Claude Code 开发环境自动化安装器**。Windows 使用 **PS 5.1 单运行时**（前置检测内联 + winget 自动安装 + Basic 三步直装，PS7 作为推荐组件非阻塞安装、不 re-exec），macOS 使用 zsh + Homebrew + nvm 原生入口；install 仅装 Basic 三步（NodeJS / Git / ClaudeCode），进阶项（提示词 / 配置 / 工具管理）搬进 Manage TUI；Manage 重构为根级 **OpenTUI TUI 子项目**（`tui/`，Bun `>=1.2.0`）**6 菜单**（供应商 / MCP / Skills / 提示词 / 配置文件 / 工具管理），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-darwin-x64` / `ccq-darwin-arm64`），ccq 经 PATH 目录天然可达（**不注入 Profile**），支持整可执行文件热更新；契约按「谁用归谁」拆分至 `installer/contracts/`（install 链）与 `tui/contracts/`（TUI 链，**内嵌进可执行文件**）。
+Windows 10/11 与 macOS 12+ 双平台的 **Claude Code 开发环境自动化安装器**。Windows 使用 **PS 5.1 单运行时**（前置检测内联 + winget 自动安装 + Basic 三步直装，PS7 作为推荐组件非阻塞安装、不 re-exec），macOS 使用 zsh + Homebrew + nvm 原生入口；install 仅装 Basic 三步（NodeJS / Git / ClaudeCode），进阶项（全局规则 / 配置 / 工具管理）搬进 Manage TUI；Manage 重构为根级 **OpenTUI TUI 子项目**（`tui/`，Bun `>=1.2.0`）**6 菜单**（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-darwin-x64` / `ccq-darwin-arm64`），ccq 经 PATH 目录天然可达（**不注入 Profile**），支持整可执行文件热更新；契约按「谁用归谁」拆分至 `installer/contracts/`（install 链）与 `tui/contracts/`（TUI 链，**内嵌进可执行文件**）。
 
 ---
 
@@ -11,7 +11,7 @@ Windows 10/11 与 macOS 12+ 双平台的 **Claude Code 开发环境自动化安�
 ```
 claude-code-quickstart/
 ├── dist/                             # 默认构建输出：6 个 artifact（2 .ps1 + 2 .sh + 4 平台 ccq 可执行文件）
-├── tui/                              # 根级 OpenTUI TUI 子项目：6 菜单（供应商/MCP/Skills/提示词/配置文件/工具管理）（src/ → 4 平台可执行文件）
+├── tui/                              # 根级 OpenTUI TUI 子项目：6 菜单（工具管理/供应商/配置文件/全局规则/MCP/Skills）（src/ → 4 平台可执行文件）
 │   └── contracts/                    # TUI 链契约（内嵌进可执行文件）：claude-config / mcp-servers / providers / templates / claude-config-drift.js
 ├── installer/
 │   ├── build.ps1                     # Windows / GitHub Actions Windows job 构建入口（2 个 .ps1）
@@ -74,7 +74,7 @@ NodeJS ─── ClaudeCode ─── Git
 
 | 模块 | 详细文档 | 职责 |
 |------|---------|------|
-| tui/ | [tui/README.md](tui/README.md) | OpenTUI 6 菜单 TUI，Bun 单文件可执行分发（供应商/MCP/Skills/提示词/配置文件/工具管理） |
+| tui/ | [tui/README.md](tui/README.md) | OpenTUI 6 菜单 TUI，Bun 单文件可执行分发（工具管理/供应商/配置文件/全局规则/MCP/Skills） |
 | tui/contracts/ | [tui/contracts/README.md](tui/contracts/README.md) | TUI 链契约（内嵌进可执行文件）：claude-config / mcp-servers / providers / templates / claude-config-drift.js |
 | installer/ | [installer/CLAUDE.md](installer/CLAUDE.md) | Windows/macOS 平台目录、双构建入口、install 链契约（`installer/contracts/`）导航 |
 | installer/contracts/ | [installer/contracts/README.md](installer/contracts/README.md) | install 链契约：steps.json 分组、build.json、cleanup-policy.json + Test-Contracts.ps1（Windows/macOS 共享） |
@@ -135,7 +135,7 @@ pwsh -File installer/windows/Install.ps1
 # 查看步骤列表（仅列 Basic）
 pwsh -File installer/windows/Install.ps1 -ListSteps
 
-# 直接运行 ccq（6 菜单：供应商/MCP/Skills/提示词/配置文件/工具管理）
+# 直接运行 ccq（6 菜单：工具管理/供应商/配置文件/全局规则/MCP/Skills）
 ccq
 
 # 从源码运行 TUI（开发调试）
@@ -176,7 +176,7 @@ zsh -n installer/macos/Install.zsh
 
 ## Manage TUI 架构
 
-**OpenTUI + Bun 单文件可执行迁移**（2026-06-24）：Manage 从 Ink + Node 22 + 目录型 tgz 缓存迁移到 **OpenTUI + Bun `>=1.2.0` + 单文件可执行分发**。`tui/src/` TypeScript 经 `bun build --compile --target bun-windows-x64 --outfile dist/ccq-windows-x64.exe` 交叉编译为 **4 平台单文件可执行产物**（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-darwin-x64` / `ccq-darwin-arm64`），contracts 内嵌进可执行文件（`import.meta.dir` 路径自适应），安装时下载到 `~/.local/bin/ccq[.exe]` 并通过用户级 PATH 目录天然可达（与 Claude Code native installer 的 `claude[.exe]` 同目录），**不注入 Profile**。**TUI 共 6 菜单**（供应商 / MCP / Skills / 提示词 / 配置文件 / 工具管理）；旧 Ink + Node + 目录缓存 wrapper（ManageCore.ps1 / ManageCore.zsh / manage-tui.tgz）全链已删除。
+**OpenTUI + Bun 单文件可执行迁移**（2026-06-24）：Manage 从 Ink + Node 22 + 目录型 tgz 缓存迁移到 **OpenTUI + Bun `>=1.2.0` + 单文件可执行分发**。`tui/src/` TypeScript 经 `bun build --compile --target bun-windows-x64 --outfile dist/ccq-windows-x64.exe` 交叉编译为 **4 平台单文件可执行产物**（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-darwin-x64` / `ccq-darwin-arm64`），contracts 内嵌进可执行文件（`import.meta.dir` 路径自适应），安装时下载到 `~/.local/bin/ccq[.exe]` 并通过用户级 PATH 目录天然可达（与 Claude Code native installer 的 `claude[.exe]` 同目录），**不注入 Profile**。**TUI 共 6 菜单**（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）；旧 Ink + Node + 目录缓存 wrapper（ManageCore.ps1 / ManageCore.zsh / manage-tui.tgz）全链已删除。
 
 ```
 安装后调用链：
@@ -186,9 +186,9 @@ zsh -n installer/macos/Install.zsh
     ├─ non-TTY 守卫（HC-NON-TTY）
     ├─ 内嵌版本号（CCQ_VERSION，供热更新比对）
     └─ App（6 菜单 + 整可执行文件热更新）
-         ├─ 供应商        ├─ MCP
-         ├─ Skills        ├─ 提示词
-         ├─ 配置文件       └─ 工具管理（ClaudeCode+Ccline/CcgWorkflow/OpenSpec/CodexCli/AntigravityCli）
+         ├─ 工具管理      ├─ 供应商
+         ├─ 配置文件       ├─ 全局规则
+         ├─ MCP           └─ Skills
 
 安装时调用链：
   Install.ps1 / Install.zsh（末尾确认下载 ccq 可执行文件）

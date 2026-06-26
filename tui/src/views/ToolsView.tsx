@@ -1,9 +1,8 @@
-import React, { useEffect, useReducer, useState } from 'react';
+import React, { useEffect, useMemo, useReducer } from 'react';
 import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
-import { Card, ErrorPanel, ProgressLog, StatusDot, StatusLabel, type StatusDotKind } from '../components/index.js';
+import { Card, ConfirmModal, ErrorPanel, StatusDot, StatusLabel, ViewHeader, type StatusDotKind } from '../components/index.js';
 import { colors } from '../theme/index.js';
-import { truncateToWidth } from '../core/text-utils.js';
 import type { ProgressCallback } from '../core/exec.js';
 import type { DetectionState } from '../services/async-detection.js';
 import type { DetectionCache } from '../hooks/use-detection-cache.js';
@@ -16,9 +15,10 @@ import {
 	isAnyBusy,
 	itemStatusOf,
 	reduceToolsViewState,
-	selectedInstallTargets,
 	updatableComponents,
-	GRID_COLUMNS,
+	activeProgressTasks,
+	CARD_WIDTH,
+	computeColumns,
 	type ComponentItemStatus,
 	type ToolsViewAction,
 	type ToolsViewState
@@ -31,8 +31,6 @@ type Dispatch = React.Dispatch<ToolsViewAction>;
 // 卡片按状态暴露操作：未装→安装 / 可更新→更新 / 已装→卸载（u 强确认）。
 // 检测缓存提升到 App 层：切走再切回不重跑；r 键刷新。
 // OpenTUI 适配：useKeyboard 替代 useInput，<box>/<text> 小写元素，<input> 替代 ink-text-input。
-
-const CARD_WIDTH = 30;
 
 export type ToolsViewServices = {
 	readonly detectComponents: () => Promise<readonly ManagedComponent[]>;
@@ -49,13 +47,17 @@ export type ToolsViewProps = {
 	readonly cache: DetectionCache<ManagedComponent[]>;
 	readonly active?: boolean;
 	readonly viewportHeight?: number;
+	readonly contentWidth?: number;
 	readonly onSubModeChange?: (subMode: string) => void;
 	readonly onExitToNav?: () => void;
 };
 
-export function ToolsView({ services, cache, active = true, viewportHeight = 16, onSubModeChange, onExitToNav }: ToolsViewProps) {
+export function ToolsView({ services, cache, active = true, viewportHeight = 16, contentWidth, onSubModeChange, onExitToNav }: ToolsViewProps) {
 	const [view, dispatch] = useReducer(reduceToolsViewState, undefined, createInitialToolsViewState);
 	const detection = cache.state;
+
+	// 网格列数随终端内容区宽度自适应（卡宽固定），导航上下键 delta 跟随列数，避免视觉/语义错位。
+	const columns = useMemo(() => computeColumns(contentWidth ?? 52), [contentWidth]);
 
 	useEffect(() => {
 		if (detection.status === 'success') {
@@ -81,8 +83,14 @@ export function ToolsView({ services, cache, active = true, viewportHeight = 16,
 		// OpenTUI 回调收到 KeyEvent 对象，取 .name 得到键名字符串。
 		const key = keyEvent.name;
 
-		// grid 模式 Esc/← 退回左侧导航（与其他视图一致）。
-		if (view.mode === 'grid' && (key === 'escape' || key === 'left' || key === 'arrowleft') && onExitToNav) {
+		// grid 模式 Esc 退回左侧导航；←/→ 留给网格内光标移动（横向布局下选中相邻工具）。
+		if (view.mode === 'grid' && key === 'escape' && onExitToNav) {
+			onExitToNav();
+			return;
+		}
+
+		// grid 模式选中第一个时，← 直接退回左侧导航（行首边界快捷返回，与 Esc 等效）。
+		if (view.mode === 'grid' && (key === 'left' || key === 'arrowleft') && view.cursor === 0 && onExitToNav) {
 			onExitToNav();
 			return;
 		}
@@ -96,24 +104,19 @@ export function ToolsView({ services, cache, active = true, viewportHeight = 16,
 			return; // 执行中禁用操作
 		}
 
-		handleGridKey(key, view, services, dispatch, cache);
+		handleGridKey(key, view, services, dispatch, cache, columns);
 	});
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<box marginBottom={1}>
-				<text fg={colors.primary} attributes={TextAttributes.BOLD}>
-					工具管理
-				</text>
-				<text attributes={TextAttributes.DIM}>  安装 · 更新 · 卸载（全生命周期）</text>
-			</box>
+			<ViewHeader title="工具管理" subtitle="安装 · 更新 · 卸载（全生命周期）" />
 			{view.mode === 'confirm-uninstall' ? (
 				<UninstallConfirm view={view} dispatch={dispatch} services={services} cache={cache} active={active} />
 			) : (
 				<>
 					{renderDetectionNotice(detection.status)}
 					{renderGrid(view)}
-					{view.busyAction || isAnyBusy(view) ? <ProgressLog title="执行进度" messages={view.progress} /> : null}
+					{activeProgressTasks(view).length > 0 ? <ActiveProgressTasks tasks={activeProgressTasks(view)} /> : null}
 					{view.notice ? <text fg={colors.success}>{view.notice}</text> : null}
 					{view.errorText ? <ErrorPanel message={view.errorText} /> : null}
 				</>
@@ -129,17 +132,18 @@ function handleGridKey(
 	view: ToolsViewState,
 	services: ToolsViewServices,
 	dispatch: Dispatch,
-	cache: DetectionCache<ManagedComponent[]>
+	cache: DetectionCache<ManagedComponent[]>,
+	columns: number
 ): void {
 	const k = key.toLowerCase();
 
 	if (k === 'up' || k === 'arrowup') {
-		dispatch({ type: 'nav', delta: -GRID_COLUMNS });
+		dispatch({ type: 'nav', delta: -columns });
 		return;
 	}
 
 	if (k === 'down' || k === 'arrowdown') {
-		dispatch({ type: 'nav', delta: GRID_COLUMNS });
+		dispatch({ type: 'nav', delta: columns });
 		return;
 	}
 
@@ -155,11 +159,6 @@ function handleGridKey(
 
 	if (k === 'enter' || k === 'return') {
 		enterDefaultAction(view, services, dispatch, cache);
-		return;
-	}
-
-	if (k === ' ') {
-		dispatch({ type: 'toggle-select' });
 		return;
 	}
 
@@ -187,13 +186,6 @@ function enterDefaultAction(view: ToolsViewState, services: ToolsViewServices, d
 		return;
 	}
 
-	// 多选存在时，Enter 批量安装选中的未装项。
-	const batch = selectedInstallTargets(view);
-	if (batch.length > 0) {
-		installBatch(batch, services, dispatch, cache);
-		return;
-	}
-
 	if (!component.installed) {
 		installOne(component, services, dispatch, cache);
 		return;
@@ -209,14 +201,14 @@ function enterDefaultAction(view: ToolsViewState, services: ToolsViewServices, d
 
 // ── 安装（单项 / 批量，失败隔离） ─────────────────────────────────────────────
 
-function progressSink(dispatch: Dispatch): ProgressCallback {
-	return (event) => dispatch({ type: 'progress', message: event.message });
+function progressSink(dispatch: Dispatch, fallbackId: string): ProgressCallback {
+	return (event) => dispatch({ type: 'progress', id: event.componentId ?? fallbackId, message: event.message });
 }
 
 function installOne(component: ManagedComponent, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
 	dispatch({ type: 'item-start', id: component.id, action: 'install' });
 	void services
-		.installComponent(component.id, progressSink(dispatch))
+		.installComponent(component.id, progressSink(dispatch, component.id))
 		.then(async (outcome) => {
 			const components = await services.detectComponents();
 			if (outcome.success) {
@@ -232,42 +224,12 @@ function installOne(component: ManagedComponent, services: ToolsViewServices, di
 		});
 }
 
-function installBatch(
-	ids: readonly ComponentId[],
-	services: ToolsViewServices,
-	dispatch: Dispatch,
-	cache: DetectionCache<ManagedComponent[]>
-): void {
-	dispatch({ type: 'batch-start', action: 'install', ids });
-	void services
-		.installMultiple(ids, progressSink(dispatch))
-		.then(async (outcomes) => {
-			const failed = outcomes.filter((item) => !item.success);
-			const components = await services.detectComponents();
-			const summary =
-				failed.length === 0
-					? `已安装 ${ids.length} 个组件`
-					: `${outcomes.length - failed.length}/${outcomes.length} 成功，失败: ${failed.map((item) => item.id).join(', ')}`;
-			if (failed.length === 0) {
-				dispatch({ type: 'batch-done', summary, components });
-			} else {
-				dispatch({ type: 'batch-failed', error: summary, components });
-			}
-
-			cache.refresh();
-		})
-		.catch(async (error: unknown) => {
-			const components = await services.detectComponents().catch(() => []);
-			dispatch({ type: 'batch-failed', error: errorMessage(error), components });
-		});
-}
-
 // ── 更新（单项 / 一键） ───────────────────────────────────────────────────────
 
 function updateOne(component: ManagedComponent, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
 	dispatch({ type: 'item-start', id: component.id, action: 'update' });
 	void services
-		.updateComponents([component], progressSink(dispatch))
+		.updateComponents([component], progressSink(dispatch, component.id))
 		.then(async (result) => {
 			const components = await services.detectComponents();
 			const failed = result.updatedItems.some((item) => item.startsWith(`failed::${component.id}`));
@@ -294,7 +256,7 @@ function updateAll(view: ToolsViewState, services: ToolsViewServices, dispatch: 
 
 	dispatch({ type: 'batch-start', action: 'update', ids: targets.map((item) => item.id) });
 	void services
-		.updateComponents(targets, progressSink(dispatch))
+		.updateComponents(targets, progressSink(dispatch, targets[0]?.id ?? 'batch-update'))
 		.then(async (result) => {
 			const components = await services.detectComponents();
 			const failedIds = result.updatedItems.filter((item) => item.startsWith('failed::')).map((item) => item.split('::')[1]);
@@ -317,7 +279,7 @@ function updateAll(view: ToolsViewState, services: ToolsViewServices, dispatch: 
 		});
 }
 
-// ── 卸载强确认 ─────────────────────────────────────────────────────────────────
+// ── 卸载确认 ─────────────────────────────────────────────────────────────────
 
 function UninstallConfirm({
 	view,
@@ -332,19 +294,14 @@ function UninstallConfirm({
 	readonly cache: DetectionCache<ManagedComponent[]>;
 	readonly active: boolean;
 }) {
-	const [value, setValue] = useState('');
-
 	const target = view.components.find((item) => item.id === view.uninstallTarget);
 	if (!target) {
 		return null;
 	}
 
-	const matched = value.trim().toLowerCase() === target.name.toLowerCase();
-
 	useKeyboard((keyEvent) => {
 		if (!active) return;
 
-		// OpenTUI 回调收到 KeyEvent 对象，取 .name 得到键名字符串。
 		const key = keyEvent.name;
 
 		if (key === 'escape') {
@@ -352,31 +309,13 @@ function UninstallConfirm({
 			return;
 		}
 
-		if ((key === 'enter' || key === 'return') && matched) {
-			// 先同步确认词到 state，reducer confirm-uninstall（在 runUninstall 内）再据此校验。
-			dispatch({ type: 'confirm-input', value });
+		if (key === 'enter' || key === 'return') {
 			runUninstall(target, services, dispatch, cache);
-		}
-
-		// 处理字符输入
-		if (key === 'backspace' || key === 'delete') {
-			setValue((prev) => prev.slice(0, -1));
-			return;
-		}
-
-		// 可打印字符追加（排除修饰键组合与 tab）
-		if (key.length === 1 && !keyEvent.ctrl && !keyEvent.meta && !keyEvent.option && key !== 'tab') {
-			setValue((prev) => prev + key);
 		}
 	});
 
 	return (
 		<box flexDirection="column">
-			<box marginBottom={1}>
-				<text fg={colors.danger} attributes={TextAttributes.BOLD}>
-					⚠ 卸载确认：{target.name}
-				</text>
-			</box>
 			{target.isBase ? (
 				<box marginBottom={1}>
 					<text fg={colors.danger} attributes={TextAttributes.BOLD}>
@@ -384,21 +323,14 @@ function UninstallConfirm({
 					</text>
 				</box>
 			) : null}
-			<box marginBottom={1}>
-				<text>输入组件名称 </text>
-				<text fg={colors.warning} attributes={TextAttributes.BOLD}>
-					{target.name}
-				</text>
-				<text> 以确认卸载：</text>
-			</box>
-			<box borderStyle="rounded" borderColor={matched ? colors.danger : 'gray'} paddingX={1}>
-				<text>{value || target.name}</text>
-				<text>_</text>
-			</box>
-			<box marginTop={1}>
-				<text attributes={TextAttributes.DIM}>{matched ? 'Enter 确认卸载' : '确认词不匹配'}  Esc 取消</text>
-			</box>
-			{view.progress.length > 0 ? <ProgressLog title="执行进度" messages={view.progress} /> : null}
+			<ConfirmModal
+				title={`卸载确认：${target.name}`}
+				message={target.isBase ? '基础组件卸载风险极高，确认继续？' : '确认卸载此组件？此操作不可撤销。'}
+				confirmLabel="Enter 确认卸载"
+				cancelLabel="Esc 取消"
+				tone="danger"
+			/>
+			{activeProgressTasks(view).length > 0 ? <ActiveProgressTasks tasks={activeProgressTasks(view)} /> : null}
 			{view.errorText ? <ErrorPanel message={view.errorText} /> : null}
 		</box>
 	);
@@ -407,7 +339,7 @@ function UninstallConfirm({
 function runUninstall(component: ManagedComponent, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
 	dispatch({ type: 'confirm-uninstall' });
 	void services
-		.uninstallComponent(component.id, progressSink(dispatch))
+		.uninstallComponent(component.id, progressSink(dispatch, component.id))
 		.then(async (outcome) => {
 			const components = await services.detectComponents();
 			if (outcome.success) {
@@ -446,16 +378,17 @@ function renderGrid(view: ToolsViewState): React.ReactNode {
 	}
 
 	// flex 自由换行：每卡固定宽度，按终端宽度自动排布（对齐原 UpdateView 范式）。
+	// 卡片间留 1 字符水平间距（marginRight）提升视觉呼吸感。
 	return (
-		<box flexWrap="wrap">
+		<box flexDirection="row" flexWrap="wrap">
 			{view.components.map((component, index) => (
-				<ToolCard
-					key={component.id}
-					component={component}
-					focused={index === view.cursor}
-					status={itemStatusOf(view, component.id)}
-					selected={view.selected.includes(component.id)}
-				/>
+				<box key={component.id} marginRight={1} marginBottom={0}>
+					<ToolCard
+						component={component}
+						focused={index === view.cursor}
+						status={itemStatusOf(view, component.id)}
+					/>
+				</box>
 			))}
 		</box>
 	);
@@ -464,24 +397,29 @@ function renderGrid(view: ToolsViewState): React.ReactNode {
 function ToolCard({
 	component,
 	focused,
-	status,
-	selected
+	status
 }: {
 	readonly component: ManagedComponent;
 	readonly focused: boolean;
 	readonly status: ComponentItemStatus;
-	readonly selected: boolean;
 }) {
 	const dot = dotKindFor(component, status);
 	return (
-		<Card title={component.name} titleRight={<StatusDot kind={dot.kind} label={dot.label} />} focused={focused} width={CARD_WIDTH} minHeight={4} selected={selected}>
-			<text attributes={TextAttributes.DIM}>
-				{component.currentVersion || '-'} → {component.latestVersion || '-'}
-			</text>
-			<box height={1} overflow="hidden">
-				<text attributes={TextAttributes.DIM}>{truncateToWidth(component.description, CARD_WIDTH - 4)}</text>
-			</box>
+		<Card title={component.name} focused={focused} width={CARD_WIDTH} minHeight={4}>
+			<StatusDot kind={dot.kind} label={dot.label} />
 		</Card>
+	);
+}
+
+/** 活跃任务进度：遍历进行中的组件，每个一项；完成（离开进行时态）自动从列表消失，下方上移补齐。 */
+function ActiveProgressTasks({tasks}: {readonly tasks: readonly {readonly id: string; readonly name: string; readonly message: string}[]}) {
+	return (
+		<box flexDirection="column">
+			<text attributes={TextAttributes.BOLD}>执行进度</text>
+			{tasks.map(task => (
+				<text key={task.id}>· {task.name} · {task.message}</text>
+			))}
+		</box>
 	);
 }
 
@@ -504,7 +442,7 @@ function dotKindFor(component: ManagedComponent, status: ComponentItemStatus): {
 	}
 
 	if (status === 'done') {
-		return { kind: 'latest', label: '已完成' };
+		return { kind: 'latest', label: component.currentVersion || '已完成' };
 	}
 
 	if (!component.installed) {
@@ -512,14 +450,15 @@ function dotKindFor(component: ManagedComponent, status: ComponentItemStatus): {
 	}
 
 	if (component.hasUpdate === true) {
-		return { kind: 'updatable', label: '可更新' };
+		return { kind: 'updatable', label: `${component.currentVersion || '-'} → ${component.latestVersion || '-'}` };
 	}
 
 	if (component.hasUpdate === false) {
-		return { kind: 'latest', label: '最新' };
+		return { kind: 'latest', label: component.currentVersion || '最新' };
 	}
 
-	return { kind: 'unknown', label: '未知' };
+	// hasUpdate === null：已安装但无法判定更新（如 AntigravityCli 无远端版本源），显示版本号 + 无法检测更新标识。
+	return { kind: 'latest', label: `${component.currentVersion || '已安装'} · 无法检测更新` };
 }
 
 // ── 工具 ─────────────────────────────────────────────────────────────────────

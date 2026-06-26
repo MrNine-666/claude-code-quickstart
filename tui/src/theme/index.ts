@@ -11,6 +11,7 @@ export const PRIMARY_BRIGHT = '#E8946A';
 export const colors = {
 	primary: PRIMARY,
 	primaryBright: PRIMARY_BRIGHT,
+	focusedBackground: '#2A1A10',
 	success: 'green',
 	warning: 'yellow',
 	danger: 'red',
@@ -18,11 +19,18 @@ export const colors = {
 	muted: 'gray'
 } as const;
 
-/** 区域/卡片边框色：活跃用主色，非活跃用弱化灰 */
+/** 区域/卡片边框色：活跃用主色，非活跃用深灰（降低干扰） */
 export const borderColors = {
 	active: PRIMARY,
-	inactive: 'gray'
+	inactive: '#555555',
+	formItem: '#333333'
 } as const;
+
+/** 区域边框样式：活跃用 double（加粗视觉），非活跃用 rounded（轻量） */
+export const borderStyles = {
+	active: 'double' as const,
+	inactive: 'rounded' as const
+};
 
 /**
  * 状态圆点语义色（检查更新页 + 通用状态指示，对齐 SC-3）

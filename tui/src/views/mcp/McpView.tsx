@@ -1,36 +1,33 @@
-import React, { useEffect, useState } from 'react';
-import { TextAttributes } from '@opentui/core';
-import { useKeyboard } from '@opentui/react';
+import React, {useEffect, useMemo, useState} from 'react';
+import {useKeyboard} from '@opentui/react';
 import {
 	ConfirmModal,
-	DetailPanel,
-	DetailScreen,
 	ErrorPanel,
 	ScrollList,
 	StatusDot,
-	type StatusDotKind,
-	type ScrollListItem
+	StatusLabel,
+	ViewHeader,
+	type ScrollListItem,
+	type StatusDotKind
 } from '../../components/index.js';
-import { colors } from '../../theme/index.js';
-import { truncateToWidth } from '../../core/text-utils.js';
+import {colors} from '../../theme/index.js';
+import {clampMove} from '../../core/list-utils.js';
 import {
 	disableMcpServer,
 	enableMcpServer,
 	loadMcpDetail,
 	loadMcpStatus,
-	removeMcpServer,
-	buildMcpForm,
-	type McpServiceResult
+	removeMcpServer
 } from '../../services/mcp-service.js';
-import type { McpServerDetail, McpStatusRow } from '../../core/mcp.js';
-import type { McpFormModel } from '../../core/mcp-form.js';
-import { McpFormView } from './McpFormView.js';
-import { clampIndex } from './mcp-view-model.js';
+import type {McpServerStatus, McpStatusRow} from '../../core/mcp.js';
+import {configToJson} from '../../core/mcp-form.js';
+import {McpFormView} from './McpFormView.js';
 
-// MCP TUI 视图（OpenTUI 适配 - Phase 4 基础实现）：
-// - 列表屏：状态卡片（Active/Disabled/Missing/Custom + 圆点）
-// - 详情屏：Server 详细信息 + 操作（T 启用/禁用、X 删除）
-// - Phase 5 实现：表单屏（E 编辑，含字段↔JSON 双向联动）
+// MCP TUI 视图（OpenTUI 适配）：
+// - 列表屏：仅展示已安装（过滤 Missing），行只留状态圆点 + Id
+// - Enter 切换状态（Active/Custom↔Disabled），A 新增，E 编辑，D 删除（无独立详情屏）
+// - 表单屏：复用 McpFormView（模板 + Server ID + JSON 编辑）
+// - 操作结果统一走 banner，不离开列表（除表单屏）
 
 export type McpViewProps = {
 	// 本视图是否获得右侧内容区焦点（focus === 'view'）。
@@ -39,263 +36,213 @@ export type McpViewProps = {
 	readonly viewportHeight?: number;
 	// 上报当前子模式给 App footer。
 	readonly onSubModeChange?: (subMode: string) => void;
-	// 在列表屏按 Esc 时请求退回左侧导航。
+	// 在列表屏按 Esc/← 时请求退回左侧导航。
 	readonly onExitToNav: () => void;
 };
 
-function statusKind(status: McpStatusRow['Status']): StatusDotKind {
+type McpScreen =
+	| {readonly kind: 'list'}
+	| {readonly kind: 'add'}
+	| {readonly kind: 'edit'; readonly serverId: string; readonly initialJson: string}
+	| {readonly kind: 'confirm-remove'; readonly serverId: string};
+
+type Banner =
+	| {readonly kind: 'none'}
+	| {readonly kind: 'success'; readonly message: string}
+	| {readonly kind: 'error'; readonly message: string};
+
+function statusKind(status: McpServerStatus): StatusDotKind {
 	switch (status) {
 		case 'Active':
 		case 'Custom':
 			return 'latest';
 		case 'Disabled':
-		case 'Missing':
 			return 'notInstalled';
 		default:
 			return 'unknown';
 	}
 }
 
-// 详情屏右上角操作提示（与 shortcutsFor detail 一致，纯展示）。
-function detailActionsHint(detail: McpServerDetail): string {
-	const parts: string[] = [];
-	if (!detail.isEnvFile && detail.definition) {
-		parts.push('E 编辑');
-	}
-
-	if (detail.status === 'Active' || detail.status === 'Disabled') {
-		parts.push(detail.status === 'Active' ? 'T 禁用' : 'T 启用');
-	}
-
-	if (detail.status !== 'Missing') {
-		parts.push('X 删除');
-	}
-
-	parts.push('Esc 返回');
-	return parts.join(' · ');
-}
-
-function detailItems(detail: McpServerDetail): { label: string; value: React.ReactNode }[] {
-	const def = detail.definition;
-	const config = detail.config as
-		| { command?: string; args?: string[]; url?: string; env?: Record<string, string> }
-		| null;
-	const items: { label: string; value: React.ReactNode }[] = [
-		{ label: 'ID', value: detail.id },
-		{ label: '名称', value: def?.Name ?? detail.id },
-		{ label: '描述', value: def?.Description ?? '-' },
-		{ label: '类型', value: def?.McpType ?? (config?.url ? 'http' : 'stdio') },
-		{ label: '状态', value: detail.status }
-	];
-
-	if (config?.command) {
-		items.push({ label: 'command', value: config.command });
-	}
-
-	if (config?.args && config.args.length > 0) {
-		items.push({ label: 'args', value: config.args.join(' ') });
-	}
-
-	if (config?.url) {
-		items.push({ label: 'url', value: config.url });
-	}
-
-	if (config?.env && Object.keys(config.env).length > 0) {
-		items.push({ label: 'env', value: Object.keys(config.env).join(', ') });
-	}
-
-	items.push({ label: 'permissions', value: detail.permissions.length > 0 ? detail.permissions.join(', ') : '无' });
-	items.push({
-		label: 'vault',
-		value: detail.vaultEntry ? `已记录（disabled=${detail.vaultEntry.disabled ?? false}）` : '无'
-	});
-
-	if (detail.isEnvFile) {
-		items.push({ label: '提示', value: '该 MCP 使用 env-file 凭据，由安装链管理，本面板只读' });
-	}
-
-	return items;
-}
-
-type ViewMessage = { readonly text: string; readonly isError: boolean };
-
-export default function McpView({ active, viewportHeight = 16, onSubModeChange, onExitToNav }: McpViewProps) {
-	const [mode, setMode] = useState<'list' | 'detail' | 'confirm-remove' | 'message' | 'form'>('list');
+export default function McpView({active, viewportHeight = 16, onSubModeChange, onExitToNav}: McpViewProps) {
 	const [rows, setRows] = useState<McpStatusRow[]>(() => loadMcpStatus());
-	const [listIndex, setListIndex] = useState(0);
-	const [detail, setDetail] = useState<McpServerDetail | null>(null);
-	const [formModel, setFormModel] = useState<McpFormModel | null>(null);
-	const [message, setMessage] = useState<ViewMessage | null>(null);
+	const [selected, setSelected] = useState(0);
+	const [screen, setScreen] = useState<McpScreen>({kind: 'list'});
+	const [banner, setBanner] = useState<Banner>({kind: 'none'});
+
+	// 仅展示已安装过的（过滤 Missing：契约里有但用户从未配置的）。
+	const visibleRows = useMemo(() => rows.filter((row) => row.Status !== 'Missing'), [rows]);
+	const safeSelected = visibleRows.length === 0 ? 0 : Math.min(selected, visibleRows.length - 1);
+	const current = visibleRows[safeSelected] ?? null;
 
 	// 进入视图时刷新状态表并复位到列表。
 	useEffect(() => {
 		if (active) {
 			setRows(loadMcpStatus());
-			setMode('list');
-			setListIndex((current) => clampIndex(current, rows.length));
+			setSelected(0);
+			setScreen({kind: 'list'});
+			setBanner({kind: 'none'});
 		}
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [active]);
 
-	// 上报当前子模式给 App footer。
+	// 上报当前子模式给 App footer：表单屏统一 'form'，空列表 'empty'，否则用 screen.kind。
 	useEffect(() => {
-		if (active) {
-			onSubModeChange?.(mode);
+		if (!active) {
+			return;
 		}
-	}, [active, mode, onSubModeChange]);
 
-	function refreshList(): void {
+		const subMode =
+			screen.kind === 'add' || screen.kind === 'edit'
+				? 'form'
+				: screen.kind === 'list' && visibleRows.length === 0
+					? 'empty'
+					: screen.kind;
+		onSubModeChange?.(subMode);
+	}, [active, screen.kind, visibleRows.length, onSubModeChange]);
+
+	function refresh(): void {
 		const next = loadMcpStatus();
+		const visibleCount = next.filter((row) => row.Status !== 'Missing').length;
 		setRows(next);
-		setListIndex((current) => clampIndex(current, next.length));
+		setSelected((prev) => Math.min(prev, Math.max(0, visibleCount - 1)));
 	}
 
-	function reportResult(result: McpServiceResult, successText: string): void {
-		setMessage(result.ok ? { text: successText, isError: false } : { text: result.error, isError: true });
-		setMode('message');
+	function toggleCurrent(): void {
+		if (!current) {
+			return;
+		}
+
+		const willDisable = current.Status !== 'Disabled';
+		const result = willDisable ? disableMcpServer(current.Id) : enableMcpServer(current.Id);
+		refresh();
+		setBanner(
+			result.ok
+				? {kind: 'success', message: `已${willDisable ? '禁用' : '启用'} ${current.Id}`}
+				: {kind: 'error', message: result.error}
+		);
 	}
 
-	// Phase 5 TODO: 实现表单屏（含字段↔JSON 双向联动）
-	// 表单屏（E 编辑，复用通用 FormPanel，本期基础字段编辑，字段↔JSON 联动分两步走）
-	if (mode === 'form' && formModel) {
+	// 表单屏（add/edit 统一走 McpFormView）。
+	if (screen.kind === 'add') {
 		return (
 			<McpFormView
-				model={formModel}
+				mode="add"
+				serverId=""
+				initialJson={configToJson(null)}
 				active={active}
-				onSaved={(msg) => {
-					setMessage({ text: msg, isError: false });
-					setMode('message');
+				contentHeight={viewportHeight - 2}
+				onCancel={() => setScreen({kind: 'list'})}
+				onSaved={(message) => {
+					refresh();
+					setBanner({kind: 'success', message});
+					setScreen({kind: 'list'});
 				}}
-				onError={(err) => {
-					setMessage({ text: err, isError: true });
-					setMode('message');
-				}}
-				onCancel={() => setMode('detail')}
 			/>
 		);
 	}
 
-	if (mode === 'message') {
+	if (screen.kind === 'edit') {
 		return (
-			<box flexDirection="column">
-				<text attributes={TextAttributes.BOLD}>操作结果</text>
-				<box marginTop={1}>
-					{message?.isError ? <ErrorPanel message={message.text} /> : <text fg={colors.primary}>{message?.text}</text>}
-				</box>
-				<box marginTop={1}>
-					<text attributes={TextAttributes.DIM}>按任意键返回列表</text>
-				</box>
-				<MessageInput
-					active={active}
-					onDismiss={() => {
-						refreshList();
-						setMode('list');
-					}}
-				/>
-			</box>
-		);
-	}
-
-	if (mode === 'detail' && detail) {
-		return (
-			<DetailScreen title={detail.id} actionsHint={detailActionsHint(detail)}>
-				<DetailPanel items={detailItems(detail)} />
-				<DetailInput
-					active={active}
-					detail={detail}
-					onBack={() => {
-						refreshList();
-						setMode('list');
-					}}
-					onEdit={() => {
-						if (!detail.definition) {
-							reportResult({ ok: false, error: '该 MCP 无契约定义，暂不支持编辑' }, '');
-							return;
-						}
-
-						const config = detail.config as Parameters<typeof buildMcpForm>[2];
-						const model = buildMcpForm(detail.id, detail.definition, config, 'edit-builtin');
-						if (!model.editable) {
-							reportResult({ ok: false, error: model.note ?? '该 MCP 不支持编辑保存' }, '');
-							return;
-						}
-
-						setFormModel(model);
-						setMode('form');
-					}}
-					onToggle={() => {
-						const result = detail.status === 'Active' ? disableMcpServer(detail.id) : enableMcpServer(detail.id);
-						reportResult(result, detail.status === 'Active' ? `已禁用 ${detail.id}` : `已启用 ${detail.id}`);
-					}}
-					onRemove={() => {
-						setMode('confirm-remove');
-					}}
-				/>
-			</DetailScreen>
+			<McpFormView
+				mode="edit"
+				serverId={screen.serverId}
+				initialJson={screen.initialJson}
+				active={active}
+				contentHeight={viewportHeight - 2}
+				onCancel={() => setScreen({kind: 'list'})}
+				onSaved={(message) => {
+					refresh();
+					setBanner({kind: 'success', message});
+					setScreen({kind: 'list'});
+				}}
+			/>
 		);
 	}
 
 	// 列表屏
-	const items: ScrollListItem[] = rows.map((row) => ({
+	const items: ScrollListItem[] = visibleRows.map((row) => ({
 		key: row.Id,
 		title: row.Id,
-		leading: <StatusDot kind={statusKind(row.Status)} />,
-		body: (
-			<text attributes={TextAttributes.DIM}>
-				{truncateToWidth(
-					`${row.Name} · ${row.Status}${row.McpType ? ` · ${row.McpType}` : ''}`,
-					64
-				)}
-			</text>
-		)
+		leading: <StatusDot kind={statusKind(row.Status)} />
 	}));
 
 	return (
-		<box flexDirection="column">
-			<box marginBottom={1}>
-				<text attributes={TextAttributes.BOLD}>MCP Server 管理</text>
-				<text attributes={TextAttributes.DIM}>  共 {rows.length} 个</text>
-			</box>
+		<box flexDirection="column" flexGrow={1}>
+			<ViewHeader title="MCP Server 管理" subtitle={`共 ${visibleRows.length} 个`} />
 
-			{rows.length === 0 ? (
-				<text attributes={TextAttributes.DIM}>暂无 MCP Server 配置。</text>
+			{visibleRows.length === 0 ? (
+				<box flexDirection="column" flexGrow={1} justifyContent="center">
+					<text fg={colors.muted}>暂无 MCP Server</text>
+				</box>
 			) : (
-				<ScrollList items={items} cursor={listIndex} viewportHeight={viewportHeight} reservedRows={2} />
+				<ScrollList items={items} cursor={safeSelected} viewportHeight={viewportHeight} reservedRows={3} />
 			)}
 
-			{mode === 'confirm-remove' && detail ? (
+			{banner.kind === 'success' ? (
+				<box marginTop={1}>
+					<StatusLabel kind="pass" label={banner.message} />
+				</box>
+			) : null}
+			{banner.kind === 'error' ? (
+				<box marginTop={1}>
+					<ErrorPanel message={banner.message} />
+				</box>
+			) : null}
+
+			{screen.kind === 'confirm-remove' && current ? (
 				<box marginTop={1}>
 					<ConfirmModal
 						title="确认删除 MCP Server"
-						message={`即将删除 MCP Server ${detail.id}，此操作不可撤销。`}
+						message={`即将删除 MCP Server ${current.Id}，此操作不可撤销。`}
 						confirmLabel="Enter 确认删除"
 						cancelLabel="Esc 取消"
+						tone="danger"
 					/>
 				</box>
 			) : null}
 
 			<ListInput
-				active={active && mode === 'list'}
-				hasRows={rows.length > 0}
-				onMove={(delta) => setListIndex((prev) => clampMove(prev, delta, rows.length))}
-				onSelect={() => {
-					const current = rows[listIndex];
+				active={active && screen.kind === 'list'}
+				hasCurrent={current !== null}
+				onMove={(delta) => setSelected((prev) => clampMove(prev, delta, visibleRows.length))}
+				onToggle={toggleCurrent}
+				onAdd={() => {
+					setBanner({kind: 'none'});
+					setScreen({kind: 'add'});
+				}}
+				onEdit={() => {
+					if (!current) {
+						return;
+					}
+
+					const detail = loadMcpDetail(current.Id);
+					setBanner({kind: 'none'});
+					setScreen({kind: 'edit', serverId: current.Id, initialJson: configToJson(detail.config)});
+				}}
+				onDelete={() => {
 					if (current) {
-						setDetail(loadMcpDetail(current.Id));
-						setMode('detail');
+						setScreen({kind: 'confirm-remove', serverId: current.Id});
 					}
 				}}
 				onExit={onExitToNav}
 			/>
 
-			<RemoveInput
-				active={active && mode === 'confirm-remove'}
-				onCancel={() => setMode('detail')}
+			<ConfirmInput
+				active={active && screen.kind === 'confirm-remove'}
+				onCancel={() => setScreen({kind: 'list'})}
 				onConfirm={() => {
-					if (detail) {
-						const result = removeMcpServer(detail.id, true);
-						reportResult(result, `已删除 MCP Server ${detail.id}`);
+					if (!current) {
+						setScreen({kind: 'list'});
+						return;
 					}
+
+					const result = removeMcpServer(current.Id, true);
+					refresh();
+					setBanner(
+						result.ok
+							? {kind: 'success', message: `已删除 MCP Server ${current.Id}`}
+							: {kind: 'error', message: result.error}
+					);
+					setScreen({kind: 'list'});
 				}}
 			/>
 		</box>
@@ -306,19 +253,27 @@ export default function McpView({ active, viewportHeight = 16, onSubModeChange, 
 
 function ListInput({
 	active,
-	hasRows,
+	hasCurrent,
 	onMove,
-	onSelect,
+	onToggle,
+	onAdd,
+	onEdit,
+	onDelete,
 	onExit
 }: {
 	readonly active: boolean;
-	readonly hasRows: boolean;
+	readonly hasCurrent: boolean;
 	readonly onMove: (delta: number) => void;
-	readonly onSelect: () => void;
+	readonly onToggle: () => void;
+	readonly onAdd: () => void;
+	readonly onEdit: () => void;
+	readonly onDelete: () => void;
 	readonly onExit: () => void;
 }) {
 	useKeyboard((keyEvent) => {
-		if (!active) return;
+		if (!active) {
+			return;
+		}
 
 		switch (keyEvent.name.toLowerCase()) {
 			case 'up':
@@ -336,9 +291,25 @@ function ListInput({
 				break;
 			case 'enter':
 			case 'return':
-				if (hasRows) {
-					onSelect();
+				if (hasCurrent) {
+					onToggle();
 				}
+
+				break;
+			case 'a':
+				onAdd();
+				break;
+			case 'e':
+				if (hasCurrent) {
+					onEdit();
+				}
+
+				break;
+			case 'd':
+				if (hasCurrent) {
+					onDelete();
+				}
+
 				break;
 		}
 	});
@@ -346,40 +317,7 @@ function ListInput({
 	return null;
 }
 
-function DetailInput({
-	active,
-	detail,
-	onBack,
-	onEdit,
-	onToggle,
-	onRemove
-}: {
-	readonly active: boolean;
-	readonly detail: McpServerDetail;
-	readonly onBack: () => void;
-	readonly onEdit: () => void;
-	readonly onToggle: () => void;
-	readonly onRemove: () => void;
-}) {
-	useKeyboard((keyEvent) => {
-		if (!active) return;
-
-		const k = keyEvent.name.toLowerCase();
-		if (k === 'escape' || k === 'left' || k === 'arrowleft') {
-			onBack();
-		} else if (k === 'e') {
-			onEdit();
-		} else if (k === 't' && (detail.status === 'Active' || detail.status === 'Disabled')) {
-			onToggle();
-		} else if (k === 'x' && detail.status !== 'Missing') {
-			onRemove();
-		}
-	});
-
-	return null;
-}
-
-function RemoveInput({
+function ConfirmInput({
 	active,
 	onCancel,
 	onConfirm
@@ -389,7 +327,9 @@ function RemoveInput({
 	readonly onConfirm: () => void;
 }) {
 	useKeyboard((keyEvent) => {
-		if (!active) return;
+		if (!active) {
+			return;
+		}
 
 		const k = keyEvent.name.toLowerCase();
 		if (k === 'escape') {
@@ -400,34 +340,4 @@ function RemoveInput({
 	});
 
 	return null;
-}
-
-function MessageInput({ active, onDismiss }: { readonly active: boolean; readonly onDismiss: () => void }) {
-	useKeyboard((keyEvent) => {
-		if (!active) return;
-		if (keyEvent.name) {
-			onDismiss();
-		}
-	});
-
-	return null;
-}
-
-// ── 工具 ──────────────────────────────────────────────────────────────────────
-
-function clampMove(prev: number, delta: number, length: number): number {
-	if (length === 0) {
-		return 0;
-	}
-
-	const next = prev + delta;
-	if (next < 0) {
-		return length - 1;
-	}
-
-	if (next >= length) {
-		return 0;
-	}
-
-	return next;
 }

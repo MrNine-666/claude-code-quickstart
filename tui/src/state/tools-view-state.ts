@@ -1,11 +1,22 @@
 import type {ComponentId, ManagedComponent} from '../core/tools-manage.js';
 
 // 工具管理视图状态机（Phase 11D，design TDR-11）：合并工具安装 + 检查更新为单一全生命周期菜单。
-// grid 卡片范式 + 2D 导航 + 多选批量安装 + 卸载强确认 + per-item install/update/uninstall busy。
-// 只负责 UI 模式/光标/多选/确认词/进度/通知的有界迁移，副作用（exec 调用）由组件层执行后回填。
+// grid 卡片范式 + 2D 导航 + 一键批量更新 + 卸载强确认 + per-item install/update/uninstall busy。
+// 只负责 UI 模式/光标/确认词/进度/通知的有界迁移，副作用（exec 调用）由组件层执行后回填。
 // 检测状态由 detection runner 单独管理，组件以 props/state 注入，不混入此处。
 
-export const GRID_COLUMNS = 3;
+// 网格布局：卡宽固定，列数随终端宽度自适应；导航 delta 跟随列数，避免视觉/语义错位。
+// CARD_WIDTH=28（内宽 24）：容纳「● 版本号 · 无法检测更新」等长状态行，80 列退化 1 列、宽终端多列。
+export const CARD_WIDTH = 28;
+export const CARD_GAP = 1;
+
+/** 根据内容区可用宽度计算网格列数（至少 1 列）。 */
+export function computeColumns(contentWidth: number): number {
+	if (contentWidth <= 0) {
+		return 1;
+	}
+	return Math.max(1, Math.floor((contentWidth + CARD_GAP) / (CARD_WIDTH + CARD_GAP)));
+}
 
 export type ToolsViewMode =
 	| 'grid' // 卡片网格浏览
@@ -38,24 +49,20 @@ export type ToolsViewState = {
 	readonly components: readonly ManagedComponent[];
 	readonly loaded: boolean;
 	readonly cursor: number;
-	readonly selected: readonly ComponentId[];
 	readonly itemStatus: Readonly<Record<string, ComponentItemStatus>>;
 	readonly itemError: Readonly<Record<string, string>>;
 	readonly busyAction?: ComponentAction;
 	readonly uninstallTarget?: ComponentId;
-	readonly confirmInput: string;
 	readonly notice?: string;
 	readonly errorText?: string;
-	readonly progress: readonly string[];
+	readonly progressByComponent: Readonly<Record<string, string>>;
 };
 
 export type ToolsViewAction =
 	| {readonly type: 'components-loaded'; readonly components: readonly ManagedComponent[]}
 	| {readonly type: 'detection-error'; readonly error: string}
 	| {readonly type: 'nav'; readonly delta: number}
-	| {readonly type: 'toggle-select'}
 	| {readonly type: 'request-uninstall'}
-	| {readonly type: 'confirm-input'; readonly value: string}
 	| {readonly type: 'confirm-uninstall'}
 	| {readonly type: 'cancel'}
 	| {readonly type: 'item-start'; readonly id: ComponentId; readonly action: ComponentAction}
@@ -65,7 +72,7 @@ export type ToolsViewAction =
 	| {readonly type: 'batch-done'; readonly summary: string; readonly components: readonly ManagedComponent[]}
 	| {readonly type: 'batch-failed'; readonly error: string; readonly components?: readonly ManagedComponent[]}
 	| {readonly type: 'notice'; readonly message: string}
-	| {readonly type: 'progress'; readonly message: string}
+	| {readonly type: 'progress'; readonly id: string; readonly message: string}
 	| {readonly type: 'clear-notice'};
 
 export function createInitialToolsViewState(): ToolsViewState {
@@ -74,25 +81,15 @@ export function createInitialToolsViewState(): ToolsViewState {
 		components: [],
 		loaded: false,
 		cursor: 0,
-		selected: [],
 		itemStatus: {},
 		itemError: {},
-		confirmInput: '',
-		progress: []
+		progressByComponent: {}
 	};
 }
 
 /** 当前光标组件。 */
 export function cursorComponent(state: ToolsViewState): ManagedComponent | undefined {
 	return state.components[state.cursor];
-}
-
-/** 批量安装目标：多选优先（仅未安装项），无多选时空数组（单项安装由组件层直接调 service）。 */
-export function selectedInstallTargets(state: ToolsViewState): readonly ComponentId[] {
-	return state.selected.filter(id => {
-		const component = state.components.find(item => item.id === id);
-		return component && !component.installed;
-	});
 }
 
 /** 当前可更新（hasUpdate === true）且非进行中的组件，用于一键更新。 */
@@ -115,18 +112,29 @@ export function itemStatusOf(state: ToolsViewState, id: string): ComponentItemSt
 	return state.itemStatus[id] ?? 'idle';
 }
 
-/** 卸载确认词：输入组件 name 即视为确认（大小写不敏感）。 */
-export function isUninstallConfirmed(state: ToolsViewState): boolean {
-	if (!state.uninstallTarget) {
-		return false;
+/** 进行时态 → 中文动作标签（无进度消息时的兜底显示）。 */
+function actionTenseLabel(status: ComponentItemStatus): string {
+	switch (status) {
+		case 'installing':
+			return '安装中…';
+		case 'updating':
+			return '更新中…';
+		case 'uninstalling':
+			return '卸载中…';
+		default:
+			return '处理中…';
 	}
+}
 
-	const target = state.components.find(item => item.id === state.uninstallTarget);
-	if (!target) {
-		return false;
-	}
-
-	return state.confirmInput.trim().toLowerCase() === target.name.toLowerCase();
+/** 活跃任务列表：遍历进行中的组件，每个一项（组件名 + 最新进度），完成（离开进行时态）自动消失、下方上移补齐。 */
+export function activeProgressTasks(state: ToolsViewState): readonly {readonly id: string; readonly name: string; readonly message: string}[] {
+	return state.components
+		.filter(component => PROGRESS_STATUSES.has(state.itemStatus[component.id] ?? 'idle'))
+		.map(component => ({
+			id: component.id,
+			name: component.name,
+			message: state.progressByComponent[component.id] ?? actionTenseLabel(state.itemStatus[component.id] ?? 'idle')
+		}));
 }
 
 export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAction): ToolsViewState {
@@ -136,8 +144,7 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				...state,
 				components: action.components,
 				loaded: true,
-				cursor: clamp(state.cursor, action.components.length),
-				selected: state.selected.filter(id => action.components.some(item => item.id === id))
+				cursor: clamp(state.cursor, action.components.length)
 			};
 
 		case 'detection-error':
@@ -145,21 +152,6 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 
 		case 'nav':
 			return {...state, cursor: clamp(state.cursor + action.delta, state.components.length)};
-
-		case 'toggle-select': {
-			const current = cursorComponent(state);
-			if (!current || current.installed) {
-				return state; // 仅未安装组件可多选安装
-			}
-
-			const exists = state.selected.includes(current.id);
-			return {
-				...state,
-				selected: exists
-					? state.selected.filter(id => id !== current.id)
-					: [...state.selected, current.id]
-			};
-		}
 
 		case 'request-uninstall': {
 			const current = cursorComponent(state);
@@ -171,24 +163,19 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				...state,
 				mode: 'confirm-uninstall',
 				uninstallTarget: current.id,
-				confirmInput: '',
 				errorText: undefined
 			};
 		}
 
-		case 'confirm-input':
-			return {...state, confirmInput: action.value};
-
 		case 'confirm-uninstall':
-			if (state.mode !== 'confirm-uninstall' || !isUninstallConfirmed(state)) {
-				return {...state, errorText: '确认词不匹配，请输入组件名称'};
+			if (state.mode !== 'confirm-uninstall') {
+				return state;
 			}
 
 			return {
 				...state,
 				mode: 'busy',
 				busyAction: 'uninstall',
-				progress: [],
 				errorText: undefined,
 				itemStatus: state.uninstallTarget ? {...state.itemStatus, [state.uninstallTarget]: 'uninstalling'} : state.itemStatus
 			};
@@ -210,10 +197,10 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				mode: 'grid',
 				busyAction: undefined,
 				uninstallTarget: undefined,
-				confirmInput: '',
 				loaded: true,
 				components: action.components,
 				itemStatus: {...state.itemStatus, [action.id]: 'done'},
+				progressByComponent: omit(state.progressByComponent, action.id),
 				notice: action.summary
 			};
 
@@ -223,11 +210,11 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				mode: 'grid',
 				busyAction: undefined,
 				uninstallTarget: undefined,
-				confirmInput: '',
 				loaded: action.components !== undefined,
 				components: action.components ?? state.components,
 				itemStatus: {...state.itemStatus, [action.id]: 'failed'},
 				itemError: {...state.itemError, [action.id]: action.error},
+				progressByComponent: omit(state.progressByComponent, action.id),
 				errorText: action.error
 			};
 
@@ -236,7 +223,6 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				...state,
 				mode: 'busy',
 				busyAction: action.action,
-				progress: [],
 				errorText: undefined,
 				itemStatus: {
 					...state.itemStatus,
@@ -249,13 +235,12 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				...state,
 				mode: 'grid',
 				busyAction: undefined,
-				selected: [],
 				loaded: true,
 				components: action.components,
 				itemStatus: {},
 				itemError: {},
-				notice: action.summary,
-				progress: state.progress
+				progressByComponent: {},
+				notice: action.summary
 			};
 
 		case 'batch-failed':
@@ -263,11 +248,11 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				...state,
 				mode: 'grid',
 				busyAction: undefined,
-				selected: [],
 				loaded: action.components !== undefined,
 				components: action.components ?? state.components,
 				itemStatus: {},
 				itemError: {},
+				progressByComponent: {},
 				errorText: action.error
 			};
 
@@ -275,7 +260,7 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 			return {...state, notice: action.message, errorText: undefined};
 
 		case 'progress':
-			return {...state, progress: [...state.progress, action.message].slice(-8)};
+			return {...state, progressByComponent: {...state.progressByComponent, [action.id]: action.message}};
 
 		case 'clear-notice':
 			return {...state, notice: undefined, errorText: undefined};
@@ -292,7 +277,6 @@ function cancel(state: ToolsViewState): ToolsViewState {
 				...state,
 				mode: 'grid',
 				uninstallTarget: undefined,
-				confirmInput: '',
 				errorText: undefined
 			};
 		default:

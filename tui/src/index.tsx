@@ -26,8 +26,8 @@ if (appliedUpdate) {
 startBackgroundUpdateCheck();
 
 const renderer = await createCliRenderer({
-	autoFocus: true  // 启用自动聚焦，确保键盘事件能被捕获
-	// exitOnCtrlC 保持默认 true，让 Ctrl+C 可以退出
+	autoFocus: true,  // 启用自动聚焦，确保键盘事件能被捕获
+	exitOnCtrlC: false  // 释放 Ctrl+C 给终端复制；应用内退出使用 q
 });
 // @opentui/keymap 自带 @opentui/core 依赖；Bun 会保留一份嵌套副本。
 // 运行时版本已对齐到 0.4.2，这里只做 CliRenderer 私有类型桥接。

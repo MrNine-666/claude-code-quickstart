@@ -76,8 +76,7 @@ export function navShortcuts(): readonly Shortcut[] {
 		{command: NAV_COMMANDS.NAV_DOWN, label: '菜单'},
 		{command: NAV_COMMANDS.NAV_ENTER, label: '进入'},
 		{command: NAV_COMMANDS.NAV_RIGHT, label: '进入'},
-		{command: NAV_COMMANDS.QUIT, label: '退出'},
-		{command: 'app:ctrl-c', label: '退出'}
+		{command: NAV_COMMANDS.QUIT, label: '退出'}
 	]);
 }
 
@@ -105,11 +104,11 @@ function providerShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	}
 
 	if (subMode === 'form') {
-		return buildShortcuts([
-			{command: PROVIDER_COMMANDS.FORM_UP, label: '字段'},
-			{command: PROVIDER_COMMANDS.FORM_DOWN, label: '字段'},
-			{command: PROVIDER_COMMANDS.FORM_SAVE, label: '保存'},
-			{command: PROVIDER_COMMANDS.FORM_CANCEL, label: '取消'}
+		return manualShortcuts([
+			{key: '↑/↓', label: '字段'},
+			{key: '←/→', label: '选项'},
+			{key: 'Ctrl+S', label: '保存'},
+			{key: 'Esc', label: '取消'}
 		]);
 	}
 
@@ -134,36 +133,29 @@ function providerShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 }
 
 function mcpShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
-	if (subMode === 'detail') {
-		return buildShortcuts([
-			{command: MCP_COMMANDS.DETAIL_EDIT, label: '编辑'},
-			{command: MCP_COMMANDS.DETAIL_TOGGLE, label: '启用/禁用'},
-			{command: MCP_COMMANDS.DETAIL_DELETE, label: '删除'},
-			{command: MCP_COMMANDS.DETAIL_BACK, label: '返回列表'}
-		]);
-	}
-
 	if (subMode === 'form') {
-		return manualShortcuts([{key: '↑/↓', label: '字段'}, {key: '←/→', label: '选项切换'}, {key: 'Enter', label: '保存'}, {key: 'Esc', label: '取消'}]);
-	}
-
-	if (subMode === 'add-type') {
-		return manualShortcuts([{key: '↑/↓', label: '类型'}, {key: 'Enter', label: '下一步'}, {key: 'Esc', label: '返回'}]);
+		return manualShortcuts([{key: '↑/↓', label: '字段'}, {key: '←/→', label: '选项'}, {key: 'Ctrl+S', label: '保存'}, {key: 'Esc', label: '取消'}]);
 	}
 
 	if (subMode === 'confirm-remove') {
 		return manualShortcuts([{key: 'Enter', label: '确认删除'}, {key: 'Esc', label: '取消'}]);
 	}
 
-	if (subMode === 'message') {
-		return manualShortcuts([{key: '任意键', label: '返回列表'}]);
+	if (subMode === 'empty') {
+		return buildShortcuts([
+			{command: MCP_COMMANDS.ADD, label: '新增'},
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
+		]);
 	}
 
 	return buildShortcuts([
 		{command: MCP_COMMANDS.LIST_UP, label: '选择'},
 		{command: MCP_COMMANDS.LIST_DOWN, label: '选择'},
-		{command: MCP_COMMANDS.ENTER_DETAIL, label: '详情'},
+		{command: MCP_COMMANDS.TOGGLE, label: '切换状态'},
 		{command: MCP_COMMANDS.ADD, label: '新增'},
+		{command: MCP_COMMANDS.EDIT, label: '编辑'},
+		{command: MCP_COMMANDS.DELETE, label: '删除'},
 		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}
 	]);
 }
@@ -202,7 +194,6 @@ function promptsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		return buildShortcuts([
 			{command: PROMPTS_COMMANDS.EDITOR_SAVE, label: '保存'},
 			{command: PROMPTS_COMMANDS.EDITOR_PREVIEW, label: '预览'},
-			{command: PROMPTS_COMMANDS.EDITOR_PREVIEW_TAB, label: '预览'},
 			{command: PROMPTS_COMMANDS.EDITOR_CANCEL, label: '取消'}
 		]);
 	}
@@ -237,7 +228,6 @@ function configShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		return buildShortcuts([
 			{command: CONFIG_COMMANDS.EDITOR_SAVE, label: '保存'},
 			{command: CONFIG_COMMANDS.EDITOR_PREVIEW, label: '预览'},
-			{command: CONFIG_COMMANDS.EDITOR_PREVIEW_TAB, label: '预览'},
 			{command: CONFIG_COMMANDS.EDITOR_CANCEL, label: '取消'}
 		]);
 	}
@@ -279,13 +269,13 @@ function toolsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	return buildShortcuts([
 		{command: TOOLS_COMMANDS.UP, label: '选择'},
 		{command: TOOLS_COMMANDS.DOWN, label: '选择'},
+		{command: TOOLS_COMMANDS.LEFT, label: '选择'},
+		{command: TOOLS_COMMANDS.RIGHT, label: '选择'},
 		{command: TOOLS_COMMANDS.INSTALL_OR_UPDATE, label: '安装/更新'},
-		{command: TOOLS_COMMANDS.TOGGLE_SELECT, label: '多选装'},
 		{command: TOOLS_COMMANDS.UPDATE_ALL, label: '更新全部'},
 		{command: TOOLS_COMMANDS.UNINSTALL, label: '卸载'},
 		{command: TOOLS_COMMANDS.REFRESH, label: '重新检测'},
-		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
-		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
+		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}
 	]);
 }
 
@@ -327,8 +317,6 @@ function mergeKeys(left: string, right: string): string {
 }
 
 function formatCommand(command: string): string {
-	if (command === 'app:ctrl-c') return 'Ctrl+C';
-
 	const bindings = bindingLookup.get(command) ?? [];
 	const parsed = bindings.map(binding => ({
 		sequence: parseKeySequence(binding.key)

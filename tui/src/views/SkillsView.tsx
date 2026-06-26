@@ -2,7 +2,7 @@ import React, { useEffect, useReducer } from 'react';
 import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 import type { KeyEvent } from '@opentui/core';
-import { ConfirmModal, ErrorPanel, ProgressLog, ScrollList, StatusLabel } from '../components/index.js';
+import { ConfirmModal, ErrorPanel, ProgressLog, ScrollList, StatusLabel, ViewHeader, ActionHint } from '../components/index.js';
 import { colors } from '../theme/index.js';
 import type { DetectionState } from '../services/async-detection.js';
 import type { DetectionCache } from '../hooks/use-detection-cache.js';
@@ -96,12 +96,7 @@ export function SkillsView({
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<box marginBottom={1}>
-				<text fg={colors.primary} attributes={TextAttributes.BOLD}>
-					Skills 技能管理
-				</text>
-				<text attributes={TextAttributes.DIM}>  搜索安装 · 已装检测 · 更新 · 卸载</text>
-			</box>
+			<ViewHeader title="Skills 技能管理" subtitle="搜索安装 · 已装检测 · 更新 · 卸载" />
 			{renderDetectionNotice(detection.status)}
 			{renderBody(view, detection, viewportHeight)}
 			{view.busyAction ? <ProgressLog title="执行进度" messages={view.progress} /> : null}
@@ -345,10 +340,7 @@ function renderBody(view: SkillsViewState, detection: DetectionState<InstalledSk
 			<box flexDirection="column">
 				<text attributes={TextAttributes.BOLD}>搜索结果：{view.query}</text>
 				<box marginTop={1}>
-					<ScrollList items={items} cursor={view.resultIndex} viewportHeight={viewportHeight} reservedRows={3} />
-				</box>
-				<box marginTop={1}>
-					<text attributes={TextAttributes.DIM}>Enter 安装 · Esc 返回列表</text>
+					<ScrollList items={items} cursor={view.resultIndex} viewportHeight={viewportHeight} reservedRows={2} />
 				</box>
 			</box>
 		);
@@ -379,6 +371,7 @@ function renderBody(view: SkillsViewState, detection: DetectionState<InstalledSk
 					message={`即将卸载：${names.join(', ')}`}
 					confirmLabel="Enter 确认"
 					cancelLabel="Esc 取消"
+					tone="danger"
 				/>
 			</box>
 		);
@@ -406,13 +399,15 @@ function renderBody(view: SkillsViewState, detection: DetectionState<InstalledSk
 					</box>
 				) : null}
 				{items.length === 0 ? (
-					<text attributes={TextAttributes.DIM}>暂无已安装 skill。按 / 搜索安装。</text>
+					<box flexDirection="column" flexGrow={1} justifyContent="center">
+						<text fg={colors.muted}>暂无已安装 skill</text>
+						<box marginTop={1}>
+							<ActionHint label="搜索并安装 skill" enabled />
+						</box>
+					</box>
 				) : (
 					<ScrollList items={items} cursor={view.installedIndex} viewportHeight={viewportHeight} reservedRows={3} />
 				)}
-				<box marginTop={1}>
-					<text attributes={TextAttributes.DIM}>Space 选择 · / 搜索 · U 更新全部 · D 卸载选中 · R 刷新</text>
-				</box>
 			</box>
 		);
 	}

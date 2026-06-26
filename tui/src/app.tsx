@@ -12,7 +12,7 @@ import {
 } from './state/manage-state.js';
 import { navShortcuts, viewShortcuts } from './state/shortcuts.js';
 import { ShortcutBar, ToastViewport } from './components/index.js';
-import { colors, borderColors, PRIMARY } from './theme/index.js';
+import { colors, borderColors, borderStyles, PRIMARY } from './theme/index.js';
 import { CCQ_LOGO, CCQ_LOGO_COLORS } from './theme/logo.js';
 import { displayWidth } from './core/text-utils.js';
 
@@ -28,7 +28,7 @@ import { ToolsView } from './views/ToolsView.js';
 import { createSkillsViewServices } from './views/skills-view-services.js';
 import { createToolsViewServices } from './views/tools-view-services.js';
 
-// logo 每行 20 列宽，侧边栏内宽 = SIDEBAR_WIDTH - 2(边框) - 2(paddingX) 须 >= 20，故取 24。
+// logo 每行 11 列宽（块面风格），侧边栏内宽 = SIDEBAR_WIDTH - 2(边框) - 2(paddingX) = 20，菜单标签充裕。
 const SIDEBAR_WIDTH = 24;
 
 export default function App() {
@@ -75,6 +75,8 @@ export default function App() {
 	// 获取终端尺寸（OpenTUI 通过 renderer 获取）
 	const terminalWidth = renderer?.width ?? 80;
 	const terminalHeight = renderer?.height ?? 24;
+	// 右侧内容区可用宽度 = 总宽 - 左侧栏(SIDEBAR_WIDTH) - 右栏边框(2) - paddingX(2)，驱动工具管理网格列数。
+	const contentWidth = Math.max(0, terminalWidth - SIDEBAR_WIDTH - 4);
 
 	useEffect(() => {
 		if (state.shouldExit) {
@@ -109,7 +111,7 @@ export default function App() {
 					flexDirection="column"
 					width={SIDEBAR_WIDTH}
 					flexShrink={0}
-					borderStyle="rounded"
+					borderStyle={navActive ? borderStyles.active : borderStyles.inactive}
 					borderColor={navActive ? borderColors.active : borderColors.inactive}
 					paddingX={1}
 				>
@@ -124,18 +126,20 @@ export default function App() {
 
 					<Divider width={sidebarInnerWidth} />
 
-					{/* 菜单列表：active 项用背景高亮条（铺满菜单宽度），nav 焦点时主色、失焦时弱化 */}
+					{/* 菜单列表：active 项用 ▸ 指示器 + 背景高亮条（铺满菜单宽度）+ 粗体三重状态 */}
 					<box flexDirection="column">
 						{menuItems.map((item, index) => {
 							const selected = index === state.selectedIndex;
-							const raw = ` ${item.label}`;
+							const indicator = selected ? '▸ ' : '  ';
+							const raw = `${indicator}${item.label}`;
 							const label = raw + ' '.repeat(Math.max(0, sidebarInnerWidth - displayWidth(raw)));
 							return (
 								<text
 									key={item.id}
-								
 									fg={selected ? (navActive ? '#1A1A1A' : colors.primary) : colors.muted}
-									bg={selected ? (navActive ? PRIMARY : '#3A2A20') : undefined} attributes={(selected) ? TextAttributes.BOLD : 0}>
+									bg={selected ? (navActive ? PRIMARY : '#3A2A20') : undefined}
+									attributes={selected ? TextAttributes.BOLD : 0}
+								>
 									{label}
 								</text>
 							);
@@ -147,7 +151,7 @@ export default function App() {
 				<box
 					flexDirection="column"
 					flexGrow={1}
-					borderStyle="rounded"
+					borderStyle={!navActive ? borderStyles.active : borderStyles.inactive}
 					borderColor={!navActive ? borderColors.active : borderColors.inactive}
 					paddingX={1}
 				>
@@ -156,6 +160,7 @@ export default function App() {
 						<ModuleContent
 							moduleId={activeItem.id}
 							viewportHeight={contentViewportHeight}
+							contentWidth={contentWidth}
 							active={state.focus === 'view'}
 							skillsViewServices={skillsViewServices}
 							skillsCache={skillsCache}
@@ -189,6 +194,7 @@ function Divider({ width }: { readonly width: number }) {
 function ModuleContent({
 	moduleId,
 	viewportHeight,
+	contentWidth,
 	active,
 	skillsViewServices,
 	skillsCache,
@@ -200,6 +206,7 @@ function ModuleContent({
 }: {
 	readonly moduleId: string;
 	readonly viewportHeight: number;
+	readonly contentWidth: number;
 	readonly active: boolean;
 	readonly skillsViewServices: ReturnType<typeof createSkillsViewServices>;
 	readonly skillsCache: DetectionCache<any>;
@@ -222,7 +229,7 @@ function ModuleContent({
 		case 'config':
 			return <ConfigView active={active} viewportHeight={viewportHeight} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} syntaxStyle={syntaxStyle} />;
 		case 'tools':
-			return <ToolsView services={toolsViewServices} cache={toolsCache} active={active} viewportHeight={viewportHeight} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
+			return <ToolsView services={toolsViewServices} cache={toolsCache} active={active} viewportHeight={viewportHeight} contentWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
 		default:
 			// 兜底：显示模块信息
 			const item = menuItems.find(menuItem => menuItem.id === moduleId);

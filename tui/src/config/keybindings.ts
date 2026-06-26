@@ -77,24 +77,25 @@ export const providerBindings: Binding[] = commandBindings({
 export const MCP_COMMANDS = {
 	LIST_UP: 'mcp:list-up',
 	LIST_DOWN: 'mcp:list-down',
-	ENTER_DETAIL: 'mcp:enter-detail',
+	TOGGLE: 'mcp:toggle',
 	ADD: 'mcp:add',
-	// detail 子模式
-	DETAIL_EDIT: 'mcp:detail-edit',
-	DETAIL_TOGGLE: 'mcp:detail-toggle',
-	DETAIL_DELETE: 'mcp:detail-delete',
-	DETAIL_BACK: 'mcp:detail-back'
+	EDIT: 'mcp:edit',
+	DELETE: 'mcp:delete',
+	// form 子模式
+	FORM_SAVE: 'mcp:form-save',
+	FORM_CANCEL: 'mcp:form-cancel'
 } as const;
 
 export const mcpBindings: Binding[] = commandBindings({
 	[MCP_COMMANDS.LIST_UP]: 'up',
 	[MCP_COMMANDS.LIST_DOWN]: 'down',
-	[MCP_COMMANDS.ENTER_DETAIL]: 'enter',
+	[MCP_COMMANDS.TOGGLE]: 'enter',
 	[MCP_COMMANDS.ADD]: 'a',
-	[MCP_COMMANDS.DETAIL_EDIT]: 'e',
-	[MCP_COMMANDS.DETAIL_TOGGLE]: 't',
-	[MCP_COMMANDS.DETAIL_DELETE]: 'x',
-	[MCP_COMMANDS.DETAIL_BACK]: 'escape'
+	[MCP_COMMANDS.EDIT]: 'e',
+	[MCP_COMMANDS.DELETE]: 'd',
+	// form 子模式（与 list 复用按键，靠视图焦点/子模式控制生效时机）
+	[MCP_COMMANDS.FORM_SAVE]: 'ctrl+s',
+	[MCP_COMMANDS.FORM_CANCEL]: 'escape'
 });
 
 // ------------------------------------------------------------
@@ -121,7 +122,7 @@ export const skillsBindings: Binding[] = commandBindings({
 });
 
 // ------------------------------------------------------------
-// 提示词视图 commands
+// 全局规则视图 commands
 // ------------------------------------------------------------
 export const PROMPTS_COMMANDS = {
 	IMPORT: 'prompts:import',
@@ -188,8 +189,9 @@ export const configBindings: Binding[] = commandBindings({
 export const TOOLS_COMMANDS = {
 	UP: 'tools:up',
 	DOWN: 'tools:down',
+	LEFT: 'tools:left',
+	RIGHT: 'tools:right',
 	INSTALL_OR_UPDATE: 'tools:install-or-update',
-	TOGGLE_SELECT: 'tools:toggle-select',
 	UPDATE_ALL: 'tools:update-all',
 	UNINSTALL: 'tools:uninstall',
 	REFRESH: 'tools:refresh'
@@ -198,8 +200,9 @@ export const TOOLS_COMMANDS = {
 export const toolsBindings: Binding[] = commandBindings({
 	[TOOLS_COMMANDS.UP]: 'up',
 	[TOOLS_COMMANDS.DOWN]: 'down',
+	[TOOLS_COMMANDS.LEFT]: 'left',
+	[TOOLS_COMMANDS.RIGHT]: 'right',
 	[TOOLS_COMMANDS.INSTALL_OR_UPDATE]: 'enter',
-	[TOOLS_COMMANDS.TOGGLE_SELECT]: 'space',
 	[TOOLS_COMMANDS.UPDATE_ALL]: 'a',
 	[TOOLS_COMMANDS.UNINSTALL]: 'u',
 	[TOOLS_COMMANDS.REFRESH]: 'r'

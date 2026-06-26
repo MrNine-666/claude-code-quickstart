@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 import { colors, borderColors } from '../theme/index.js';
-import { ConfirmModal, ErrorPanel, ProgressLog, StatusLabel, TextareaEditor } from '../components/index.js';
+import { ConfirmModal, ErrorPanel, ProgressLog, StatusLabel, TextareaEditor, ActionHint, ViewHeader } from '../components/index.js';
 import { truncateToWidth } from '../core/text-utils.js';
 import type { ProgressEvent } from '../core/exec.js';
 import type { ConfigEntry, ConfigRecommendation } from '../core/config-recommend.js';
@@ -157,8 +157,8 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 
 	if (screen.kind === 'busy') {
 		return (
-			<box flexDirection="column">
-				<text attributes={TextAttributes.BOLD}>配置文件管理</text>
+			<box flexDirection="column" flexGrow={1}>
+				<ViewHeader title="配置文件管理" />
 				<box marginTop={1}>
 					<ProgressLog title="执行进度" messages={logs} />
 				</box>
@@ -167,11 +167,8 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 	}
 
 	return (
-		<box flexDirection="column">
-			<box marginBottom={1}>
-				<text attributes={TextAttributes.BOLD}>配置文件管理</text>
-				<text attributes={TextAttributes.DIM}>  {settingsPath}</text>
-			</box>
+		<box flexDirection="column" flexGrow={1}>
+			<ViewHeader title="配置文件管理" subtitle={settingsPath} />
 
 			{recommendation.available ? (
 				<RecommendationPreview recommendation={recommendation} viewportHeight={viewportHeight} />
@@ -182,9 +179,8 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 			)}
 
 			<box flexDirection="column" marginTop={1}>
-				<ActionHint hotkey="I" label="按缺失项补全配置（不覆盖已有 ~/.claude/settings.json）" enabled={recommendation.available} />
+				<ActionHint label="按缺失项补全配置（不覆盖已有 ~/.claude/settings.json）" enabled={recommendation.available} />
 				<ActionHint
-					hotkey="C"
 					label="复制推荐配置 JSON 到剪贴板"
 					enabled={recommendation.available && clipboardSupported}
 					disabledHint={clipboardSupported ? '' : '（剪贴板不可用）'}
@@ -288,24 +284,3 @@ function buildPreviewRows(
 	return rows;
 }
 
-function ActionHint({
-	hotkey,
-	label,
-	enabled,
-	disabledHint = ''
-}: {
-	readonly hotkey: string;
-	readonly label: string;
-	readonly enabled: boolean;
-	readonly disabledHint?: string;
-}) {
-	return (
-		<box>
-			<text fg={enabled ? colors.primary : undefined} attributes={(enabled ? TextAttributes.BOLD : 0) | (!enabled ? TextAttributes.DIM : 0)}>
-				[{hotkey}]
-			</text>
-			<text attributes={(!enabled) ? TextAttributes.DIM : 0}> {label}</text>
-			{!enabled && disabledHint ? <text attributes={TextAttributes.DIM}> {disabledHint}</text> : null}
-		</box>
-	);
-}

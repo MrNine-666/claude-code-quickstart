@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
-import { colors, borderColors } from '../theme/index.js';
-import { ConfirmModal, ErrorPanel, ProgressLog, StatusLabel, TextareaEditor } from '../components/index.js';
+import { borderColors } from '../theme/index.js';
+import { ConfirmModal, ErrorPanel, ProgressLog, StatusLabel, TextareaEditor, ActionHint, ViewHeader } from '../components/index.js';
 import { truncateToWidth } from '../core/text-utils.js';
 import type { ProgressEvent } from '../core/exec.js';
 import {
@@ -15,7 +15,7 @@ import {
 	saveClaudeMd
 } from '../services/prompts-service.js';
 
-// 提示词菜单视图（Phase 4）：查看推荐 CLAUDE.md / 一键导入（整文件覆盖）/ 复制 / 内嵌编辑器。
+// 全局规则菜单视图（Phase 4）：查看推荐 CLAUDE.md / 一键导入（整文件覆盖）/ 复制 / 内嵌编辑器。
 // 导入是破坏性动作（整文件覆盖），经 ConfirmModal 二次确认。Update 检测已收缩（HC-FU-08），
 // 导入不写指纹种子。剪贴板不可用时（缺命令 / 非 TTY）对应入口禁用并提示。
 // OpenTUI 适配：useKeyboard 替代 useInput，<box>/<text> 小写元素，内嵌 textarea 替代外部编辑器。
@@ -69,7 +69,7 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 		const result = await importRecommendationWithProgress(appendLog);
 		setBanner(
 			result.ok
-				? { kind: 'success', message: `已导入推荐提示词（${result.lineCount} 行）到 ${claudeMdPath}` }
+				? { kind: 'success', message: `已导入推荐全局规则（${result.lineCount} 行）到 ${claudeMdPath}` }
 				: { kind: 'error', message: result.error }
 		);
 		setScreen({ kind: 'list' });
@@ -84,7 +84,7 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 		setLogs([]);
 		setScreen({ kind: 'busy' });
 		const result = await copyRecommendationToClipboard(appendLog);
-		setBanner(result.ok ? { kind: 'success', message: '推荐提示词已复制到剪贴板' } : { kind: 'error', message: result.error });
+		setBanner(result.ok ? { kind: 'success', message: '推荐全局规则已复制到剪贴板' } : { kind: 'error', message: result.error });
 		setScreen({ kind: 'list' });
 	};
 
@@ -150,8 +150,8 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 
 	if (screen.kind === 'busy') {
 		return (
-			<box flexDirection="column">
-				<text attributes={TextAttributes.BOLD}>提示词管理</text>
+			<box flexDirection="column" flexGrow={1}>
+				<ViewHeader title="全局规则管理" />
 				<box marginTop={1}>
 					<ProgressLog title="执行进度" messages={logs} />
 				</box>
@@ -160,25 +160,21 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 	}
 
 	return (
-		<box flexDirection="column">
-			<box marginBottom={1}>
-				<text attributes={TextAttributes.BOLD}>提示词管理</text>
-				<text attributes={TextAttributes.DIM}>  {claudeMdPath}</text>
-			</box>
+		<box flexDirection="column" flexGrow={1}>
+			<ViewHeader title="全局规则管理" subtitle={claudeMdPath} />
 
 			{recommendation.available ? (
 				<RecommendationPreview content={recommendation.content} lineCount={recommendation.lineCount} viewportHeight={viewportHeight} />
 			) : (
 				<box marginBottom={1}>
-					<ErrorPanel message="推荐提示词模板不可用（contracts/templates 缺失）" />
+					<ErrorPanel message="推荐全局规则模板不可用（contracts/templates 缺失）" />
 				</box>
 			)}
 
 			<box flexDirection="column" marginTop={1}>
-				<ActionHint hotkey="I" label="一键导入（整文件覆盖 ~/.claude/CLAUDE.md）" enabled={recommendation.available} />
+				<ActionHint label="一键导入（整文件覆盖 ~/.claude/CLAUDE.md）" enabled={recommendation.available} />
 				<ActionHint
-					hotkey="C"
-					label="复制推荐提示词到剪贴板"
+					label="复制推荐全局规则到剪贴板"
 					enabled={recommendation.available && clipboardSupported}
 					disabledHint={clipboardSupported ? '' : '（剪贴板不可用）'}
 				/>
@@ -198,7 +194,7 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 			{screen.kind === 'confirm-import' ? (
 				<box marginTop={1}>
 					<ConfirmModal
-						title="确认导入推荐提示词"
+						title="确认导入推荐全局规则"
 						message={`将整文件覆盖 ${claudeMdPath}，当前内容会被替换，此操作不可撤销。`}
 						confirmLabel="Enter 确认导入"
 						cancelLabel="Esc 取消"
@@ -225,7 +221,7 @@ function RecommendationPreview({
 
 	return (
 		<box flexDirection="column" borderStyle="rounded" borderColor={borderColors.inactive} paddingX={1}>
-			<text attributes={TextAttributes.DIM}>推荐提示词预览（共 {lineCount} 行）</text>
+			<text attributes={TextAttributes.DIM}>推荐全局规则预览（共 {lineCount} 行）</text>
 			{lines.map((line, index) => (
 				<text key={index}>{truncateToWidth(line || ' ', PREVIEW_WIDTH)}</text>
 			))}
@@ -234,24 +230,3 @@ function RecommendationPreview({
 	);
 }
 
-function ActionHint({
-	hotkey,
-	label,
-	enabled,
-	disabledHint = ''
-}: {
-	readonly hotkey: string;
-	readonly label: string;
-	readonly enabled: boolean;
-	readonly disabledHint?: string;
-}) {
-	return (
-		<box>
-			<text fg={enabled ? colors.primary : undefined} attributes={(enabled ? TextAttributes.BOLD : 0) | (!enabled ? TextAttributes.DIM : 0)}>
-				[{hotkey}]
-			</text>
-			<text attributes={(!enabled) ? TextAttributes.DIM : 0}> {label}</text>
-			{!enabled && disabledHint ? <text attributes={TextAttributes.DIM}> {disabledHint}</text> : null}
-		</box>
-	);
-}

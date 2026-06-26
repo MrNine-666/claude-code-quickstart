@@ -1,6 +1,8 @@
 import React from 'react';
 import { TextAttributes } from '@opentui/core';
 import { colors } from '../../theme/index.js';
+import { FormLabel, FORM_VALUE_MARGIN_LEFT } from './FormLabel.js';
+import { FormControlFrame } from './FormControlFrame.js';
 import type { KeyValueEntry } from './field-types.js';
 
 export type KeyValueFieldProps = {
@@ -17,32 +19,29 @@ export type KeyValueFieldProps = {
  * KeyValueField：键值对编辑（单行 `K=V,K2=V2` 文本形式）
  * - 编辑态用 <input> 录入逗号分隔的 K=V 文本，由 FormPanel 解析回 entries
  * - 非编辑态以多行只读形式展示当前键值对，便于阅读
- * - Enter 由 FormPanel 统一处理（保存）
+ * - Ctrl/Cmd+S 保存、Esc 取消由 FormPanel 统一处理；Enter 维持 textarea 换行（本字段不绑 onSubmit）
  */
 export function KeyValueField({ label, entries, text, helpText, focused, active, onChange }: KeyValueFieldProps) {
 	return (
-		<box flexDirection="column" marginBottom={1}>
-			<text fg={focused ? colors.primary : undefined} attributes={(focused) ? TextAttributes.BOLD : 0}>
-				{focused ? '› ' : '  '}
-				{label}
-			</text>
-			{active && focused ? (
-				<input value={text} placeholder="KEY=VALUE,KEY2=VALUE2" onInput={onChange} focused />
-			) : entries.length === 0 ? (
-				<text fg="gray">（无）</text>
-			) : (
-				<box flexDirection="column">
-					{entries.map((entry) => (
-						<text key={entry.key} fg={colors.muted}>
-							{entry.key}={entry.value}
-						</text>
-					))}
-				</box>
-			)}
+		<box flexDirection="column">
+			<box flexDirection="row" alignItems="center">
+				<FormLabel label={label} focused={focused} />
+				<FormControlFrame>
+					{active && focused ? (
+						<input value={text} placeholder="KEY=VALUE,KEY2=VALUE2" onInput={onChange} focused />
+					) : entries.length === 0 ? (
+						<text fg="gray">（无）</text>
+					) : (
+						<text fg={colors.muted}>{entries.slice(0, 3).map((entry) => `${entry.key}=${entry.value}`).join(', ')}</text>
+					)}
+				</FormControlFrame>
+			</box>
 			{helpText ? (
-				<text fg="gray" attributes={TextAttributes.DIM}>
-					{helpText}
-				</text>
+				<box marginLeft={FORM_VALUE_MARGIN_LEFT}>
+					<text fg="gray" attributes={TextAttributes.DIM}>
+						{helpText}
+					</text>
+				</box>
 			) : null}
 		</box>
 	);

@@ -233,8 +233,8 @@ export type CustomMcpConfigResult =
 	| {readonly ok: true; readonly serverId: string; readonly config: McpConfigEntry; readonly permission: string}
 	| {readonly ok: false; readonly error: string};
 
-/** 校验自定义 Server ID（非空 + 合法字符 + 不与已存在 ID 冲突由调用方处理）。 */
-function validateServerId(serverId: string): string | null {
+/** 校验 Server ID（非空 + 合法字符；与已存在 ID 冲突由调用方处理）。供表单/自定义 builder 复用。 */
+export function validateServerId(serverId: string): string | null {
 	if (isBlank(serverId)) {
 		return 'Server ID 不能为空';
 	}

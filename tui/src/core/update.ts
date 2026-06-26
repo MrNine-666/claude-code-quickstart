@@ -43,7 +43,7 @@ const NPM_COMPONENT_MAP: Record<string, string> = {
 	ClaudeCode: '@anthropic-ai/claude-code',
 	Ccline: '@cometix/ccline',
 	CcgWorkflow: 'ccg-workflow',
-	CodexCli: 'codex-cli',
+	CodexCli: '@openai/codex',
 	OpenSpec: '@fission-ai/openspec'
 };
 
@@ -662,8 +662,7 @@ export async function checkLatestVersion(): Promise<{ version: string; downloadU
 			version: latestVersion,
 			downloadUrl: asset.browser_download_url,
 		};
-	} catch (error) {
-		console.error('Failed to check for updates:', error);
+	} catch {
 		return null;
 	}
 }
@@ -698,8 +697,7 @@ export async function downloadUpdate(downloadUrl: string): Promise<boolean> {
 		}
 
 		return true;
-	} catch (error) {
-		console.error('Failed to download update:', error);
+	} catch {
 		return false;
 	}
 }
@@ -734,8 +732,7 @@ export async function applyUpdate(): Promise<boolean> {
 		}
 
 		return true;
-	} catch (error) {
-		console.error('Failed to apply update:', error);
+	} catch {
 		return false;
 	}
 }
@@ -786,8 +783,7 @@ export async function applyPendingUpdateOnStartup(): Promise<boolean> {
 		}
 
 		return true;
-	} catch (error) {
-		console.error('Failed to apply pending update:', error);
+	} catch {
 		return false;
 	}
 }

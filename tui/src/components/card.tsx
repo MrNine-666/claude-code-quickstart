@@ -48,14 +48,16 @@ export function Card({
 	if (leading !== undefined) {
 		return (
 			<box
+				flexDirection="row"
 				borderStyle="rounded"
 				borderColor={focused ? borderColors.active : borderColors.inactive}
+				backgroundColor={focused ? colors.focusedBackground : undefined}
 				paddingX={1}
 				width={width}
 				minHeight={minHeight}
 				flexShrink={0}
 			>
-				<box flexShrink={0} marginRight={1}>{leading}</box>
+				<box flexShrink={0} width={3} justifyContent="center" marginRight={1}>{leading}</box>
 				<box flexDirection="column" flexGrow={1} minWidth={0} overflow="hidden">
 					{title === undefined ? null : (
 						<box height={1} overflow="hidden">
@@ -76,6 +78,7 @@ export function Card({
 			flexDirection="column"
 			borderStyle="rounded"
 			borderColor={focused ? borderColors.active : borderColors.inactive}
+			backgroundColor={focused ? colors.focusedBackground : undefined}
 			paddingX={1}
 			width={width}
 			minHeight={minHeight}

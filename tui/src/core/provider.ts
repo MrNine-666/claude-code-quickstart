@@ -568,7 +568,16 @@ function addProviderUnlocked(opts: AddProviderOptions): AddProviderResult {
 		}
 
 		providerName = opts.name || builtin.name;
-		providerBaseUrl = builtin.baseUrl;
+		if (!isNullOrWhiteSpace(opts.baseUrl)) {
+			if (!/^https?:\/\//.test(String(opts.baseUrl))) {
+				result.error = 'Base URL 必须以 http:// 或 https:// 开头';
+				return result;
+			}
+
+			providerBaseUrl = normalizeBaseUrl(opts.baseUrl);
+		} else {
+			providerBaseUrl = builtin.baseUrl;
+		}
 
 		const strategy = opts.conflictStrategy || 'increment';
 		const exists = existsSync(join(providersDir(), `${selectedKey}.json`));
@@ -624,22 +633,17 @@ function addProviderUnlocked(opts: AddProviderOptions): AddProviderResult {
 	};
 
 	const templateModelEnv = template?.modelEnv as Record<string, string> | undefined;
-	if (templateModelEnv) {
-		setManagedModelEnv(profile, templateModelEnv);
-	} else if (opts.modelEnv) {
+	if (opts.modelEnv !== undefined) {
 		setManagedModelEnv(profile, opts.modelEnv);
+	} else if (templateModelEnv) {
+		setManagedModelEnv(profile, templateModelEnv);
 	}
 
-	// §2.8：extra env 全量写入 env（内置模板 extraEnv 为基，opts.extraEnv 覆盖，用户 key-value 自由维护）
-	const mergedExtraEnv: Record<string, string> = {};
+	// §2.8：当 TUI 传入 extraEnv（来自最终 JSON）时以用户 JSON 为真源；未传入时回退模板 extraEnv。
 	const templateExtraEnv = template?.extraEnv as Record<string, string> | undefined;
-	if (templateExtraEnv) {
-		Object.assign(mergedExtraEnv, templateExtraEnv);
-	}
-
-	if (opts.extraEnv) {
-		Object.assign(mergedExtraEnv, opts.extraEnv);
-	}
+	const mergedExtraEnv: Record<string, string> = opts.extraEnv !== undefined
+		? {...opts.extraEnv}
+		: {...(templateExtraEnv ?? {})};
 
 	if (Object.keys(mergedExtraEnv).length > 0) {
 		setManagedExtraEnv(profile, mergedExtraEnv);
