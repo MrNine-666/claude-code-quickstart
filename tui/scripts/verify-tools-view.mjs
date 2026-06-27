@@ -7,7 +7,7 @@ import {
 	readMcpSnapshot,
 	restoreMcpSnapshot,
 	TOOL_DEFINITIONS
-} from '../dist/core/tools-install.js';
+} from '../src/core/tools-install.ts';
 
 // Phase 6 工具安装菜单门禁：守住两条核心不变量——
 //   P-6 批量安装失败隔离：第 N 个工具失败时，第 N+1 个仍执行；

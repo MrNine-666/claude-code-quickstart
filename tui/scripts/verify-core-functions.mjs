@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import {buildMcpConfig} from '../dist/core/mcp-config-builder.js';
-import {hasUpdate, parseSemver, semverCompare} from '../dist/core/semver.js';
-import {buildProviderFormModel, toProviderSavePayload, validateProviderForm} from '../dist/core/provider-form.js';
-import {maskApiKey, normalizeBaseUrl, testProviderKey} from '../dist/core/text-utils.js';
-import {parseSkillsFindOutput} from '../dist/core/skills.js';
-import {loadMcpContract} from '../dist/core/mcp-contract.js';
+import {buildMcpConfig} from '../src/core/mcp-config-builder.ts';
+import {hasUpdate, parseSemver, semverCompare} from '../src/core/semver.ts';
+import {buildProviderFormModel, toProviderSavePayload, validateProviderForm} from '../src/core/provider-form.ts';
+import {maskApiKey, normalizeBaseUrl, testProviderKey} from '../src/core/text-utils.ts';
+import {parseSkillsFindOutput} from '../src/core/skills.ts';
+import {loadMcpContract} from '../src/core/mcp-contract.ts';
 
 // Phase 2 核心纯函数回归门禁：守住 buildMcpConfig parity、semver、provider 表单、
 // skills find parser、env-file 拒绝——这些是后续 Phase 视图与测试的基础不变量。
@@ -32,7 +32,7 @@ console.log('[PASS] 文本/凭据工具');
 // ── provider 表单 ─────────────────────────────────────────────────────────
 const builtinForm = buildProviderFormModel({mode: 'add-builtin', builtinKey: 'zhipu'});
 assert.equal(builtinForm.values.baseUrl, 'https://open.bigmodel.cn/api/anthropic');
-assert.equal(builtinForm.values.modelEnv.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.1');
+assert.equal(builtinForm.values.modelEnv.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.2');
 assert.deepEqual(validateProviderForm('add-builtin', {...builtinForm.values, apiKey: ''}), ['API Key 不能为空']);
 
 const customForm = buildProviderFormModel({mode: 'add-custom'});

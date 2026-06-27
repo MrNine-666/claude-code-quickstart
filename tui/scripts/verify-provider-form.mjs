@@ -15,8 +15,8 @@ process.env.CCQ_HOME = home;
 const providersDir = join(home, '.claude', 'providers');
 mkdirSync(providersDir, {recursive: true});
 
-const {buildProviderFormModel, validateProviderForm, toProviderSavePayload} = await import('../dist/core/provider-form.js');
-const {addProvider} = await import('../dist/core/provider.js');
+const {buildProviderFormModel, validateProviderForm, toProviderSavePayload} = await import('../src/core/provider-form.ts');
+const {addProvider} = await import('../src/core/provider.ts');
 
 // ── 文件名校验 ──────────────────────────────────────────────────────────────
 assert.deepEqual(
@@ -80,18 +80,21 @@ assert.equal(saved.env.API_TIMEOUT_MS, '3000000');
 assert.equal('EMPTY_VAL' in saved.env, false, '空值条目未写入');
 console.log('[PASS] 8.2 端到端：用户文件名落盘 + extra env 写入 env');
 
-// ── 内置模板 extraEnv 预填 + key-value 字段 ─────────────────────────────────
+// ── 内置模板表单结构（HC-12 单层 env：extraEnv 走 values JSON 区，不再是表单字段） ──
 const builtinForm = buildProviderFormModel({mode: 'add-builtin', builtinKey: 'zhipu'});
-assert.equal(builtinForm.values.profileKey, 'zhipu', '内置默认文件名预填');
-assert.equal(builtinForm.values.extraEnv.API_TIMEOUT_MS, '3000000', '内置模板 extraEnv 预填');
-const kvField = builtinForm.fields.find(f => f.id === 'extraEnv');
-assert.ok(kvField, 'extraEnv 字段应存在');
-assert.equal(kvField.type, 'key-value', 'extraEnv 字段类型为 key-value');
-assert.ok(kvField.entries.some(e => e.key === 'API_TIMEOUT_MS'), 'key-value 字段含模板条目');
-const nameField = builtinForm.fields.find(f => f.id === 'profileKey');
-assert.equal(nameField.type, 'text', 'add 模式文件名字段可编辑');
-assert.equal(nameField.label, '文件名', '文件名字段标签');
-console.log('[PASS] 8.2 内置模板 extraEnv 预填 + key-value/文件名 字段');
+assert.equal(builtinForm.mode, 'add-builtin');
+assert.ok(Array.isArray(builtinForm.fields), '应返回 fields 数组');
+// add 模式首字段为供应商类型 radio
+assert.equal(builtinForm.fields[0].id, 'providerType', 'add 模式首字段为供应商类型');
+assert.equal(builtinForm.fields[0].type, 'radio');
+// 核心可编辑字段存在
+assert.ok(builtinForm.fields.some(f => f.id === 'profileKey' && f.type === 'text'), '文件名字段可编辑');
+assert.ok(builtinForm.fields.some(f => f.id === 'baseUrl'), '含 baseUrl 字段');
+assert.ok(builtinForm.fields.some(f => f.id === 'apiKey'), '含 apiKey 字段');
+// extraEnv 在 values 维护（JSON 区），不再是表单字段
+assert.equal(builtinForm.fields.find(f => f.id === 'extraEnv'), undefined, 'extraEnv 不再是表单字段');
+assert.ok(typeof builtinForm.values.extraEnv === 'object', 'values.extraEnv 存在');
+console.log('[PASS] 8.2 内置模板表单结构（extraEnv 走 values 不走 fields）');
 
 rmSync(home, {recursive: true, force: true});
 console.log('[PASS] task 8.2 Provider 表单门禁全部通过');

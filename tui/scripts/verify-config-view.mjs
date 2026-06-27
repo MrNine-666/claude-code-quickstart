@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {applyFillMissing, importFillMissing, loadConfigContract, settingsFilePath} from '../dist/core/config-recommend.js';
+import {applyFillMissing, importFillMissing, loadConfigContract, settingsFilePath} from '../src/core/config-recommend.ts';
 
 // Phase 5 配置文件菜单门禁：守住 fill-missing 的两条核心不变量——
 //   P-1 幂等性：同一配置导入两次，第二次无变更；

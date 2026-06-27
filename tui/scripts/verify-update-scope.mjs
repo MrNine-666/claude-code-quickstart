@@ -31,7 +31,7 @@ writeFileSync(join(cacheDir, 'npm-view.json'), JSON.stringify({}), 'utf8');
 mkdirSync(join(home, '.claude', '.ccg'), {recursive: true});
 writeFileSync(join(home, '.claude', '.ccg', 'config.toml'), 'version = "3.1.6"\n', 'utf8');
 
-const {checkComponentUpdates, applyUpdates} = await import('../dist/core/update.js');
+const {checkComponentUpdates, applyUpdates} = await import('../src/core/update.ts');
 
 const components = await checkComponentUpdates();
 const ids = components.map(c => c.id);

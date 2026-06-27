@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {buildMcpConfig} from '../dist/core/mcp-config-builder.js';
+import {buildMcpConfig} from '../src/core/mcp-config-builder.ts';
 
 // 6.9 buildMcpConfig golden parity 门禁：对齐 Windows New-McpSettingsEntry
 // （installer/windows/steps/Mcp.ps1）对各 CredentialType 的 command/args/env/url 输出。

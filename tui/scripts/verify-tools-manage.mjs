@@ -27,7 +27,7 @@ writeFileSync(join(cacheDir, 'npm-view.json'), JSON.stringify({}), 'utf8');
 mkdirSync(join(home, '.claude', '.ccg'), {recursive: true});
 writeFileSync(join(home, '.claude', '.ccg', 'config.toml'), 'version = "3.1.6"\n', 'utf8');
 
-const {COMPONENT_DEFINITIONS, detectComponents, installComponent} = await import('../dist/core/tools-manage.js');
+const {COMPONENT_DEFINITIONS, detectComponents, installComponent} = await import('../src/core/tools-manage.ts');
 
 // ── COMPONENT_DEFINITIONS 完整性（11.4/11.6）──────────────────────────────────
 const ids = COMPONENT_DEFINITIONS.map(c => c.id);
@@ -99,7 +99,7 @@ assert.match(unknown.error, /未知组件/, '未知组件错误信息');
 console.log('[PASS] installComponent 未知组件拒绝');
 
 // ── Phase 11C 卸载门禁（11.10~11.15）──────────────────────────────────────────
-const {uninstallComponent, updateComponents} = await import('../dist/core/tools-manage.js');
+const {uninstallComponent, updateComponents} = await import('../src/core/tools-manage.ts');
 
 // P-13：snapshot 失败 → exec 零调用（11.15 snapshot-before-write 不变量）
 {
@@ -248,20 +248,13 @@ console.log('[PASS] npm 卸载命令 + Ccline 受管 statusLine 还原 (11.10/11
 }
 console.log('[PASS] Ccline 用户自定义 statusLine 保护 (11.11)');
 
-// 11.14：Antigravity 无卸载子命令 → manualHint（不误删）
+// 11.14：Antigravity 改为 fs 直删（不再走 agy uninstall 子命令），success=true，无 manualHint
 {
-	const mockExec = async (cmd, args) => {
-		if (cmd === 'agy' && args.includes('--help')) {
-			return {code: 0, stdout: 'Usage: agy [options]', stderr: ''};
-		}
-
-		return {code: 1, stdout: '', stderr: ''};
-	};
-	const outcome = await uninstallComponent('AntigravityCli', undefined, {exec: mockExec});
-	assert.equal(outcome.success, false, '无子命令时 success=false');
-	assert.ok(outcome.manualHint, '无子命令时返回 manualHint');
+	const outcome = await uninstallComponent('AntigravityCli', undefined, {exec: async () => ({code: 0, stdout: '', stderr: ''})});
+	assert.equal(outcome.success, true, 'Antigravity fs 直删成功（无目标文件也不报错）');
+	assert.equal(outcome.manualHint, undefined, '已改为 fs 直删，不再产出 manualHint');
 }
-console.log('[PASS] Antigravity 无子命令 → manualHint (11.14)');
+console.log('[PASS] Antigravity fs 直删 success=true 无 manualHint (11.14)');
 
 rmSync(home, {recursive: true, force: true});
 // 缓存目录可能被其他测试共享，不删

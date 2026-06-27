@@ -29,7 +29,7 @@ const USER_OWNED = {
 };
 writeFileSync(settingsPath, JSON.stringify({...USER_OWNED, env: {EXISTING: 'keep-me'}}, null, 2), 'utf8');
 
-const {addProvider, editProvider, switchProvider, getDisplayData} = await import('../dist/core/provider.js');
+const {addProvider, editProvider, switchProvider, getDisplayData} = await import('../src/core/provider.ts');
 
 function readSettings() {
 	return JSON.parse(readFileSync(settingsPath, 'utf8'));
@@ -58,7 +58,7 @@ assertUserFieldsIntact('add+activate');
 let settings = readSettings();
 assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, 'sk-zhipu-aaaaaaaaaaaa', 'AUTH_TOKEN 应写入');
 assert.equal(settings.env.ANTHROPIC_BASE_URL, 'https://open.bigmodel.cn/api/anthropic', 'BASE_URL 应写入');
-assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.1', '受管模型键应写入');
+assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.2', '受管模型键应写入');
 assert.equal(settings.env.EXISTING, 'keep-me', '已有非受管 env 键应保留');
 console.log('[PASS] 5.7 add+activate 字段所有权');
 

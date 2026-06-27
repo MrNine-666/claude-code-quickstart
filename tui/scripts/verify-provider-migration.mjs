@@ -54,7 +54,7 @@ writeProfile('broken', {
 	env: {ANTHROPIC_BASE_URL: 'https://only-baseurl.test'}
 });
 
-const {migrateLegacyProfiles, getActiveProvider} = await import('../dist/core/provider.js');
+const {migrateLegacyProfiles, getActiveProvider} = await import('../src/core/provider.ts');
 
 const result = migrateLegacyProfiles();
 

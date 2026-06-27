@@ -25,7 +25,7 @@ mkdirSync(providersDir, {recursive: true});
 const USER_OWNED = {model: 'claude-opus-4-8', permissions: {allow: ['Read'], deny: []}};
 writeFileSync(settingsPath, JSON.stringify({...USER_OWNED, env: {CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '80'}}, null, 2), 'utf8');
 
-const {addProvider, switchProvider} = await import('../dist/core/provider.js');
+const {addProvider, switchProvider} = await import('../src/core/provider.ts');
 
 function readSettings() {
 	return JSON.parse(readFileSync(settingsPath, 'utf8'));
@@ -47,7 +47,7 @@ switchProvider(a.key);
 let env = readSettings().env;
 assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'sk-zhipu-aaaaaaaa');
 assert.equal(env.ANTHROPIC_BASE_URL, 'https://open.bigmodel.cn/api/anthropic');
-assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.1', 'A 模型键写入');
+assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.2', 'A 模型键写入');
 assert.equal(env.API_TIMEOUT_MS, '3000000', 'A extra env 写入');
 assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '80', 'ClaudeConfig 非 provider env 保留');
 console.log('[PASS] 8.3 设置默认 A：模型键 + extra env + ClaudeConfig env 保留');

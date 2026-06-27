@@ -34,7 +34,7 @@ writeFileSync(
 	'utf8'
 );
 
-const {migrateLegacyProfiles} = await import('../dist/core/provider.js');
+const {migrateLegacyProfiles} = await import('../src/core/provider.ts');
 const result = migrateLegacyProfiles();
 assert.deepEqual([...result.migrated], ['legacy-all'], '复合 fixture 应迁移');
 

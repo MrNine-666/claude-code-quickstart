@@ -4,7 +4,7 @@ import {
 	createInitialDetectionState,
 	reduceDetectionState,
 	shouldStartDetection
-} from '../dist/services/index.js';
+} from '../src/services/index.ts';
 
 const idle = createInitialDetectionState();
 assert.equal(idle.status, 'idle');
