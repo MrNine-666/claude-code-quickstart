@@ -3,10 +3,9 @@
 export { StatusDot, type StatusDotProps, type StatusDotKind } from './status-dot.js';
 export { Checkbox, type CheckboxProps } from './checkbox.js';
 export { ShortcutBar, type ShortcutBarProps, type Shortcut } from './shortcut-bar.js';
-export { ConfirmModal, type ConfirmModalProps } from './confirm-modal.js';
+export { ConfirmModal, CONFIRM_MODAL_ROWS, type ConfirmModalProps } from './confirm-modal.js';
 export { Spinner, type SpinnerProps } from './spinner.js';
 export { toast, ToastViewport, type ToastType, type ToastOptions } from './toast.js';
-export { StatusLabel, type StatusLabelProps, type StatusKind } from './status-label.js';
 export { Card, type CardProps } from './card.js';
 export { ActionHint, type ActionHintProps } from './action-hint.js';
 export { ViewHeader, type ViewHeaderProps } from './view-header.js';
@@ -16,7 +15,8 @@ export { ScrollList, type ScrollListProps, type ScrollListItem } from './scroll-
 export { DetailPanel, type DetailPanelProps, type DetailItem } from './detail-panel.js';
 export { DetailScreen, type DetailScreenProps } from './detail-screen.js';
 export { ProgressLog, type ProgressLogProps } from './progress-log.js';
-export { TextareaEditor, type TextareaEditorProps, type EditorFiletype } from './editor/TextareaEditor.js';
+export { TextareaEditor, type TextareaEditorProps, type EditorFiletype, type TextEditorHandle } from './editor/TextareaEditor.js';
+export { UpdateModal, type UpdateModalProps, type UpdateModalStatus } from './update-modal.js';
 
 // Form 组件导出
 export type { FormField, SelectOption, KeyValueEntry } from './form/field-types.js';

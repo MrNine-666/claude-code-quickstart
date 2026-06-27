@@ -2,6 +2,7 @@ import {existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSyn
 import {join, dirname, relative} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash, randomBytes} from 'node:crypto';
+import {spawn} from 'node:child_process';
 import {atomicWrite, readJsonFile} from './fs-utils.js';
 import {claudeDir, claudeJsonPath, ccqDir, resolveHome, settingsPath, skillsDir} from './paths.js';
 import {execCommand, type ProgressCallback} from './exec.js';
@@ -589,7 +590,7 @@ export function generateUpdateSummary(updatedItems: readonly string[]): string {
 // 整可执行文件热更新（Phase 7.5-7.8）
 // ============================================================================
 
-import { CCQ_VERSION } from '../index.js';
+import { CCQ_VERSION } from '../version.js';
 
 // GitHub Release API 端点
 const GITHUB_REPO = "MrNine-666/claude-code-quickstart";
@@ -803,4 +804,26 @@ export function startBackgroundUpdateCheck(): void {
 			// P-5: 失败不阻断当前运行，静默忽略
 		}
 	}, 5000);
+}
+
+// 重启 ccq 可执行文件：spawn 一个 detached 新进程（继承终端 stdio），再退出当前进程。
+// 供热更新完成后「立即重启」调用。新进程启动时：
+//   - macOS/Linux：applyUpdate 已原子替换磁盘文件，直接加载新版
+//   - Windows：走 applyPendingUpdateOnStartup 收尾待替换的 .ccq-update.tmp
+// spawn 失败则不退出，保持当前进程运行，由用户手动重启。
+// 注意：调用方应先 renderer.destroy() 恢复终端 raw mode，再调本函数。
+export function restartExecutable(): void {
+	try {
+		const child = spawn(process.execPath, [], {
+			detached: true,
+			stdio: 'inherit',
+			cwd: process.cwd()
+		});
+		child.unref();
+	} catch {
+		// spawn 失败则保持当前进程运行，让用户手动重启
+		return;
+	}
+
+	process.exit(0);
 }

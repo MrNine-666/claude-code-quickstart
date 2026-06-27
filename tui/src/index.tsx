@@ -5,9 +5,6 @@ import { KeymapProvider } from "@opentui/keymap/react";
 import App from "./app.js";
 import { applyPendingUpdateOnStartup, startBackgroundUpdateCheck } from "./core/update.js";
 
-// 内嵌版本号常量，供热更新版本比对使用（Phase 7.5）
-export const CCQ_VERSION = "0.1.0";
-
 // non-TTY 守卫：管道/重定向时输出只读提示，不进交互 TUI（对齐 HC-NON-TTY）
 if (!process.stdin.isTTY) {
 	console.log('Claude Code Quickstart 管理控制台');
@@ -24,6 +21,7 @@ if (appliedUpdate) {
 
 // 启动后台自动检查更新（Phase 7.5，不阻塞主流程）
 startBackgroundUpdateCheck();
+
 
 const renderer = await createCliRenderer({
 	autoFocus: true,  // 启用自动聚焦，确保键盘事件能被捕获

@@ -1,6 +1,6 @@
 export type FocusMode = 'nav' | 'view' | 'form' | 'modal';
 
-export type ManageModuleId = 'provider' | 'mcp' | 'skills' | 'prompts' | 'config' | 'tools';
+export type ManageModuleId = 'provider' | 'mcp' | 'skills' | 'prompts' | 'config' | 'tools' | 'update';
 
 export type ManageKeyName =
 	| 'up'
@@ -36,11 +36,22 @@ export const menuItems: readonly ManageMenuItem[] = [
 	{id: 'skills', label: 'Skills', description: '搜索、安装、更新和卸载 Claude Code Skills'}
 ];
 
-const maxMenuIndex = menuItems.length - 1;
+// 侧边栏底部固定的「检查更新」按钮（不在 menuItems 列表内，占第 menuItems.length 个导航位）。
+// 下键从最后一个菜单可跳到此处选中；selectedMenuItem 在该位返回此按钮（id='update'）。
+export const UPDATE_BUTTON: ManageMenuItem = {
+	id: 'update',
+	label: '检查更新',
+	description: '检查并更新 ccq 可执行文件到最新版本'
+};
+
+// 导航位总数 = 菜单项 + 底部「检查更新」按钮；按钮占第 menuItems.length 个 index。
+const navCount = menuItems.length + 1;
+const maxMenuIndex = navCount - 1;
 
 export function createInitialManageState(): ManageState {
 	return {
-		focus: 'nav',
+		// 启动即聚焦右侧视图：首个菜单（工具管理）直接获焦，无需先按 enter 进入
+		focus: 'view',
 		selectedIndex: 0,
 		eventLog: ['Manage TUI PoC 已启动'],
 		shouldExit: false
@@ -48,7 +59,9 @@ export function createInitialManageState(): ManageState {
 }
 
 export function selectedMenuItem(state: ManageState): ManageMenuItem {
-	return menuItems[clampIndex(state.selectedIndex)]!;
+	const index = clampIndex(state.selectedIndex);
+	// 末位（index === menuItems.length）为底部「检查更新」按钮
+	return index < menuItems.length ? menuItems[index]! : UPDATE_BUTTON;
 }
 
 export function reduceManageState(state: ManageState, keyName: ManageKeyName): ManageState {

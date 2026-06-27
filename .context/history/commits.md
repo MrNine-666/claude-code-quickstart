@@ -14,3 +14,4 @@
 | 2026-06-27 | 56799a6a | (pending) | refactor(tui): 抽取共享组件统一视图视觉与键位单一数据源 | 5 | 0 | medium |
 | 2026-06-28 | 27dae51d | (pending) | feat(tui): 增强 Skills 搜索安装与批量管理 | 3 | 0 | medium |
 | 2026-06-28 | 58133382 | (pending) | feat(tui): 优化内嵌编辑器与 MCP 表单回显 | 3 | 0 | medium |
+| 2026-06-28 | f58bb1f4 | (pending) | feat(tui): 增加检查更新浮窗与重启入口 | 4 | 0 | medium |
