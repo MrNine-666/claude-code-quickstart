@@ -27,11 +27,8 @@ bun run build
 ## 验证
 
 ```bash
-# parity 验证（与旧实现行为对齐）
-bun run verify:parity
-
-# smoke 测试
-bun run smoke
+# 运行全部 verify 门禁（parser / 状态机 / 迁移 / parity，bun 直跑 src）
+bun run verify
 ```
 
 ## 目录结构

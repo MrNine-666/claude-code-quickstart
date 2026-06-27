@@ -29,13 +29,13 @@
   "BuiltinProviders": {
     "zhipu": {
       "Name": "智谱 GLM",
-      "Description": "智谱 GLM Coding Plan，默认使用 GLM-5.1 系列模型",
+      "Description": "智谱 GLM Coding Plan，默认使用 GLM-5.2 旗舰模型",
       "BaseUrl": "https://open.bigmodel.cn/api/anthropic",
       "PlatformUrl": "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
       "ModelEnv": {
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4.5-air",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.1",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.1"
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.2",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2"
       },
       "ExtraEnv": {
         "API_TIMEOUT_MS": "3000000"
@@ -79,11 +79,11 @@
       "PlatformUrl": "https://platform.deepseek.com/api_keys",
       "ModelEnv": {
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1m]",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro[1m]"
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro"
       },
       "ExtraEnv": {
-        "ANTHROPIC_MODEL": "deepseek-v4-pro[1m]",
+        "ANTHROPIC_MODEL": "deepseek-v4-pro",
         "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-v4-flash",
         "CLAUDE_CODE_EFFORT_LEVEL": "max"
       }

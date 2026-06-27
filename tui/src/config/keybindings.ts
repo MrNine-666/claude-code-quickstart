@@ -104,8 +104,8 @@ export const mcpBindings: Binding[] = commandBindings({
 export const SKILLS_COMMANDS = {
 	LIST_UP: 'skills:list-up',
 	LIST_DOWN: 'skills:list-down',
-	TOGGLE_SELECT: 'skills:toggle-select',
-	SEARCH: 'skills:search',
+	TOGGLE_FOCUS: 'skills:toggle-focus',
+	INSTALL: 'skills:install',
 	UPDATE_ALL: 'skills:update-all',
 	UNINSTALL: 'skills:uninstall',
 	REFRESH: 'skills:refresh'
@@ -114,40 +114,40 @@ export const SKILLS_COMMANDS = {
 export const skillsBindings: Binding[] = commandBindings({
 	[SKILLS_COMMANDS.LIST_UP]: 'up',
 	[SKILLS_COMMANDS.LIST_DOWN]: 'down',
-	[SKILLS_COMMANDS.TOGGLE_SELECT]: 'space',
-	[SKILLS_COMMANDS.SEARCH]: '/',
+	[SKILLS_COMMANDS.TOGGLE_FOCUS]: 'tab',
+	[SKILLS_COMMANDS.INSTALL]: 'a',
 	[SKILLS_COMMANDS.UPDATE_ALL]: 'u',
 	[SKILLS_COMMANDS.UNINSTALL]: 'd',
 	[SKILLS_COMMANDS.REFRESH]: 'r'
 });
 
 // ------------------------------------------------------------
-// 全局规则视图 commands
+// 全局规则视图 commands（view-first：只读展示 ↔ a/e 编辑 ↔ 源码推荐边栏）
 // ------------------------------------------------------------
 export const PROMPTS_COMMANDS = {
-	IMPORT: 'prompts:import',
-	COPY: 'prompts:copy',
-	EDIT: 'prompts:edit',
-	// editor 子模式
-	EDITOR_SAVE: 'prompts:editor-save',
-	EDITOR_PREVIEW: 'prompts:editor-preview',
-	EDITOR_PREVIEW_TAB: 'prompts:editor-preview-tab',
-	EDITOR_CANCEL: 'prompts:editor-cancel',
-	// preview 子模式
-	PREVIEW_BACK: 'prompts:preview-back',
-	PREVIEW_UP: 'prompts:preview-up',
-	PREVIEW_DOWN: 'prompts:preview-down'
+	// view 态入口（只读展示 / 空状态）
+	ADD: 'prompts:add',                          // a 新建（空白编辑器）
+	EDIT_ENTRY: 'prompts:edit-entry',            // e 编辑现有（载入磁盘内容）
+	// edit 态主操作
+	TOGGLE_PANEL: 'prompts:toggle-panel',        // ctrl+t 开/关推荐边栏
+	IMPORT: 'prompts:import',                    // ctrl+o 推荐灌入缓冲
+	EDITOR_SAVE: 'prompts:editor-save',          // ctrl+s 保存
+	EDITOR_CANCEL: 'prompts:editor-cancel',      // escape 取消编辑回 view
+	// 双栏焦点切换
+	FOCUS_CYCLE: 'prompts:focus-cycle',          // tab 编辑器↔推荐边栏
+	// 滚动（view 展示 / 边栏）
+	PREVIEW_UP: 'prompts:preview-up',            // up 滚动
+	PREVIEW_DOWN: 'prompts:preview-down'         // down 滚动
 } as const;
 
 export const promptsBindings: Binding[] = commandBindings({
-	[PROMPTS_COMMANDS.IMPORT]: 'i',
-	[PROMPTS_COMMANDS.COPY]: 'c',
-	[PROMPTS_COMMANDS.EDIT]: 'e',
+	[PROMPTS_COMMANDS.ADD]: 'a',
+	[PROMPTS_COMMANDS.EDIT_ENTRY]: 'e',
+	[PROMPTS_COMMANDS.TOGGLE_PANEL]: 'ctrl+t',
+	[PROMPTS_COMMANDS.IMPORT]: 'ctrl+o',
 	[PROMPTS_COMMANDS.EDITOR_SAVE]: 'ctrl+s',
-	[PROMPTS_COMMANDS.EDITOR_PREVIEW]: 'ctrl+p',
-	[PROMPTS_COMMANDS.EDITOR_PREVIEW_TAB]: 'tab',
 	[PROMPTS_COMMANDS.EDITOR_CANCEL]: 'escape',
-	[PROMPTS_COMMANDS.PREVIEW_BACK]: 'escape',
+	[PROMPTS_COMMANDS.FOCUS_CYCLE]: 'tab',
 	[PROMPTS_COMMANDS.PREVIEW_UP]: 'up',
 	[PROMPTS_COMMANDS.PREVIEW_DOWN]: 'down'
 });
@@ -204,7 +204,7 @@ export const toolsBindings: Binding[] = commandBindings({
 	[TOOLS_COMMANDS.RIGHT]: 'right',
 	[TOOLS_COMMANDS.INSTALL_OR_UPDATE]: 'enter',
 	[TOOLS_COMMANDS.UPDATE_ALL]: 'a',
-	[TOOLS_COMMANDS.UNINSTALL]: 'u',
+	[TOOLS_COMMANDS.UNINSTALL]: 'd',
 	[TOOLS_COMMANDS.REFRESH]: 'r'
 });
 

@@ -2,12 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useKeyboard } from '@opentui/react';
 import {
 	ConfirmModal,
+	CONFIRM_MODAL_ROWS,
 	ErrorPanel,
 	ScrollList,
 	StatusDot,
-	StatusLabel,
 	ViewHeader,
 	ActionHint,
+	toast,
 	type ScrollListItem
 } from '../components/index.js';
 import { ProviderForm } from './provider-form.js';
@@ -41,11 +42,6 @@ type ProviderScreen =
 	| { readonly kind: 'edit'; readonly key: string }
 	| { readonly kind: 'confirm-delete'; readonly key: string };
 
-type Banner =
-	| { readonly kind: 'none' }
-	| { readonly kind: 'success'; readonly message: string }
-	| { readonly kind: 'error'; readonly message: string };
-
 // 卡片正文单行最大显示宽度（截断，防溢出）。
 const CARD_BODY_WIDTH = 64;
 
@@ -70,7 +66,6 @@ export function ProviderView({
 	const migrationFailed = useMemo(() => getMigrationResult()?.failed ?? [], []);
 	const [selected, setSelected] = useState(0);
 	const [screen, setScreen] = useState<ProviderScreen>({ kind: 'list' });
-	const [banner, setBanner] = useState<Banner>({ kind: 'none' });
 
 	const profiles = display.profiles;
 	const safeSelected = profiles.length === 0 ? 0 : Math.min(selected, profiles.length - 1);
@@ -113,7 +108,7 @@ export function ProviderView({
 				onCancel={() => setScreen({ kind: 'list' })}
 				onSaved={(message) => {
 					refresh();
-					setBanner({ kind: 'success', message });
+					toast.success(message);
 					setScreen({ kind: 'list' });
 				}}
 			/>
@@ -134,7 +129,7 @@ export function ProviderView({
 				onCancel={() => setScreen({ kind: 'list' })}
 				onSaved={(message) => {
 					refresh();
-					setBanner({ kind: 'success', message });
+					toast.success(message);
 					setScreen({ kind: 'list' });
 				}}
 			/>
@@ -170,35 +165,21 @@ export function ProviderView({
 					profiles={profiles}
 					selectedIndex={safeSelected}
 					viewportHeight={viewportHeight}
-					reservedRows={migrationFailed.length > 0 ? 6 : 3}
+					reservedRows={(migrationFailed.length > 0 ? 6 : 3) + (screen.kind === 'confirm-delete' ? CONFIRM_MODAL_ROWS : 0)}
 				/>
 			)}
 
-			{banner.kind === 'success' ? (
-				<box marginTop={1}>
-					<StatusLabel kind="pass" label={banner.message} />
-				</box>
-			) : null}
-			{banner.kind === 'error' ? (
-				<box marginTop={1}>
-					<ErrorPanel message={banner.message} />
-				</box>
-			) : null}
-
+			{screen.kind === 'confirm-delete' && current ? <box flexGrow={1} /> : null}
 			{screen.kind === 'confirm-delete' && current ? (
-				<box marginTop={1}>
-					<ConfirmModal
-						title={current.isActive ? '禁止删除活跃供应商' : '确认删除供应商'}
-						message={
-							current.isActive
-								? `${current.name} 是当前活跃供应商，删除前请先切换到其他供应商。`
-								: `即将删除供应商 ${current.name}（${current.key}），此操作不可撤销。`
-						}
-						confirmLabel={current.isActive ? '（已禁用）' : 'Enter 确认删除'}
-						cancelLabel="Esc 取消"
-						tone="danger"
-					/>
-				</box>
+				<ConfirmModal
+					title={current.isActive ? '禁止删除活跃供应商' : '确认删除供应商'}
+					message={
+						current.isActive
+							? `${current.key} 是当前活跃供应商，删除前请先切换到其他供应商。`
+							: `即将删除供应商 ${current.key}，此操作不可撤销。`
+					}
+					tone="danger"
+				/>
 			) : null}
 
 			<ListInput
@@ -213,18 +194,16 @@ export function ProviderView({
 					const result = switchActiveProvider(current.key);
 					if (result.ok) {
 						refresh();
-						setBanner({ kind: 'success', message: `已切换为活跃供应商：${result.data.providerName}` });
+						toast.success(`已切换为活跃供应商：${result.data.providerName}`);
 					} else {
-						setBanner({ kind: 'error', message: result.error });
+						toast.error(result.error);
 					}
 				}}
 				onAdd={() => {
-					setBanner({ kind: 'none' });
 					setScreen({ kind: 'add' });
 				}}
 				onEdit={() => {
 					if (current) {
-						setBanner({ kind: 'none' });
 						setScreen({ kind: 'edit', key: current.key });
 					}
 				}}
@@ -246,21 +225,18 @@ export function ProviderView({
 					}
 
 					if (current.isActive) {
-						setBanner({
-							kind: 'error',
-							message: `无法删除当前活跃供应商 ${current.name}，请先切换到其他供应商。`
-						});
+						toast.error(`无法删除当前活跃供应商 ${current.key}，请先切换到其他供应商。`);
 						setScreen({ kind: 'list' });
 						return;
 					}
 
 					const result = removeProvider(current.key);
 					refresh();
-					setBanner(
-						result.ok
-							? { kind: 'success', message: `已删除供应商：${current.name}` }
-							: { kind: 'error', message: result.error }
-					);
+					if (result.ok) {
+						toast.success(`已删除供应商：${current.key}`);
+					} else {
+						toast.error(result.error);
+					}
 					setScreen({ kind: 'list' });
 				}}
 			/>
@@ -283,7 +259,7 @@ function ProviderTable({
 }) {
 	const items: ScrollListItem[] = profiles.map((profile) => ({
 		key: profile.key,
-		title: profile.name,
+		title: profile.key,
 		leading: cardStatusDot(profile),
 		body: (
 			<text fg={colors.muted}>

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useReducer } from 'react';
 import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
-import { Card, ConfirmModal, ErrorPanel, StatusDot, StatusLabel, ViewHeader, type StatusDotKind } from '../components/index.js';
+import { Card, ConfirmModal, ErrorPanel, Spinner, StatusDot, ViewHeader, toast, type StatusDotKind } from '../components/index.js';
 import { colors } from '../theme/index.js';
 import type { ProgressCallback } from '../core/exec.js';
 import type { DetectionState } from '../services/async-detection.js';
@@ -69,6 +69,13 @@ export function ToolsView({ services, cache, active = true, viewportHeight = 16,
 		}
 	}, [detection.status, detection.result, detection.error]);
 
+	// 检测失败时弹 toast（长停留，保留「按 r 重试」指引；仅在 status 变 error 时触发一次）。
+	useEffect(() => {
+		if (detection.status === 'error') {
+			toast.error('检测失败，可按 r 重试', 6000);
+		}
+	}, [detection.status]);
+
 	// 上报当前子模式给 App footer。
 	useEffect(() => {
 		if (active) {
@@ -110,17 +117,16 @@ export function ToolsView({ services, cache, active = true, viewportHeight = 16,
 	return (
 		<box flexDirection="column" flexGrow={1}>
 			<ViewHeader title="工具管理" subtitle="安装 · 更新 · 卸载（全生命周期）" />
+			{renderDetectionNotice(detection.status)}
+			{renderGrid(view)}
+			{activeProgressTasks(view).length > 0 ? <ActiveProgressTasks tasks={activeProgressTasks(view)} /> : null}
+			{view.errorText ? <ErrorPanel message={view.errorText} /> : null}
+			{view.mode === 'confirm-uninstall' ? <box flexGrow={1} /> : null}
 			{view.mode === 'confirm-uninstall' ? (
-				<UninstallConfirm view={view} dispatch={dispatch} services={services} cache={cache} active={active} />
-			) : (
-				<>
-					{renderDetectionNotice(detection.status)}
-					{renderGrid(view)}
-					{activeProgressTasks(view).length > 0 ? <ActiveProgressTasks tasks={activeProgressTasks(view)} /> : null}
-					{view.notice ? <text fg={colors.success}>{view.notice}</text> : null}
-					{view.errorText ? <ErrorPanel message={view.errorText} /> : null}
-				</>
-			)}
+				<box marginTop={1}>
+					<UninstallConfirm view={view} dispatch={dispatch} services={services} cache={cache} active={active} />
+				</box>
+			) : null}
 		</box>
 	);
 }
@@ -167,13 +173,12 @@ function handleGridKey(
 		return;
 	}
 
-	if (k === 'u' || k === 'x') {
+	if (k === 'd') {
 		dispatch({ type: 'request-uninstall' });
 		return;
 	}
 
 	if (k === 'r' && !isAnyBusy(view)) {
-		dispatch({ type: 'clear-notice' });
 		cache.refresh();
 	}
 }
@@ -196,7 +201,7 @@ function enterDefaultAction(view: ToolsViewState, services: ToolsViewServices, d
 		return;
 	}
 
-	dispatch({ type: 'notice', message: `${component.name} 已是最新` });
+	toast.success(`${component.name} 已是最新`);
 }
 
 // ── 安装（单项 / 批量，失败隔离） ─────────────────────────────────────────────
@@ -212,7 +217,8 @@ function installOne(component: ManagedComponent, services: ToolsViewServices, di
 		.then(async (outcome) => {
 			const components = await services.detectComponents();
 			if (outcome.success) {
-				dispatch({ type: 'item-done', id: component.id, summary: `${component.name} 安装成功`, components });
+				toast.success(`${component.name} 安装成功`);
+				dispatch({ type: 'item-done', id: component.id, components });
 				cache.refresh();
 			} else {
 				dispatch({ type: 'item-failed', id: component.id, error: outcome.error ?? `${component.name} 安装失败`, components });
@@ -236,7 +242,8 @@ function updateOne(component: ManagedComponent, services: ToolsViewServices, dis
 			if (failed) {
 				dispatch({ type: 'item-failed', id: component.id, error: `${component.name} 更新失败`, components });
 			} else {
-				dispatch({ type: 'item-done', id: component.id, summary: `${component.name} 已更新`, components });
+				toast.success(`${component.name} 已更新`);
+				dispatch({ type: 'item-done', id: component.id, components });
 			}
 
 			cache.refresh();
@@ -250,7 +257,7 @@ function updateOne(component: ManagedComponent, services: ToolsViewServices, dis
 function updateAll(view: ToolsViewState, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
 	const targets = updatableComponents(view);
 	if (targets.length === 0) {
-		dispatch({ type: 'notice', message: '没有可更新的组件' });
+		toast.info('没有可更新的组件');
 		return;
 	}
 
@@ -266,7 +273,8 @@ function updateAll(view: ToolsViewState, services: ToolsViewServices, dispatch: 
 					? `已更新 ${targets.length} 个组件`
 					: `${updatedCount}/${targets.length} 成功，失败: ${failedIds.join(', ')}`;
 			if (failedIds.length === 0) {
-				dispatch({ type: 'batch-done', summary, components });
+				toast.success(summary);
+				dispatch({ type: 'batch-done', components });
 			} else {
 				dispatch({ type: 'batch-failed', error: summary, components });
 			}
@@ -326,12 +334,8 @@ function UninstallConfirm({
 			<ConfirmModal
 				title={`卸载确认：${target.name}`}
 				message={target.isBase ? '基础组件卸载风险极高，确认继续？' : '确认卸载此组件？此操作不可撤销。'}
-				confirmLabel="Enter 确认卸载"
-				cancelLabel="Esc 取消"
 				tone="danger"
 			/>
-			{activeProgressTasks(view).length > 0 ? <ActiveProgressTasks tasks={activeProgressTasks(view)} /> : null}
-			{view.errorText ? <ErrorPanel message={view.errorText} /> : null}
 		</box>
 	);
 }
@@ -343,7 +347,8 @@ function runUninstall(component: ManagedComponent, services: ToolsViewServices, 
 		.then(async (outcome) => {
 			const components = await services.detectComponents();
 			if (outcome.success) {
-				dispatch({ type: 'item-done', id: component.id, summary: `${component.name} 已卸载`, components });
+				toast.success(`${component.name} 已卸载`);
+				dispatch({ type: 'item-done', id: component.id, components });
 				cache.refresh();
 			} else {
 				const message = outcome.manualHint
@@ -362,11 +367,7 @@ function runUninstall(component: ManagedComponent, services: ToolsViewServices, 
 
 function renderDetectionNotice(status: DetectionState<ManagedComponent[]>['status']): React.ReactNode {
 	if (status === 'loading' || status === 'idle') {
-		return <StatusLabel kind="loading" label="正在检测组件状态与远程版本..." />;
-	}
-
-	if (status === 'error') {
-		return <StatusLabel kind="fail" label="检测失败，可按 r 重试" />;
+		return <Spinner label="正在检测组件状态与远程版本..." />;
 	}
 
 	return null;
@@ -439,10 +440,6 @@ function dotKindFor(component: ManagedComponent, status: ComponentItemStatus): {
 
 	if (status === 'failed') {
 		return { kind: 'failed', label: '失败' };
-	}
-
-	if (status === 'done') {
-		return { kind: 'latest', label: component.currentVersion || '已完成' };
 	}
 
 	if (!component.installed) {

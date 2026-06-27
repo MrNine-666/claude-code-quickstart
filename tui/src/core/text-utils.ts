@@ -81,6 +81,8 @@ export function displayWidth(text: string): number {
 			(code >= 0x1100 && code <= 0x115f) ||
 			(code >= 0x2e80 && code <= 0xa4cf) ||
 			(code >= 0xac00 && code <= 0xd7a3) ||
+			(code >= 0xe000 && code <= 0xf8ff) ||   // BMP 私有用区（Nerd Font 图标等，终端多按双宽渲染）
+			(code >= 0xf0001 && code <= 0x1afff) || // 补充私有用区（nf-md-* Material Design 图标）
 			(code >= 0xf900 && code <= 0xfaff) ||
 			(code >= 0xfe30 && code <= 0xfe4f) ||
 			(code >= 0xff00 && code <= 0xff60) ||

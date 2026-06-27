@@ -1,4 +1,4 @@
-import {existsSync, readFileSync, rmSync, unlinkSync} from 'node:fs';
+import {existsSync, readdirSync, readFileSync, rmSync, unlinkSync} from 'node:fs';
 import {join} from 'node:path';
 import {execCommand, type ProgressCallback} from './exec.js';
 import {
@@ -12,7 +12,7 @@ import {
 } from './update.js';
 import {installTool, TOOL_DEFINITIONS, type ToolId} from './tools-install.js';
 import {atomicWrite} from './fs-utils.js';
-import {claudeDir, settingsPath, rulesDir} from './paths.js';
+import {claudeDir, resolveHome, rulesDir, settingsPath} from './paths.js';
 
 // tools-manage core：工具管理单一真理源（design TDR-11）。
 // 融合 tools-install.ts（5 工具安装定义）与 update.ts（CLI 组件检测/快照/应用），
@@ -129,7 +129,7 @@ export async function detectComponents(onProgress?: ProgressCallback): Promise<M
 /**
  * 安装单个组件（11.6 ClaudeCode 新增 / 11.8 五工具复用 installTool）。
  * ClaudeCode 走 npm install -g + 检测确认，支持 deps.exec 注入供测试；
- * 5 工具复用 tools-install.installTool（含 Ccline patch / CcgWorkflow npx init / Antigravity shell 脚本），不重写。
+ * 5 工具复用 tools-install.installTool（含 CcgWorkflow npx init / Antigravity shell 脚本），不重写。
  */
 export async function installComponent(
 	id: ComponentId,
@@ -220,7 +220,12 @@ const CCG_MANAGED_PATHS: readonly string[] = [
 	'bin/codeagent-wrapper'
 ];
 
-/** CcgWorkflow 受管 rules 文件（对齐 ccg-workflow.json managedRuleFiles）。 */
+/**
+ * CcgWorkflow 受管 rules 文件清单（~/.claude/rules/ 下）。
+ * 对齐 contracts/ccg-workflow.json 的 managedRuleFiles（ccq- 前缀，ccg-workflow 安装时写入）。
+ * 注：ccq- 前缀中仅这 4 个属 CcgWorkflow 受管，其余 ccq-*（如 install 写入的 ccq-mcp-*.md）
+ * 为本项目 rules，不删——故用显式清单而非前缀通配。
+ */
 const CCG_MANAGED_RULE_FILES: readonly string[] = [
 	'ccq-ccgworkflow.md',
 	'ccq-multimodel.md',
@@ -228,10 +233,7 @@ const CCG_MANAGED_RULE_FILES: readonly string[] = [
 	'ccq-workflow.md'
 ];
 
-const ANTIGRAVITY_MANUAL_HINT =
-	'未检测到 agy 卸载子命令，请参考 Antigravity 官方文档手动卸载（通常删除安装目录并清理 PATH）';
-
-/** 单组件卸载结果（manualHint 用于无自动卸载能力时的手动指引）。 */
+/** 单组件卸载结果（manualHint 保留字段；Antigravity 已改为 fs 直删，当前不再产出 manualHint）。 */
 export type ComponentUninstallOutcome = {
 	readonly id: ComponentId;
 	readonly success: boolean;
@@ -285,7 +287,8 @@ export async function uninstallComponent(
 				await uninstallCcgWorkflow(exec, onProgress);
 				break;
 			case 'shell-script':
-				return await uninstallAntigravity(exec, onProgress);
+				await uninstallAntigravity(onProgress);
+				break;
 		}
 
 		onProgress?.({level: 'success', message: `${definition.name} 已卸载`, componentId: id});
@@ -449,16 +452,27 @@ async function uninstallCcgWorkflow(exec: typeof execCommand, onProgress?: Progr
 		}
 	}
 
-	// 2. 清理受管 rules 文件（managedRuleFiles 单一真理源）
+	// 2. 清理 CcgWorkflow 受管 rules 文件（对齐 contracts/ccg-workflow.json managedRuleFiles）。
+	//    删清单内 ccq- 文件（CcgWorkflow 安装写入）+ 兼容旧版官方 ccg-*.md；
+	//    保留其余 ccq-*（本项目 install rules）与用户自定义。
 	const rules = rulesDir();
-	for (const file of CCG_MANAGED_RULE_FILES) {
-		const target = join(rules, file);
-		if (!existsSync(target)) {
+	const ruleFiles = new Set<string>();
+	try {
+		for (const file of readdirSync(rules)) {
+			ruleFiles.add(file);
+		}
+	} catch {
+		/* rules 目录不存在或读取失败，跳过 */
+	}
+
+	const legacyCcgRules = [...ruleFiles].filter(file => file.startsWith('ccg-') && file.endsWith('.md'));
+	for (const file of [...CCG_MANAGED_RULE_FILES, ...legacyCcgRules]) {
+		if (!ruleFiles.has(file)) {
 			continue;
 		}
 
 		try {
-			unlinkSync(target);
+			unlinkSync(join(rules, file));
 			onProgress?.({level: 'success', message: `已删除 rules/${file}`, componentId: 'CcgWorkflow'});
 		} catch {
 			/* 单个 rules 删除失败不阻塞 */
@@ -495,34 +509,46 @@ async function uninstallCcgWorkflow(exec: typeof execCommand, onProgress?: Progr
 }
 
 /**
- * 11.14 Antigravity 卸载：运行时探测 agy --help 是否含 uninstall/remove 子命令。
- * 存在则调用；不存在则返回 manualHint（不臆测路径、不误删）。
+ * 11.14 Antigravity 卸载：agy 无官方 uninstall 子命令，按官方文档直接删除安装文件。
+ * macOS/Linux：~/.local/bin/agy + update-antigravity-cli + ~/.cache/antigravity；
+ * Windows：%LOCALAPPDATA%\agy\bin 整目录。文件不存在则跳过（可能未装或已手动清理）。
  */
-async function uninstallAntigravity(exec: typeof execCommand, onProgress?: ProgressCallback): Promise<ComponentUninstallOutcome> {
-	let helpText = '';
-	try {
-		const help = await exec('agy', ['--help'], {timeout: DETECT_TIMEOUT_MS});
-		helpText = `${help.stdout || ''}\n${help.stderr || ''}`;
-	} catch {
-		helpText = '';
+async function uninstallAntigravity(onProgress?: ProgressCallback): Promise<void> {
+	const targets: string[] = [];
+	if (process.platform === 'win32') {
+		const localAppData = process.env.LOCALAPPDATA;
+		if (localAppData) {
+			targets.push(join(localAppData, 'agy', 'bin'));
+		}
+	} else {
+		const home = resolveHome();
+		targets.push(join(home, '.local', 'bin', 'agy'));
+		targets.push(join(home, '.local', 'bin', 'update-antigravity-cli'));
+		targets.push(join(home, '.cache', 'antigravity'));
 	}
 
-	const subcommand = /\buninstall\b/i.test(helpText) ? 'uninstall' : /\bremove\b/i.test(helpText) ? 'remove' : '';
-	if (!subcommand) {
-		onProgress?.({level: 'warning', message: ANTIGRAVITY_MANUAL_HINT, componentId: 'AntigravityCli'});
-		return {id: 'AntigravityCli', success: false, manualHint: ANTIGRAVITY_MANUAL_HINT};
+	let removed = false;
+	for (const target of targets) {
+		if (!existsSync(target)) {
+			continue;
+		}
+
+		try {
+			rmSync(target, {recursive: true, force: true});
+			onProgress?.({level: 'success', message: `已删除 ${target}`, componentId: 'AntigravityCli'});
+			removed = true;
+		} catch (error) {
+			onProgress?.({
+				level: 'warning',
+				message: `删除 ${target} 失败: ${error instanceof Error ? error.message : String(error)}`,
+				componentId: 'AntigravityCli'
+			});
+		}
 	}
 
-	onProgress?.({level: 'info', message: `agy ${subcommand}`, componentId: 'AntigravityCli'});
-	const result = await exec('agy', [subcommand], {timeout: INSTALL_TIMEOUT_MS});
-	if (result.code === 0) {
-		onProgress?.({level: 'success', message: 'Antigravity CLI 已卸载', componentId: 'AntigravityCli'});
-		return {id: 'AntigravityCli', success: true};
+	if (!removed) {
+		onProgress?.({level: 'warning', message: '未找到 Antigravity 安装文件（可能未安装或路径已变更）', componentId: 'AntigravityCli'});
 	}
-
-	const message = friendlyError(result.stderr || result.stdout, `agy ${subcommand} 失败 (exit ${result.code})`);
-	onProgress?.({level: 'danger', message: `Antigravity 卸载失败: ${message}`, componentId: 'AntigravityCli'});
-	return {id: 'AntigravityCli', success: false, error: message};
 }
 
 export type {ApplyUpdatesDeps, ApplyUpdatesResult};

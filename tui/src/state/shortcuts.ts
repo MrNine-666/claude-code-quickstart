@@ -95,6 +95,8 @@ export function viewShortcuts(menuId: ManageModuleId, subMode: ViewSubMode): rea
 			return configShortcuts(subMode);
 		case 'tools':
 			return toolsShortcuts(subMode);
+		default:
+			return [];
 	}
 }
 
@@ -161,14 +163,6 @@ function mcpShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 }
 
 function skillsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
-	if (subMode === 'search-input') {
-		return manualShortcuts([{key: '输入', label: '关键词'}, {key: 'Enter', label: '搜索'}, {key: 'Esc', label: '取消'}]);
-	}
-
-	if (subMode === 'search-results') {
-		return manualShortcuts([{key: '↑/↓', label: '选择'}, {key: 'Enter', label: '安装'}, {key: 'Esc', label: '返回'}]);
-	}
-
 	if (subMode === 'confirm-install' || subMode === 'confirm-uninstall') {
 		return manualShortcuts([{key: 'Enter', label: '确认'}, {key: 'Esc', label: '取消'}]);
 	}
@@ -177,11 +171,33 @@ function skillsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		return manualShortcuts([{key: '请稍候', label: '执行中'}]);
 	}
 
+	// 安装页·父级：搜索框 + repo 列表（find 按 owner/repo 去重）
+	if (subMode === 'install') {
+		return manualShortcuts([
+			{key: 'Tab', label: '搜索框/repo'},
+			{key: '↑/↓', label: '选择 repo'},
+			{key: 'Enter', label: '展开子 skill'},
+			{key: 'Esc', label: '返回列表页'}
+		]);
+	}
+
+	// 安装页·子级：某 repo 下 skill 多选（需求③）
+	if (subMode === 'install-pick') {
+		return manualShortcuts([
+			{key: 'A', label: '全选/取消'},
+			{key: 'Space', label: '选中/取消'},
+			{key: '↑/↓', label: '选择'},
+			{key: 'Enter', label: '安装选中'},
+			{key: 'Esc', label: '返回 repo 列表'}
+		]);
+	}
+
+	// 列表页（默认）：本地过滤 + 已装管理
 	return buildShortcuts([
+		{command: SKILLS_COMMANDS.TOGGLE_FOCUS, label: '过滤框/列表'},
 		{command: SKILLS_COMMANDS.LIST_UP, label: '选择'},
 		{command: SKILLS_COMMANDS.LIST_DOWN, label: '选择'},
-		{command: SKILLS_COMMANDS.TOGGLE_SELECT, label: '多选'},
-		{command: SKILLS_COMMANDS.SEARCH, label: '搜索安装'},
+		{command: SKILLS_COMMANDS.INSTALL, label: '安装页'},
 		{command: SKILLS_COMMANDS.UPDATE_ALL, label: '更新全部'},
 		{command: SKILLS_COMMANDS.UNINSTALL, label: '卸载'},
 		{command: SKILLS_COMMANDS.REFRESH, label: '刷新'},
@@ -190,37 +206,60 @@ function skillsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 }
 
 function promptsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
-	if (subMode === 'editor') {
+	// view 态：只读渲染展示（本地 md 有内容；已有内容不展示「新建」避免误覆盖）
+	if (subMode === 'view-render') {
 		return buildShortcuts([
+			{command: PROMPTS_COMMANDS.EDIT_ENTRY, label: '编辑'},
+			{command: PROMPTS_COMMANDS.PREVIEW_UP, label: '滚动'},
+			{command: PROMPTS_COMMANDS.PREVIEW_DOWN, label: '滚动'},
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}
+		]);
+	}
+
+	// view 态：空状态（本地 md 不存在/空，仅此时 a 新建）
+	if (subMode === 'view-empty') {
+		return buildShortcuts([
+			{command: PROMPTS_COMMANDS.ADD, label: '新建'},
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}
+		]);
+	}
+
+	// edit 态：纯编辑器（默认）
+	if (subMode === 'edit') {
+		return buildShortcuts([
+			{command: PROMPTS_COMMANDS.TOGGLE_PANEL, label: '推荐边栏'},
 			{command: PROMPTS_COMMANDS.EDITOR_SAVE, label: '保存'},
-			{command: PROMPTS_COMMANDS.EDITOR_PREVIEW, label: '预览'},
+			{command: PROMPTS_COMMANDS.IMPORT, label: '导入推荐'},
 			{command: PROMPTS_COMMANDS.EDITOR_CANCEL, label: '取消'}
 		]);
 	}
 
-	if (subMode === 'preview') {
+	// edit 态：双栏 · 焦点在编辑器
+	if (subMode === 'edit-split-editor') {
 		return buildShortcuts([
-			{command: PROMPTS_COMMANDS.PREVIEW_BACK, label: '返回编辑'},
-			{command: PROMPTS_COMMANDS.PREVIEW_UP, label: '滚动'},
-			{command: PROMPTS_COMMANDS.PREVIEW_DOWN, label: '滚动'}
+			{command: PROMPTS_COMMANDS.FOCUS_CYCLE, label: '切边栏'},
+			{command: PROMPTS_COMMANDS.TOGGLE_PANEL, label: '收边栏'},
+			{command: PROMPTS_COMMANDS.EDITOR_SAVE, label: '保存'},
+			{command: PROMPTS_COMMANDS.IMPORT, label: '导入推荐'},
+			{command: PROMPTS_COMMANDS.EDITOR_CANCEL, label: '取消'}
 		]);
 	}
 
-	if (subMode === 'confirm-import') {
-		return manualShortcuts([{key: 'Enter', label: '确认导入'}, {key: 'Esc', label: '取消'}]);
+	// edit 态：双栏 · 焦点在推荐边栏（↑/↓ 滚动）
+	if (subMode === 'edit-split-recommend') {
+		return buildShortcuts([
+			{command: PROMPTS_COMMANDS.PREVIEW_UP, label: '滚动'},
+			{command: PROMPTS_COMMANDS.PREVIEW_DOWN, label: '滚动'},
+			{command: PROMPTS_COMMANDS.FOCUS_CYCLE, label: '切编辑器'},
+			{command: PROMPTS_COMMANDS.TOGGLE_PANEL, label: '收边栏'},
+			{command: PROMPTS_COMMANDS.EDITOR_SAVE, label: '保存'},
+			{command: PROMPTS_COMMANDS.IMPORT, label: '导入推荐'},
+			{command: PROMPTS_COMMANDS.EDITOR_CANCEL, label: '取消'}
+		]);
 	}
 
-	if (subMode === 'busy') {
-		return manualShortcuts([{key: '请稍候', label: '执行中'}]);
-	}
-
-	return buildShortcuts([
-		{command: PROMPTS_COMMANDS.IMPORT, label: '导入'},
-		{command: PROMPTS_COMMANDS.COPY, label: '复制'},
-		{command: PROMPTS_COMMANDS.EDIT, label: '编辑器'},
-		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
-		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
-	]);
+	// 确认浮层（import）
+	return manualShortcuts([{key: 'Enter', label: '确认'}, {key: 'Esc', label: '取消'}]);
 }
 
 function configShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
@@ -263,7 +302,7 @@ function toolsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	}
 
 	if (subMode === 'confirm-uninstall') {
-		return manualShortcuts([{key: '输入确认词', label: '确认卸载'}, {key: 'Esc', label: '取消'}]);
+		return manualShortcuts([{key: 'Enter', label: '确认卸载'}, {key: 'Esc', label: '取消'}]);
 	}
 
 	return buildShortcuts([

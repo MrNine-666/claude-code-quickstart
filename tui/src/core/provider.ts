@@ -30,7 +30,6 @@ export type ProviderProfile = {
 
 export type ProviderListItem = {
 	readonly key: string;
-	readonly name: string;
 	readonly baseUrl: string;
 	readonly hasManagedModelConfig: boolean;
 	readonly authToken: string;
@@ -39,7 +38,6 @@ export type ProviderListItem = {
 
 export type ProviderDisplayProfile = {
 	readonly key: string;
-	readonly name: string;
 	readonly baseUrl: string;
 	readonly authToken: string;
 	readonly profilePath: string;
@@ -374,7 +372,6 @@ export function getProviderList(): ProviderListItem[] {
 
 			results.push({
 				key: basename(f, '.json'),
-				name: basename(f, '.json'),
 				baseUrl: profile.env?.ANTHROPIC_BASE_URL ?? '',
 				hasManagedModelConfig: Object.keys(getManagedModelEnv(profile)).length > 0,
 				authToken: profile.env?.ANTHROPIC_AUTH_TOKEN ?? '',
@@ -418,7 +415,7 @@ function resolveActiveProfile(
 }
 
 /** 识别当前活跃供应商。 */
-export function getActiveProvider(): {key: string; name: string; baseUrl: string; profilePath: string} | null {
+export function getActiveProvider(): {key: string; baseUrl: string; profilePath: string} | null {
 	const env = settingsEnv(readSettings());
 	const baseUrl = env.ANTHROPIC_BASE_URL || '';
 	const authToken = env.ANTHROPIC_AUTH_TOKEN || '';
@@ -431,7 +428,7 @@ export function getActiveProvider(): {key: string; name: string; baseUrl: string
 		return null;
 	}
 
-	return {key: active.key, name: active.name, baseUrl: active.baseUrl, profilePath: active.profilePath};
+	return {key: active.key, baseUrl: active.baseUrl, profilePath: active.profilePath};
 }
 
 /** 聚合供应商展示数据（合并 Profiles + ActiveKey）。 */
@@ -445,7 +442,6 @@ export function getDisplayData(): ProviderDisplayData {
 
 	const displayProfiles: ProviderDisplayProfile[] = profiles.map(p => ({
 		key: p.key,
-		name: p.name,
 		baseUrl: p.baseUrl,
 		authToken: p.authToken,
 		profilePath: p.profilePath,
@@ -799,7 +795,7 @@ function deleteProviderUnlocked(key: string, opts?: {force?: boolean}): {success
 	const isActive = Boolean(active && active.key === key);
 
 	if (isActive && !options.force) {
-		throw new Error(`无法删除当前活跃的供应商: ${active!.name}，请先切换到其他供应商后再删除`);
+		throw new Error(`无法删除当前活跃的供应商: ${active!.key}，请先切换到其他供应商后再删除`);
 	}
 
 	// §2.8.1：删除前读出 profile.env 键集合，活跃供应商删除时据此精确清理 settings.env。

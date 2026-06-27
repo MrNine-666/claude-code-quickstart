@@ -1,5 +1,4 @@
 import {readFileSync, existsSync} from 'node:fs';
-import {join} from 'node:path';
 import {execCommand, type ProgressCallback} from './exec.js';
 import {atomicWrite} from './fs-utils.js';
 import {claudeDir, claudeJsonPath, settingsPath} from './paths.js';
@@ -7,7 +6,7 @@ import {claudeDir, claudeJsonPath, settingsPath} from './paths.js';
 // 工具安装 core：检测 + 安装 5 个进阶工具（Ccline / CcgWorkflow / OpenSpec / CodexCli / AntigravityCli）。
 // 全部经 core/exec.ts 的 execCommand spawn 外部命令（HC-TUI-NODE-ONLY），不调 PS/zsh 步骤函数。
 // 安装命令矩阵对齐 installer 步骤（design TDR-5）：
-//   Ccline       npm install -g + ccline --patch <cli.js> + settings.json statusLine（仅补缺失）
+//   Ccline       npm install -g @cometix/ccline + settings.json statusLine（仅补缺失）
 //   CcgWorkflow  npx ccg-workflow@latest init --skip-prompt --skip-mcp + mcpServers 快照保护
 //   OpenSpec/CodexCli  npm install -g
 //   AntigravityCli     平台 shell 脚本（Win irm|iex / mac curl|bash）
@@ -155,9 +154,9 @@ async function installNpmPackage(definition: ToolDefinition, onProgress?: Progre
 	}
 }
 
-/** Ccline 后置：写 statusLine（仅补缺失） + ccline --patch <cli.js>。 */
+/** Ccline 后置：写 statusLine（仅补缺失，保护用户配置）。 */
 async function postInstallCcline(onProgress?: ProgressCallback): Promise<void> {
-	// 1. settings.json statusLine（fill-missing：已有 statusLine 则不覆盖，保护用户配置）
+	// settings.json statusLine（fill-missing：已有 statusLine 则不覆盖，保护用户配置）
 	const path = settingsPath();
 	let settings: JsonObject = {};
 	if (existsSync(path)) {
@@ -178,25 +177,6 @@ async function postInstallCcline(onProgress?: ProgressCallback): Promise<void> {
 		} catch (error) {
 			onProgress?.({level: 'warning', message: `statusLine 写入失败: ${error instanceof Error ? error.message : String(error)}`, componentId: 'Ccline'});
 		}
-	}
-
-	// 2. ccline --patch <claude cli.js>
-	try {
-		const rootResult = await execCommand('npm', ['root', '-g'], {timeout: DETECT_TIMEOUT_MS});
-		const npmRoot = rootResult.stdout.trim().split(/\r?\n/)[0];
-		if (npmRoot) {
-			const cliPath = join(npmRoot, '@anthropic-ai', 'claude-code', 'cli.js');
-			if (existsSync(cliPath)) {
-				const patch = await execCommand('ccline', ['--patch', cliPath], {timeout: 30000});
-				if (patch.code === 0) {
-					onProgress?.({level: 'success', message: 'ccline --patch 已应用', componentId: 'Ccline'});
-				} else {
-					onProgress?.({level: 'warning', message: 'ccline --patch 未完成，可手动执行 ccline --patch', componentId: 'Ccline'});
-				}
-			}
-		}
-	} catch {
-		onProgress?.({level: 'warning', message: 'ccline --patch 执行异常，可手动重试', componentId: 'Ccline'});
 	}
 }
 

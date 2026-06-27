@@ -60,7 +60,7 @@ export function Card({
 				<box flexShrink={0} width={3} justifyContent="center" marginRight={1}>{leading}</box>
 				<box flexDirection="column" flexGrow={1} minWidth={0} overflow="hidden">
 					{title === undefined ? null : (
-						<box height={1} overflow="hidden">
+						<box flexDirection="row" height={1} overflow="hidden">
 							<text fg={focused ? colors.primary : undefined} attributes={TextAttributes.BOLD}>
 								{title}
 							</text>
@@ -85,8 +85,8 @@ export function Card({
 			flexShrink={0}
 		>
 			{title === undefined ? null : (
-				<box height={1} overflow="hidden">
-					<box flexShrink={1} flexGrow={1} overflow="hidden">
+				<box flexDirection="row" height={1} overflow="hidden">
+					<box flexDirection="row" flexShrink={1} flexGrow={1} overflow="hidden">
 						{selected === undefined ? null : (
 							<text fg={selected ? colors.primary : colors.muted}>{selected ? '✅ ' : '⬜ '}</text>
 						)}

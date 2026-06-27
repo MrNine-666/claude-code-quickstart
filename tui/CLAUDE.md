@@ -67,7 +67,7 @@ tui/
 │   └── claude-config-drift.js # 配置漂移检测脚本
 ├── scripts/                   # 构建 / 验证脚本
 │   ├── build.ts               # 构建脚本（4 平台交叉编译）
-│   └── verify-*.mjs           # 验证脚本（parity / smoke）
+│   └── verify-*.mjs           # 验证脚本（bun 直跑 src，bun run verify 聚合）
 ├── dist/                      # 构建产物（4 个可执行文件）
 ├── package.json               # 项目配置（packageManager: bun）
 ├── tsconfig.json              # TypeScript 配置
@@ -134,11 +134,8 @@ bun run typecheck
 # 构建 4 平台可执行文件
 bun run build
 
-# 运行 parity 验证
-bun run verify:parity
-
-# 运行 smoke 测试
-bun run smoke
+# 运行全部 verify 门禁（parser / 状态机 / 迁移 / parity）
+bun run verify
 ```
 
 ### 源码模式（离线）
@@ -195,7 +192,7 @@ echo | ./dist/ccq-darwin-arm64
 | 工具管理 | `views/tools-view.tsx` | ClaudeCode + 5 工具全生命周期（安装/更新/卸载 + 卡片范式 + 2D 导航） |
 | 供应商 | `views/provider-view.tsx` + `provider-form.tsx` | 供应商 Profile CRUD + 设置默认 + extraEnv JSON 编辑 |
 | 配置文件 | `views/config-view.tsx` | Claude 配置项开关（fill-missing / remove-managed） |
-| 全局规则 | `views/prompts-view.tsx` | 全局规则推荐 + 自定义编辑（双区：上区只读 + 下区可编辑） |
+| 全局规则 | `views/prompts-view.tsx` | 全局规则页（view-first）：进入先渲染只读本地 CLAUDE.md（`<markdown>`），无内容则空状态提示按 `a` 新建；`a`（空白新建）/ `e`（编辑现有）进编辑器，`Ctrl+T` 开源码推荐边栏（未渲染·语法高亮对照），`Ctrl+I` 推荐灌缓冲 / `Ctrl+S` 保存 / `Ctrl+P` 预览 / `Esc` 取消回只读态（有脏先确认） |
 | MCP | `views/mcp/McpView.tsx` + `mcp-view-model.ts` | MCP Server 启用/禁用 + 凭据管理 + 字段↔JSON 双向联动 |
 | Skills | `views/skills-view.tsx` | Skills 安装 / 更新 / 卸载 |
 

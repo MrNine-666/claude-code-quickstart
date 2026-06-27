@@ -20,12 +20,12 @@ export function computeColumns(contentWidth: number): number {
 
 export type ToolsViewMode =
 	| 'grid' // 卡片网格浏览
-	| 'confirm-uninstall' // 卸载强确认（输入确认词）
+	| 'confirm-uninstall' // 卸载强确认（Enter 确认 / Esc 取消）
 	| 'busy'; // 异步安装/更新/卸载进行中
 
 /** 单卡片执行态（idle = 未在操作）。进行时态触发 loading 圆点。 */
 export type ComponentAction = 'install' | 'update' | 'uninstall';
-export type ComponentItemStatus = 'idle' | 'installing' | 'updating' | 'uninstalling' | 'done' | 'failed';
+export type ComponentItemStatus = 'idle' | 'installing' | 'updating' | 'uninstalling' | 'failed';
 
 /** 动作 → 进行时态（itemStatus 存储）。 */
 function progressTense(action: ComponentAction): ComponentItemStatus {
@@ -53,7 +53,6 @@ export type ToolsViewState = {
 	readonly itemError: Readonly<Record<string, string>>;
 	readonly busyAction?: ComponentAction;
 	readonly uninstallTarget?: ComponentId;
-	readonly notice?: string;
 	readonly errorText?: string;
 	readonly progressByComponent: Readonly<Record<string, string>>;
 };
@@ -66,14 +65,12 @@ export type ToolsViewAction =
 	| {readonly type: 'confirm-uninstall'}
 	| {readonly type: 'cancel'}
 	| {readonly type: 'item-start'; readonly id: ComponentId; readonly action: ComponentAction}
-	| {readonly type: 'item-done'; readonly id: ComponentId; readonly summary: string; readonly components: readonly ManagedComponent[]}
+	| {readonly type: 'item-done'; readonly id: ComponentId; readonly components: readonly ManagedComponent[]}
 	| {readonly type: 'item-failed'; readonly id: ComponentId; readonly error: string; readonly components?: readonly ManagedComponent[]}
 	| {readonly type: 'batch-start'; readonly action: ComponentAction; readonly ids: readonly ComponentId[]}
-	| {readonly type: 'batch-done'; readonly summary: string; readonly components: readonly ManagedComponent[]}
+	| {readonly type: 'batch-done'; readonly components: readonly ManagedComponent[]}
 	| {readonly type: 'batch-failed'; readonly error: string; readonly components?: readonly ManagedComponent[]}
-	| {readonly type: 'notice'; readonly message: string}
-	| {readonly type: 'progress'; readonly id: string; readonly message: string}
-	| {readonly type: 'clear-notice'};
+	| {readonly type: 'progress'; readonly id: string; readonly message: string};
 
 export function createInitialToolsViewState(): ToolsViewState {
 	return {
@@ -199,9 +196,8 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				uninstallTarget: undefined,
 				loaded: true,
 				components: action.components,
-				itemStatus: {...state.itemStatus, [action.id]: 'done'},
-				progressByComponent: omit(state.progressByComponent, action.id),
-				notice: action.summary
+				itemStatus: {...state.itemStatus, [action.id]: 'idle'},
+				progressByComponent: omit(state.progressByComponent, action.id)
 			};
 
 		case 'item-failed':
@@ -239,8 +235,7 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				components: action.components,
 				itemStatus: {},
 				itemError: {},
-				progressByComponent: {},
-				notice: action.summary
+				progressByComponent: {}
 			};
 
 		case 'batch-failed':
@@ -256,14 +251,8 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				errorText: action.error
 			};
 
-		case 'notice':
-			return {...state, notice: action.message, errorText: undefined};
-
 		case 'progress':
 			return {...state, progressByComponent: {...state.progressByComponent, [action.id]: action.message}};
-
-		case 'clear-notice':
-			return {...state, notice: undefined, errorText: undefined};
 
 		default:
 			return state;

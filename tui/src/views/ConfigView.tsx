@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 import { colors, borderColors } from '../theme/index.js';
-import { ConfirmModal, ErrorPanel, ProgressLog, StatusLabel, TextareaEditor, ActionHint, ViewHeader } from '../components/index.js';
+import { ConfirmModal, ErrorPanel, ProgressLog, TextareaEditor, ActionHint, ViewHeader, toast } from '../components/index.js';
 import { truncateToWidth } from '../core/text-utils.js';
 import type { ProgressEvent } from '../core/exec.js';
 import type { ConfigEntry, ConfigRecommendation } from '../core/config-recommend.js';
@@ -27,11 +27,6 @@ type ConfigScreen =
 	| { readonly kind: 'busy' }
 	| { readonly kind: 'editor'; readonly content: string };
 
-type Banner =
-	| { readonly kind: 'none' }
-	| { readonly kind: 'success'; readonly message: string }
-	| { readonly kind: 'error'; readonly message: string };
-
 const PREVIEW_LINES = 8;
 const PREVIEW_WIDTH = 64;
 
@@ -49,7 +44,6 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 	const settingsPath = useMemo(() => getSettingsPath(), []);
 
 	const [screen, setScreen] = useState<ConfigScreen>({ kind: 'list' });
-	const [banner, setBanner] = useState<Banner>({ kind: 'none' });
 	const [logs, setLogs] = useState<readonly string[]>([]);
 
 	useEffect(() => {
@@ -68,27 +62,28 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 		setLogs([]);
 		setScreen({ kind: 'busy' });
 		const result = await importFillMissingWithProgress(appendLog);
-		setBanner(
-			result.ok
-				? {
-						kind: 'success',
-						message: result.changed === 0 ? '配置已是最新，无需补全' : `已补全 ${result.changed} 项缺失配置到 ${settingsPath}`
-					}
-				: { kind: 'error', message: result.error }
-		);
+		if (result.ok) {
+			toast.success(result.changed === 0 ? '配置已是最新，无需补全' : `已补全 ${result.changed} 项缺失配置到 ${settingsPath}`);
+		} else {
+			toast.error(result.error);
+		}
 		setScreen({ kind: 'list' });
 	};
 
 	const runCopy = async (): Promise<void> => {
 		if (!clipboardSupported) {
-			setBanner({ kind: 'error', message: '当前平台不支持剪贴板写入' });
+			toast.error('当前平台不支持剪贴板写入');
 			return;
 		}
 
 		setLogs([]);
 		setScreen({ kind: 'busy' });
 		const result = await copyRecommendationToClipboard(appendLog);
-		setBanner(result.ok ? { kind: 'success', message: '推荐配置已复制到剪贴板' } : { kind: 'error', message: result.error });
+		if (result.ok) {
+			toast.success('推荐配置已复制到剪贴板');
+		} else {
+			toast.error(result.error);
+		}
 		setScreen({ kind: 'list' });
 	};
 
@@ -118,13 +113,10 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 
 			const ch = key.toLowerCase();
 			if (ch === 'i' && recommendation.available) {
-				setBanner({ kind: 'none' });
 				setScreen({ kind: 'confirm-import' });
 			} else if (ch === 'c' && recommendation.available && clipboardSupported) {
-				setBanner({ kind: 'none' });
 				void runCopy();
 			} else if (ch === 'e') {
-				setBanner({ kind: 'none' });
 				const current = readCurrentSettings();
 				const json = current ? JSON.stringify(current, null, 2) : '{}';
 				setScreen({ kind: 'editor', content: json });
@@ -145,7 +137,7 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 				onSave={(content) => {
 					const result = saveSettings(content);
 					if (result.ok) {
-						setBanner({ kind: 'success', message: `已保存到 ${settingsPath}` });
+						toast.success(`已保存到 ${settingsPath}`);
 						setScreen({ kind: 'list' });
 					}
 					return result;
@@ -187,24 +179,11 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 				/>
 			</box>
 
-			{banner.kind === 'success' ? (
-				<box marginTop={1}>
-					<StatusLabel kind="pass" label={banner.message} />
-				</box>
-			) : null}
-			{banner.kind === 'error' ? (
-				<box marginTop={1}>
-					<ErrorPanel message={banner.message} />
-				</box>
-			) : null}
-
 			{screen.kind === 'confirm-import' ? (
 				<box marginTop={1}>
 					<ConfirmModal
 						title="确认补全配置"
 						message={`将按缺失项补全 ${settingsPath}（仅添加缺失的语言/环境变量/权限，不覆盖 model、供应商与 statusLine 等已有配置）。`}
-						confirmLabel="Enter 确认补全"
-						cancelLabel="Esc 取消"
 					/>
 				</box>
 			) : null}
