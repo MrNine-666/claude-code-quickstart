@@ -13,7 +13,8 @@
     "build:windows-x64": "bun build --compile --target=bun-windows-x64 --outfile=dist/ccq-windows-x64.exe src/index.tsx",
     "build:windows-arm64": "bun build --compile --target=bun-windows-arm64 --outfile=dist/ccq-windows-arm64.exe src/index.tsx",
     "build:darwin-x64": "bun build --compile --target=bun-darwin-x64 --outfile=dist/ccq-darwin-x64 src/index.tsx",
-    "build:darwin-arm64": "bun build --compile --target=bun-darwin-arm64 --outfile=dist/ccq-darwin-arm64 src/index.tsx"
+    "build:darwin-arm64": "bun build --compile --target=bun-darwin-arm64 --outfile=dist/ccq-darwin-arm64 src/index.tsx",
+    "typecheck": "bunx tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@types/bun": "latest",
