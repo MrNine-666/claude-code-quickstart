@@ -148,9 +148,12 @@ export function getServerDetail(serverId: string): McpServerDetail {
 	const contract = loadMcpContract();
 	const definition = contract.servers[serverId] ?? null;
 	const claudeJson = readClaudeJson();
-	const config = claudeJson.mcpServers?.[serverId] ?? null;
 	const vault = loadVault();
 	const vaultEntry = vault.servers?.[serverId] ?? null;
+	// config 优先取 .claude.json（Active/Custom 在此）；Disabled 时 .claude.json 条目已被
+	// disableServer 清除并备份进 vault（mcp-meta.json），fallback 到 vaultEntry.config，
+	// 否则编辑态会展示空 {}（HC：编辑须回显真实 config）。
+	const config = claudeJson.mcpServers?.[serverId] ?? vaultEntry?.config ?? null;
 
 	const settings = readSettings();
 	const allow = (settings.permissions as {allow?: string[]} | undefined)?.allow ?? [];

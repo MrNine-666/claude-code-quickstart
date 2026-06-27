@@ -2,11 +2,11 @@ import React, {useEffect, useMemo, useState} from 'react';
 import {useKeyboard} from '@opentui/react';
 import {
 	ConfirmModal,
-	ErrorPanel,
+	CONFIRM_MODAL_ROWS,
 	ScrollList,
 	StatusDot,
-	StatusLabel,
 	ViewHeader,
+	toast,
 	type ScrollListItem,
 	type StatusDotKind
 } from '../../components/index.js';
@@ -46,11 +46,6 @@ type McpScreen =
 	| {readonly kind: 'edit'; readonly serverId: string; readonly initialJson: string}
 	| {readonly kind: 'confirm-remove'; readonly serverId: string};
 
-type Banner =
-	| {readonly kind: 'none'}
-	| {readonly kind: 'success'; readonly message: string}
-	| {readonly kind: 'error'; readonly message: string};
-
 function statusKind(status: McpServerStatus): StatusDotKind {
 	switch (status) {
 		case 'Active':
@@ -67,7 +62,6 @@ export default function McpView({active, viewportHeight = 16, onSubModeChange, o
 	const [rows, setRows] = useState<McpStatusRow[]>(() => loadMcpStatus());
 	const [selected, setSelected] = useState(0);
 	const [screen, setScreen] = useState<McpScreen>({kind: 'list'});
-	const [banner, setBanner] = useState<Banner>({kind: 'none'});
 
 	// 仅展示已安装过的（过滤 Missing：契约里有但用户从未配置的）。
 	const visibleRows = useMemo(() => rows.filter((row) => row.Status !== 'Missing'), [rows]);
@@ -80,7 +74,6 @@ export default function McpView({active, viewportHeight = 16, onSubModeChange, o
 			setRows(loadMcpStatus());
 			setSelected(0);
 			setScreen({kind: 'list'});
-			setBanner({kind: 'none'});
 		}
 	}, [active]);
 
@@ -114,11 +107,11 @@ export default function McpView({active, viewportHeight = 16, onSubModeChange, o
 		const willDisable = current.Status !== 'Disabled';
 		const result = willDisable ? disableMcpServer(current.Id) : enableMcpServer(current.Id);
 		refresh();
-		setBanner(
-			result.ok
-				? {kind: 'success', message: `已${willDisable ? '禁用' : '启用'} ${current.Id}`}
-				: {kind: 'error', message: result.error}
-		);
+		if (result.ok) {
+			toast.success(`已${willDisable ? '禁用' : '启用'} ${current.Id}`);
+		} else {
+			toast.error(result.error);
+		}
 	}
 
 	// 表单屏（add/edit 统一走 McpFormView）。
@@ -133,7 +126,7 @@ export default function McpView({active, viewportHeight = 16, onSubModeChange, o
 				onCancel={() => setScreen({kind: 'list'})}
 				onSaved={(message) => {
 					refresh();
-					setBanner({kind: 'success', message});
+					toast.success(message);
 					setScreen({kind: 'list'});
 				}}
 			/>
@@ -151,7 +144,7 @@ export default function McpView({active, viewportHeight = 16, onSubModeChange, o
 				onCancel={() => setScreen({kind: 'list'})}
 				onSaved={(message) => {
 					refresh();
-					setBanner({kind: 'success', message});
+					toast.success(message);
 					setScreen({kind: 'list'});
 				}}
 			/>
@@ -174,30 +167,16 @@ export default function McpView({active, viewportHeight = 16, onSubModeChange, o
 					<text fg={colors.muted}>暂无 MCP Server</text>
 				</box>
 			) : (
-				<ScrollList items={items} cursor={safeSelected} viewportHeight={viewportHeight} reservedRows={3} />
+				<ScrollList items={items} cursor={safeSelected} viewportHeight={viewportHeight} reservedRows={3 + (screen.kind === 'confirm-remove' ? CONFIRM_MODAL_ROWS : 0)} />
 			)}
 
-			{banner.kind === 'success' ? (
-				<box marginTop={1}>
-					<StatusLabel kind="pass" label={banner.message} />
-				</box>
-			) : null}
-			{banner.kind === 'error' ? (
-				<box marginTop={1}>
-					<ErrorPanel message={banner.message} />
-				</box>
-			) : null}
-
+			{screen.kind === 'confirm-remove' && current ? <box flexGrow={1} /> : null}
 			{screen.kind === 'confirm-remove' && current ? (
-				<box marginTop={1}>
-					<ConfirmModal
-						title="确认删除 MCP Server"
-						message={`即将删除 MCP Server ${current.Id}，此操作不可撤销。`}
-						confirmLabel="Enter 确认删除"
-						cancelLabel="Esc 取消"
-						tone="danger"
-					/>
-				</box>
+				<ConfirmModal
+					title="确认删除 MCP Server"
+					message={`即将删除 MCP Server ${current.Id}，此操作不可撤销。`}
+					tone="danger"
+				/>
 			) : null}
 
 			<ListInput
@@ -206,7 +185,6 @@ export default function McpView({active, viewportHeight = 16, onSubModeChange, o
 				onMove={(delta) => setSelected((prev) => clampMove(prev, delta, visibleRows.length))}
 				onToggle={toggleCurrent}
 				onAdd={() => {
-					setBanner({kind: 'none'});
 					setScreen({kind: 'add'});
 				}}
 				onEdit={() => {
@@ -215,7 +193,6 @@ export default function McpView({active, viewportHeight = 16, onSubModeChange, o
 					}
 
 					const detail = loadMcpDetail(current.Id);
-					setBanner({kind: 'none'});
 					setScreen({kind: 'edit', serverId: current.Id, initialJson: configToJson(detail.config)});
 				}}
 				onDelete={() => {
@@ -237,11 +214,11 @@ export default function McpView({active, viewportHeight = 16, onSubModeChange, o
 
 					const result = removeMcpServer(current.Id, true);
 					refresh();
-					setBanner(
-						result.ok
-							? {kind: 'success', message: `已删除 MCP Server ${current.Id}`}
-							: {kind: 'error', message: result.error}
-					);
+					if (result.ok) {
+						toast.success(`已删除 MCP Server ${current.Id}`);
+					} else {
+						toast.error(result.error);
+					}
 					setScreen({kind: 'list'});
 				}}
 			/>

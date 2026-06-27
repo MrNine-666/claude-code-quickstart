@@ -57,6 +57,32 @@ function collectCredentialHint(def: McpServerDefinition): string | undefined {
 	return parts.length > 0 ? parts.join('；') : undefined;
 }
 
+/**
+ * 收集 args 类凭据占位（args-multi 的 ArgName + 空值 / args-token 的 TokenArg= 空值）。
+ * 对齐 buildMcpConfig 的 args 拼装：args-multi 按 [argName, value] 顺序追加，args-token 按 `${TokenArg}=value` 追加。
+ * 模板预填时 value 留空占位，用户填值即可直接保存（格式与契约保存一致，填完无需再手动补前缀）。
+ */
+function collectArgsCredentialPlaceholders(def: McpServerDefinition): string[] {
+	const credentialType = def.CredentialType;
+	const placeholders: string[] = [];
+
+	if (credentialType === 'args-multi') {
+		for (const cred of def.ArgsCredentials ?? []) {
+			const argName = cred.ArgName;
+			if (argName) {
+				placeholders.push(argName, '');
+			}
+		}
+	} else if (credentialType === 'args-token') {
+		const tokenArg = def.TokenArg;
+		if (tokenArg) {
+			placeholders.push(`${tokenArg}=`);
+		}
+	}
+
+	return placeholders;
+}
+
 export type McpTemplateResult = {readonly json: string; readonly credHint?: string};
 
 /**
@@ -91,7 +117,7 @@ export function getMcpTemplateJson(serverId: string): McpTemplateResult | null {
 
 	const config: McpConfigEntry = {
 		command: def.Command ?? '',
-		args: [...(def.Args ?? [])]
+		args: [...(def.Args ?? []), ...collectArgsCredentialPlaceholders(def)]
 	};
 	if (Object.keys(env).length > 0) {
 		config.env = env;
@@ -119,6 +145,29 @@ export type McpFormParseResult =
 	| {readonly ok: true; readonly payload: McpFormPayload}
 	| {readonly ok: false; readonly error: string};
 
+export type McpJsonFormatResult =
+	| {readonly ok: true; readonly value: Record<string, unknown>}
+	| {readonly ok: false; readonly error: string};
+
+/**
+ * 仅校验 JSON 文本格式（语法 + 顶层对象），不校验 serverId / 业务字段。
+ * 供表单 textarea 实时校验：编辑即提示格式错误，无需等到保存（对齐供应商表单实时校验）。
+ */
+export function parseMcpJsonFormat(json: string): McpJsonFormatResult {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(json);
+	} catch (error) {
+		return {ok: false, error: `JSON 格式错误: ${error instanceof Error ? error.message : String(error)}`};
+	}
+
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+		return {ok: false, error: '配置必须是 JSON 对象'};
+	}
+
+	return {ok: true, value: parsed as Record<string, unknown>};
+}
+
 /**
  * 校验表单输入：serverId + JSON 文本 → 合法 payload。
  * - JSON 必须为对象
@@ -132,18 +181,12 @@ export function parseMcpFormInput(serverId: string, json: string): McpFormParseR
 		return {ok: false, error: idError};
 	}
 
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(json);
-	} catch (error) {
-		return {ok: false, error: `JSON 格式错误: ${error instanceof Error ? error.message : String(error)}`};
+	const format = parseMcpJsonFormat(json);
+	if (!format.ok) {
+		return {ok: false, error: format.error};
 	}
 
-	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-		return {ok: false, error: '配置必须是 JSON 对象'};
-	}
-
-	const raw = parsed as Record<string, unknown>;
+	const raw = format.value;
 	const isHttp = raw.type === 'http' || typeof raw.url === 'string';
 
 	if (isHttp) {

@@ -8,6 +8,7 @@ import {claudeDir} from './paths.js';
 // 与 installer/windows/steps/ClaudeMd.ps1 / macos/steps/ClaudeMd.zsh 的拼装逻辑对齐：
 //   base.TrimEnd() + "\n\n" + platform.TrimEnd() + "\n"
 // Update 检测已收缩（HC-FU-08 不再检测 ClaudeMd），导入不写指纹种子。
+// 工作台消费：assembleRecommendation() 给左栏全文对照 + Ctrl+I 灌缓冲（整体，不分片段）。
 
 export type PromptsPlatform = 'windows' | 'macos';
 
@@ -17,17 +18,28 @@ export type PromptsRecommendation = {
 	readonly lineCount: number;
 };
 
-function templatePath(name: string): string {
-	return join(resolveContractsDir(), 'templates', `claude-md.${name}.md`);
+/** templates 目录下指定文件名的绝对路径。 */
+function templateFilePath(fileName: string): string {
+	return join(resolveContractsDir(), 'templates', fileName);
 }
 
-function readTemplate(name: string): string | null {
-	const path = templatePath(name);
+/** 读 templates 目录下任意文件；缺失或读取失败返回 null，不抛。 */
+function readTemplateFile(fileName: string): string | null {
+	const path = templateFilePath(fileName);
 	if (!existsSync(path)) {
 		return null;
 	}
 
-	return readFileSync(path, 'utf8');
+	try {
+		return readFileSync(path, 'utf8');
+	} catch {
+		return null;
+	}
+}
+
+/** 读 claude-md.<name>.md 模板（assembleRecommendation 拼装用）。 */
+function readTemplate(name: string): string | null {
+	return readTemplateFile(`claude-md.${name}.md`);
 }
 
 /** 推断当前运行平台（Windows / macOS），决定拼装哪段平台模板。 */

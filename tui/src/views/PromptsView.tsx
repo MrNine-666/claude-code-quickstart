@@ -1,38 +1,31 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { TextAttributes } from '@opentui/core';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { TextAttributes, type ScrollBoxRenderable } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
-import { borderColors } from '../theme/index.js';
-import { ConfirmModal, ErrorPanel, ProgressLog, StatusLabel, TextareaEditor, ActionHint, ViewHeader } from '../components/index.js';
-import { truncateToWidth } from '../core/text-utils.js';
-import type { ProgressEvent } from '../core/exec.js';
+import { borderColors, colors, PRIMARY } from '../theme/index.js';
 import {
-	checkClipboardSupport,
-	copyRecommendationToClipboard,
+	TextareaEditor,
+	ViewHeader,
+	toast,
+	type TextEditorHandle
+} from '../components/index.js';
+import { assembleRecommendation } from '../core/prompts.js';
+import {
 	getClaudeMdPath,
-	importRecommendationWithProgress,
-	loadRecommendationForPreview,
 	readCurrentClaudeMd,
 	saveClaudeMd
 } from '../services/prompts-service.js';
 
-// 全局规则菜单视图（Phase 4）：查看推荐 CLAUDE.md / 一键导入（整文件覆盖）/ 复制 / 内嵌编辑器。
-// 导入是破坏性动作（整文件覆盖），经 ConfirmModal 二次确认。Update 检测已收缩（HC-FU-08），
-// 导入不写指纹种子。剪贴板不可用时（缺命令 / 非 TTY）对应入口禁用并提示。
-// OpenTUI 适配：useKeyboard 替代 useInput，<box>/<text> 小写元素，内嵌 textarea 替代外部编辑器。
+// 全局规则页（view-first）：
+// 进入先渲染只读本地 CLAUDE.md（<markdown>）；无内容则空状态提示按 a 新建。
+// e（编辑现有；空 md 时 a 新建）进入编辑器；Ctrl+T 开推荐边栏（未渲染纯文本源码，只读对照）；
+// Ctrl+O 推荐灌缓冲（Ctrl+I 在终端等同 Tab，故用 Ctrl+O）；Ctrl+S 保存后回只读展示；
+// Esc 取消编辑直接回 view（放弃未保存改动，toast 提示）。
+// HC-SHORTCUT-SINGLE-SOURCE：键位处理用 keyEvent.name，footer 文案由 shortcuts.ts 按 subMode 解析。
 
-type PromptsScreen =
-	| { readonly kind: 'list' }
-	| { readonly kind: 'confirm-import' }
-	| { readonly kind: 'busy' }
-	| { readonly kind: 'editor'; readonly content: string };
-
-type Banner =
-	| { readonly kind: 'none' }
-	| { readonly kind: 'success'; readonly message: string }
-	| { readonly kind: 'error'; readonly message: string };
-
-const PREVIEW_LINES = 8;
-const PREVIEW_WIDTH = 64;
+type Mode = 'view' | 'edit';
+type Panel = 'editor' | 'split';
+type Focus = 'editor' | 'recommend';
+type Confirm = 'none';
 
 export type PromptsViewProps = {
 	readonly active: boolean;
@@ -43,190 +36,256 @@ export type PromptsViewProps = {
 };
 
 export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onExitToNav, syntaxStyle = null }: PromptsViewProps) {
-	const recommendation = useMemo(() => loadRecommendationForPreview(), []);
-	const clipboardSupported = useMemo(() => checkClipboardSupport(), []);
+	const recommendationContent = useMemo(() => assembleRecommendation() ?? '', []);
+	const recommendationAvailable = recommendationContent !== '';
 	const claudeMdPath = useMemo(() => getClaudeMdPath(), []);
 
-	const [screen, setScreen] = useState<PromptsScreen>({ kind: 'list' });
-	const [banner, setBanner] = useState<Banner>({ kind: 'none' });
-	const [logs, setLogs] = useState<readonly string[]>([]);
+	// view 态展示内容（保存 / 取消后重新读盘刷新，保证展示最新）
+	const [viewContent, setViewContent] = useState<string>(() => readCurrentClaudeMd() ?? '');
+	const hasContent = viewContent.trim().length > 0;
+
+	// edit 态
+	const [mode, setMode] = useState<Mode>('view');
+	const [editInitial, setEditInitial] = useState<string>('');
+	const [panel, setPanel] = useState<Panel>('editor');
+	const [focus, setFocus] = useState<Focus>('editor');
+	const [confirm, setConfirm] = useState<Confirm>('none');
+	const [dirty, setDirty] = useState(false);
+
+	const editorRef = useRef<TextEditorHandle>(null);
+	// scrollbox 默认不响应键盘 ↑/↓（需鼠标点击获焦），这里持 ref 主动 scrollBy 驱动滚动
+	const viewScrollRef = useRef<ScrollBoxRenderable>(null);
+	const recommendScrollRef = useRef<ScrollBoxRenderable>(null);
+
+	// subMode → footer 解析（view / edit / confirm / split 细分）
+	const subMode = mode === 'view'
+		? (hasContent ? 'view-render' : 'view-empty')
+		: confirm !== 'none'
+			? `confirm-${confirm}`
+			: panel === 'split'
+				? (focus === 'recommend' ? 'edit-split-recommend' : 'edit-split-editor')
+				: 'edit';
 
 	useEffect(() => {
-		if (!active) {
+		if (!active) return;
+		onSubModeChange?.(subMode);
+	}, [active, subMode, onSubModeChange]);
+
+	// split 态焦点在边栏时编辑区失活（边框变灰），与边栏 active 同步
+	const editorActive = mode === 'edit' && active && confirm === 'none' && (panel === 'editor' || focus === 'editor');
+	const textareaFocused = mode === 'edit' && confirm === 'none' && focus === 'editor';
+	const tabMode = panel === 'split' ? 'cycle-focus' : 'indent';
+	// 编辑器总高度 = 当前内容视口；编辑态不再额外渲染全局 ViewHeader，
+	// 只保留 pane 内「推荐规则 / 当前规则」简单标题。
+	const editorViewportHeight = Math.max(8, viewportHeight);
+
+	// ── 操作 ──
+	const refreshView = (): void => {
+		setViewContent(readCurrentClaudeMd() ?? '');
+	};
+
+	// 进入编辑器：initial = '' (a 新建·仅空状态) | 现有磁盘内容 (e 编辑)
+	const enterEdit = (initial: string): void => {
+		setEditInitial(initial);
+		setDirty(false);
+		setPanel('editor');
+		setFocus('editor');
+		setConfirm('none');
+		setMode('edit');
+	};
+
+	const togglePanel = (): void => {
+		setConfirm('none');
+		if (panel === 'editor') {
+			if (!recommendationAvailable) {
+				toast.error('推荐模板不可用');
+				return;
+			}
+			setPanel('split');
+			setFocus('recommend');
+		} else {
+			setPanel('editor');
+			setFocus('editor');
+		}
+	};
+
+	const cycleFocus = (): void => {
+		setFocus(f => (f === 'editor' ? 'recommend' : 'editor'));
+	};
+
+	const requestImport = (): void => {
+		doImport();
+	};
+
+	const doImport = (): void => {
+		if (!recommendationAvailable) {
+			toast.error('推荐模板不可用');
+			setConfirm('none');
 			return;
 		}
-
-		onSubModeChange?.(screen.kind);
-	}, [active, screen.kind, onSubModeChange]);
-
-	const appendLog = (event: ProgressEvent): void => {
-		setLogs((prev) => [...prev, event.message].slice(-PREVIEW_LINES));
+		editorRef.current?.replaceText(recommendationContent);
+		setDirty(true);
+		setConfirm('none');
+		toast.success('已导入完整推荐到编辑器（Ctrl+Z 撤销 · Ctrl+S 保存）');
 	};
 
-	const runImport = async (): Promise<void> => {
-		setLogs([]);
-		setScreen({ kind: 'busy' });
-		const result = await importRecommendationWithProgress(appendLog);
-		setBanner(
-			result.ok
-				? { kind: 'success', message: `已导入推荐全局规则（${result.lineCount} 行）到 ${claudeMdPath}` }
-				: { kind: 'error', message: result.error }
-		);
-		setScreen({ kind: 'list' });
-	};
-
-	const runCopy = async (): Promise<void> => {
-		if (!clipboardSupported) {
-			setBanner({ kind: 'error', message: '当前平台不支持剪贴板写入' });
-			return;
+	const handleSave = (content: string): { ok: boolean; error?: string } => {
+		const result = saveClaudeMd(content);
+		if (result.ok) {
+			setDirty(false);
+			refreshView();
+			toast.success(`已保存到 ${claudeMdPath}`);
+			// 保存后回只读展示（编辑器作为临时态，无需停留）
+			setMode('view');
+			setPanel('editor');
+			setFocus('editor');
 		}
-
-		setLogs([]);
-		setScreen({ kind: 'busy' });
-		const result = await copyRecommendationToClipboard(appendLog);
-		setBanner(result.ok ? { kind: 'success', message: '推荐全局规则已复制到剪贴板' } : { kind: 'error', message: result.error });
-		setScreen({ kind: 'list' });
+		return result;
 	};
 
-	// 键盘输入处理（OpenTUI useKeyboard 回调参数是 KeyEvent 对象，键名取 .name）
+	const handleContentChange = (): void => {
+		setDirty(true);
+	};
+
+	// 取消编辑：直接回只读展示；有未保存改动时 toast 提示（不弹确认浮层，避免遮挡卡住）
+	const cancelEdit = (): void => {
+		if (dirty) toast.info('已放弃未保存的编辑');
+		refreshView();
+		setMode('view');
+		setPanel('editor');
+		setFocus('editor');
+		setDirty(false);
+		setConfirm('none');
+	};
+
+	// onCancel 防御兜底：escapeMode='bubble' 时编辑态 Esc 不走这里（由 useKeyboard 单一处理）。
+	const handleEditorCancel = (): void => {
+		cancelEdit();
+	};
+
+	// ── 键盘（单一入口，按 mode / confirm / panel / focus 分流）──
 	useKeyboard((keyEvent) => {
 		if (!active) return;
+		const name = keyEvent.name;
+		const mod = keyEvent.ctrl || keyEvent.super === true;
 
-		const key = keyEvent.name;
-
-		if (screen.kind === 'confirm-import') {
-			if (key === 'escape') {
-				setScreen({ kind: 'list' });
-				return;
-			}
-			if (key === 'enter' || key === 'return') {
-				void runImport();
-				return;
-			}
+		// Ctrl+O 直接导入推荐，不再弹确认浮层：导入只写入编辑缓冲，不落盘，可 Ctrl+Z 撤销。
+		// ── view 态 ──
+		if (mode === 'view') {
+			if (name === 'escape') { onExitToNav(); return; }
+			if (name === 'e' && hasContent) { enterEdit(readCurrentClaudeMd() ?? ''); return; }
+			if (name === 'a' && !hasContent) { enterEdit(''); return; }
+			// ↑/↓ 滚动展示区（scrollbox 需主动驱动，否则默认不响应键盘）
+			if (name === 'up') { viewScrollRef.current?.scrollBy(-1); return; }
+			if (name === 'down') { viewScrollRef.current?.scrollBy(1); return; }
 			return;
 		}
 
-		if (screen.kind === 'list') {
-			if (key === 'escape' || key === 'left' || key === 'arrowleft') {
-				onExitToNav();
-				return;
-			}
+		// ── edit 态 ──
+		// Esc：取消编辑直接回 view
+		if (name === 'escape') { cancelEdit(); return; }
 
-			const ch = key.toLowerCase();
-			if (ch === 'i' && recommendation.available) {
-				setBanner({ kind: 'none' });
-				setScreen({ kind: 'confirm-import' });
-			} else if (ch === 'c' && recommendation.available && clipboardSupported) {
-				setBanner({ kind: 'none' });
-				void runCopy();
-			} else if (ch === 'e') {
-				setBanner({ kind: 'none' });
-				setScreen({ kind: 'editor', content: readCurrentClaudeMd() ?? '' });
-			}
+		// 主操作：编辑器获焦时 Ctrl+S 由 TextareaEditor 自管；边栏获焦时由页面兜底保存。
+		if (mod && name === 's' && panel === 'split' && focus === 'recommend') {
+			handleSave(editorRef.current?.getText() ?? '');
+			return;
+		}
+		if (mod && name === 't') { togglePanel(); return; }
+		// Ctrl+I 在终端等同 Tab（ASCII 0x09），改用 Ctrl+O 触发导入
+		if (mod && name === 'o') { requestImport(); return; }
+
+		// 边栏焦点：↑/↓ 滚动推荐；Tab 切回编辑器
+		if (panel === 'split' && focus === 'recommend') {
+			if (name === 'up') { recommendScrollRef.current?.scrollBy(-1); return; }
+			if (name === 'down') { recommendScrollRef.current?.scrollBy(1); return; }
+			if (name === 'tab') { cycleFocus(); return; }
 		}
 	});
 
-	if (screen.kind === 'editor') {
-		return (
-			<TextareaEditor
-				title={`编辑 ${claudeMdPath}`}
-				initialContent={screen.content}
-				active={active}
-				filetype="markdown"
-				syntaxStyle={syntaxStyle}
-				onModeChange={(m) => onSubModeChange?.(m === 'preview' ? 'preview' : 'editor')}
-				onSave={(content) => {
-					const result = saveClaudeMd(content);
-					if (result.ok) {
-						setBanner({ kind: 'success', message: `已保存到 ${claudeMdPath}` });
-						setScreen({ kind: 'list' });
-					}
-					return result;
-				}}
-				onCancel={() => setScreen({ kind: 'list' })}
-			/>
-		);
-	}
-
-	if (screen.kind === 'busy') {
+	// ── view 态渲染 ──
+	if (mode === 'view') {
 		return (
 			<box flexDirection="column" flexGrow={1}>
-				<ViewHeader title="全局规则管理" />
-				<box marginTop={1}>
-					<ProgressLog title="执行进度" messages={logs} />
-				</box>
+				<ViewHeader title="全局规则管理" subtitle={claudeMdPath} />
+				{hasContent ? (
+					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
+						<scrollbox ref={viewScrollRef} style={{flexGrow: 1}} scrollY>
+							{syntaxStyle
+								? <markdown content={viewContent} syntaxStyle={syntaxStyle} />
+								: <text fg={colors.info}>{viewContent}</text>}
+						</scrollbox>
+					</box>
+				) : (
+					<box
+						flexGrow={1}
+						flexDirection="column"
+						borderStyle="single"
+						borderColor={borderColors.inactive}
+						justifyContent="center"
+						alignItems="center"
+					>
+						<text fg={colors.primary} attributes={TextAttributes.BOLD}>尚无全局规则文件</text>
+						<box marginTop={1} flexDirection="row">
+							<text fg={colors.muted}>按 </text>
+							<text fg={PRIMARY} attributes={TextAttributes.BOLD}>a</text>
+							<text fg={colors.muted}> 新建 ~/.claude/CLAUDE.md</text>
+						</box>
+						<box marginTop={1}>
+							<text attributes={TextAttributes.DIM}>{claudeMdPath}</text>
+						</box>
+					</box>
+				)}
 			</box>
 		);
 	}
+
+	// ── edit 态渲染 ──
+	const editorEl = (
+		<TextareaEditor
+			ref={editorRef}
+			title="当前规则"
+			initialContent={editInitial}
+			active={editorActive}
+			filetype="markdown"
+			syntaxStyle={syntaxStyle}
+			tabMode={tabMode}
+			textareaFocused={textareaFocused}
+			escapeMode="bubble"
+			previewEnabled={false}
+			viewportHeight={editorViewportHeight}
+			onContentChange={handleContentChange}
+			onCycleFocus={() => cycleFocus()}
+			onSave={handleSave}
+			onCancel={handleEditorCancel}
+		/>
+	);
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title="全局规则管理" subtitle={claudeMdPath} />
-
-			{recommendation.available ? (
-				<RecommendationPreview content={recommendation.content} lineCount={recommendation.lineCount} viewportHeight={viewportHeight} />
+			{panel === 'split' && recommendationAvailable ? (
+				<box flexDirection="row" flexGrow={1}>
+					<box flexDirection="column" width="50%" height={editorViewportHeight}>
+						<box marginBottom={1}>
+							<text fg={colors.primary} attributes={TextAttributes.BOLD}>推荐规则</text>
+						</box>
+						<box
+							flexGrow={1}
+							borderStyle="rounded"
+							borderColor={focus === 'recommend' ? borderColors.active : borderColors.inactive}
+							paddingX={1}
+						>
+							<scrollbox ref={recommendScrollRef} style={{flexGrow: 1}} scrollY>
+								<text fg={colors.info}>{recommendationContent}</text>
+							</scrollbox>
+						</box>
+					</box>
+					<box flexDirection="column" width="50%" marginLeft={1}>
+						{editorEl}
+					</box>
+				</box>
 			) : (
-				<box marginBottom={1}>
-					<ErrorPanel message="推荐全局规则模板不可用（contracts/templates 缺失）" />
-				</box>
+				editorEl
 			)}
-
-			<box flexDirection="column" marginTop={1}>
-				<ActionHint label="一键导入（整文件覆盖 ~/.claude/CLAUDE.md）" enabled={recommendation.available} />
-				<ActionHint
-					label="复制推荐全局规则到剪贴板"
-					enabled={recommendation.available && clipboardSupported}
-					disabledHint={clipboardSupported ? '' : '（剪贴板不可用）'}
-				/>
-			</box>
-
-			{banner.kind === 'success' ? (
-				<box marginTop={1}>
-					<StatusLabel kind="pass" label={banner.message} />
-				</box>
-			) : null}
-			{banner.kind === 'error' ? (
-				<box marginTop={1}>
-					<ErrorPanel message={banner.message} />
-				</box>
-			) : null}
-
-			{screen.kind === 'confirm-import' ? (
-				<box marginTop={1}>
-					<ConfirmModal
-						title="确认导入推荐全局规则"
-						message={`将整文件覆盖 ${claudeMdPath}，当前内容会被替换，此操作不可撤销。`}
-						confirmLabel="Enter 确认导入"
-						cancelLabel="Esc 取消"
-					/>
-				</box>
-			) : null}
 		</box>
 	);
 }
-
-// ── 推荐预览（前 N 行，截断防溢出） ──────────────────────────────────────────
-
-function RecommendationPreview({
-	content,
-	lineCount,
-	viewportHeight
-}: {
-	readonly content: string;
-	readonly lineCount: number;
-	readonly viewportHeight: number;
-}) {
-	const maxLines = Math.max(3, Math.min(PREVIEW_LINES, viewportHeight - 6));
-	const lines = content.split('\n').slice(0, maxLines);
-
-	return (
-		<box flexDirection="column" borderStyle="rounded" borderColor={borderColors.inactive} paddingX={1}>
-			<text attributes={TextAttributes.DIM}>推荐全局规则预览（共 {lineCount} 行）</text>
-			{lines.map((line, index) => (
-				<text key={index}>{truncateToWidth(line || ' ', PREVIEW_WIDTH)}</text>
-			))}
-			{lineCount > maxLines ? <text attributes={TextAttributes.DIM}>… 余 {lineCount - maxLines} 行（导入后可在编辑器查看完整内容）</text> : null}
-		</box>
-	);
-}
-

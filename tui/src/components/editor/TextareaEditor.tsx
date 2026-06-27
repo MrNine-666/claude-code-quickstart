@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { forwardRef, useImperativeHandle, useRef, useState } from 'react';
 import { TextAttributes } from '@opentui/core';
 import type { TextareaRenderable, SyntaxStyle, KeyEvent } from '@opentui/core';
 import { useKeyboard, useRenderer } from '@opentui/react';
@@ -10,9 +10,26 @@ import { handleTextareaEditKeys, handleTextareaIndentKey } from './textarea-edit
 // - 编辑模式：OpenTUI <textarea> 纯文本编辑，Ctrl/Cmd+S 保存、Ctrl/Cmd+Z 撤销、Ctrl/Cmd+C 复制选中、Esc 取消、Ctrl/Cmd+P 切预览、Tab 缩进（2 空格）
 // - 预览模式（只读）：markdown 用 <markdown>，代码/JSON 用 <line-number><code>（语法高亮 + 行号），Esc 返回编辑
 // - isJson 模式：保存前 JSON.parse 校验，失败显示错误但不退出（容忍中间态）
+// - 命令式能力（forwardRef）：insertText/replaceText/getText/focus/blur，供工作台等父视图程序化插入片段 / 灌缓冲
+// - tabMode='cycle-focus'：Tab 不缩进，改由父视图切焦点（工作台双栏）
+// - escapeMode='bubble'：编辑态 Esc 不触发 onCancel，交给父视图处理（工作台 Esc 退菜单单一入口）
 
 /** 预览渲染用的文件类型；text 不提供预览（直接禁用切换）。 */
 export type EditorFiletype = 'markdown' | 'typescript' | 'javascript' | 'json' | 'text';
+
+/** 命令式句柄：父视图通过 ref 程序化操作编辑器（工作台插入片段 / 灌缓冲）。 */
+export type TextEditorHandle = {
+	/** 在当前光标处插入文本（不替换全文，保留 undo 历史）。 */
+	insertText(text: string): void;
+	/** 替换全文并保留 undo 历史（可 Ctrl+Z 撤销）。 */
+	replaceText(text: string): void;
+	/** 读取当前全文。 */
+	getText(): string;
+	/** 聚焦 textarea。 */
+	focus(): void;
+	/** 使 textarea 失焦。 */
+	blur(): void;
+};
 
 export type TextareaEditorProps = {
 	readonly title: string;
@@ -29,6 +46,22 @@ export type TextareaEditorProps = {
 	// 保存回调：返回 { ok:false, error } 时停留编辑器并展示错误。
 	readonly onSave: (content: string) => { ok: boolean; error?: string };
 	readonly onCancel: () => void;
+	// 内容变更通知（用户输入 / 缩进 / undo/redo / 程序化插入均触发），供父视图做脏标记。
+	readonly onContentChange?: () => void;
+	// Tab 行为：'indent'（默认，Tab/Shift+Tab 缩进 2 空格）| 'cycle-focus'（Tab 切焦点，由 onCycleFocus 处理）。
+	readonly tabMode?: 'indent' | 'cycle-focus';
+	// tabMode='cycle-focus' 时 Tab/Shift+Tab 回调（reverse=true 为反向）。
+	readonly onCycleFocus?: (reverse: boolean) => void;
+	// Esc 行为：'cancel'（默认，Esc → onCancel）| 'bubble'（编辑态 Esc 不处理，交给父视图，避免双触发）。
+	readonly escapeMode?: 'cancel' | 'bubble';
+	// textarea 是否获焦；不传则回退到 active（向后兼容）。
+	readonly textareaFocused?: boolean;
+	// 是否启用 Ctrl+P 预览模式（默认 true）。false 时禁用预览
+	// （如全局规则页保存后已回只读展示，编辑器内无需重复预览）。
+	readonly previewEnabled?: boolean;
+	// 编辑器组件总高度（含标题行）。传入时根容器用固定高度约束 textarea 视口，
+	// 避免内容行数超出边框（不传则 flexGrow 填满父容器，向后兼容）。
+	readonly viewportHeight?: number;
 };
 
 /** filetype → CodeRenderable 的 filetype 字符串（markdown/text 不走 code 预览）。 */
@@ -44,7 +77,7 @@ function codeFiletype(filetype: EditorFiletype): string {
 	}
 }
 
-export function TextareaEditor({
+export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(function TextareaEditor({
 	title,
 	initialContent,
 	active,
@@ -53,16 +86,23 @@ export function TextareaEditor({
 	syntaxStyle = null,
 	onModeChange,
 	onSave,
-	onCancel
-}: TextareaEditorProps) {
-	const ref = useRef<TextareaRenderable>(null);
+	onCancel,
+	onContentChange,
+	tabMode = 'indent',
+	onCycleFocus,
+	escapeMode = 'cancel',
+	textareaFocused,
+	previewEnabled = true,
+	viewportHeight
+}, ref) {
+	const taRef = useRef<TextareaRenderable>(null);
 	const renderer = useRenderer();
 	const [error, setError] = useState<string | null>(null);
 	const [mode, setMode] = useState<'edit' | 'preview'>('edit');
 	// 预览内容快照（进入预览时从 textarea 取最新文本）。
 	const [previewContent, setPreviewContent] = useState(initialContent);
 
-	const canPreview = filetype !== 'text';
+	const canPreview = filetype !== 'text' && previewEnabled !== false;
 
 	const enterPreview = (): void => {
 		// 语法高亮未就绪（Tree-sitter 仍在初始化）时不进预览，避免渲染降级。
@@ -70,7 +110,7 @@ export function TextareaEditor({
 			return;
 		}
 
-		setPreviewContent(ref.current?.plainText ?? initialContent);
+		setPreviewContent(taRef.current?.plainText ?? initialContent);
 		setMode('preview');
 		onModeChange?.('preview');
 	};
@@ -82,7 +122,7 @@ export function TextareaEditor({
 
 	// Ctrl/Cmd+S 保存：isJson 模式先校验 JSON，再回调 onSave。
 	const saveContent = (): void => {
-		const content = ref.current?.plainText ?? '';
+		const content = taRef.current?.plainText ?? '';
 
 		if (isJson) {
 			try {
@@ -102,10 +142,25 @@ export function TextareaEditor({
 		setError(null);
 	};
 
-	// 编辑模式 textarea onKeyDown（handleKeyPress 之前）：Tab 缩进 / Shift+Tab 反向缩进。
+	// 编辑模式 textarea onKeyDown（handleKeyPress 之前）：
+	// - tabMode='cycle-focus'：Tab/Shift+Tab preventDefault + onCycleFocus（不缩进）
+	// - tabMode='indent'：Tab/Shift+Tab 缩进 2 空格，插入后通知内容变更
 	const handleEditorKey = (keyEvent: KeyEvent) => {
-		if (active && mode === 'edit') {
-			handleTextareaIndentKey(keyEvent, ref.current);
+		if (!active || mode !== 'edit') {
+			return;
+		}
+
+		if (tabMode === 'cycle-focus') {
+			const name = keyEvent.name.toLowerCase();
+			if (name === 'tab' || name === 'shift-tab') {
+				keyEvent.preventDefault();
+				onCycleFocus?.(name === 'shift-tab' || keyEvent.shift === true);
+			}
+			return;
+		}
+
+		if (handleTextareaIndentKey(keyEvent, taRef.current)) {
+			onContentChange?.();
 		}
 	};
 
@@ -129,19 +184,41 @@ export function TextareaEditor({
 
 		// ── 编辑模式 ──
 		if (name === 'escape') {
-			onCancel();
+			// escapeMode='bubble'：编辑态 Esc 交给父视图（工作台退菜单单一入口），不调 onCancel 避免双触发。
+			if (escapeMode !== 'bubble') {
+				onCancel();
+			}
 			return;
 		}
 
-		// Ctrl/Cmd+P 切预览（仅 filetype 支持时）；Tab 已归缩进（onKeyDown）。
+		// Ctrl/Cmd+P 切预览（仅 filetype 支持时）；Tab 已归缩进/切焦点（onKeyDown）。
 		if (canPreview && name === 'p' && mod) {
 			enterPreview();
 			return;
 		}
 
 		// Ctrl/Cmd+S 保存 · Ctrl+Z 撤销 · Ctrl+Shift+Z/Y 重做 · Ctrl/Cmd+C 复制选中（OSC52）。
-		handleTextareaEditKeys(keyEvent, ref.current, renderer, saveContent, () => setError(null));
+		// onContentMutate：undo/redo 走底层 FFI 不触发 onContentChange，需手动通知脏标记 + 清错误。
+		handleTextareaEditKeys(keyEvent, taRef.current, renderer, saveContent, () => {
+			setError(null);
+			onContentChange?.();
+		});
 	});
+
+	// 命令式句柄：供父视图程序化插入片段 / 灌缓冲 / 读取 / 聚焦。
+	useImperativeHandle(ref, () => ({
+		insertText: (text: string) => {
+			taRef.current?.insertText(text);
+			onContentChange?.();
+		},
+		replaceText: (text: string) => {
+			taRef.current?.replaceText(text);
+			onContentChange?.();
+		},
+		getText: () => taRef.current?.plainText ?? '',
+		focus: () => taRef.current?.focus(),
+		blur: () => taRef.current?.blur()
+	}), [onContentChange]);
 
 	// ── 预览模式渲染 ──（enterPreview 已保证 syntaxStyle 非 null）
 	if (mode === 'preview' && syntaxStyle) {
@@ -181,7 +258,7 @@ export function TextareaEditor({
 
 	// ── 编辑模式渲染 ──
 	return (
-		<box flexDirection="column" flexGrow={1}>
+		<box flexDirection="column" flexGrow={viewportHeight === undefined ? 1 : 0} height={viewportHeight}>
 			<box marginBottom={1}>
 				<text fg={colors.primary} attributes={TextAttributes.BOLD}>
 					{title}
@@ -189,7 +266,14 @@ export function TextareaEditor({
 			</box>
 
 			<box flexGrow={1} borderStyle="rounded" borderColor={active ? borderColors.active : borderColors.inactive}>
-				<textarea ref={ref} initialValue={initialContent} focused={active} onKeyDown={handleEditorKey} style={{ flexGrow: 1 }} />
+				<textarea
+					ref={taRef}
+					initialValue={initialContent}
+					focused={textareaFocused ?? active}
+					onContentChange={onContentChange ? () => onContentChange() : undefined}
+					onKeyDown={handleEditorKey}
+					style={{ flexGrow: 1 }}
+				/>
 			</box>
 
 			{error ? (
@@ -199,4 +283,4 @@ export function TextareaEditor({
 			) : null}
 		</box>
 	);
-}
+});
