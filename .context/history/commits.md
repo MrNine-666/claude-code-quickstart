@@ -12,3 +12,4 @@
 | 2026-06-17 | 5a33bd49 | (pending) | refactor(installer): 移除 McpManager 平台 wrapper 并完成 Skills 文件重命名 | 2 | 0 | low |
 | 2026-06-17 | 0b081fa3 | (pending) | feat(installer): Manage 四大入口统一至 Node.js 并引入 esbuild 构建体系 | 4 | 0 | medium |
 | 2026-06-27 | 56799a6a | (pending) | refactor(tui): 抽取共享组件统一视图视觉与键位单一数据源 | 5 | 0 | medium |
+| 2026-06-28 | 27dae51d | (pending) | feat(tui): 增强 Skills 搜索安装与批量管理 | 3 | 0 | medium |

@@ -130,3 +130,41 @@ export async function uninstallSkills(skillNames: readonly string[], onProgress?
 		return {success: false, error: friendly};
 	}
 }
+
+/**
+ * 批量安装某 repo 下多个 skill（需求③多选）。
+ * 单次调用 `skills add <source> --skill a --skill b ...`（已验证 CLI 支持单次多 --skill，一次 fetch 装 N 个，远快于循环）。
+ */
+export async function installMultipleSkills(
+	input: {readonly source: string; readonly skillNames: readonly string[]; readonly displayName?: string},
+	onProgress?: ProgressCallback,
+	exec: SkillsExecFn = execCommand
+): Promise<SkillsActionResult> {
+	if (input.skillNames.length === 0) {
+		return {success: false, error: '未选择要安装的 Skill'};
+	}
+
+	const args = ['--yes', 'skills', 'add', input.source, '--yes', '--agent', SKILLS_CLI_AGENT, '-g'];
+	for (const name of input.skillNames) {
+		args.push('--skill', name);
+	}
+
+	const label = input.displayName || `${input.source}（${input.skillNames.join(', ')}）`;
+	emit(onProgress, {level: 'info', message: `正在安装 ${label}`, componentId: label});
+
+	try {
+		const {code, stdout, stderr} = await exec('npx', args, {timeout: INSTALL_TIMEOUT_MS});
+		if (code === 0) {
+			emit(onProgress, {level: 'success', message: `${label} 安装成功`, componentId: label});
+			return {success: true};
+		}
+
+		const error = getFriendlyError(code, stderr || stdout || '未知错误', '安装');
+		emit(onProgress, {level: 'warning', message: `${label} 安装失败: ${error}`, componentId: label});
+		return {success: false, error};
+	} catch (error) {
+		const friendly = getFriendlyError(-1, error instanceof Error ? error.message : String(error), '安装');
+		emit(onProgress, {level: 'warning', message: `${label} 安装失败: ${friendly}`, componentId: label});
+		return {success: false, error: friendly};
+	}
+}

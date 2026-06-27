@@ -274,3 +274,153 @@ export async function searchSkills(query: string, exec: ExecFn = execCommand): P
 	}
 }
 
+// ── 按 repo 分组（父级列表）+ skills add <repo> --list（子级全量） ──────────
+// 需求③两级选择：find 结果按 owner/repo 去重为「父 repo 列表」；
+// 选中父 repo 后用 `skills add <repo> --list` 拉取该 repo 全部子 skill（对齐 npx skills add 交互）。
+
+export type RepoGroup = {
+	readonly repo: string; // owner/repo
+	readonly hitCount: number; // 该 repo 命中搜索词的 skill 数
+	readonly totalInstalls?: number; // 命中 skill 安装数求和（可选，用于父级热度展示）
+};
+
+export type RepoSkill = {
+	readonly name: string;
+	readonly description?: string;
+};
+
+export type RepoSkillsOutcome =
+	| {readonly ok: true; readonly skills: readonly RepoSkill[]}
+	| {readonly ok: false; readonly error: string; readonly rawSummary?: string};
+
+const LIST_REPO_TIMEOUT_MS = 120000;
+
+/** 从 `owner/repo@skill` 形态的 name 取 repo（@ 前）；无 @ 返回空串。 */
+function repoOfName(name: string): string {
+	const at = name.indexOf('@');
+	return at < 0 ? '' : name.slice(0, at);
+}
+
+function mergeInstalls(a: number | undefined, b: number | undefined): number | undefined {
+	if (a === undefined && b === undefined) {
+		return undefined;
+	}
+
+	return (a ?? 0) + (b ?? 0);
+}
+
+/**
+ * 把 skills find 结果按 owner/repo 去重，得到父级 repo 列表。
+ * repo 取 source（find 解析时已拆出），fallback 从 name 的 @ 前缀解析；两者皆空则跳过。
+ */
+export function groupByRepo(results: readonly SearchSkillResult[]): readonly RepoGroup[] {
+	const map = new Map<string, RepoGroup>();
+	for (const r of results) {
+		const repo = r.source || repoOfName(r.name);
+		if (!repo) {
+			continue;
+		}
+
+		const existing = map.get(repo);
+		if (existing) {
+			map.set(repo, {
+				repo,
+				hitCount: existing.hitCount + 1,
+				totalInstalls: mergeInstalls(existing.totalInstalls, r.installCount)
+			});
+		} else {
+			map.set(repo, {repo, hitCount: 1, totalInstalls: r.installCount});
+		}
+	}
+
+	return [...map.values()];
+}
+
+/**
+ * 解析 `skills add <repo> --list` 输出（Available Skills 块状格式）。
+ * 实测格式：每块 `│    <name>`（单个连字符 token，无空格）+ `│` + `│      <desc>`（含空格自然语言），块间 `│` 分隔。
+ * 解析规则：去掉行首边框/空白后，单个 token（`^[A-Za-z0-9][A-Za-z0-9._-]*$`）= skill name；
+ * 含空格文本 = 追加到当前 skill 的 description。
+ * 返回 null 表示无法解析（命令不可用 / repo 不存在），区别于空数组（成功无 skill）。
+ */
+export function parseSkillsListOutput(rawStdout: string, rawStderr = ''): RepoSkill[] | null {
+	const cleaned = removeAnsiSequences(rawStdout).trim();
+	const combined = removeAnsiSequences(`${rawStdout}\n${rawStderr}`);
+
+	const startIdx = cleaned.indexOf('Available Skills');
+	if (startIdx < 0) {
+		// 无 Available Skills 标题：命令不可用 / repo 不存在 / 仓库无 skill
+		if (COMMAND_UNAVAILABLE.test(combined) || /not found|404|no such|empty|no skills/i.test(combined)) {
+			return null;
+		}
+
+		return cleaned ? [] : null;
+	}
+
+	const tailMarker = cleaned.indexOf('Use --skill', startIdx);
+	const region = tailMarker > startIdx ? cleaned.slice(startIdx, tailMarker) : cleaned.slice(startIdx);
+
+	const skills: RepoSkill[] = [];
+	let current: {name: string; description: string} | null = null;
+
+	for (const rawLine of region.split(/\r?\n/)) {
+		// 去掉行首边框符号（│ │ └ ● ◇ ○ ◓ ◒ ◑ ◐ 等装饰）与空白
+		const line = rawLine.replace(/^[│|└●◇○◓◒◑◐\s]+/, '').trim();
+		if (!line || line === 'Available Skills') {
+			continue;
+		}
+
+		// 单个 token = skill name（skill 名无空格，含字母/数字/._-）
+		if (/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(line)) {
+			if (current) {
+				skills.push(current);
+			}
+
+			current = {name: line, description: ''};
+			continue;
+		}
+
+		// 含空格文本 = description（追加到当前 skill，多行拼接）
+		if (current) {
+			current.description = current.description ? `${current.description} ${line}` : line;
+		}
+	}
+
+	if (current) {
+		skills.push(current);
+	}
+
+	return skills;
+}
+
+/**
+ * 列出某 repo 下全部 skill（`npx --yes skills add <owner/repo> --list`）。
+ * 需求③：选中父 repo 后调用，拉取该 repo 全部子 skill（--list 只列不装）。
+ * 输出无法解析 / 命令不可用时返回 ok:false。
+ */
+export async function listRepoSkills(repo: string, exec: ExecFn = execCommand): Promise<RepoSkillsOutcome> {
+	const trimmed = (repo || '').trim();
+	if (!trimmed) {
+		return {ok: false, error: '无效的 repo'};
+	}
+
+	try {
+		const {code, stdout, stderr} = await exec('npx', ['--yes', 'skills', 'add', trimmed, '--list', '--agent', SKILLS_CLI_AGENT], {
+			timeout: LIST_REPO_TIMEOUT_MS
+		});
+
+		const skills = parseSkillsListOutput(stdout, stderr);
+		if (skills === null) {
+			return {
+				ok: false,
+				error: code === 0 ? 'skills add --list 输出无法解析' : 'skills add --list 命令不可用或执行失败',
+				rawSummary: removeAnsiSequences(stderr || stdout).slice(0, 500)
+			};
+		}
+
+		return {ok: true, skills};
+	} catch (error) {
+		return {ok: false, error: error instanceof Error ? error.message : String(error)};
+	}
+}
+
