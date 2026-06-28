@@ -1,34 +1,33 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { TextAttributes } from '@opentui/core';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { TextAttributes, type ScrollBoxRenderable } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
-import { colors, borderColors } from '../theme/index.js';
-import { ConfirmModal, ErrorPanel, ProgressLog, TextareaEditor, ActionHint, ViewHeader, toast } from '../components/index.js';
-import { truncateToWidth } from '../core/text-utils.js';
-import type { ProgressEvent } from '../core/exec.js';
-import type { ConfigEntry, ConfigRecommendation } from '../core/config-recommend.js';
+import { borderColors, colors, PRIMARY } from '../theme/index.js';
 import {
-	checkClipboardSupport,
-	copyRecommendationToClipboard,
+	TextareaEditor,
+	ViewHeader,
+	toast,
+	type TextEditorHandle
+} from '../components/index.js';
+import {
+	fillMissingIntoText,
 	getSettingsPath,
-	importFillMissingWithProgress,
-	loadRecommendationForPreview,
-	readCurrentSettings,
-	saveSettings
+	loadRecommendationAnnotated,
+	readCurrentSettingsTextStripped,
+	saveSettingsMerged
 } from '../services/config-service.js';
 
-// 配置文件菜单视图（Phase 4）：查看推荐 settings.json 配置（含介绍）/ fill-missing 补全 / 复制 / 内嵌编辑器。
-// 导入为非破坏性 fill-missing（仅补缺失，不覆盖供应商/模型/用户已有配置），经 ConfirmModal 确认。
-// Update 检测已收缩（HC-FU-08），导入不写指纹种子。剪贴板不可用时对应入口禁用并提示。
-// OpenTUI 适配：useKeyboard 替代 useInput，<box>/<text> 小写元素，内嵌编辑器替代外部编辑器。
+// 配置文件页（view-first，对齐 PromptsView）+ 字段级（settings.json 多页共享）：
+// view 态只读渲染当前 settings.json（手动 JSON 着色：key/string/数字/布尔/标点分色；opentui 未内置 json grammar）。
+// 字段所有权（HC-12）：供应商 env（token/base_url/model 等，DoNotManageEnvKeys）从展示中剥离，归供应商页管；
+// 保存时自动从原文件恢复供应商 env，绝不丢失。标题标注「已排除供应商配置」。
+// e（编辑现有；空时 a 新建 {}）进入编辑器；Ctrl+T 开推荐边栏（带注释 JSONC 只读对照，注释行分色）；
+// Ctrl+O fill-missing 灌缓冲（仅补缺失，保留已有配置，可 Ctrl+Z 撤销）；Ctrl+S 保存后回只读展示；
+// Esc 取消编辑直接回 view（放弃未保存改动，toast 提示）。
+// HC-SHORTCUT-SINGLE-SOURCE：键位处理用 keyEvent.name，footer 文案由 shortcuts.ts 按 subMode 解析。
 
-type ConfigScreen =
-	| { readonly kind: 'list' }
-	| { readonly kind: 'confirm-import' }
-	| { readonly kind: 'busy' }
-	| { readonly kind: 'editor'; readonly content: string };
-
-const PREVIEW_LINES = 8;
-const PREVIEW_WIDTH = 64;
+type Mode = 'view' | 'edit';
+type Panel = 'editor' | 'split';
+type Focus = 'editor' | 'recommend';
 
 export type ConfigViewProps = {
 	readonly active: boolean;
@@ -39,227 +38,353 @@ export type ConfigViewProps = {
 };
 
 export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExitToNav, syntaxStyle = null }: ConfigViewProps) {
-	const recommendation = useMemo(() => loadRecommendationForPreview(), []);
-	const clipboardSupported = useMemo(() => checkClipboardSupport(), []);
+	const recommendationContent = useMemo(() => loadRecommendationAnnotated() ?? '', []);
+	const recommendationAvailable = recommendationContent !== '';
 	const settingsPath = useMemo(() => getSettingsPath(), []);
 
-	const [screen, setScreen] = useState<ConfigScreen>({ kind: 'list' });
-	const [logs, setLogs] = useState<readonly string[]>([]);
+	// view 态展示内容（已剥离供应商 env；保存 / 取消后重新读盘刷新，保证展示最新）
+	const [viewContent, setViewContent] = useState<string>(() => readCurrentSettingsTextStripped());
+	const hasContent = viewContent.trim().length > 0;
+
+	// edit 态
+	const [mode, setMode] = useState<Mode>('view');
+	const [editInitial, setEditInitial] = useState<string>('');
+	const [panel, setPanel] = useState<Panel>('editor');
+	const [focus, setFocus] = useState<Focus>('editor');
+	const [dirty, setDirty] = useState(false);
+
+	const editorRef = useRef<TextEditorHandle>(null);
+	// scrollbox 默认不响应键盘 ↑/↓（需鼠标点击获焦），这里持 ref 主动 scrollBy 驱动滚动
+	const viewScrollRef = useRef<ScrollBoxRenderable>(null);
+	const recommendScrollRef = useRef<ScrollBoxRenderable>(null);
+
+	// subMode → footer 解析（view / edit / split 细分）
+	const subMode = mode === 'view'
+		? (hasContent ? 'view-render' : 'view-empty')
+		: panel === 'split'
+			? (focus === 'recommend' ? 'edit-split-recommend' : 'edit-split-editor')
+			: 'edit';
 
 	useEffect(() => {
-		if (!active) {
+		if (!active) return;
+		onSubModeChange?.(subMode);
+	}, [active, subMode, onSubModeChange]);
+
+	// split 态焦点在边栏时编辑区失活（边框变灰），与边栏 active 同步
+	const editorActive = mode === 'edit' && active && (panel === 'editor' || focus === 'editor');
+	const textareaFocused = mode === 'edit' && focus === 'editor';
+	const tabMode = panel === 'split' ? 'cycle-focus' : 'indent';
+	// 编辑态保留全局 ViewHeader：右侧内容区固定高，先扣除标题行，避免编辑器 flex 抢占导致标题被裁剪。
+	const bodyViewportHeight = Math.max(1, viewportHeight - 2);
+	const editorViewportHeight = bodyViewportHeight;
+
+	// ── 操作 ──
+	const refreshView = (): void => {
+		setViewContent(readCurrentSettingsTextStripped());
+	};
+
+	// 进入编辑器：initial = '{}' (a 新建·仅空状态) | 现有磁盘内容（已剥离供应商 env）(e 编辑)
+	const enterEdit = (initial: string): void => {
+		setEditInitial(initial);
+		setDirty(false);
+		setPanel('editor');
+		setFocus('editor');
+		setMode('edit');
+	};
+
+	const togglePanel = (): void => {
+		if (panel === 'editor') {
+			if (!recommendationAvailable) {
+				toast.error('推荐配置契约不可用');
+				return;
+			}
+			setPanel('split');
+			setFocus('recommend');
+		} else {
+			setPanel('editor');
+			setFocus('editor');
+		}
+	};
+
+	const cycleFocus = (): void => {
+		setFocus(f => (f === 'editor' ? 'recommend' : 'editor'));
+	};
+
+	// fill-missing 灌缓冲：对当前编辑缓冲执行合并（仅补缺失，保留用户已有配置），结果写回编辑器，可 Ctrl+Z 撤销。
+	// 与全局规则页 replaceText(全文) 的差异：配置文件必须保留供应商/model/权限等已有项（HC-12 fill-missing-only）。
+	const doImport = (): void => {
+		if (!recommendationAvailable) {
+			toast.error('推荐配置契约不可用');
 			return;
 		}
-
-		onSubModeChange?.(screen.kind);
-	}, [active, screen.kind, onSubModeChange]);
-
-	const appendLog = (event: ProgressEvent): void => {
-		setLogs((prev) => [...prev, event.message].slice(-PREVIEW_LINES));
-	};
-
-	const runImport = async (): Promise<void> => {
-		setLogs([]);
-		setScreen({ kind: 'busy' });
-		const result = await importFillMissingWithProgress(appendLog);
-		if (result.ok) {
-			toast.success(result.changed === 0 ? '配置已是最新，无需补全' : `已补全 ${result.changed} 项缺失配置到 ${settingsPath}`);
-		} else {
+		const result = fillMissingIntoText(editorRef.current?.getText() ?? '');
+		if (!result.ok) {
 			toast.error(result.error);
-		}
-		setScreen({ kind: 'list' });
-	};
-
-	const runCopy = async (): Promise<void> => {
-		if (!clipboardSupported) {
-			toast.error('当前平台不支持剪贴板写入');
 			return;
 		}
-
-		setLogs([]);
-		setScreen({ kind: 'busy' });
-		const result = await copyRecommendationToClipboard(appendLog);
-		if (result.ok) {
-			toast.success('推荐配置已复制到剪贴板');
-		} else {
-			toast.error(result.error);
-		}
-		setScreen({ kind: 'list' });
+		editorRef.current?.replaceText(result.text);
+		setDirty(true);
+		toast.success(result.changed === 0
+			? '配置已是最新，无需补全（Ctrl+Z 撤销 · Ctrl+S 保存）'
+			: `已补全 ${result.changed} 项缺失配置到编辑器（Ctrl+Z 撤销 · Ctrl+S 保存）`);
 	};
 
-	// 键盘输入处理（OpenTUI useKeyboard 回调参数是 KeyEvent 对象，键名取 .name）
+	const handleSave = (content: string): { ok: boolean; error?: string } => {
+		const result = saveSettingsMerged(content);
+		if (result.ok) {
+			setDirty(false);
+			refreshView();
+			toast.success(`已保存到 ${settingsPath}（供应商配置已原样保留）`);
+			// 保存后回只读展示（编辑器作为临时态，无需停留）
+			setMode('view');
+			setPanel('editor');
+			setFocus('editor');
+		}
+		return result;
+	};
+
+	const handleContentChange = (): void => {
+		setDirty(true);
+	};
+
+	// 取消编辑：直接回只读展示；有未保存改动时 toast 提示（不弹确认浮层，避免遮挡卡住）
+	const cancelEdit = (): void => {
+		if (dirty) toast.info('已放弃未保存的编辑');
+		refreshView();
+		setMode('view');
+		setPanel('editor');
+		setFocus('editor');
+		setDirty(false);
+	};
+
+	// onCancel 防御兜底：escapeMode='bubble' 时编辑态 Esc 不走这里（由 useKeyboard 单一处理）。
+	const handleEditorCancel = (): void => {
+		cancelEdit();
+	};
+
+	// ── 键盘（单一入口，按 mode / panel / focus 分流）──
 	useKeyboard((keyEvent) => {
 		if (!active) return;
+		const name = keyEvent.name;
+		const mod = keyEvent.ctrl || keyEvent.super === true;
 
-		const key = keyEvent.name;
-
-		if (screen.kind === 'confirm-import') {
-			if (key === 'escape') {
-				setScreen({ kind: 'list' });
-				return;
-			}
-			if (key === 'enter' || key === 'return') {
-				void runImport();
-				return;
-			}
+		// ── view 态 ──
+		if (mode === 'view') {
+			if (name === 'escape') { onExitToNav(); return; }
+			if (name === 'e' && hasContent) { enterEdit(readCurrentSettingsTextStripped() || '{}'); return; }
+			if (name === 'a' && !hasContent) { enterEdit('{}'); return; }
+			// ↑/↓ 滚动展示区（scrollbox 需主动驱动，否则默认不响应键盘）
+			if (name === 'up') { viewScrollRef.current?.scrollBy(-1); return; }
+			if (name === 'down') { viewScrollRef.current?.scrollBy(1); return; }
 			return;
 		}
 
-		if (screen.kind === 'list') {
-			if (key === 'escape' || key === 'left' || key === 'arrowleft') {
-				onExitToNav();
-				return;
-			}
+		// ── edit 态 ──
+		// Esc：取消编辑直接回 view
+		if (name === 'escape') { cancelEdit(); return; }
 
-			const ch = key.toLowerCase();
-			if (ch === 'i' && recommendation.available) {
-				setScreen({ kind: 'confirm-import' });
-			} else if (ch === 'c' && recommendation.available && clipboardSupported) {
-				void runCopy();
-			} else if (ch === 'e') {
-				const current = readCurrentSettings();
-				const json = current ? JSON.stringify(current, null, 2) : '{}';
-				setScreen({ kind: 'editor', content: json });
-			}
+		// 主操作：编辑器获焦时 Ctrl+S 由 TextareaEditor 自管；边栏获焦时由页面兜底保存。
+		if (mod && name === 's' && panel === 'split' && focus === 'recommend') {
+			handleSave(editorRef.current?.getText() ?? '');
+			return;
+		}
+		if (mod && name === 't') { togglePanel(); return; }
+		// Ctrl+I 在终端等同 Tab（ASCII 0x09），改用 Ctrl+O 触发 fill-missing 灌缓冲
+		if (mod && name === 'o') { doImport(); return; }
+
+		// 边栏焦点：↑/↓ 滚动推荐；Tab 切回编辑器
+		if (panel === 'split' && focus === 'recommend') {
+			if (name === 'up') { recommendScrollRef.current?.scrollBy(-1); return; }
+			if (name === 'down') { recommendScrollRef.current?.scrollBy(1); return; }
+			if (name === 'tab') { cycleFocus(); return; }
 		}
 	});
 
-	if (screen.kind === 'editor') {
-		return (
-			<TextareaEditor
-				title={`编辑 ${settingsPath}`}
-				initialContent={screen.content}
-				active={active}
-				isJson
-				filetype="json"
-				syntaxStyle={syntaxStyle}
-				onModeChange={(m) => onSubModeChange?.(m === 'preview' ? 'preview' : 'editor')}
-				onSave={(content) => {
-					const result = saveSettings(content);
-					if (result.ok) {
-						toast.success(`已保存到 ${settingsPath}`);
-						setScreen({ kind: 'list' });
-					}
-					return result;
-				}}
-				onCancel={() => setScreen({ kind: 'list' })}
-			/>
-		);
-	}
-
-	if (screen.kind === 'busy') {
+	// ── view 态渲染（手动 JSON 着色，opentui 无 json grammar 的回退方案）──
+	if (mode === 'view') {
 		return (
 			<box flexDirection="column" flexGrow={1}>
-				<ViewHeader title="配置文件管理" />
-				<box marginTop={1}>
-					<ProgressLog title="执行进度" messages={logs} />
-				</box>
+				<ViewHeader
+					title="配置文件管理"
+					subtitle="查看、补全与编辑 Claude Code settings.json"
+					right={<text fg={colors.warning} attributes={TextAttributes.DIM}>已排除供应商配置</text>}
+				/>
+				{hasContent ? (
+					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
+						<scrollbox ref={viewScrollRef} style={{flexGrow: 1}} scrollY>
+							<ColoredCodeLines content={viewContent} />
+						</scrollbox>
+					</box>
+				) : (
+					<box
+						flexGrow={1}
+						flexDirection="column"
+						borderStyle="single"
+						borderColor={borderColors.inactive}
+						justifyContent="center"
+						alignItems="center"
+					>
+						<text fg={colors.primary} attributes={TextAttributes.BOLD}>尚无配置文件</text>
+						<box marginTop={1} flexDirection="row">
+							<text fg={colors.muted}>按 </text>
+							<text fg={PRIMARY} attributes={TextAttributes.BOLD}>a</text>
+							<text fg={colors.muted}> 新建 ~/.claude/settings.json</text>
+						</box>
+						<box marginTop={1}>
+							<text attributes={TextAttributes.DIM}>{settingsPath}</text>
+						</box>
+					</box>
+				)}
 			</box>
 		);
 	}
+
+	// ── edit 态渲染 ──
+	const editorEl = (
+		<TextareaEditor
+			ref={editorRef}
+			title="当前配置（已排除供应商）"
+			initialContent={editInitial}
+			active={editorActive}
+			isJson
+			filetype="json"
+			syntaxStyle={syntaxStyle}
+			tabMode={tabMode}
+			textareaFocused={textareaFocused}
+			escapeMode="bubble"
+			previewEnabled={false}
+			viewportHeight={editorViewportHeight}
+			onContentChange={handleContentChange}
+			onCycleFocus={() => cycleFocus()}
+			onSave={handleSave}
+			onCancel={handleEditorCancel}
+		/>
+	);
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title="配置文件管理" subtitle={settingsPath} />
-
-			{recommendation.available ? (
-				<RecommendationPreview recommendation={recommendation} viewportHeight={viewportHeight} />
+			<ViewHeader
+				title="配置文件管理"
+				subtitle="查看、补全与编辑 Claude Code settings.json"
+				right={<text fg={colors.warning} attributes={TextAttributes.DIM}>已排除供应商配置</text>}
+			/>
+			{panel === 'split' && recommendationAvailable ? (
+				<box flexDirection="row" flexGrow={1} height={bodyViewportHeight}>
+					<box flexDirection="column" width="50%" height={editorViewportHeight}>
+						<box marginBottom={1}>
+							<text fg={colors.primary} attributes={TextAttributes.BOLD}>推荐配置</text>
+						</box>
+						<box
+							flexGrow={1}
+							borderStyle="rounded"
+							borderColor={focus === 'recommend' ? borderColors.active : borderColors.inactive}
+							paddingX={1}
+						>
+							<scrollbox ref={recommendScrollRef} style={{flexGrow: 1}} scrollY>
+								<ColoredCodeLines content={recommendationContent} jsonc />
+							</scrollbox>
+						</box>
+					</box>
+					<box flexDirection="column" width="50%" marginLeft={1}>
+						{editorEl}
+					</box>
+				</box>
 			) : (
-				<box marginBottom={1}>
-					<ErrorPanel message="推荐配置契约不可用（contracts/claude-config.json 缺失）" />
-				</box>
+				editorEl
 			)}
-
-			<box flexDirection="column" marginTop={1}>
-				<ActionHint label="按缺失项补全配置（不覆盖已有 ~/.claude/settings.json）" enabled={recommendation.available} />
-				<ActionHint
-					label="复制推荐配置 JSON 到剪贴板"
-					enabled={recommendation.available && clipboardSupported}
-					disabledHint={clipboardSupported ? '' : '（剪贴板不可用）'}
-				/>
-			</box>
-
-			{screen.kind === 'confirm-import' ? (
-				<box marginTop={1}>
-					<ConfirmModal
-						title="确认补全配置"
-						message={`将按缺失项补全 ${settingsPath}（仅添加缺失的语言/环境变量/权限，不覆盖 model、供应商与 statusLine 等已有配置）。`}
-					/>
-				</box>
-			) : null}
 		</box>
 	);
 }
 
-// ── 推荐配置预览（顶层 / env / permissions 三段，附 description） ───────────────
+// ── JSON 手动着色（opentui 未内置 json grammar，回退：纯前端 token 分色）──
 
-function RecommendationPreview({
-	recommendation,
-	viewportHeight
-}: {
-	readonly recommendation: ConfigRecommendation;
-	readonly viewportHeight: number;
-}) {
-	const { topLevel, env, permissions } = recommendation;
-	const budget = Math.max(6, Math.min(PREVIEW_LINES + 6, viewportHeight - 6));
-	const rows = buildPreviewRows(topLevel, env, permissions);
-	const visible = rows.slice(0, budget);
-	const hidden = rows.length - visible.length;
+type JsonTokenType = 'key' | 'string' | 'number' | 'boolean' | 'punct' | 'space';
+type JsonToken = {readonly type: JsonTokenType; readonly text: string};
 
-	return (
-		<box flexDirection="column" borderStyle="rounded" borderColor={borderColors.inactive} paddingX={1}>
-			<text attributes={TextAttributes.DIM}>
-				推荐配置预览（顶层 {topLevel.length} / 环境变量 {env.length} / 权限 {permissions.items.length} 项）
-			</text>
-			{visible.map((row, index) =>
-				row.kind === 'header' ? (
-					<text key={index} fg={colors.primary}>
-						{truncateToWidth(row.text, PREVIEW_WIDTH)}
-					</text>
-				) : (
-					<text key={index} attributes={(row.kind === 'note') ? TextAttributes.DIM : 0}>
-						{truncateToWidth(row.text, PREVIEW_WIDTH)}
-					</text>
-				)
-			)}
-			{hidden > 0 ? <text attributes={TextAttributes.DIM}>… 余 {hidden} 行（导入后可在编辑器查看完整配置）</text> : null}
-		</box>
-	);
-}
-
-type PreviewRow = { readonly kind: 'header' | 'entry' | 'note'; readonly text: string };
-
-function buildPreviewRows(
-	topLevel: readonly ConfigEntry[],
-	env: readonly ConfigEntry[],
-	permissions: ConfigRecommendation['permissions']
-): PreviewRow[] {
-	const rows: PreviewRow[] = [];
-
-	const pushEntries = (title: string, entries: readonly ConfigEntry[]): void => {
-		if (entries.length === 0) {
-			return;
+/** 按行 tokenize JSON：key（后跟冒号的字符串）/ string / number / boolean·null / 标点 / 空白。 */
+function tokenizeJsonLine(line: string): readonly JsonToken[] {
+	const tokens: JsonToken[] = [];
+	let i = 0;
+	while (i < line.length) {
+		const ch = line[i]!;
+		if (/\s/.test(ch)) {
+			let j = i + 1;
+			while (j < line.length && /\s/.test(line[j]!)) j++;
+			tokens.push({type: 'space', text: line.slice(i, j)});
+			i = j;
+		} else if (ch === '"') {
+			let j = i + 1;
+			while (j < line.length) {
+				if (line[j] === '\\') { j += 2; continue; }
+				if (line[j] === '"') { j++; break; }
+				j++;
+			}
+			const text = line.slice(i, j);
+			let k = j;
+			while (k < line.length && /\s/.test(line[k]!)) k++;
+			tokens.push({type: line[k] === ':' ? 'key' : 'string', text});
+			i = j;
+		} else if (ch === '{' || ch === '}' || ch === '[' || ch === ']' || ch === ':' || ch === ',') {
+			tokens.push({type: 'punct', text: ch});
+			i++;
+		} else if (ch === '-' || (ch >= '0' && ch <= '9')) {
+			let j = i + 1;
+			while (j < line.length && /[-+.eE0-9]/.test(line[j]!)) j++;
+			tokens.push({type: 'number', text: line.slice(i, j)});
+			i = j;
+		} else if (ch >= 'a' && ch <= 'z') {
+			let j = i + 1;
+			while (j < line.length && /[a-z]/.test(line[j]!)) j++;
+			tokens.push({type: 'boolean', text: line.slice(i, j)});
+			i = j;
+		} else {
+			tokens.push({type: 'string', text: ch});
+			i++;
 		}
-
-		rows.push({ kind: 'header', text: `─ ${title} ─` });
-		for (const entry of entries) {
-			const desc = entry.description ? `  ${entry.description}` : '';
-			rows.push({ kind: 'entry', text: `${entry.key} = ${entry.value}${desc}` });
-		}
-	};
-
-	pushEntries('顶层默认值', topLevel);
-	pushEntries('环境变量', env);
-
-	if (permissions.items.length > 0) {
-		rows.push({ kind: 'header', text: `─ 权限白名单（${permissions.items.length} 项）─` });
-		if (permissions.description) {
-			rows.push({ kind: 'note', text: permissions.description });
-		}
-
-		rows.push({ kind: 'entry', text: permissions.items.join(', ') });
 	}
-
-	return rows;
+	return tokens;
 }
 
+/** token → 颜色（对齐 app.tsx GitHub Dark 主题）。 */
+function jsonTokenColor(type: JsonTokenType): string {
+	switch (type) {
+		case 'key': return '#FFA657';       // 橙：键名突出
+		case 'string': return '#A5D6FF';    // 浅蓝：字符串值
+		case 'number': return '#79C0FF';    // 蓝：数字
+		case 'boolean': return '#FF7B72';   // 红：true/false/null
+		case 'punct': return colors.muted;  // 灰：标点柔和
+		case 'space': return colors.info;   // 空白（占位，颜色无关）
+	}
+}
+
+/**
+ * 多行 JSON/JSONC 着色渲染（view 态纯 JSON + 边栏 JSONC 共用）。
+ * 每行按 token 分色（key/string/number/boolean/punct）；jsonc=true 时 // 注释行用 muted+DIM 柔和区分。
+ */
+function ColoredCodeLines({ content, jsonc = false }: { readonly content: string; readonly jsonc?: boolean }) {
+	return (
+		<box flexDirection="column">
+			{content.split('\n').map((line, i) => {
+				const isComment = jsonc && line.trimStart().startsWith('//');
+				if (isComment) {
+					return (
+						<text key={i} fg={colors.muted} attributes={TextAttributes.DIM}>
+							{line.length > 0 ? line : ' '}
+						</text>
+					);
+				}
+				return (
+					<box key={i} flexDirection="row">
+						{line.length === 0
+							? <text>{' '}</text>
+							: tokenizeJsonLine(line).map((tok, j) => (
+								<text key={j} fg={jsonTokenColor(tok.type)}>
+									{tok.text.length > 0 ? tok.text : ' '}
+								</text>
+							))}
+					</box>
+				);
+			})}
+		</box>
+	);
+}

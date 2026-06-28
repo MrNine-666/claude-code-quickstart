@@ -263,37 +263,59 @@ function promptsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 }
 
 function configShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
-	if (subMode === 'editor') {
+	// view 态：只读渲染展示当前 settings.json
+	if (subMode === 'view-render') {
 		return buildShortcuts([
+			{command: CONFIG_COMMANDS.EDIT_ENTRY, label: '编辑'},
+			{command: CONFIG_COMMANDS.PREVIEW_UP, label: '滚动'},
+			{command: CONFIG_COMMANDS.PREVIEW_DOWN, label: '滚动'},
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}
+		]);
+	}
+
+	// view 态：空状态（settings.json 不存在/空，仅此时 a 新建）
+	if (subMode === 'view-empty') {
+		return buildShortcuts([
+			{command: CONFIG_COMMANDS.ADD, label: '新建'},
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}
+		]);
+	}
+
+	// edit 态：纯编辑器（默认）
+	if (subMode === 'edit') {
+		return buildShortcuts([
+			{command: CONFIG_COMMANDS.TOGGLE_PANEL, label: '推荐边栏'},
 			{command: CONFIG_COMMANDS.EDITOR_SAVE, label: '保存'},
-			{command: CONFIG_COMMANDS.EDITOR_PREVIEW, label: '预览'},
+			{command: CONFIG_COMMANDS.IMPORT, label: '补全推荐'},
 			{command: CONFIG_COMMANDS.EDITOR_CANCEL, label: '取消'}
 		]);
 	}
 
-	if (subMode === 'preview') {
+	// edit 态：双栏 · 焦点在编辑器
+	if (subMode === 'edit-split-editor') {
 		return buildShortcuts([
-			{command: CONFIG_COMMANDS.PREVIEW_BACK, label: '返回编辑'},
-			{command: CONFIG_COMMANDS.PREVIEW_UP, label: '滚动'},
-			{command: CONFIG_COMMANDS.PREVIEW_DOWN, label: '滚动'}
+			{command: CONFIG_COMMANDS.FOCUS_CYCLE, label: '切边栏'},
+			{command: CONFIG_COMMANDS.TOGGLE_PANEL, label: '收边栏'},
+			{command: CONFIG_COMMANDS.EDITOR_SAVE, label: '保存'},
+			{command: CONFIG_COMMANDS.IMPORT, label: '补全推荐'},
+			{command: CONFIG_COMMANDS.EDITOR_CANCEL, label: '取消'}
 		]);
 	}
 
-	if (subMode === 'confirm-import') {
-		return manualShortcuts([{key: 'Enter', label: '确认补全'}, {key: 'Esc', label: '取消'}]);
+	// edit 态：双栏 · 焦点在推荐边栏（↑/↓ 滚动）
+	if (subMode === 'edit-split-recommend') {
+		return buildShortcuts([
+			{command: CONFIG_COMMANDS.PREVIEW_UP, label: '滚动'},
+			{command: CONFIG_COMMANDS.PREVIEW_DOWN, label: '滚动'},
+			{command: CONFIG_COMMANDS.FOCUS_CYCLE, label: '切编辑器'},
+			{command: CONFIG_COMMANDS.TOGGLE_PANEL, label: '收边栏'},
+			{command: CONFIG_COMMANDS.EDITOR_SAVE, label: '保存'},
+			{command: CONFIG_COMMANDS.IMPORT, label: '补全推荐'},
+			{command: CONFIG_COMMANDS.EDITOR_CANCEL, label: '取消'}
+		]);
 	}
 
-	if (subMode === 'busy') {
-		return manualShortcuts([{key: '请稍候', label: '执行中'}]);
-	}
-
-	return buildShortcuts([
-		{command: CONFIG_COMMANDS.IMPORT, label: '补全'},
-		{command: CONFIG_COMMANDS.COPY, label: '复制'},
-		{command: CONFIG_COMMANDS.EDIT, label: '编辑器'},
-		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
-		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
-	]);
+	return [];
 }
 
 function toolsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {

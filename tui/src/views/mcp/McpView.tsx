@@ -1,8 +1,7 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import {useKeyboard} from '@opentui/react';
 import {
-	ConfirmModal,
-	CONFIRM_MODAL_ROWS,
+	Modal,
 	ScrollList,
 	StatusDot,
 	ViewHeader,
@@ -34,6 +33,7 @@ export type McpViewProps = {
 	readonly active: boolean;
 	// content 区可视行数（焦点驱动滚动）。
 	readonly viewportHeight?: number;
+	readonly viewportWidth?: number;
 	// 上报当前子模式给 App footer。
 	readonly onSubModeChange?: (subMode: string) => void;
 	// 在列表屏按 Esc/← 时请求退回左侧导航。
@@ -58,7 +58,7 @@ function statusKind(status: McpServerStatus): StatusDotKind {
 	}
 }
 
-export default function McpView({active, viewportHeight = 16, onSubModeChange, onExitToNav}: McpViewProps) {
+export default function McpView({active, viewportHeight = 16, viewportWidth = 52, onSubModeChange, onExitToNav}: McpViewProps) {
 	const [rows, setRows] = useState<McpStatusRow[]>(() => loadMcpStatus());
 	const [selected, setSelected] = useState(0);
 	const [screen, setScreen] = useState<McpScreen>({kind: 'list'});
@@ -160,23 +160,27 @@ export default function McpView({active, viewportHeight = 16, onSubModeChange, o
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title="MCP Server 管理" subtitle={`共 ${visibleRows.length} 个`} />
+			<ViewHeader title="MCP Server 管理" subtitle="维护 Claude Code 可用的 MCP Server 连接" />
 
 			{visibleRows.length === 0 ? (
 				<box flexDirection="column" flexGrow={1} justifyContent="center">
 					<text fg={colors.muted}>暂无 MCP Server</text>
 				</box>
 			) : (
-				<ScrollList items={items} cursor={safeSelected} viewportHeight={viewportHeight} reservedRows={3 + (screen.kind === 'confirm-remove' ? CONFIRM_MODAL_ROWS : 0)} />
+				<ScrollList items={items} cursor={safeSelected} viewportHeight={viewportHeight} reservedRows={3} stretch />
 			)}
 
-			{screen.kind === 'confirm-remove' && current ? <box flexGrow={1} /> : null}
 			{screen.kind === 'confirm-remove' && current ? (
-				<ConfirmModal
+				<Modal
+					active
 					title="确认删除 MCP Server"
-					message={`即将删除 MCP Server ${current.Id}，此操作不可撤销。`}
+					hint="Enter 确认  Esc 取消"
 					tone="danger"
-				/>
+					viewportWidth={viewportWidth}
+					viewportHeight={viewportHeight}
+				>
+					<text>{`即将删除 MCP Server ${current.Id}，此操作不可撤销。`}</text>
+				</Modal>
 			) : null}
 
 			<ListInput

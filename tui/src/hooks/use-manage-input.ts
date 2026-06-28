@@ -6,6 +6,8 @@ const manageInputBindings: readonly { readonly key: string; readonly keyName: Ma
 	{ key: 'down', keyName: 'down' },
 	{ key: 'left', keyName: 'left' },
 	{ key: 'right', keyName: 'right' },
+	// OpenTUI 键盘事件将回车规范化为 return；同时保留 enter 兼容部分组件/终端别名。
+	{ key: 'return', keyName: 'enter' },
 	{ key: 'enter', keyName: 'enter' },
 	{ key: 'escape', keyName: 'escape' },
 	{ key: 'tab', keyName: 'tab' },

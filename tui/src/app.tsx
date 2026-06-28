@@ -12,9 +12,11 @@ import {
 	type ManageState
 } from './state/manage-state.js';
 import { navShortcuts, viewShortcuts } from './state/shortcuts.js';
-import { ShortcutBar, ToastViewport, UpdateModal, type StatusDotKind, type UpdateModalStatus } from './components/index.js';
+import { Modal, ShortcutBar, ToastViewport, toast, type StatusDotKind } from './components/index.js';
 import { colors, borderColors, borderStyles, PRIMARY } from './theme/index.js';
 import { CCQ_LOGO, CCQ_LOGO_COLORS } from './theme/logo.js';
+import { CCQ_VERSION } from './version.js';
+import { applyUpdate, checkLatestVersion, downloadUpdate, restartExecutable } from './core/update.js';
 import { displayWidth } from './core/text-utils.js';
 // 导入 6 个视图组件
 import { ProviderView } from './views/provider-view.js';
@@ -31,11 +33,23 @@ import { createToolsViewServices } from './views/tools-view-services.js';
 // logo 每行 13 列宽（块面风格），侧边栏内宽 = SIDEBAR_WIDTH - 2(边框) - 2(paddingX) = 20，菜单标签充裕。
 const SIDEBAR_WIDTH = 24;
 
+type UpdateScreen =
+	| { readonly kind: 'checking' }
+	| { readonly kind: 'latest' }
+	| { readonly kind: 'available'; readonly version: string; readonly downloadUrl: string }
+	| { readonly kind: 'downloading'; readonly version: string }
+	| { readonly kind: 'applying' }
+	| { readonly kind: 'confirm-restart'; readonly version: string }
+	| { readonly kind: 'updated'; readonly version: string }
+	| { readonly kind: 'error'; readonly message: string };
+
+type UpdateStatus = UpdateScreen['kind'];
+
 export default function App() {
 	const [state, setState] = useState(createInitialManageState);
 	const [viewSubMode, setViewSubMode] = useState<string>('');
-	const [updateModalOpen, setUpdateModalOpen] = useState(false);
-	const [updateStatus, setUpdateStatus] = useState<UpdateModalStatus>('checking');
+	const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+	const [updateScreen, setUpdateScreen] = useState<UpdateScreen>({ kind: 'checking' });
 	// 右侧内容区当前显示的菜单 id：selectedIndex 在菜单范围内时跟随，停在底部按钮位时保持上一个（按钮不切视图，回车只开浮窗）
 	const [displayMenuId, setDisplayMenuId] = useState<ManageModuleId>(menuItems[0]!.id);
 	const renderer = useRenderer();
@@ -56,6 +70,7 @@ export default function App() {
 
 			// GitHub Dark 主题配色
 			const style = SyntaxStyle.fromStyles({
+				// code token（fenced code block：TS/JS）
 				keyword: { fg: RGBA.fromHex('#FF7B72'), bold: true },
 				string: { fg: RGBA.fromHex('#A5D6FF') },
 				number: { fg: RGBA.fromHex('#79C0FF') },
@@ -63,6 +78,21 @@ export default function App() {
 				function: { fg: RGBA.fromHex('#D2A8FF') },
 				type: { fg: RGBA.fromHex('#FFA657') },
 				operator: { fg: RGBA.fromHex('#FF7B72') },
+				// markdown markup token（全局规则页 CLAUDE.md：标题/粗体/列表/引用/代码/链接着色）
+				'markup.heading': { fg: RGBA.fromHex('#58A6FF'), bold: true },
+				'markup.heading.1': { fg: RGBA.fromHex('#79C0FF'), bold: true },
+				'markup.heading.2': { fg: RGBA.fromHex('#58A6FF'), bold: true },
+				'markup.heading.3': { fg: RGBA.fromHex('#58A6FF'), bold: true },
+				'markup.bold': { fg: RGBA.fromHex('#F0F6FC'), bold: true },
+				'markup.strong': { fg: RGBA.fromHex('#F0F6FC'), bold: true },
+				'markup.italic': { fg: RGBA.fromHex('#F0F6FC'), italic: true },
+				'markup.list': { fg: RGBA.fromHex('#FF7B72') },
+				'markup.list.checked': { fg: RGBA.fromHex('#3FB950') },
+				'markup.quote': { fg: RGBA.fromHex('#8B949E'), italic: true },
+				'markup.raw': { fg: RGBA.fromHex('#A5D6FF') },
+				'markup.raw.block': { fg: RGBA.fromHex('#A5D6FF') },
+				'markup.link': { fg: RGBA.fromHex('#58A6FF'), underline: true },
+				'markup.link.url': { fg: RGBA.fromHex('#58A6FF'), underline: true },
 				default: { fg: RGBA.fromHex('#E6EDF3') }
 			});
 			setSyntaxStyle(style);
@@ -92,20 +122,55 @@ export default function App() {
 		}
 	}, [renderer, state.shouldExit]);
 
+	const runUpdateCheck = async (): Promise<void> => {
+		setUpdateScreen({ kind: 'checking' });
+		const info = await checkLatestVersion();
+		setUpdateScreen(info ? { kind: 'available', version: info.version, downloadUrl: info.downloadUrl } : { kind: 'latest' });
+	};
+
+	const runUpdate = async (version: string, downloadUrl: string): Promise<void> => {
+		setUpdateScreen({ kind: 'downloading', version });
+		const downloaded = await downloadUpdate(downloadUrl);
+		if (!downloaded) {
+			toast.error('下载更新失败，请检查网络后重试');
+			setUpdateScreen({ kind: 'error', message: '下载失败' });
+			return;
+		}
+
+		setUpdateScreen({ kind: 'applying' });
+		const applied = await applyUpdate();
+		if (!applied) {
+			toast.error('应用更新失败');
+			setUpdateScreen({ kind: 'error', message: '应用更新失败' });
+			return;
+		}
+
+		toast.success(process.platform === 'win32' ? '更新已就绪，重启 ccq 后自动完成' : '更新完成，重启 ccq 生效');
+		setUpdateScreen({ kind: 'confirm-restart', version });
+	};
+
+	useEffect(() => {
+		if (updateDialogOpen) {
+			void runUpdateCheck();
+		}
+		// 仅在打开浮窗时自动检查，避免 screen 改变导致重复请求。
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [updateDialogOpen]);
+
 	// 全局键盘分发：nav 焦点始终激活；进入 view 后，凡是自带键盘处理的视图
 	// 都让位给视图自身处理，避免双重响应；浮窗打开时也让位给浮窗自身处理。
 	// 其余模块由全局 reducer 处理 Esc/← 返回导航。
 	const viewModulesWithInput = useMemo(() => new Set(menuItems.map(item => item.id)), []);
-	const ownsViewInput = updateModalOpen || (state.focus === 'view' && viewModulesWithInput.has(displayMenuId));
+	const ownsViewInput = updateDialogOpen || (state.focus === 'view' && viewModulesWithInput.has(displayMenuId));
 	useManageInput(keyName => {
 		// 底部「检查更新」按钮：nav 焦点 + 按钮位 + 确认键 → 打开浮窗（不进 view）
 		if (
 			state.focus === 'nav' &&
 			state.selectedIndex === menuItems.length &&
 			(keyName === 'enter' || keyName === 'right' || keyName === 'tab') &&
-			!updateModalOpen
+			!updateDialogOpen
 		) {
-			setUpdateModalOpen(true);
+			setUpdateDialogOpen(true);
 			return;
 		}
 		setState(current => reduceManageState(current, keyName));
@@ -168,7 +233,7 @@ export default function App() {
 						selected={state.selectedIndex === menuItems.length}
 						navActive={navActive}
 						width={sidebarInnerWidth}
-						statusKind={updateStatusKind(updateStatus, updateModalOpen)}
+						statusKind={updateStatusKind(updateScreen.kind, updateDialogOpen)}
 					/>
 				</box>
 
@@ -207,13 +272,19 @@ export default function App() {
 				</box>
 			</box>
 
-			{/* 检查更新浮窗：底部按钮回车触发，position=absolute 居中覆盖主界面（非独立页面） */}
-			<UpdateModal
-				active={updateModalOpen}
-				onClose={() => setUpdateModalOpen(false)}
-				onStatusChange={setUpdateStatus}
+			{/* 检查更新浮窗：底部按钮回车触发，统一 Modal 居中覆盖主界面（非独立页面） */}
+			<UpdateDialog
+				active={updateDialogOpen}
+				screen={updateScreen}
 				viewportWidth={terminalWidth}
 				viewportHeight={terminalHeight}
+				onClose={() => setUpdateDialogOpen(false)}
+				onUpdate={(version, downloadUrl) => void runUpdate(version, downloadUrl)}
+				onRestart={() => {
+					renderer?.destroy();
+					restartExecutable();
+				}}
+				onRestartLater={(version) => setUpdateScreen({ kind: 'updated', version })}
 			/>
 		</>
 	);
@@ -263,7 +334,7 @@ function NavRow({ label, selected, navActive, width, statusKind }: {
 	);
 }
 
-function updateStatusKind(status: UpdateModalStatus, active: boolean): StatusDotKind {
+function updateStatusKind(status: UpdateStatus, active: boolean): StatusDotKind {
 	if (!active) {
 		return 'unknown';
 	}
@@ -281,6 +352,117 @@ function updateStatusKind(status: UpdateModalStatus, active: boolean): StatusDot
 			return 'latest';
 		case 'error':
 			return 'failed';
+	}
+}
+
+function UpdateDialog({
+	active,
+	screen,
+	viewportWidth,
+	viewportHeight,
+	onClose,
+	onUpdate,
+	onRestart,
+	onRestartLater
+}: {
+	readonly active: boolean;
+	readonly screen: UpdateScreen;
+	readonly viewportWidth: number;
+	readonly viewportHeight: number;
+	readonly onClose: () => void;
+	readonly onUpdate: (version: string, downloadUrl: string) => void;
+	readonly onRestart: () => void;
+	readonly onRestartLater: (version: string) => void;
+}) {
+	useManageInput((keyName) => {
+		const isEnter = keyName === 'enter';
+		const isEsc = keyName === 'escape';
+
+		if (screen.kind === 'confirm-restart') {
+			if (isEnter) onRestart();
+			else if (isEsc) onRestartLater(screen.version);
+			return;
+		}
+
+		if (screen.kind === 'available') {
+			if (isEnter) onUpdate(screen.version, screen.downloadUrl);
+			else if (isEsc) onClose();
+			return;
+		}
+
+		if (screen.kind === 'checking' || screen.kind === 'downloading' || screen.kind === 'applying') {
+			if (isEsc) onClose();
+			return;
+		}
+
+		if (isEnter || isEsc) {
+			onClose();
+		}
+	}, active);
+
+	const content = updateDialogContent(screen);
+	return (
+		<Modal active={active} title={content.title} hint={content.hint} viewportWidth={viewportWidth} viewportHeight={viewportHeight}>
+			{content.body}
+		</Modal>
+	);
+}
+
+function updateDialogContent(screen: UpdateScreen): { readonly title: string; readonly body: React.ReactNode; readonly hint: string } {
+	switch (screen.kind) {
+		case 'checking':
+			return { title: '检查更新', body: <text fg={colors.muted}>正在检查最新版本...</text>, hint: 'Esc 取消' };
+		case 'latest':
+			return {
+				title: '检查更新',
+				body: (
+					<box flexDirection="column">
+						<text fg={colors.success}>✓ 已是最新版本</text>
+						<text fg={colors.muted}>{`  当前 v${CCQ_VERSION}`}</text>
+					</box>
+				),
+				hint: 'Esc 关闭'
+			};
+		case 'available':
+			return {
+				title: '检查更新',
+				body: (
+					<box flexDirection="column">
+						<text fg={PRIMARY}>发现新版本</text>
+						<text fg={colors.muted}>{`  当前 v${CCQ_VERSION}`}</text>
+						<text fg={colors.muted}>{`  最新 v${screen.version}`}</text>
+					</box>
+				),
+				hint: 'Enter 更新  Esc 取消'
+			};
+		case 'downloading':
+			return { title: '检查更新', body: <text fg={colors.muted}>{`正在下载 v${screen.version}...`}</text>, hint: 'Esc 取消' };
+		case 'applying':
+			return { title: '检查更新', body: <text fg={colors.muted}>正在应用更新...</text>, hint: 'Esc 取消' };
+		case 'confirm-restart':
+			return {
+				title: '更新完成',
+				body: (
+					<box flexDirection="column">
+						<text fg={colors.success}>{`✓ 已更新到 v${screen.version}`}</text>
+						<text>是否立即重启 ccq？</text>
+					</box>
+				),
+				hint: 'Enter 重启  Esc 稍后'
+			};
+		case 'updated':
+			return {
+				title: '更新完成',
+				body: (
+					<box flexDirection="column">
+						<text fg={colors.success}>{`✓ 已更新到 v${screen.version}`}</text>
+						<text fg={colors.muted}>重启 ccq 后生效</text>
+					</box>
+				),
+				hint: 'Esc 关闭'
+			};
+		case 'error':
+			return { title: '检查更新', body: <text fg={colors.danger}>{`✗ 更新失败：${screen.message}`}</text>, hint: 'Esc 关闭' };
 	}
 }
 
@@ -331,17 +513,17 @@ function ModuleContent({
 	// 根据 moduleId 渲染对应的视图组件
 	switch (moduleId) {
 		case 'provider':
-			return <ProviderView active={active} viewportHeight={viewportHeight} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
+			return <ProviderView active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
 		case 'mcp':
-			return <McpView active={active} viewportHeight={viewportHeight} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
+			return <McpView active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
 		case 'skills':
-			return <SkillsView services={skillsViewServices} cache={skillsCache} active={active} viewportHeight={viewportHeight} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
+			return <SkillsView services={skillsViewServices} cache={skillsCache} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
 		case 'prompts':
 			return <PromptsView active={active} viewportHeight={viewportHeight} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} syntaxStyle={syntaxStyle} />;
 		case 'config':
 			return <ConfigView active={active} viewportHeight={viewportHeight} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} syntaxStyle={syntaxStyle} />;
 		case 'tools':
-			return <ToolsView services={toolsViewServices} cache={toolsCache} active={active} viewportHeight={viewportHeight} contentWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
+			return <ToolsView services={toolsViewServices} cache={toolsCache} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} contentWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
 		default:
 			// 兜底：显示模块信息
 			const item = menuItems.find(menuItem => menuItem.id === moduleId);

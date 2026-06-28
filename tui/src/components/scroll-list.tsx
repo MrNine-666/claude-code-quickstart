@@ -26,6 +26,8 @@ export type ScrollListProps = {
 	readonly viewportHeight: number;
 	// ScrollList 之外（同一 content 区内）已占用的行数：标题、副标题、notice 等。
 	readonly reservedRows?: number;
+	// 拉伸模式：由父容器 flex 分配高度，避免继续用 viewportHeight 手算列表高度。
+	readonly stretch?: boolean;
 	readonly emptyText?: string;
 };
 
@@ -41,12 +43,14 @@ export function ScrollList({
 	cursor,
 	viewportHeight,
 	reservedRows = 0,
+	stretch = false,
 	emptyText = '暂无数据'
 }: ScrollListProps) {
 	const ref = useRef<ScrollBoxRenderable>(null);
 	const safeCursor = items.length === 0 ? 0 : Math.min(Math.max(cursor, 0), items.length - 1);
 	const activeItemId = items[safeCursor] ? itemId(items[safeCursor], safeCursor) : null;
 	const scrollHeight = Math.max(1, viewportHeight - reservedRows - COUNT_ROWS);
+	const scrollboxHeight = stretch ? undefined : scrollHeight;
 	const renderedItems = useMemo(
 		() => items.map((item, index) => ({item, index, id: itemId(item, index)})),
 		[items]
@@ -65,10 +69,11 @@ export function ScrollList({
 	}
 
 	return (
-		<box flexDirection="column">
+		<box flexDirection="column" flexGrow={stretch ? 1 : 0}>
 			<scrollbox
 				ref={ref}
-				height={scrollHeight}
+				height={scrollboxHeight}
+				style={stretch ? {flexGrow: 1} : undefined}
 				width="100%"
 				viewportCulling
 				scrollY

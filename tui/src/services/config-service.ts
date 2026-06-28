@@ -1,66 +1,38 @@
-import type {ProgressCallback} from '../core/exec.js';
 import {
-	assembleRecommendationJson,
-	importFillMissing,
-	loadRecommendation,
-	readInstalledSettings,
+	applyFillMissingToText,
+	assembleRecommendationAnnotated,
+	mergeProviderEnvOnSave,
+	readInstalledSettingsText,
 	settingsFilePath,
-	type ConfigRecommendation,
-	type ImportResult
+	stripProviderEnvFromText
 } from '../core/config-recommend.js';
-import {copyToClipboard, isClipboardSupported, type ClipboardResult} from '../core/clipboard.js';
 import {atomicWrite} from '../core/fs-utils.js';
 
-// Config service：配置文件视图唯一入口，包装 core 并统一进度上报（对齐 prompts-service 结构）。
-// Phase 5: 移除 external-editor 调用链，改用内嵌编辑器（OpenTUI textarea）
+// Config service：配置文件视图唯一入口，包装 core 并对齐 prompts-service 结构。
+// view-first（对齐 PromptsView）+ 字段级（settings.json 多页共享）：
+// view/edit 仅展示 ClaudeConfig 管辖字段（剥离供应商 env，HC-12 字段所有权），保存时合并保留供应商 env。
+// 落盘版 fill-missing 仍由 core 提供（verify 守护）。
 
-/** 加载推荐配置（供预览展示，含 description 介绍）。 */
-export function loadRecommendationForPreview(): ConfigRecommendation {
-	return loadRecommendation();
-}
-
-/** 读取当前已安装的 settings.json（不存在返回 null）。 */
-export function readCurrentSettings(): Record<string, unknown> | null {
-	return readInstalledSettings();
-}
-
-/** fill-missing 导入推荐配置（仅补缺失，不覆盖已有），带进度上报。 */
-export async function importFillMissingWithProgress(onProgress?: ProgressCallback): Promise<ImportResult> {
-	onProgress?.({level: 'info', message: '正在按缺失项补全配置...'});
-	const result = importFillMissing();
-	if (result.ok) {
-		const summary = result.changed === 0 ? '配置已是最新，无需补全' : `已补全 ${result.changed} 项配置`;
-		onProgress?.({level: 'success', message: summary});
-	} else {
-		onProgress?.({level: 'danger', message: `导入失败: ${result.error}`});
+/** 读取当前 settings.json，剥离供应商 env 字段后返回（供 view/edit 展示，不暴露 token 等）。 */
+export function readCurrentSettingsTextStripped(): string {
+	const raw = readInstalledSettingsText();
+	if (!raw) {
+		return '';
 	}
-
-	return result;
+	const result = stripProviderEnvFromText(raw);
+	return result.ok ? result.text : raw;  // 解析失败退回原文（保留可读性，让用户看到原始内容）
 }
 
-/** 复制推荐配置 JSON 到剪贴板，带进度上报。 */
-export async function copyRecommendationToClipboard(onProgress?: ProgressCallback): Promise<ClipboardResult> {
-	const json = assembleRecommendationJson();
-	if (!json) {
-		const error = '推荐配置契约不可用';
-		onProgress?.({level: 'danger', message: error});
-		return {ok: false, error};
-	}
-
-	onProgress?.({level: 'info', message: '正在复制到剪贴板...'});
-	const result = await copyToClipboard(json);
-	if (result.ok) {
-		onProgress?.({level: 'success', message: '已复制推荐配置到剪贴板'});
-	} else {
-		onProgress?.({level: 'danger', message: `复制失败: ${result.error}`});
-	}
-
-	return result;
+/** 组装带注释的推荐配置文本（JSONC 风格，每项 description 以 // 注释标注，供推荐边栏对照展示）。 */
+export function loadRecommendationAnnotated(): string | null {
+	return assembleRecommendationAnnotated();
 }
 
-/** 检测剪贴板是否可用（仅 Windows / macOS）。 */
-export function checkClipboardSupport(): boolean {
-	return isClipboardSupported();
+/** 对编辑缓冲 JSON 文本执行 fill-missing 合并（仅补缺失，保留用户已有配置），供推荐边栏 Ctrl+O 灌缓冲。 */
+export function fillMissingIntoText(jsonText: string):
+	| {readonly ok: true; readonly text: string; readonly changed: number}
+	| {readonly ok: false; readonly error: string} {
+	return applyFillMissingToText(jsonText);
 }
 
 /** 获取 settings.json 文件路径（供视图展示）。 */
@@ -68,16 +40,21 @@ export function getSettingsPath(): string {
 	return settingsFilePath();
 }
 
-/** 内嵌编辑器保存：JSON.parse 校验通过后整文件覆盖写入 settings.json（原子写）。 */
-export function saveSettings(jsonContent: string): {ok: boolean; error?: string} {
+/** 保存：edited 是用户编辑（不含供应商 env），校验合法 JSON 后合并原文件供应商 env，整文件原子写入。 */
+export function saveSettingsMerged(jsonContent: string): {ok: boolean; error?: string} {
 	try {
-		JSON.parse(jsonContent); // 校验合法 JSON，非法则拒绝写入。
+		JSON.parse(jsonContent);  // 校验 edited 合法 JSON
 	} catch (error) {
 		return {ok: false, error: `JSON 格式错误: ${error instanceof Error ? error.message : String(error)}`};
 	}
 
+	const merged = mergeProviderEnvOnSave(jsonContent, readInstalledSettingsText());
+	if (!merged.ok) {
+		return {ok: false, error: merged.error};
+	}
+
 	try {
-		atomicWrite(settingsFilePath(), jsonContent);
+		atomicWrite(settingsFilePath(), merged.text);
 		return {ok: true};
 	} catch (error) {
 		return {ok: false, error: error instanceof Error ? error.message : String(error)};

@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useKeyboard } from '@opentui/react';
 import {
-	ConfirmModal,
-	CONFIRM_MODAL_ROWS,
+	Modal,
 	ErrorPanel,
 	ScrollList,
 	StatusDot,
@@ -50,6 +49,7 @@ export type ProviderViewProps = {
 	readonly active: boolean;
 	// content 区可视行数（焦点驱动滚动）。
 	readonly viewportHeight?: number;
+	readonly viewportWidth?: number;
 	// 上报当前子模式给 App footer。
 	readonly onSubModeChange?: (subMode: string) => void;
 	// 在列表屏按 Esc/← 时请求退回左侧导航。
@@ -59,6 +59,7 @@ export type ProviderViewProps = {
 export function ProviderView({
 	active,
 	viewportHeight = 16,
+	viewportWidth = 52,
 	onSubModeChange,
 	onExitToNav
 }: ProviderViewProps) {
@@ -139,7 +140,7 @@ export function ProviderView({
 	// 列表屏（Phase 4 实现）
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title="供应商管理" subtitle={`共 ${profiles.length} 个`} />
+			<ViewHeader title="供应商管理" subtitle="管理 API 供应商、密钥与模型环境变量" />
 
 			{migrationFailed.length > 0 ? (
 				<box marginBottom={1}>
@@ -165,21 +166,25 @@ export function ProviderView({
 					profiles={profiles}
 					selectedIndex={safeSelected}
 					viewportHeight={viewportHeight}
-					reservedRows={(migrationFailed.length > 0 ? 6 : 3) + (screen.kind === 'confirm-delete' ? CONFIRM_MODAL_ROWS : 0)}
+					reservedRows={migrationFailed.length > 0 ? 6 : 3}
 				/>
 			)}
 
-			{screen.kind === 'confirm-delete' && current ? <box flexGrow={1} /> : null}
 			{screen.kind === 'confirm-delete' && current ? (
-				<ConfirmModal
+				<Modal
+					active
 					title={current.isActive ? '禁止删除活跃供应商' : '确认删除供应商'}
-					message={
-						current.isActive
-							? `${current.key} 是当前活跃供应商，删除前请先切换到其他供应商。`
-							: `即将删除供应商 ${current.key}，此操作不可撤销。`
-					}
+					hint="Enter 确认  Esc 取消"
 					tone="danger"
-				/>
+					viewportWidth={viewportWidth}
+					viewportHeight={viewportHeight}
+				>
+					<text>
+						{current.isActive
+							? `${current.key} 是当前活跃供应商，删除前请先切换到其他供应商。`
+							: `即将删除供应商 ${current.key}，此操作不可撤销。`}
+					</text>
+				</Modal>
 			) : null}
 
 			<ListInput
@@ -271,7 +276,7 @@ function ProviderTable({
 		)
 	}));
 
-	return <ScrollList items={items} cursor={selectedIndex} viewportHeight={viewportHeight} reservedRows={reservedRows} />;
+	return <ScrollList items={items} cursor={selectedIndex} viewportHeight={viewportHeight} reservedRows={reservedRows} stretch />;
 }
 
 // 左栏状态圆点：active 用更新页同款绿点（latest 表示当前生效），非活跃用弱化灰点；

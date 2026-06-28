@@ -2,7 +2,7 @@ import React, {useEffect, useReducer} from 'react';
 import {TextAttributes} from '@opentui/core';
 import {useKeyboard} from '@opentui/react';
 import type {KeyEvent} from '@opentui/core';
-import {ActionHint, Checkbox, ConfirmModal, CONFIRM_MODAL_ROWS, ErrorPanel, ProgressLog, ScrollList, Spinner, ViewHeader, toast} from '../components/index.js';
+import {ActionHint, Checkbox, ErrorPanel, Modal, ProgressLog, ScrollList, Spinner, ViewHeader, toast} from '../components/index.js';
 import {borderColors, colors} from '../theme/index.js';
 import type {DetectionState} from '../services/async-detection.js';
 import type {DetectionCache} from '../hooks/use-detection-cache.js';
@@ -28,7 +28,7 @@ type Dispatch = React.Dispatch<SkillsViewAction>;
 // 安装页·父级：远程搜索框 + repo 列表（find 按 owner/repo 去重）；Enter 展开子 skill。
 // 安装页·子级：某 repo 下 skill 多选（Space 切换 / Enter 确认安装）；Esc 回父级。
 // 列表页 `a` → 安装页；Esc 逐级回退（子级→父级→列表页→导航）。
-// 确认框固定 footer 上方（需求①）：列表/安装页保持显示，ConfirmModal 经 flexGrow 推到底部。
+// 确认弹窗统一使用绝对定位 Modal 居中覆盖，不挤占列表布局。
 // 检测缓存提升到 App 层：已安装检测由 cache 注入，切走再切回不重跑；r 键刷新。
 
 export type SkillsViewServices = {
@@ -56,6 +56,7 @@ export type SkillsViewProps = {
 	readonly cache: DetectionCache<InstalledSkill[]>;
 	readonly active?: boolean;
 	readonly viewportHeight?: number;
+	readonly viewportWidth?: number;
 	readonly onSubModeChange?: (subMode: string) => void;
 	readonly onExitToNav?: () => void;
 };
@@ -65,6 +66,7 @@ export function SkillsView({
 	cache,
 	active = true,
 	viewportHeight = 16,
+	viewportWidth = 52,
 	onSubModeChange,
 	onExitToNav
 }: SkillsViewProps) {
@@ -94,24 +96,23 @@ export function SkillsView({
 		handleKey(keyEvent, view, dispatch, services, cache, onExitToNav);
 	});
 
-	const confirmRows = isConfirmMode(view.mode) ? CONFIRM_MODAL_ROWS : 0;
+	// 确认态使用绝对定位 Modal，不再为确认框预留列表行数。
+	const confirmActive = isConfirmMode(view.mode);
+	const confirmRows = 0;
+	const stretchLists = true;
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title="Skills 技能管理" subtitle="列表页：过滤 · 更新 · 卸载     a 进入安装页：搜 repo → 选 skill" />
+			<ViewHeader title="Skills 技能管理" subtitle="搜索、安装、更新和卸载 Claude Code Skills" />
 			{renderDetectionNotice(detection.status)}
-			{renderPage(view, detection, viewportHeight, confirmRows)}
+			{renderPage(view, detection, viewportHeight, confirmRows, stretchLists)}
 			{view.busyAction ? <ProgressLog title="执行进度" messages={view.progress} /> : null}
 			{view.errorText ? (
 				<box marginTop={1}>
 					<ErrorPanel message={view.errorText} />
 				</box>
 			) : null}
-			{/* 确认框固定 footer 上方（需求①）：弹性空白把 ConfirmModal 推到底部，列表/安装页保持显示 */}
-			{isConfirmMode(view.mode) ? <box flexGrow={1} /> : null}
-			{isConfirmMode(view.mode) ? (
-				<box marginTop={1}>{renderConfirm(view)}</box>
-			) : null}
+			{confirmActive ? renderConfirm(view, viewportWidth, viewportHeight) : null}
 		</box>
 	);
 }
@@ -549,26 +550,23 @@ function renderDetectionNotice(status: DetectionState<InstalledSkill[]>['status'
 }
 
 /** 底部确认框（confirm-install 列多选汇总 / confirm-uninstall 单条）。 */
-function renderConfirm(view: SkillsViewState): React.ReactNode {
+function renderConfirm(view: SkillsViewState, viewportWidth: number, viewportHeight: number): React.ReactNode {
 	if (view.mode === 'confirm-install') {
 		const targets = installTargets(view);
 		const names = targets.map(target => target.skillName);
 		const repo = targets[0]?.source ?? '';
 		return (
-			<ConfirmModal
-				title="确认安装 Skill"
-				message={names.length > 0 ? `即将安装 ${repo} 下：${names.join(', ')}` : '无可用结果'}
-			/>
+			<Modal active title="确认安装 Skill" hint="Enter 确认  Esc 取消" viewportWidth={viewportWidth} viewportHeight={viewportHeight}>
+				<text>{names.length > 0 ? `即将安装 ${repo} 下：${names.join(', ')}` : '无可用结果'}</text>
+			</Modal>
 		);
 	}
 
 	const names = uninstallTargets(view);
 	return (
-		<ConfirmModal
-			title="确认卸载 Skill"
-			message={names.length > 0 ? `即将卸载：${names.join(', ')}` : '无卸载目标'}
-			tone="danger"
-		/>
+		<Modal active title="确认卸载 Skill" hint="Enter 确认  Esc 取消" tone="danger" viewportWidth={viewportWidth} viewportHeight={viewportHeight}>
+			<text>{names.length > 0 ? `即将卸载：${names.join(', ')}` : '无卸载目标'}</text>
+		</Modal>
 	);
 }
 
@@ -576,27 +574,28 @@ function renderPage(
 	view: SkillsViewState,
 	detection: DetectionState<InstalledSkill[]>,
 	viewportHeight: number,
-	confirmRows: number
+	confirmRows: number,
+	stretchLists: boolean
 ): React.ReactNode {
 	const page = pageOf(view.mode, view.busyAction);
 	if (page === 'install') {
-		return renderInstallRepoPage(view, viewportHeight, confirmRows);
+		return renderInstallRepoPage(view, viewportHeight, confirmRows, stretchLists);
 	}
 
 	if (page === 'install-pick') {
-		return renderInstallPickPage(view, viewportHeight, confirmRows);
+		return renderInstallPickPage(view, viewportHeight, confirmRows, stretchLists);
 	}
 
 	// 列表页（默认）。detection 未就绪时由 detectionNotice 占位，body 留空。
 	if (detection.status === 'success') {
-		return renderListPage(view, viewportHeight, confirmRows);
+		return renderListPage(view, viewportHeight, confirmRows, stretchLists);
 	}
 
 	return null;
 }
 
 /** 列表页：顶部本地过滤框 + 已装列表（过滤后）。 */
-function renderListPage(view: SkillsViewState, viewportHeight: number, confirmRows: number): React.ReactNode {
+function renderListPage(view: SkillsViewState, viewportHeight: number, confirmRows: number, stretchLists: boolean): React.ReactNode {
 	const filtered = filteredInstalled(view);
 	const items = filtered.map((skill) => ({
 		key: skill.name,
@@ -604,7 +603,7 @@ function renderListPage(view: SkillsViewState, viewportHeight: number, confirmRo
 	}));
 
 	return (
-		<box flexDirection="column">
+		<box flexDirection="column" flexGrow={stretchLists ? 1 : 0}>
 			<InputBox label="过滤" value={view.filterText} focused={view.filterFocused} placeholder="输入关键词模糊筛选已装 skill" />
 			{filtered.length === 0 ? (
 				<box flexDirection="column" flexGrow={1} justifyContent="center">
@@ -614,6 +613,10 @@ function renderListPage(view: SkillsViewState, viewportHeight: number, confirmRo
 							<ActionHint label="按 a 进入安装页搜索安装" enabled />
 						</box>
 					) : null}
+				</box>
+			) : stretchLists ? (
+				<box marginTop={1} flexGrow={1}>
+					<ScrollList items={items} cursor={view.installedIndex} viewportHeight={viewportHeight} reservedRows={6 + confirmRows} stretch />
 				</box>
 			) : (
 				<box marginTop={1}>
@@ -625,7 +628,7 @@ function renderListPage(view: SkillsViewState, viewportHeight: number, confirmRo
 }
 
 /** 安装页·父级：远程搜索框 + repo 列表（find 结果按 owner/repo 去重）。 */
-function renderInstallRepoPage(view: SkillsViewState, viewportHeight: number, confirmRows: number): React.ReactNode {
+function renderInstallRepoPage(view: SkillsViewState, viewportHeight: number, confirmRows: number, stretchLists: boolean): React.ReactNode {
 	const items = view.repos.map((group) => ({
 		key: group.repo,
 		title: group.repo,
@@ -633,7 +636,7 @@ function renderInstallRepoPage(view: SkillsViewState, viewportHeight: number, co
 	}));
 
 	return (
-		<box flexDirection="column">
+		<box flexDirection="column" flexGrow={stretchLists ? 1 : 0}>
 			<InputBox label="搜索" value={view.query} focused={view.queryFocused} placeholder="输入关键词，Enter 远程搜索 skills.sh" />
 			{view.searching ? (
 				<box marginTop={1}>
@@ -641,8 +644,8 @@ function renderInstallRepoPage(view: SkillsViewState, viewportHeight: number, co
 				</box>
 			) : null}
 			{items.length > 0 ? (
-				<box marginTop={1}>
-					<ScrollList items={items} cursor={view.repoIndex} viewportHeight={viewportHeight} reservedRows={6 + confirmRows} />
+				<box marginTop={1} flexGrow={stretchLists ? 1 : 0}>
+					<ScrollList items={items} cursor={view.repoIndex} viewportHeight={viewportHeight} reservedRows={6 + confirmRows} stretch={stretchLists} />
 				</box>
 			) : null}
 		</box>
@@ -650,7 +653,7 @@ function renderInstallRepoPage(view: SkillsViewState, viewportHeight: number, co
 }
 
 /** 安装页·子级：某 repo 下 skill 多选（Space 切换 / Enter 安装选中）。 */
-function renderInstallPickPage(view: SkillsViewState, viewportHeight: number, confirmRows: number): React.ReactNode {
+function renderInstallPickPage(view: SkillsViewState, viewportHeight: number, confirmRows: number, stretchLists: boolean): React.ReactNode {
 	const repo = view.currentRepo ?? '';
 	const items: Array<{
 		readonly key: string;
@@ -670,7 +673,7 @@ function renderInstallPickPage(view: SkillsViewState, viewportHeight: number, co
 	});
 
 	return (
-		<box flexDirection="column">
+		<box flexDirection="column" flexGrow={stretchLists ? 1 : 0}>
 			<box flexDirection="row" marginBottom={1}>
 				<text fg={colors.primary} attributes={TextAttributes.BOLD}>{repo}</text>
 				<text> 下 </text>
@@ -679,7 +682,7 @@ function renderInstallPickPage(view: SkillsViewState, viewportHeight: number, co
 			</box>
 			{view.loadingRepo ? <Spinner label="正在拉取 repo skill 列表..." /> : null}
 			{!view.loadingRepo && items.length > 0 ? (
-				<ScrollList items={items} cursor={view.pickIndex} viewportHeight={viewportHeight} reservedRows={6 + confirmRows} emptyText="该 repo 暂无 skill" />
+				<ScrollList items={items} cursor={view.pickIndex} viewportHeight={viewportHeight} reservedRows={6 + confirmRows} emptyText="该 repo 暂无 skill" stretch={stretchLists} />
 			) : null}
 		</box>
 	);

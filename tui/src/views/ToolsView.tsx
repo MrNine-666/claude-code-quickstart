@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useReducer } from 'react';
 import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
-import { Card, ConfirmModal, ErrorPanel, Spinner, StatusDot, ViewHeader, toast, type StatusDotKind } from '../components/index.js';
+import { Card, ErrorPanel, Modal, Spinner, StatusDot, ViewHeader, toast, type StatusDotKind } from '../components/index.js';
 import { colors } from '../theme/index.js';
 import type { ProgressCallback } from '../core/exec.js';
 import type { DetectionState } from '../services/async-detection.js';
@@ -47,12 +47,13 @@ export type ToolsViewProps = {
 	readonly cache: DetectionCache<ManagedComponent[]>;
 	readonly active?: boolean;
 	readonly viewportHeight?: number;
+	readonly viewportWidth?: number;
 	readonly contentWidth?: number;
 	readonly onSubModeChange?: (subMode: string) => void;
 	readonly onExitToNav?: () => void;
 };
 
-export function ToolsView({ services, cache, active = true, viewportHeight = 16, contentWidth, onSubModeChange, onExitToNav }: ToolsViewProps) {
+export function ToolsView({ services, cache, active = true, viewportHeight = 16, viewportWidth = 52, contentWidth, onSubModeChange, onExitToNav }: ToolsViewProps) {
 	const [view, dispatch] = useReducer(reduceToolsViewState, undefined, createInitialToolsViewState);
 	const detection = cache.state;
 
@@ -116,17 +117,12 @@ export function ToolsView({ services, cache, active = true, viewportHeight = 16,
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title="工具管理" subtitle="安装 · 更新 · 卸载（全生命周期）" />
+			<ViewHeader title="工具管理" subtitle="管理常用 CLI 工具的安装、更新与卸载" />
 			{renderDetectionNotice(detection.status)}
 			{renderGrid(view)}
 			{activeProgressTasks(view).length > 0 ? <ActiveProgressTasks tasks={activeProgressTasks(view)} /> : null}
 			{view.errorText ? <ErrorPanel message={view.errorText} /> : null}
-			{view.mode === 'confirm-uninstall' ? <box flexGrow={1} /> : null}
-			{view.mode === 'confirm-uninstall' ? (
-				<box marginTop={1}>
-					<UninstallConfirm view={view} dispatch={dispatch} services={services} cache={cache} active={active} />
-				</box>
-			) : null}
+			{view.mode === 'confirm-uninstall' ? <UninstallConfirm view={view} dispatch={dispatch} services={services} cache={cache} active={active} viewportWidth={viewportWidth} viewportHeight={viewportHeight} /> : null}
 		</box>
 	);
 }
@@ -294,13 +290,17 @@ function UninstallConfirm({
 	dispatch,
 	services,
 	cache,
-	active
+	active,
+	viewportWidth,
+	viewportHeight
 }: {
 	readonly view: ToolsViewState;
 	readonly dispatch: Dispatch;
 	readonly services: ToolsViewServices;
 	readonly cache: DetectionCache<ManagedComponent[]>;
 	readonly active: boolean;
+	readonly viewportWidth: number;
+	readonly viewportHeight: number;
 }) {
 	const target = view.components.find((item) => item.id === view.uninstallTarget);
 	if (!target) {
@@ -323,20 +323,24 @@ function UninstallConfirm({
 	});
 
 	return (
-		<box flexDirection="column">
-			{target.isBase ? (
-				<box marginBottom={1}>
+		<Modal
+			active
+			title={`卸载确认：${target.name}`}
+			hint="Enter 确认  Esc 取消"
+			tone="danger"
+			viewportWidth={viewportWidth}
+			viewportHeight={viewportHeight}
+			height={target.isBase ? 9 : 7}
+		>
+			<box flexDirection="column">
+				{target.isBase ? (
 					<text fg={colors.danger} attributes={TextAttributes.BOLD}>
 						危险：这是基础组件，卸载将破坏整个 Claude Code 环境！
 					</text>
-				</box>
-			) : null}
-			<ConfirmModal
-				title={`卸载确认：${target.name}`}
-				message={target.isBase ? '基础组件卸载风险极高，确认继续？' : '确认卸载此组件？此操作不可撤销。'}
-				tone="danger"
-			/>
-		</box>
+				) : null}
+				<text>{target.isBase ? '基础组件卸载风险极高，确认继续？' : '确认卸载此组件？此操作不可撤销。'}</text>
+			</box>
+		</Modal>
 	);
 }
 

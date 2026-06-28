@@ -153,32 +153,32 @@ export const promptsBindings: Binding[] = commandBindings({
 });
 
 // ------------------------------------------------------------
-// 配置文件视图 commands
+// 配置文件视图 commands（view-first：只读展示 ↔ a/e 编辑 ↔ 推荐边栏，对齐 PROMPTS_COMMANDS）
 // ------------------------------------------------------------
 export const CONFIG_COMMANDS = {
-	IMPORT: 'config:import',
-	COPY: 'config:copy',
-	EDIT: 'config:edit',
-	// editor 子模式
-	EDITOR_SAVE: 'config:editor-save',
-	EDITOR_PREVIEW: 'config:editor-preview',
-	EDITOR_PREVIEW_TAB: 'config:editor-preview-tab',
-	EDITOR_CANCEL: 'config:editor-cancel',
-	// preview 子模式
-	PREVIEW_BACK: 'config:preview-back',
-	PREVIEW_UP: 'config:preview-up',
-	PREVIEW_DOWN: 'config:preview-down'
+	// view 态入口（只读展示 / 空状态）
+	ADD: 'config:add',                          // a 新建（空白 {} 编辑器）
+	EDIT_ENTRY: 'config:edit-entry',            // e 编辑现有（载入磁盘内容）
+	// edit 态主操作
+	TOGGLE_PANEL: 'config:toggle-panel',        // ctrl+t 开/关推荐边栏
+	IMPORT: 'config:import',                    // ctrl+o fill-missing 灌入缓冲（仅补缺失，不覆盖已有）
+	EDITOR_SAVE: 'config:editor-save',          // ctrl+s 保存
+	EDITOR_CANCEL: 'config:editor-cancel',      // escape 取消编辑回 view
+	// 双栏焦点切换
+	FOCUS_CYCLE: 'config:focus-cycle',          // tab 编辑器↔推荐边栏
+	// 滚动（view 展示 / 边栏）
+	PREVIEW_UP: 'config:preview-up',            // up 滚动
+	PREVIEW_DOWN: 'config:preview-down'         // down 滚动
 } as const;
 
 export const configBindings: Binding[] = commandBindings({
-	[CONFIG_COMMANDS.IMPORT]: 'i',
-	[CONFIG_COMMANDS.COPY]: 'c',
-	[CONFIG_COMMANDS.EDIT]: 'e',
+	[CONFIG_COMMANDS.ADD]: 'a',
+	[CONFIG_COMMANDS.EDIT_ENTRY]: 'e',
+	[CONFIG_COMMANDS.TOGGLE_PANEL]: 'ctrl+t',
+	[CONFIG_COMMANDS.IMPORT]: 'ctrl+o',
 	[CONFIG_COMMANDS.EDITOR_SAVE]: 'ctrl+s',
-	[CONFIG_COMMANDS.EDITOR_PREVIEW]: 'ctrl+p',
-	[CONFIG_COMMANDS.EDITOR_PREVIEW_TAB]: 'tab',
 	[CONFIG_COMMANDS.EDITOR_CANCEL]: 'escape',
-	[CONFIG_COMMANDS.PREVIEW_BACK]: 'escape',
+	[CONFIG_COMMANDS.FOCUS_CYCLE]: 'tab',
 	[CONFIG_COMMANDS.PREVIEW_UP]: 'up',
 	[CONFIG_COMMANDS.PREVIEW_DOWN]: 'down'
 });

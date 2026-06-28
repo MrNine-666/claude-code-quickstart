@@ -75,9 +75,9 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 	const editorActive = mode === 'edit' && active && confirm === 'none' && (panel === 'editor' || focus === 'editor');
 	const textareaFocused = mode === 'edit' && confirm === 'none' && focus === 'editor';
 	const tabMode = panel === 'split' ? 'cycle-focus' : 'indent';
-	// 编辑器总高度 = 当前内容视口；编辑态不再额外渲染全局 ViewHeader，
-	// 只保留 pane 内「推荐规则 / 当前规则」简单标题。
-	const editorViewportHeight = Math.max(8, viewportHeight);
+	// 编辑态保留全局 ViewHeader：右侧内容区固定高，先扣除标题行，避免编辑器 flex 抢占导致标题被裁剪。
+	const bodyViewportHeight = Math.max(1, viewportHeight - 2);
+	const editorViewportHeight = bodyViewportHeight;
 
 	// ── 操作 ──
 	const refreshView = (): void => {
@@ -206,12 +206,12 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 	if (mode === 'view') {
 		return (
 			<box flexDirection="column" flexGrow={1}>
-				<ViewHeader title="全局规则管理" subtitle={claudeMdPath} />
+				<ViewHeader title="全局规则管理" subtitle="查看、导入、复制与编辑全局 CLAUDE.md" />
 				{hasContent ? (
 					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
 						<scrollbox ref={viewScrollRef} style={{flexGrow: 1}} scrollY>
 							{syntaxStyle
-								? <markdown content={viewContent} syntaxStyle={syntaxStyle} />
+								? <code content={viewContent} filetype="markdown" syntaxStyle={syntaxStyle} conceal={false} style={{flexGrow: 1}} />
 								: <text fg={colors.info}>{viewContent}</text>}
 						</scrollbox>
 					</box>
@@ -262,8 +262,9 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
+			<ViewHeader title="全局规则管理" subtitle="查看、导入、复制与编辑全局 CLAUDE.md" />
 			{panel === 'split' && recommendationAvailable ? (
-				<box flexDirection="row" flexGrow={1}>
+				<box flexDirection="row" flexGrow={1} height={bodyViewportHeight}>
 					<box flexDirection="column" width="50%" height={editorViewportHeight}>
 						<box marginBottom={1}>
 							<text fg={colors.primary} attributes={TextAttributes.BOLD}>推荐规则</text>
@@ -275,7 +276,7 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 							paddingX={1}
 						>
 							<scrollbox ref={recommendScrollRef} style={{flexGrow: 1}} scrollY>
-								<text fg={colors.info}>{recommendationContent}</text>
+								{syntaxStyle ? <code content={recommendationContent} filetype="markdown" syntaxStyle={syntaxStyle} conceal={false} style={{flexGrow: 1}} /> : <text fg={colors.info}>{recommendationContent}</text>}
 							</scrollbox>
 						</box>
 					</box>

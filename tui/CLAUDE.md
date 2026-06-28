@@ -191,7 +191,7 @@ echo | ./dist/ccq-darwin-arm64
 |------|------|------|
 | 工具管理 | `views/tools-view.tsx` | ClaudeCode + 5 工具全生命周期（安装/更新/卸载 + 卡片范式 + 2D 导航） |
 | 供应商 | `views/provider-view.tsx` + `provider-form.tsx` | 供应商 Profile CRUD + 设置默认 + extraEnv JSON 编辑 |
-| 配置文件 | `views/config-view.tsx` | Claude 配置项开关（fill-missing / remove-managed） |
+| 配置文件 | `views/config-view.tsx` | 配置文件页（view-first，对齐 PromptsView）+ 字段级（settings.json 多页共享）：进入先渲染只读当前 settings.json（**手动 JSON 着色**：key/string/数字/布尔/标点分色，opentui 无 json grammar 的回退），标题标注「已排除供应商配置」（供应商 env 剥离展示，归供应商页管，HC-12；保存时自动合并保留）；无内容则空状态提示按 `a` 新建；`a`（空白新建 `{}`）/ `e`（编辑现有）进编辑器，`Ctrl+T` 开推荐边栏（带注释 JSONC 对照·注释行分色），`Ctrl+O` fill-missing 灌缓冲（仅补缺失）/ `Ctrl+S` 保存（合并保留供应商 env）/ `Esc` 取消回只读态 |
 | 全局规则 | `views/prompts-view.tsx` | 全局规则页（view-first）：进入先渲染只读本地 CLAUDE.md（`<markdown>`），无内容则空状态提示按 `a` 新建；`a`（空白新建）/ `e`（编辑现有）进编辑器，`Ctrl+T` 开源码推荐边栏（未渲染·语法高亮对照），`Ctrl+I` 推荐灌缓冲 / `Ctrl+S` 保存 / `Ctrl+P` 预览 / `Esc` 取消回只读态（有脏先确认） |
 | MCP | `views/mcp/McpView.tsx` + `mcp-view-model.ts` | MCP Server 启用/禁用 + 凭据管理 + 字段↔JSON 双向联动 |
 | Skills | `views/skills-view.tsx` | Skills 安装 / 更新 / 卸载 |
