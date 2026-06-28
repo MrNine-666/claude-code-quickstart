@@ -35,7 +35,6 @@ export CCQ_MACOS_ROOT CCQ_INSTALLER_ROOT
 
 CCQ_PARAM_LIST_STEPS=0
 CCQ_PARAM_OUTPUT_MODE="normal"
-CCQ_SHORTCUT_REGISTERED=0
 
 ccq_usage() {
   cat <<'EOF'
@@ -307,23 +306,6 @@ ccq_confirm_execution_plan() {
 
   choice="$(ccq_prompt_single "确认执行以上计划？" 0 "是，开始执行" "否，取消")" || return 1
   [ "${choice}" = "0" ]
-}
-
-CCQ_SHORTCUT
-)"
-  shortcut_content="${shortcut_content//__INSTALL_SCRIPT_URL__/${install_url}}"
-  shortcut_content="${shortcut_content//__MANAGE_SCRIPT_URL__/${manage_url}}"
-
-  if ccq_set_shortcut_subsection "${zshrc_path}" "${shortcut_content}" || \
-     ccq_write_profile_subsection "${zshrc_path}" "SHORTCUTS" "${shortcut_content}"; then
-    CCQ_SHORTCUT_REGISTERED=1
-    eval "${shortcut_content}" 2>/dev/null || true
-    ccq_ui_success "ccq 快捷函数已写入 ${zshrc_path}" "developer"
-    return 0
-  fi
-
-  ccq_ui_warning "ccq 快捷函数持久化失败（不影响本次安装流程）" "developer"
-  return 1
 }
 
 ccq_show_final_summary() {
