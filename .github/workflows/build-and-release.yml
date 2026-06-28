@@ -112,12 +112,14 @@ jobs:
       - name: 安装 Bun（TUI 构建运行时）
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.2.0'
+          bun-version: '1.3.14'
 
       - name: 构建 TUI 可执行文件（4 平台交叉编译）
         run: |
           cd tui
-          bun install --frozen-lockfile
+          # --os=* --cpu=* 装齐所有平台的原生 optionalDependencies
+          # （@opentui/core 经平台子包分发 Zig 原生内核，交叉编译时必须全部存在）
+          bun install --frozen-lockfile --os=* --cpu=*
           bun run build
 
       - name: 验证 TUI 可执行文件
