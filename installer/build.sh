@@ -248,7 +248,6 @@ function filterZshSource(relativePath) {
     const trimmed = line.trim();
     if (trimmed === 'source "${file_path}"' || trimmed === 'source "${full_path}"') continue;
     if (/^\s*ccq_main "\$@"\s*$/.test(line)) continue;
-    if (/^\s*ccq_manage_main "\$@"\s*$/.test(line)) continue;
     lines.push(line);
   }
 
@@ -295,11 +294,9 @@ function buildManageTuiPackage() {
     return false;
   }
 
-  // 验证产物并复制到 outputDir
+  // macOS 构建入口只输出 macOS ccq 产物。
   const tuiDistDir = path.join(tuiDir, 'dist');
   const expectedFiles = [
-    'ccq-windows-x64.exe',
-    'ccq-windows-arm64.exe',
     'ccq-darwin-x64',
     'ccq-darwin-arm64'
   ];
@@ -350,7 +347,6 @@ function buildMacOSArtifact(manifest, stepsContract, role) {
   const entryFile = order[order.length - 1] || '';
   lines.push('');
   if (/macos\/Install\.zsh$/.test(entryFile)) lines.push('ccq_main "$@"');
-  else if (/macos\/Manage\.zsh$/.test(entryFile)) lines.push('ccq_manage_main "$@"');
   else fail(`无法识别 macOS artifact 入口文件: ${entryFile}`);
 
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -384,7 +380,7 @@ function validateMacOSArtifact(outputPath) {
 
 function clearKnownBuildArtifacts() {
   // macOS 构建入口只清理 macOS 产物（.sh），保留 Windows 产物（.ps1）
-  for (const fileName of ['install.sh', 'manage.sh']) {
+  for (const fileName of ['install.sh']) {
     const fullPath = path.join(outputDir, fileName);
     if (fs.existsSync(fullPath)) fs.rmSync(fullPath, { force: true });
   }
@@ -419,7 +415,6 @@ buildManageTuiPackage();
 console.log('');
 
 buildMacOSArtifact(manifest, stepsContract, 'Install');
-buildMacOSArtifact(manifest, stepsContract, 'Manage');
 
 ensureExpectedOutputs(manifest);
 console.log('');

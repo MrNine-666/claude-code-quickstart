@@ -98,21 +98,6 @@ function Get-InstallBuildOrder {
     return $order
 }
 
-function Get-ManageBuildOrder {
-    <#
-    .SYNOPSIS
-    返回管理入口脚本构建时需要按顺序拼接的文件路径数组。
-    #>
-    $artifact = Get-BuildArtifactConfig -Platform Windows -Role Manage
-    $coreFiles = Get-BuildArtifactPathList -Artifact $artifact -FieldName 'CoreFiles'
-
-    . "$PSScriptRoot\windows\core\Registry.ps1"
-    $stepFiles = @(Get-StepFiles | ForEach-Object { ConvertTo-WindowsBuildPath -Path $_ })
-
-    $order = @($coreFiles + $stepFiles + @([string]$artifact['EntryFile']))
-    return $order
-}
-
 function Get-ScriptParamBlockInfo {
     <#
     .SYNOPSIS
@@ -219,13 +204,11 @@ function Invoke-ManageTuiPackage {
         Pop-Location
     }
 
-    # 验证产物并复制到 OutputDir
+    # 验证产物并复制到 OutputDir；Windows 构建入口只输出 Windows ccq 产物。
     $tuiDistDir = Join-Path $tuiDir 'dist'
     $expectedFiles = @(
         'ccq-windows-x64.exe',
-        'ccq-windows-arm64.exe',
-        'ccq-darwin-x64',
-        'ccq-darwin-arm64'
+        'ccq-windows-arm64.exe'
     )
 
     $allSuccess = $true

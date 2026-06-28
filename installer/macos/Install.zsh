@@ -371,8 +371,7 @@ ccq_show_final_summary() {
     ccq_ui_info "  claude --help   - 查看帮助信息" "developer"
     printf '\n'
     ccq_ui_primary "管理面板（可选）：" "developer"
-    ccq_ui_info "  方式 1: curl -fsSL https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/manage.sh | bash" "developer"
-    ccq_ui_info "  方式 2: npm install -g ccq && ccq" "developer"
+    ccq_ui_info "  ccq            - 启动 Claude Code Quickstart 管理控制台" "developer"
   else
     printf '\n'
     ccq_ui_warning "安装完成，但有 ${failed} 个步骤失败"

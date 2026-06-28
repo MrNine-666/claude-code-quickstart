@@ -18,3 +18,4 @@
 | 2026-06-28 | 6f310777 | (pending) | test(tui): 聚合 verify 门禁并清理过时脚本 | 3 | 0 | low |
 | 2026-06-28 | e8ce31b3 | (pending) | refactor(tui): 同步视图细节与供应商契约 | 4 | 0 | low |
 | 2026-06-28 | 36a1c3bd | (pending) | feat(tui): 重构配置页并统一浮窗交互 | 5 | 0 | medium |
+| 2026-06-28 | 19fcce8e | (pending) | fix(ci): 移除旧 Manage 入口引用并复用 TUI 产物 | 4 | 1 | medium |

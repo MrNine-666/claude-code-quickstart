@@ -31,8 +31,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $files = @(
-            '.\installer\windows\Install.ps1',
-            '.\installer\windows\Manage.ps1'
+            '.\installer\windows\Install.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
@@ -82,7 +81,6 @@ jobs:
         run: |
           set -eu
           zsh -n installer/macos/Install.zsh
-          zsh -n installer/macos/Manage.zsh
           sh installer/build.sh --check
 
       - name: 验证 contracts JS 语法
@@ -149,10 +147,22 @@ jobs:
     timeout-minutes: 20
     needs:
       - test-windows
+      - build-tui
 
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+
+      - name: 下载 TUI 可执行文件
+        uses: actions/download-artifact@v4
+        with:
+          name: built-tui-${{ github.sha }}
+          path: dist
+
+      - name: 清理非 Windows TUI 产物
+        shell: pwsh
+        run: |
+          Remove-Item -Path ".\dist\ccq-darwin-x64", ".\dist\ccq-darwin-arm64" -Force -ErrorAction SilentlyContinue
 
       - name: 构建 Windows 单文件脚本
         shell: pwsh
@@ -238,10 +248,21 @@ jobs:
     timeout-minutes: 15
     needs:
       - test-macos
+      - build-tui
 
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+
+      - name: 下载 TUI 可执行文件
+        uses: actions/download-artifact@v4
+        with:
+          name: built-tui-${{ github.sha }}
+          path: dist
+
+      - name: 清理非 macOS TUI 产物
+        run: |
+          rm -f dist/ccq-windows-x64.exe dist/ccq-windows-arm64.exe
 
       - name: 构建 macOS 单文件脚本
         run: |
