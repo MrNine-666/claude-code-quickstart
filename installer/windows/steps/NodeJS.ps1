@@ -1,6 +1,6 @@
 ﻿# NodeJS.ps1 - Node.js 安装和配置（主入口）
 # 作者: 哈雷酱 (本小姐的 Node.js 管理杰作！)
-# 功能: 支持 fnm / nvm-windows / Node.js 直装，统一 Node.js 安装与迁移
+# 功能: 支持 nvm-windows / Node.js 直装，统一 Node.js 安装与迁移（nvm↔direct 双向）
 
 #Requires -Version 5.1
 Set-StrictMode -Version Latest
@@ -19,7 +19,6 @@ $script:RequiredNodeVersion = "20"  # Node.js LTS 最低版本要求
 $stepRoot = $PSScriptRoot
 . "$stepRoot\NodeJS-Detect.ps1"   # 检测层
 . "$stepRoot\NodeJS-Common.ps1"   # 通用层
-. "$stepRoot\NodeJS-Fnm.ps1"      # fnm 专属层
 . "$stepRoot\NodeJS-Nvm.ps1"      # nvm 专属层
 . "$stepRoot\NodeJS-Direct.ps1"   # Node.js专属层
 
@@ -106,8 +105,8 @@ function Install-NodeJS {
             $shouldRestoreGlobalPackages = ($globalPkgChoice -eq 0)
             $result.Data["MigrationMode"] = if ($shouldRestoreGlobalPackages) { "MigrateWithRestore" } else { "FreshInstall" }
 
-            $currentProviderLabel = switch ($providerType) { "fnm" { "fnm" } "nvm" { "nvm-windows" } "direct" { "Node.js" } "portable" { "绿色版 Node.js" } default { $providerType } }
-            $targetProviderLabel = switch ($providerTarget) { "fnm" { "fnm" } "nvm" { "nvm-windows" } "direct" { "Node.js" } default { $providerTarget } }
+            $currentProviderLabel = switch ($providerType) { "nvm" { "nvm-windows" } "direct" { "Node.js" } "portable" { "绿色版 Node.js" } default { $providerType } }
+            $targetProviderLabel = switch ($providerTarget) { "nvm" { "nvm-windows" } "direct" { "Node.js" } default { $providerTarget } }
             if ($providerType -eq "portable") {
                 $confirmTitle = "⚠ 将清理当前绿色版 Node.js 的 PATH 并安装 [$targetProviderLabel]。"
             } else {
@@ -161,18 +160,8 @@ function Install-NodeJS {
                 }
             }
 
-            $hasFnmSignal = [bool]$snapshot.Data["FnmAvailable"]
             $hasPortableSignal = [bool]$snapshot.Data["PortableNodeDetected"]
             $hasOtherProviderSignal = [bool]$snapshot.Data["NvmDetected"] -or [bool]$snapshot.Data["DirectNodeDetected"]
-
-            if ($hasFnmSignal -and $providerTarget -ne "fnm") {
-                $fnmUninstallResult = Uninstall-Fnm -EnvSnapshot $snapshot.Data
-                if (-not $fnmUninstallResult.Success) {
-                    throw "卸载 fnm 失败: $($fnmUninstallResult.ErrorMessage)"
-                }
-                $result.Data["FnmUninstallCompleted"] = $true
-                $result.Data["FnmUninstallCleanedPaths"] = @($fnmUninstallResult.CleanedPaths)
-            }
 
             if ($hasOtherProviderSignal) {
                 $skipDirectFlag = ($providerTarget -eq "direct")
@@ -203,9 +192,6 @@ function Install-NodeJS {
 
         $providerResult = $null
         switch ($providerTarget) {
-            "fnm" {
-                $providerResult = Install-NodeViaFnm -ShouldRestoreGlobalPackages:$shouldRestoreGlobalPackages -GlobalPackagesBackup $globalPackagesBackup
-            }
             "nvm" {
                 $nvmAlreadyPresent = [bool]$snapshot.Data["NvmDetected"] -and ($providerType -eq "mixed")
                 if ($nvmAlreadyPresent) {

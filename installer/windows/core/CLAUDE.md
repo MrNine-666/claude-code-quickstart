@@ -343,7 +343,7 @@ macOS 安装器实现了与 Windows 功能对等的核心模块，采用 zsh 脚
 - macOS: `brew` (Homebrew)
 
 **Node.js 安装**：
-- Windows: `fnm` (Fast Node Manager)
+- Windows: nvm-windows（`winget install CoreyButler.NVMforWindows`，可切换版本）/ Node.js 直装（`OpenJS.NodeJS.LTS`，简单不可切换）；保留 portable 检测与 nvm↔direct 双向迁移
 - macOS: `nvm` 官方脚本
 
 **状态指示器**：

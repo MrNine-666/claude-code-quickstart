@@ -62,7 +62,7 @@ function Install-ClaudeCode {
             if ($nodeDetails.ErrorMessage) {
                 Write-UiInfo "  错误详情: $($nodeDetails.ErrorMessage)" -Level Detail
             }
-            Write-UiDim "💡 这可能是因为 fnm 环境变量尚未在当前会话中生效" -Level Detail
+            Write-UiDim "💡 这可能是因为 Node.js 环境变量尚未在当前会话中生效" -Level Detail
             Write-UiDim "💡 请尝试以下操作之一：" -Level Detail
             Write-UiDim "   1. 重新启动 PowerShell 后重新运行安装器" -Level Detail
             Write-UiDim "   2. 在当前窗口执行: . `$PROFILE 然后重新运行安装器" -Level Detail

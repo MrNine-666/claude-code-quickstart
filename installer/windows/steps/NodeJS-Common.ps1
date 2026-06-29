@@ -276,7 +276,7 @@ function Show-NodeMigrationMenu {
     .SYNOPSIS
     已有 Node 环境时的保留/迁移菜单
     .PARAMETER CurrentProviderType
-    当前 provider（fnm/nvm/direct/portable/mixed）
+    当前 provider（nvm/direct/portable/mixed）
     .PARAMETER ProviderHealthy
     当前 provider 是否健康
     .RETURNS
@@ -294,18 +294,6 @@ function Show-NodeMigrationMenu {
     $defaultIndex = 0
 
     switch ($CurrentProviderType) {
-        "fnm" {
-            $title = if ($ProviderHealthy) {
-                "检测到 fnm ，选择后续策略："
-            } else {
-                "检测到 fnm ，但状态不完整，选择处理方式："
-            }
-            $options = @(
-                "保留 fnm（最快 - 不迁移）",
-                "迁移到 nvm-windows（推荐 - 可切换版本）",
-                "迁移到 Node.js（直接安装，简单，但不能切换版本）"
-            )
-        }
         "nvm" {
             $title = "检测到 nvm-windows ，选择后续策略："
             $options = @(
@@ -354,13 +342,6 @@ function Show-NodeMigrationMenu {
     if ($choice -eq -1) { return "cancel" }
 
     switch ($CurrentProviderType) {
-        "fnm" {
-            switch ($choice) {
-                0 { return "keep" }
-                1 { return "nvm" }
-                2 { return "direct" }
-            }
-        }
         "nvm" {
             switch ($choice) {
                 0 { return "keep" }
@@ -1039,7 +1020,7 @@ function Complete-NodeRuntimeInstall {
     .PARAMETER Result
     当前 provider 安装结果对象
     .PARAMETER ProviderType
-    provider 类型（fnm/nvm/direct）
+    provider 类型（nvm/direct）
     .PARAMETER ShouldRestoreGlobalPackages
     是否恢复 npm 全局包
     .PARAMETER GlobalPackagesBackup
@@ -1101,20 +1082,32 @@ function Complete-NodeRuntimeInstall {
             Write-UiInfo "  npm 路径: $npmResolvedPath" -Level Debug
         }
 
+        # nvm-windows 校验同时接受 NVM_SYMLINK 目录与 NVM_HOME 子树：
+        # Sync-NvmNodeRuntimePath 会把"版本目录"（如 <NVM_HOME>\v24.18.0）注入 PATH 并排在最前，
+        # 此时 node 解析到版本目录而非 symlink 目录，两者都是合法的 nvm 路径，不应误报"未切换"。
+        $nvmSymlinkRoot = $null
+        $nvmHomeRoot = $null
+        if ($ProviderType -eq "nvm") {
+            $nvmSymlink = [Environment]::GetEnvironmentVariable("NVM_SYMLINK", "Process")
+            if ([string]::IsNullOrWhiteSpace($nvmSymlink)) { $nvmSymlink = [Environment]::GetEnvironmentVariable("NVM_SYMLINK", "User") }
+            if ([string]::IsNullOrWhiteSpace($nvmSymlink)) { $nvmSymlink = [Environment]::GetEnvironmentVariable("NVM_SYMLINK", "Machine") }
+            if (-not [string]::IsNullOrWhiteSpace($nvmSymlink)) {
+                $nvmSymlinkRoot = $nvmSymlink.Replace("/", "\").TrimEnd("\").ToLower()
+            }
+
+            $nvmHome = [string]$Result.Data["NvmHome"]
+            if ([string]::IsNullOrWhiteSpace($nvmHome)) { $nvmHome = [Environment]::GetEnvironmentVariable("NVM_HOME", "Process") }
+            if ([string]::IsNullOrWhiteSpace($nvmHome)) { $nvmHome = [Environment]::GetEnvironmentVariable("NVM_HOME", "User") }
+            if ([string]::IsNullOrWhiteSpace($nvmHome)) { $nvmHome = [Environment]::GetEnvironmentVariable("NVM_HOME", "Machine") }
+            if ([string]::IsNullOrWhiteSpace($nvmHome)) { $nvmHome = Join-Path $env:APPDATA "nvm" }
+            if (-not [string]::IsNullOrWhiteSpace($nvmHome)) {
+                $nvmHomeRoot = $nvmHome.Replace("/", "\").TrimEnd("\").ToLower()
+            }
+        }
+
         $expectedProviderRoot = switch ($ProviderType) {
             "nvm" {
-                $nvmSymlink = [Environment]::GetEnvironmentVariable("NVM_SYMLINK", "Process")
-                if ([string]::IsNullOrWhiteSpace($nvmSymlink)) { $nvmSymlink = [Environment]::GetEnvironmentVariable("NVM_SYMLINK", "User") }
-                if ([string]::IsNullOrWhiteSpace($nvmSymlink)) { $nvmSymlink = [Environment]::GetEnvironmentVariable("NVM_SYMLINK", "Machine") }
-                if ([string]::IsNullOrWhiteSpace($nvmSymlink)) {
-                    $nvmHome = [string]$Result.Data["NvmHome"]
-                    if ([string]::IsNullOrWhiteSpace($nvmHome)) { $nvmHome = [Environment]::GetEnvironmentVariable("NVM_HOME", "Process") }
-                    if ([string]::IsNullOrWhiteSpace($nvmHome)) { $nvmHome = [Environment]::GetEnvironmentVariable("NVM_HOME", "User") }
-                    if ([string]::IsNullOrWhiteSpace($nvmHome)) { $nvmHome = [Environment]::GetEnvironmentVariable("NVM_HOME", "Machine") }
-                    if ([string]::IsNullOrWhiteSpace($nvmHome)) { $null } else { $nvmHome.Replace("/", "\").TrimEnd("\").ToLower() }
-                } else {
-                    $nvmSymlink.Replace("/", "\").TrimEnd("\").ToLower()
-                }
+                if ($nvmSymlinkRoot) { $nvmSymlinkRoot } else { $nvmHomeRoot }
             }
             "direct" {
                 (Join-Path $env:ProgramFiles "nodejs").Replace("/", "\").TrimEnd("\").ToLower()
@@ -1124,7 +1117,10 @@ function Complete-NodeRuntimeInstall {
         if ($expectedProviderRoot -and -not [string]::IsNullOrWhiteSpace($nodeResolvedPath)) {
             $resolvedNodeDir = (Split-Path -Parent $nodeResolvedPath).Replace("/", "\").TrimEnd("\").ToLower()
             if ($ProviderType -eq "nvm") {
-                if ($resolvedNodeDir -ne $expectedProviderRoot) {
+                # symlink 目录精确匹配，或 node 位于 NVM_HOME 子树（版本目录）均视为合法
+                $matchSymlink = $nvmSymlinkRoot -and ($resolvedNodeDir -eq $nvmSymlinkRoot)
+                $matchHomeSubtree = $nvmHomeRoot -and ($resolvedNodeDir -eq $nvmHomeRoot -or $resolvedNodeDir.StartsWith($nvmHomeRoot + "\"))
+                if (-not ($matchSymlink -or $matchHomeSubtree)) {
                     throw "Node.js 当前实际路径为 $resolvedNodeDir，未切换到目标 provider [$ProviderType]"
                 }
             } elseif ($resolvedNodeDir -ne $expectedProviderRoot) {
@@ -1171,27 +1167,9 @@ function Complete-NodeRuntimeInstall {
             Write-UiInfo "  无需恢复 npm 全局包" -Level Detail
         }
 
-        # 写入 PowerShell Profile（仅 fnm 需要）
-        if ($ProviderType -eq "fnm") {
-            Write-UiPrimary "📝 配置 PowerShell Profile..." -Level Detail
-            $profilePath = $PROFILE
-            $nodeProfileConfig = @(
-                "# Node.js 环境初始化（fnm）",
-                "if (Get-Command fnm -ErrorAction SilentlyContinue) {",
-                "    fnm env --use-on-cd | Out-String | Invoke-Expression",
-                "}"
-            )
-            $profileSuccess = Write-ProfileSubsection -FilePath $profilePath -SectionName "FNM" -SectionContent $nodeProfileConfig
-            $Result.Data["ProfileConfigured"] = $profileSuccess
-            if ($profileSuccess) {
-                Write-UiSuccess "✓ PowerShell Profile 配置成功（fnm 环境初始化）" -Level Detail
-            } else {
-                Write-UiWarning "⚠ PowerShell Profile 配置失败，但不影响当前会话使用" -Level Detail
-            }
-        } else {
-            $Result.Data["ProfileConfigured"] = $true
-            Write-UiInfo "  nvm/direct 无需写入 PowerShell Profile" -Level Detail
-        }
+        # nvm-windows / direct 均由各自工具或系统 PATH 管理，无需写入 PowerShell Profile
+        $Result.Data["ProfileConfigured"] = $true
+        Write-UiInfo "  nvm/direct 无需写入 PowerShell Profile" -Level Detail
 
         $Result.Data["ProviderType"] = $ProviderType
         $Result.Data["ProviderHealthy"] = $true

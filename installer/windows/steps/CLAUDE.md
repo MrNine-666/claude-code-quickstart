@@ -1,7 +1,7 @@
 # installer/windows/steps/ — Windows 安装步骤模块
 
 > 面包屑：[根目录](../../../CLAUDE.md) › [installer/](../../CLAUDE.md) › windows/ › steps/
-> 生成时间：2026-06-23 (Phase 8：Mcp.ps1 整体废弃删除，MCP 管理统一由 TUI 接管；install 仅装 Basic 三步；Advanced 步骤迁 Manage TUI)
+> 生成时间：2026-06-30 (Phase：砍掉 fnm provider，NodeJS 简化为 nvm-windows / Node.js 直装二选一，保留 nvm↔direct 双向迁移与 portable 检测)
 
 ---
 
@@ -71,23 +71,26 @@ Windows 与 macOS 保持相同 StepId、分组、依赖和用户可见能力边�
 
 | StepId | 名称 | 文件 | 可选 | SkipIfInstalled | 可更新 | 主要依赖 | 分组 |
 |--------|------|------|:----:|:---------------:|:------:|---------|------|
-| NodeJS | Node.js (fnm) | `NodeJS.ps1` | — | ✓ | — | 无 | 基础 |
+| NodeJS | Node.js (nvm/direct) | `NodeJS.ps1` | — | ✓ | — | 无 | 基础 |
 | Git | Git | `Git.ps1` | — | ✓ | — | 无 | 基础 |
 | ClaudeCode | Claude Code | `ClaudeCode.ps1` | — | ✓ | ✓ | NodeJS | 基础 |
 
 ---
 
-## NodeJS — Node.js (fnm)
+## NodeJS — Node.js (nvm-windows / 直装)
 
-**文件**：`NodeJS.ps1`
-**依赖核心模块**：`Process.ps1`, `Ui.ps1`, `Profile.ps1`
+**文件**：`NodeJS.ps1`（子模块：`NodeJS-Detect.ps1` / `NodeJS-Common.ps1` / `NodeJS-Nvm.ps1` / `NodeJS-Direct.ps1`）
+**依赖核心模块**：`Process.ps1`, `Ui.ps1`, `Net.ps1`
+
+**支持 provider**：nvm-windows（可切换版本，推荐）/ Node.js 直装（简单，不可切换）。保留 portable（绿色版）检测与 nvm↔direct 双向迁移能力；fnm provider 已移除。
 
 **安装流程**：
-1. 检测 `fnm` / `node` 是否已安装
-2. 用 `winget install Schniz.fnm` 安装 fnm
-3. 写入 `$PROFILE` 标记块（`fnm env` 初始化）
-4. `Refresh-SessionPath` + `fnm install --lts`
-5. 验证 `node --version` / `npm --version`
+1. 检测现有 Node.js 环境（nvm / direct / portable / mixed）
+2. 干净机器：菜单二选一（nvm-windows / Node.js 直装）
+3. 已有环境：保留 / 迁移到 nvm 或 direct（可选 npm 全局包备份恢复）
+4. nvm 路径：`winget install CoreyButler.NVMforWindows` → `nvm install lts` → `nvm use`
+5. direct 路径：`winget install OpenJS.NodeJS.LTS`
+6. 验证 `node --version` / `npm --version`，配置 npm 镜像（国内网络）
 
 ---
 

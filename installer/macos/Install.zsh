@@ -440,11 +440,16 @@ ccq_get_release_download_base_url() {
     return 0
   fi
 
+  # 哨兵判断以 v 开头（与 build 的 GITHUB_REF_NAME=v* 约定一致）。
+  # 不能比对 __CCQ_RELEASE_TAG__ 字面量：build 用全局替换注入 tag，会把此处哨兵也
+  # 换成实际 tag，导致 "v2.1.0-rc.x" != "v2.1.0-rc.x" 恒为假 → 永远走 latest 兜底。
   local tag="${CCQ_RELEASE_TAG:-}"
-  if [ -n "${tag}" ] && [ "${tag}" != "__CCQ_RELEASE_TAG__" ]; then
-    printf 'https://github.com/MrNine-666/claude-code-quickstart/releases/download/%s' "${tag}"
-    return 0
-  fi
+  case "${tag}" in
+    v*)
+      printf 'https://github.com/MrNine-666/claude-code-quickstart/releases/download/%s' "${tag}"
+      return 0
+      ;;
+  esac
 
   printf 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download'
 }

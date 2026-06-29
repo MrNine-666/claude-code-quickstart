@@ -351,7 +351,10 @@ function Get-CcqReleaseDownloadBaseUrl {
         $tag = $script:CcqReleaseTag
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($tag) -and $tag -ne "__CCQ_RELEASE_TAG__") {
+    # 哨兵判断改用"tag 是否以 v 开头"（与 build.ps1 的 GITHUB_REF_NAME -like 'v*' 约定一致）。
+    # 不可比对占位符字面量：build 用全文 Replace 注入 tag，会把此处的 "__CCQ_RELEASE_TAG__" 一并
+    # 替换成实际 tag，导致 `$tag -ne $tag` 恒为 false → 永远走 latest 兜底（已实测复现）。
+    if ($tag -like 'v*') {
         return "https://github.com/MrNine-666/claude-code-quickstart/releases/download/$tag"
     }
 

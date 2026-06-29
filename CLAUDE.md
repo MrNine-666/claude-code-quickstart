@@ -115,7 +115,7 @@ NodeJS ─── ClaudeCode ─── Git
 ~/.ccq/mcp-meta.json        # MCP Server vault（凭据持久化 + 状态管理）
 ~/.local/bin/ccq.exe        # Windows ccq 可执行文件（x64/arm64，与 Claude Code native installer 同目录）
 ~/.local/bin/ccq            # macOS/Linux ccq 可执行文件（x64/arm64，与 Claude Code native installer 同目录）
-$PROFILE                    # PowerShell 配置文件（fnm）
+$PROFILE                    # PowerShell 配置文件（历史遗留块清理用，nvm/direct 不写）
 %TEMP%\ClaudeEnvInstaller\  # 备份目录（含更新快照 update_* ）
 ```
 

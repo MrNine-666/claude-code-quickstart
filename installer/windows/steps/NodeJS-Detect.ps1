@@ -1,5 +1,5 @@
 ﻿# NodeJS-Detect.ps1 - Node.js 环境检测层
-# 职责：检测 fnm/nvm/direct/portable 四种 provider 的安装状态
+# 职责：检测 nvm/direct/portable 三种 provider 的安装状态
 
 #Requires -Version 5.1
 Set-StrictMode -Version Latest
@@ -7,7 +7,7 @@ Set-StrictMode -Version Latest
 function Test-NodeJSInstalled {
     <#
     .SYNOPSIS
-    测试步骤 01 是否已完成（Node.js 和 fnm 安装）
+    测试步骤 01 是否已完成（Node.js 安装）
     .RETURNS
     标准检测结果 hashtable（IsInstalled, Version, Data, Message）
     #>
@@ -25,14 +25,12 @@ function Test-NodeJSInstalled {
     }
 
     try {
-        Write-UiPrimary "🔍 检查 Node.js 和 fnm 安装状态..." -Level Detail
+        Write-UiPrimary "🔍 检查 Node.js 安装状态..." -Level Detail
 
-        # 检查 fnm/node/npm 是否可用（使用 ReturnDetails 获取完整信息）
-        $fnmDetails = Test-CommandAvailable -Command "fnm" -ReturnDetails
+        # 检查 node/npm 是否可用（使用 ReturnDetails 获取完整信息）
         $nodeDetails = Test-CommandAvailable -Command "node" -ReturnDetails
         $npmDetails = Test-CommandAvailable -Command "npm" -ReturnDetails
 
-        $fnmAvailable = [bool]$fnmDetails.Available
         $nodeAvailable = [bool]$nodeDetails.Available
         $npmAvailable = [bool]$npmDetails.Available
 
@@ -81,7 +79,7 @@ function Test-NodeJSInstalled {
                     }
                 } catch {
                     # 0x8A150014 (-1978335212) = APPINSTALLER_CLI_ERROR_NO_APPLICATIONS_FOUND
-                    # winget 未找到匹配包是正常情况（Node.js 可能通过 fnm/nvm 安装），静默忽略
+                    # winget 未找到匹配包是正常情况（Node.js 可能通过 nvm 安装），静默忽略
                     if ($_.Exception.Message -notmatch '-1978335212|8A150014|找不到.*匹配') {
                         Write-UiWarning "⚠ winget list Node.js 检测失败: $($_.Exception.Message)" -Level Detail
                     }
@@ -94,10 +92,9 @@ function Test-NodeJSInstalled {
 
         # 检测绿色版（portable）Node.js：node/npm 可用但无任何已知 provider 信号
         $portableNodeDetected = $nodeAvailable -and $npmAvailable -and
-            -not $fnmAvailable -and -not $nvmDetected -and -not $directNodeDetected
+            -not $nvmDetected -and -not $directNodeDetected
 
         # 核心检测数据
-        $result.Data["FnmAvailable"] = $fnmAvailable
         $result.Data["NodePath"] = $nodeDetails.ResolvedPath
         $result.Data["NpmPath"] = $npmDetails.ResolvedPath
         $result.Data["NvmDetected"] = $nvmDetected
@@ -108,12 +105,6 @@ function Test-NodeJSInstalled {
         $result.Data["WingetNodeInstalledId"] = $wingetNodeInstalledId
 
         # 输出检测结果
-        if ($fnmAvailable) {
-            Write-UiSuccess "✓ fnm 已安装 (版本: $(Get-CommandVersion -Command 'fnm'))" -Level Detail
-        } else {
-            Write-UiWarning "⚠ fnm 未安装（允许继续使用现有 Node.js 环境）" -Level Detail
-        }
-
         if ($nvmDetected) {
             Write-UiWarning "⚠ 检测到 nvm-windows 环境" -Level Detail
             if ($nvmHome) { Write-UiInfo "  NVM_HOME: $nvmHome" -Level Detail }
@@ -172,7 +163,6 @@ function Test-NodeJSInstalled {
 
         # Provider 信号判定（基于直接信号，不依赖路径推断）
         $providerSignals = @{}
-        if ($fnmAvailable) { $providerSignals["fnm"] = $true }
         if ($nvmDetected) { $providerSignals["nvm"] = $true }
         if ($directNodeDetected) { $providerSignals["direct"] = $true }
         if ($portableNodeDetected) { $providerSignals["portable"] = $true }
@@ -186,7 +176,6 @@ function Test-NodeJSInstalled {
 
         $providerHealthy = $false
         switch ($providerType) {
-            "fnm"      { $providerHealthy = $nodeAvailable -and $npmAvailable -and $nodeVersionSatisfied -and $fnmAvailable }
             "nvm"      { $providerHealthy = $nodeAvailable -and $npmAvailable -and $nodeVersionSatisfied -and $nvmDetected }
             "direct"   { $providerHealthy = $nodeAvailable -and $npmAvailable -and $nodeVersionSatisfied -and $directNodeDetected }
             "portable" { $providerHealthy = $nodeAvailable -and $npmAvailable -and $nodeVersionSatisfied }
