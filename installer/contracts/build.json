@@ -44,7 +44,7 @@
         "RequiresHeader": "#Requires -Version 5.1",
         "EntryFile": "windows/Install.ps1",
         "HoistParamFrom": "windows/Install.ps1",
-        "OutputEncoding": "UTF8",
+        "OutputEncoding": "utf8BOM",
         "CoreFiles": [
           "windows/core/Json.ps1",
           "windows/core/Ui.ps1",

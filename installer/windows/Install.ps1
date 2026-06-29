@@ -511,8 +511,8 @@ function Show-FinalSummary {
         Write-UiInfo "  claude --help   - 查看帮助信息" -Level Detail
         Write-Host ""
         Write-UiPrimary "管理面板（可选）：" -Level Detail
-        Write-UiInfo "  方式 1: irm https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/manage.ps1 | iex" -Level Detail
-        Write-UiInfo "  方式 2: npm install -g ccq && ccq" -Level Detail
+        Write-UiInfo "  方式 1: 安装完成后打开新终端运行: ccq" -Level Detail
+        Write-UiInfo "  方式 2: 从 Release 手动下载 ccq-windows-{x64|arm64}.exe 到 PATH 目录" -Level Detail
     } else {
         Write-UiWarning "安装完成，但有 $($Results.Failed) 个步骤失败"
         Write-Host ""

@@ -124,7 +124,8 @@ sh installer/build.sh --check
 1. 不得裸用 `$PSScriptRoot` 推导源码路径；使用前先判空。
 2. 不得把空字符串传给 `Join-Path` / `Test-Path` / `Get-Content` 等 `-Path` 参数。
 3. contracts/templates 查找失败时，必须回退到 inline fallback、环境变量 fallback 或安全跳过。
-4. 修改 contracts、templates、构建拼接、远程入口相关代码后，必须同时验证：
+4. Windows Release `dist/install.ps1` 必须带 UTF-8 BOM（`installer/contracts/build.json` 的 `OutputEncoding` 固定为 `utf8BOM`）。GitHub Release asset 返回 `application/octet-stream` 时，PS5.1 的 `irm ... | iex` 会把无 BOM UTF-8 按 ANSI 解码，导致中文与 Unicode 边框乱码；入口脚本里的 `[Console]::OutputEncoding` / `SetConsoleOutputCP(65001)` 只能修复控制台输出，不能修复已被 `irm` 误解码的脚本文本。
+5. 修改 contracts、templates、构建拼接、远程入口相关代码后，必须同时验证：
    - 源码模式：`pwsh -File installer/windows/Install.ps1`
    - Release 模式：`irm 'https://.../install.ps1' | iex`
 

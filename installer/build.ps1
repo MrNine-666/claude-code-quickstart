@@ -328,14 +328,14 @@ function Build-SingleFileScript {
         New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
     }
 
-    # 临时文件用 .tmp 而非 .ps1 扩展名：含 irm|iex 下载-执行特征的 manage.ps1，其 .ps1 临时文件
+    # 临时文件用 .tmp 而非 .ps1 扩展名：含 irm|iex 下载-执行特征的 install.ps1，其 .ps1 临时文件
     # 可能被 Windows Defender 在 Move 前直接删除/隔离，导致 "Cannot find path"（重试无法挽回）。
     # .tmp 不触发 Defender 对 PowerShell 脚本的启发式扫描，规避临时阶段被删；Move 后才成为 .ps1。
     $tempPath = Join-Path $outputDir ("_tmp_" + [System.IO.Path]::GetRandomFileName() + ".tmp")
     try {
         $buffer -join "`r`n" | Set-Content -Path $tempPath -Encoding $OutputEncoding -NoNewline
         # Move 重试：Windows Defender 实时扫描可能瞬时锁定刚写入的大文件（尤其含下载-执行模式的
-        # manage.ps1），触发 Access denied。重试 5 次（间隔 300ms）让扫描句柄释放后再 Move。
+        # install.ps1），触发 Access denied。重试 5 次（间隔 300ms）让扫描句柄释放后再 Move。
         for ($moveAttempt = 1; ; $moveAttempt++) {
             try {
                 Move-Item -Path $tempPath -Destination $OutputPath -Force
@@ -396,7 +396,7 @@ function Clear-KnownBuildArtifacts {
     .SYNOPSIS
     清理输出目录中的当前平台构建产物，避免旧产物残留。
     .DESCRIPTION
-    Windows 构建入口只清理 Windows 产物（.ps1），保留 macOS 产物（.sh）。
+    Windows 构建入口清理当前 Windows install 产物与旧 Manage/Bootstrap 残留，保留 macOS install 产物。
     macOS 构建入口应只清理 macOS 产物（.sh），保留 Windows 产物（.ps1）。
     #>
     param(
@@ -409,8 +409,8 @@ function Clear-KnownBuildArtifacts {
     )
 
     $filesToClean = if ($Platform -eq 'Windows') {
-        # Windows 产物：install.ps1 + 4 个 ccq 可执行文件
-        @('install.ps1')
+        # Windows install 产物 + 旧 Manage/Bootstrap 残留（HC-DELETE-LEGACY）
+        @('install.ps1', 'manage.ps1', 'bootstrap.ps1', 'manage.sh', 'manage-tui.tgz')
     } else {
         @('install.sh')
     }
