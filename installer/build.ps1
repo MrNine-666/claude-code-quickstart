@@ -350,6 +350,11 @@ function Build-SingleFileScript {
     # 对 GitHub Release application/octet-stream 会按 Latin1/ANSI 解码，BOM 也无法纠正。
     # 让外层脚本只包含 ASCII，再在本机用 UTF-8 还原真实脚本，才能保留 irm|iex 入口。
     $scriptText = $buffer -join "`r`n"
+    $releaseTag = [Environment]::GetEnvironmentVariable('GITHUB_REF_NAME', 'Process')
+    if ([string]::IsNullOrWhiteSpace($releaseTag) -or $releaseTag -notlike 'v*') {
+        $releaseTag = '__CCQ_RELEASE_TAG__'
+    }
+    $scriptText = $scriptText.Replace('__CCQ_RELEASE_TAG__', $releaseTag)
     $outputText = $scriptText
     $effectiveEncoding = $OutputEncoding
     if ($OutputEncoding -eq 'asciiTrampoline') {

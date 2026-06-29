@@ -114,10 +114,11 @@ function Install-NodeViaNvm {
         }
 
         Refresh-SessionPath
-
-        $result.Success = $true
         $result.Data["NvmDetected"] = $true
         $result.Data["NvmSelectedVersion"] = $targetVersion
+        Sync-NvmNodeRuntimePath -Result $result.Data
+
+        $result.Success = $true
         $result.Data["MigrationTarget"] = "nvm"
         return (Complete-NodeRuntimeInstall -Result $result -ProviderType "nvm" -ShouldRestoreGlobalPackages:$ShouldRestoreGlobalPackages -GlobalPackagesBackup $GlobalPackagesBackup)
     } catch {

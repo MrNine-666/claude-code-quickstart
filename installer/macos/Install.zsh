@@ -35,6 +35,7 @@ export CCQ_MACOS_ROOT CCQ_INSTALLER_ROOT
 
 CCQ_PARAM_LIST_STEPS=0
 CCQ_PARAM_OUTPUT_MODE="normal"
+CCQ_RELEASE_TAG="__CCQ_RELEASE_TAG__"
 
 ccq_usage() {
   cat <<'EOF'
@@ -396,8 +397,6 @@ ccq_confirm_basic_install_plan() {
   ccq_ui_info "  3. Git（Basic 必需）"
   ccq_ui_info "  4. Claude Code（Basic 必需）"
   printf '\n'
-  ccq_ui_dim "ccq 管理工具将在基础流程结束后单独确认。"
-  printf '\n'
 
   local choice
   choice="$(ccq_prompt_single "确认开始安装基础环境？" 0 "是，开始安装" "否，取消")" || return 1
@@ -432,6 +431,22 @@ ccq_main() {
   # ccq 可执行文件下载确认（TDR-6）
   printf '\n'
   ccq_confirm_executable_download
+}
+
+ccq_get_release_download_base_url() {
+  # 解析 ccq 可执行文件下载基址；tag 构建使用当前 Release，源码运行回退 latest。
+  if [ -n "${CCQ_RELEASE_DOWNLOAD_BASE_URL:-}" ]; then
+    printf '%s' "${CCQ_RELEASE_DOWNLOAD_BASE_URL%/}"
+    return 0
+  fi
+
+  local tag="${CCQ_RELEASE_TAG:-}"
+  if [ -n "${tag}" ] && [ "${tag}" != "__CCQ_RELEASE_TAG__" ]; then
+    printf 'https://github.com/MrNine-666/claude-code-quickstart/releases/download/%s' "${tag}"
+    return 0
+  fi
+
+  printf 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download'
 }
 
 ccq_confirm_executable_download() {
@@ -488,7 +503,7 @@ ccq_confirm_executable_download() {
 
   # 3. 构建下载 URL
   local base_url exe_name download_url
-  base_url="https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download"
+  base_url="$(ccq_get_release_download_base_url)"
   exe_name="ccq-${arch}"
   download_url="${base_url}/${exe_name}"
 

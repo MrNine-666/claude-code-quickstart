@@ -344,13 +344,18 @@ function buildMacOSArtifact(manifest, stepsContract, role) {
     lines.push(...filterZshSource(relPath));
   }
 
+  const releaseTag = (process.env.GITHUB_REF_NAME || '').startsWith('v')
+    ? process.env.GITHUB_REF_NAME
+    : '__CCQ_RELEASE_TAG__';
+  const content = lines.join('\n').replace(/__CCQ_RELEASE_TAG__/g, releaseTag);
+
   const entryFile = order[order.length - 1] || '';
-  lines.push('');
-  if (/macos\/Install\.zsh$/.test(entryFile)) lines.push('ccq_main "$@"');
+  const finalLines = [content, ''];
+  if (/macos\/Install\.zsh$/.test(entryFile)) finalLines.push('ccq_main "$@"');
   else fail(`无法识别 macOS artifact 入口文件: ${entryFile}`);
 
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  fs.writeFileSync(outputPath, `${lines.join('\n')}`, 'utf8');
+  fs.writeFileSync(outputPath, `${finalLines.join('\n')}`, 'utf8');
   fs.chmodSync(outputPath, 0o755);
   pass(`已生成: ${outputPath}`);
   validateMacOSArtifact(outputPath);

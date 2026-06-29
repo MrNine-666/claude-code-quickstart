@@ -966,6 +966,72 @@ function Uninstall-ExistingNode {
     return $result
 }
 
+function Sync-NvmNodeRuntimePath {
+    <#
+    .SYNOPSIS
+    nvm-windows 激活版本后，同步当前进程 PATH，避免 node/npm 在安装进程内不可见。
+    #>
+    param(
+        [hashtable]$Result = @{}
+    )
+
+    foreach ($envVar in @("NVM_HOME", "NVM_SYMLINK")) {
+        if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($envVar, "Process"))) {
+            foreach ($scope in @("User", "Machine")) {
+                $value = [Environment]::GetEnvironmentVariable($envVar, $scope)
+                if (-not [string]::IsNullOrWhiteSpace($value)) {
+                    [Environment]::SetEnvironmentVariable($envVar, $value, "Process")
+                    break
+                }
+            }
+        }
+    }
+
+    $candidateDirs = [System.Collections.Generic.List[string]]::new()
+    $nvmSymlink = [Environment]::GetEnvironmentVariable("NVM_SYMLINK", "Process")
+    if (-not [string]::IsNullOrWhiteSpace($nvmSymlink)) {
+        $candidateDirs.Add($nvmSymlink)
+    }
+
+    $nvmHome = [Environment]::GetEnvironmentVariable("NVM_HOME", "Process")
+    if ([string]::IsNullOrWhiteSpace($nvmHome) -and $Result.ContainsKey("NvmHome")) {
+        $nvmHome = [string]$Result["NvmHome"]
+    }
+    if ([string]::IsNullOrWhiteSpace($nvmHome)) {
+        $nvmHome = Join-Path $env:APPDATA "nvm"
+    }
+
+    $selectedVersion = ""
+    if ($Result.ContainsKey("NvmSelectedVersion")) {
+        $selectedVersion = [string]$Result["NvmSelectedVersion"]
+    }
+    if (-not [string]::IsNullOrWhiteSpace($nvmHome) -and -not [string]::IsNullOrWhiteSpace($selectedVersion)) {
+        $candidateDirs.Add((Join-Path $nvmHome $selectedVersion))
+        $candidateDirs.Add((Join-Path $nvmHome "v$selectedVersion"))
+    }
+
+    foreach ($dir in @($candidateDirs)) {
+        if ([string]::IsNullOrWhiteSpace($dir)) { continue }
+        $hasNode = Test-Path (Join-Path $dir "node.exe") -PathType Leaf
+        $hasNpm = Test-Path (Join-Path $dir "npm.cmd") -PathType Leaf
+        if (-not ($hasNode -and $hasNpm)) { continue }
+
+        $normalizedDir = $dir.TrimEnd('\')
+        $pathEntries = @($env:PATH -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $alreadyPresent = $false
+        foreach ($entry in $pathEntries) {
+            if ($entry.Trim().Trim('"').TrimEnd('\') -ieq $normalizedDir) {
+                $alreadyPresent = $true
+                break
+            }
+        }
+        if (-not $alreadyPresent) {
+            $env:PATH = "$normalizedDir;$env:PATH"
+            Write-UiInfo "  已将 nvm 当前 Node.js 路径注入 PATH: $normalizedDir" -Level Detail
+        }
+    }
+}
+
 function Complete-NodeRuntimeInstall {
     <#
     .SYNOPSIS
@@ -1001,12 +1067,20 @@ function Complete-NodeRuntimeInstall {
         # 验证 Node.js 和 npm 可用性
         Write-UiPrimary "🔍 验证 Node.js ..." -Level Detail
         Refresh-SessionPath
+        if ($ProviderType -eq "nvm") {
+            Sync-NvmNodeRuntimePath -Result $Result
+        }
 
         if (-not (Test-CommandAvailable -Command "node")) {
             throw "Node.js 安装后仍不可用，请检查 PATH 配置"
         }
         if (-not (Test-CommandAvailable -Command "npm")) {
-            throw "npm 安装后仍不可用，请检查 PATH 配置"
+            if ($ProviderType -eq "nvm") {
+                Sync-NvmNodeRuntimePath -Result $Result
+            }
+            if (-not (Test-CommandAvailable -Command "npm")) {
+                throw "npm 安装后仍不可用，请检查 PATH 配置"
+            }
         }
 
         $nodeVersion = Get-CommandVersion -Command "node"

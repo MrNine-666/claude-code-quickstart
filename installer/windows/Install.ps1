@@ -6,7 +6,9 @@
 param(
     [switch]$ListSteps,
     [ValidateSet("Normal", "Developer")]
-    [string]$OutputMode = "Normal"
+    [string]$OutputMode = "Normal",
+
+    [string]$CcqReleaseTag = "__CCQ_RELEASE_TAG__"
 )
 
 Set-StrictMode -Version Latest
@@ -325,6 +327,30 @@ function Invoke-GroupedInstall {
 
 # ─── CCQ 可执行文件下载确认 ───────────────────────────────────────────────────
 
+function Get-CcqReleaseDownloadBaseUrl {
+    <#
+    .SYNOPSIS
+    解析 ccq 可执行文件下载基址；tag 构建使用当前 Release，源码运行回退 latest。
+    #>
+    param()
+
+    $overrideUrl = [Environment]::GetEnvironmentVariable("CCQ_RELEASE_DOWNLOAD_BASE_URL", "Process")
+    if (-not [string]::IsNullOrWhiteSpace($overrideUrl)) {
+        return $overrideUrl.TrimEnd('/')
+    }
+
+    $tag = [Environment]::GetEnvironmentVariable("CCQ_RELEASE_TAG", "Process")
+    if ([string]::IsNullOrWhiteSpace($tag)) {
+        $tag = $script:CcqReleaseTag
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($tag) -and $tag -ne "__CCQ_RELEASE_TAG__") {
+        return "https://github.com/MrNine-666/claude-code-quickstart/releases/download/$tag"
+    }
+
+    return "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download"
+}
+
 function Confirm-CcqExecutableDownload {
     <#
     .SYNOPSIS
@@ -380,7 +406,7 @@ function Confirm-CcqExecutableDownload {
     Write-UiInfo "检测到平台架构: $arch"
 
     # 3. 构建下载 URL
-    $baseUrl = "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download"
+    $baseUrl = Get-CcqReleaseDownloadBaseUrl
     $exeName = "ccq-${arch}.exe"
     $downloadUrl = "${baseUrl}/${exeName}"
 
@@ -555,9 +581,6 @@ function Confirm-BasicInstallPlan {
     Write-UiInfo "  4. Node.js（Basic 必需）"
     Write-UiInfo "  5. Git（Basic 必需）"
     Write-UiInfo "  6. Claude Code（Basic 必需）"
-    Write-Host ""
-    Write-UiDim "注意：如检测到 Node.js 环境冲突，迁移相关确认仍会单独出现。"
-    Write-UiDim "ccq 管理工具将在基础流程结束后单独确认。"
     Write-Host ""
 
     $choice = Show-SingleSelectMenu `
