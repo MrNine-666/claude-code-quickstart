@@ -86,7 +86,16 @@ $script:EmojiMap = @{
     "📦" = "[安装]"
     "❓" = "[确认]"
     "⏭" = "[跳过]"
+    "⚪" = "[运行]"
     "►" = ">"
+    "↑" = "Up"
+    "↓" = "Down"
+    "→" = "->"
+    "←" = "<-"
+    "•" = "-"
+    "━" = "-"
+    "─" = "-"
+    "│" = "|"
     "╔" = "+"
     "═" = "-"
     "╗" = "+"
@@ -623,10 +632,11 @@ function Show-SingleSelectMenu {
     Write-Host ""
 
     function Show-Menu {
-        Write-Host "`e[J" -NoNewline
+        Write-Host "$script:EscapeChar[J" -NoNewline
         for ($i = 0; $i -lt $Options.Count; $i++) {
             if ($i -eq $selectedIndex) {
-                Write-UiSuccess "  ► $($Options[$i])"
+                $selectedPrefix = Convert-EmojiToText -Text "►"
+                Write-UiSuccess "  $selectedPrefix $($Options[$i])"
             } else {
                 Write-Host "    $($Options[$i])"
             }
@@ -652,7 +662,7 @@ function Show-SingleSelectMenu {
                     $selectedIndex = ($selectedIndex - 1 + $Options.Count) % $Options.Count
                     # 向上移动到菜单起始位置（按物理行数而非选项数）
                     for ($i = 0; $i -lt $totalPhysicalLines; $i++) {
-                        Write-Host "`e[A" -NoNewline
+                        Write-Host "$script:EscapeChar[A" -NoNewline
                     }
                     Show-Menu
                 }
@@ -660,7 +670,7 @@ function Show-SingleSelectMenu {
                     $selectedIndex = ($selectedIndex + 1) % $Options.Count
                     # 向上移动到菜单起始位置（按物理行数而非选项数）
                     for ($i = 0; $i -lt $totalPhysicalLines; $i++) {
-                        Write-Host "`e[A" -NoNewline
+                        Write-Host "$script:EscapeChar[A" -NoNewline
                     }
                     Show-Menu
                 }
@@ -728,7 +738,7 @@ function Show-MultiSelectMenu {
         Write-Host ""
 
         for ($i = 0; $i -lt $Options.Count; $i++) {
-            $checked = if ($selectedItems.ContainsKey($i)) { "[✓]" } else { "[ ]" }
+            $checked = if ($selectedItems.ContainsKey($i)) { Convert-EmojiToText -Text "[✓]" } else { "[ ]" }
             $hintText = if ($OptionHints.Count -gt $i -and $OptionHints[$i]) { " $($OptionHints[$i].Text)" } else { "" }
             Write-Host "  $($i + 1). $checked $($Options[$i])$hintText"
         }
@@ -758,17 +768,19 @@ function Show-MultiSelectMenu {
     # 支持 ANSI 的交互式菜单
     Write-UiPrimary $Title
     Write-Host ""
-    Write-UiDim "使用 ↑↓ 导航，空格键选择/取消，Enter 确认，Esc 取消"
+    $navHint = Convert-EmojiToText -Text "使用 ↑↓ 导航，空格键选择/取消，Enter 确认，Esc 取消"
+    Write-UiDim $navHint
     Write-Host ""
 
     function Show-Menu {
-        Write-Host "`e[J" -NoNewline
+        Write-Host "$script:EscapeChar[J" -NoNewline
         for ($i = 0; $i -lt $Options.Count; $i++) {
-            $checked = if ($selectedItems.ContainsKey($i)) { "[✓]" } else { "[ ]" }
+            $checked = if ($selectedItems.ContainsKey($i)) { Convert-EmojiToText -Text "[✓]" } else { "[ ]" }
             $hasHint = $OptionHints.Count -gt $i -and $OptionHints[$i]
 
             if ($i -eq $selectedIndex) {
-                Write-UiSuccess "  ► $checked $($Options[$i])" -NoNewline
+                $selectedPrefix = Convert-EmojiToText -Text "►"
+                Write-UiSuccess "  $selectedPrefix $checked $($Options[$i])" -NoNewline
                 if ($hasHint) {
                     Write-Host " $($OptionHints[$i].Text)" -ForegroundColor $OptionHints[$i].Color
                 } else {
@@ -805,7 +817,7 @@ function Show-MultiSelectMenu {
                     $selectedIndex = ($selectedIndex - 1 + $Options.Count) % $Options.Count
                     # 向上移动到菜单起始位置（按物理行数而非选项数）
                     for ($i = 0; $i -lt $totalPhysicalLines; $i++) {
-                        Write-Host "`e[A" -NoNewline
+                        Write-Host "$script:EscapeChar[A" -NoNewline
                     }
                     Show-Menu
                 }
@@ -813,7 +825,7 @@ function Show-MultiSelectMenu {
                     $selectedIndex = ($selectedIndex + 1) % $Options.Count
                     # 向上移动到菜单起始位置（按物理行数而非选项数）
                     for ($i = 0; $i -lt $totalPhysicalLines; $i++) {
-                        Write-Host "`e[A" -NoNewline
+                        Write-Host "$script:EscapeChar[A" -NoNewline
                     }
                     Show-Menu
                 }
@@ -825,7 +837,7 @@ function Show-MultiSelectMenu {
                     }
                     # 向上移动到菜单起始位置（按物理行数而非选项数）
                     for ($i = 0; $i -lt $totalPhysicalLines; $i++) {
-                        Write-Host "`e[A" -NoNewline
+                        Write-Host "$script:EscapeChar[A" -NoNewline
                     }
                     Show-Menu
                 }
@@ -921,13 +933,13 @@ function Show-InstallSummary {
     $versionWidth = [Math]::Max($versionWidth, 8)
 
     # 表格边框组件
-    $topBorder = "┌" + ("─" * ($nameWidth + 2)) + "┬" + ("─" * ($statusWidth + 2)) + "┬" + ("─" * ($versionWidth + 2)) + "┐"
-    $midBorder = "├" + ("─" * ($nameWidth + 2)) + "┼" + ("─" * ($statusWidth + 2)) + "┼" + ("─" * ($versionWidth + 2)) + "┤"
-    $bottomBorder = "└" + ("─" * ($nameWidth + 2)) + "┴" + ("─" * ($statusWidth + 2)) + "┴" + ("─" * ($versionWidth + 2)) + "┘"
+    $topBorder = Convert-EmojiToText -Text ("┌" + ("─" * ($nameWidth + 2)) + "┬" + ("─" * ($statusWidth + 2)) + "┬" + ("─" * ($versionWidth + 2)) + "┐")
+    $midBorder = Convert-EmojiToText -Text ("├" + ("─" * ($nameWidth + 2)) + "┼" + ("─" * ($statusWidth + 2)) + "┼" + ("─" * ($versionWidth + 2)) + "┤")
+    $bottomBorder = Convert-EmojiToText -Text ("└" + ("─" * ($nameWidth + 2)) + "┴" + ("─" * ($statusWidth + 2)) + "┴" + ("─" * ($versionWidth + 2)) + "┘")
 
     # 表头（使用 CJK 感知填充）
     Write-UiDim $topBorder
-    $header = "│ $(Format-DisplayPad "组件" $nameWidth) │ $(Format-DisplayPad "状态" $statusWidth) │ $(Format-DisplayPad "版本" $versionWidth) │"
+    $header = Convert-EmojiToText -Text "│ $(Format-DisplayPad "组件" $nameWidth) │ $(Format-DisplayPad "状态" $statusWidth) │ $(Format-DisplayPad "版本" $versionWidth) │"
     Write-UiInfo $header
     Write-UiDim $midBorder
 
@@ -938,6 +950,7 @@ function Show-InstallSummary {
         $version = Format-DisplayPad $item.Version $versionWidth
 
         $row = "│ $name │ $status │ $version │"
+        $row = Convert-EmojiToText -Text $row
 
         # 根据状态着色
         switch ($item.Status) {

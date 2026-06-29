@@ -197,6 +197,8 @@ function Invoke-GroupedInstall {
     目标步骤 ID 数组
     .PARAMETER State
     安装状态对象
+    .PARAMETER SkipConfirmation
+    跳过分组执行计划二次确认（install 开头已统一确认时使用）
     .RETURNS
     执行结果统计
     #>
@@ -205,7 +207,9 @@ function Invoke-GroupedInstall {
         [string[]]$StepIds,
 
         [Parameter(Mandatory = $true)]
-        [InstallState]$State
+        [InstallState]$State,
+
+        [switch]$SkipConfirmation
     )
 
     # 计算依赖闭包
@@ -217,15 +221,17 @@ function Invoke-GroupedInstall {
         return @{ Total = 0; Success = 0; Failed = 0; Skipped = 0 }
     }
 
-    # 无条件显示执行计划并确认
-    $confirmed = Show-ExecutionPlan `
-        -OriginalSelection $closure.OriginalSelection `
-        -AutoAdded $closure.AutoAdded `
-        -FinalPlan $closure.FinalPlan
+    # install 开头已统一确认时，Basic 分组不再二次确认
+    if (-not $SkipConfirmation) {
+        $confirmed = Show-ExecutionPlan `
+            -OriginalSelection $closure.OriginalSelection `
+            -AutoAdded $closure.AutoAdded `
+            -FinalPlan $closure.FinalPlan
 
-    if (-not $confirmed) {
-        Write-UiWarning "安装已取消"
-        return @{ Total = 0; Success = 0; Failed = 0; Skipped = 0 }
+        if (-not $confirmed) {
+            Write-UiWarning "安装已取消"
+            return @{ Total = 0; Success = 0; Failed = 0; Skipped = 0 }
+        }
     }
 
     # 拓扑排序
@@ -343,12 +349,10 @@ function Confirm-CcqExecutableDownload {
     Write-UiDim "  （拒绝则跳过，可稍后手动安装）"
     Write-Host ""
 
-    $choices = @(
-        [System.Management.Automation.Host.ChoiceDescription]::new("&是", "下载 ccq 可执行文件")
-        [System.Management.Automation.Host.ChoiceDescription]::new("&否", "跳过，稍后手动安装")
-    )
-
-    $decision = $Host.UI.PromptForChoice("", "请选择", $choices, 0)
+    $decision = Show-SingleSelectMenu `
+        -Title "是否现在下载 ccq 可执行文件到 PATH 目录？" `
+        -Options @("是，下载 ccq", "否，稍后手动安装") `
+        -DefaultIndex 0
 
     if ($decision -ne 0) {
         Write-Host ""
@@ -534,6 +538,37 @@ function Show-FinalSummary {
     $State.IsCompleted = ($Results.Failed -eq 0)
 }
 
+function Confirm-BasicInstallPlan {
+    <#
+    .SYNOPSIS
+    在 install 开始时统一确认基础环境安装计划。
+    .RETURNS
+    $true = 用户确认执行；$false = 用户取消
+    #>
+    param()
+
+    Write-UiPrimary "本次将检查/安装以下基础环境组件："
+    Write-Host ""
+    Write-UiInfo "  1. winget（缺失时尝试自动安装，用于后续组件安装）"
+    Write-UiInfo "  2. PowerShell 7（推荐组件，非阻塞）"
+    Write-UiInfo "  3. Windows Terminal（推荐组件，非阻塞）"
+    Write-UiInfo "  4. Node.js（Basic 必需）"
+    Write-UiInfo "  5. Git（Basic 必需）"
+    Write-UiInfo "  6. Claude Code（Basic 必需）"
+    Write-Host ""
+    Write-UiDim "注意：如检测到 Node.js 环境冲突，迁移相关确认仍会单独出现。"
+    Write-UiDim "ccq 管理工具将在基础流程结束后单独确认。"
+    Write-Host ""
+
+    $choice = Show-SingleSelectMenu `
+        -Title "确认开始安装基础环境？" `
+        -Options @("是，开始安装", "否，取消") `
+        -DefaultIndex 0
+
+    return ($choice -eq 0)
+}
+
+
 # ─── 前置环境检测（PS5.1 单运行时，合并自原 Bootstrap.ps1）────────────────────
 
 function Install-RecommendedPowerShell7 {
@@ -598,13 +633,6 @@ function Install-WindowsTerminal {
         }
     } catch {
         Write-UiInfo "无法检测 Windows Terminal（系统不支持 Appx），跳过" -Level Detail
-        return
-    }
-
-    $options = @("安装 Windows Terminal（推荐，更好的终端体验）", "跳过，使用默认终端")
-    $choice = Show-SingleSelectMenu -Title "是否安装 Windows Terminal？" -Options $options -DefaultIndex 0
-    if ($choice -ne 0) {
-        Write-UiInfo "已跳过 Windows Terminal 安装" -Level Detail
         return
     }
 
@@ -696,6 +724,11 @@ function Main {
         Write-UiInfo "一键搭建 Claude Code 基础开发环境（Node.js / Git / Claude Code）" -Level Detail
         Write-Host ""
 
+        if (-not (Confirm-BasicInstallPlan)) {
+            Write-UiInfo "安装已取消"
+            return
+        }
+
         # ── 前置环境检测（PS5.1 单运行时；PS7 / Windows Terminal 为非阻塞推荐组件）
         if (-not (Invoke-InstallPreflight)) {
             Write-UiDanger "系统不兼容，安装中止"
@@ -711,7 +744,7 @@ function Main {
         Write-Host ""
 
         $basicStepIds = @($script:StepGroups["Basic"].StepIds)
-        $results = Invoke-GroupedInstall -StepIds $basicStepIds -State $state
+        $results = Invoke-GroupedInstall -StepIds $basicStepIds -State $state -SkipConfirmation
 
         if ($results.Total -gt 0) {
             Show-FinalSummary -State $state -Results $results

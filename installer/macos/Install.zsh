@@ -121,19 +121,6 @@ ccq_load_step_modules() {
   done
 }
 
-ccq_confirm_homebrew_install() {
-  if [ ! -r /dev/tty ]; then
-    ccq_ui_warning "非交互环境无法确认安装 Homebrew，请手动安装后重试"
-    return 1
-  fi
-
-  ccq_ui_info "将执行 Homebrew 官方安装命令："
-  ccq_ui_dim "$(ccq_homebrew_install_command)"
-  local choice
-  choice="$(ccq_prompt_single "是否现在安装 Homebrew？" 0 "是，安装 Homebrew" "否，稍后手动安装")" || return 1
-  [ "${choice}" = "0" ]
-}
-
 ccq_preflight() {
   if ! ccq_assert_macos_supported 12; then
     ccq_ui_danger "${CCQ_LAST_PLATFORM_ERROR:-macOS 版本检查失败}"
@@ -151,10 +138,8 @@ ccq_preflight() {
 
   if ! ccq_brew_available; then
     ccq_ui_warning "Homebrew 未安装，macOS 自动化安装需要 Homebrew"
-    if ! ccq_confirm_homebrew_install; then
-      ccq_homebrew_install_hint
-      return 1
-    fi
+    ccq_ui_info "将执行 Homebrew 官方安装命令："
+    ccq_ui_dim "$(ccq_homebrew_install_command)"
 
     ccq_ui_primary "正在执行 Homebrew 官方安装脚本..."
     if ! ccq_install_homebrew; then
@@ -364,6 +349,12 @@ ccq_show_final_summary() {
 }
 
 ccq_invoke_grouped_install() {
+  local skip_confirmation=0
+  if [ "${1:-}" = "--skip-confirmation" ]; then
+    skip_confirmation=1
+    shift
+  fi
+
   local selected=("$@")
   local plan_text step_id
   local ordered=()
@@ -377,7 +368,9 @@ ccq_invoke_grouped_install() {
     return 0
   fi
 
-  ccq_confirm_execution_plan "${#selected[@]}" "${selected[@]}" "${ordered[@]}" || { ccq_ui_warning "安装已取消"; return 0; }
+  if [ "${skip_confirmation}" != "1" ]; then
+    ccq_confirm_execution_plan "${#selected[@]}" "${selected[@]}" "${ordered[@]}" || { ccq_ui_warning "安装已取消"; return 0; }
+  fi
 
   local total="${#ordered[@]}" step_index=0 step_name step_description
   for step_id in "${ordered[@]}"; do
@@ -395,6 +388,22 @@ ccq_invoke_grouped_install() {
 }
 
 
+ccq_confirm_basic_install_plan() {
+  ccq_ui_primary "本次将检查/安装以下基础环境组件："
+  printf '\n'
+  ccq_ui_info "  1. Homebrew（缺失时执行官方安装脚本）"
+  ccq_ui_info "  2. nvm / Node.js（Basic 必需）"
+  ccq_ui_info "  3. Git（Basic 必需）"
+  ccq_ui_info "  4. Claude Code（Basic 必需）"
+  printf '\n'
+  ccq_ui_dim "ccq 管理工具将在基础流程结束后单独确认。"
+  printf '\n'
+
+  local choice
+  choice="$(ccq_prompt_single "确认开始安装基础环境？" 0 "是，开始安装" "否，取消")" || return 1
+  [ "${choice}" = "0" ]
+}
+
 ccq_main() {
   ccq_parse_args "$@"
   ccq_load_core
@@ -408,12 +417,17 @@ ccq_main() {
   ccq_show_banner "Claude Code Quickstart"
   ccq_ui_info "一键搭建 Claude Code 基础开发环境（Node.js / Git / Claude Code）" "developer"
 
+  if ! ccq_confirm_basic_install_plan; then
+    ccq_ui_info "安装已取消"
+    return 0
+  fi
+
   # 前置环境检测（macOS 12+ / Homebrew / nvm，zsh 单运行时）
   ccq_preflight || return 1
 
   # 基础环境直装（NodeJS / Git / ClaudeCode），无顶层菜单
   ccq_ui_primary "开始安装基础环境" "developer"
-  ccq_invoke_grouped_install $(ccq_get_group_step_ids Basic)
+  ccq_invoke_grouped_install --skip-confirmation $(ccq_get_group_step_ids Basic)
 
   # ccq 可执行文件下载确认（TDR-6）
   printf '\n'
@@ -439,16 +453,14 @@ ccq_confirm_executable_download() {
   printf '\n'
 
   # 确认选择
-  printf '%s' "请选择 [Y/n]: "
-  read -r decision
-  case "${decision}" in
-    [Nn]*)
-      printf '\n'
-      ccq_ui_info "已跳过 ccq 可执行文件下载"
-      ccq_ui_dim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
-      return 0
-      ;;
-  esac
+  local decision
+  decision="$(ccq_prompt_single "是否现在下载 ccq 可执行文件到 ~/.local/bin？" 0 "是，下载 ccq" "否，稍后手动安装")" || decision=1
+  if [ "${decision}" != "0" ]; then
+    printf '\n'
+    ccq_ui_info "已跳过 ccq 可执行文件下载"
+    ccq_ui_dim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
+    return 0
+  fi
 
   printf '\n'
   ccq_ui_info "正在准备下载 ccq 可执行文件..."

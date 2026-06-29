@@ -27,11 +27,7 @@ function Test-ClaudeCodeInstalled {
 
     return Invoke-UnifiedCheck -StepId "ClaudeCode" -DisplayName "Claude Code" `
         -Command "claude" `
-        -CustomVerify {
-            # 验证 Claude Code 基本功能
-            $helpResult = Invoke-ExternalCommand -Command "claude" -Arguments @("--help") -SuppressOutput -TimeoutSeconds 10
-            return $helpResult.Success
-        } -UseCache
+        -UseCache
 }
 
 function Install-ClaudeCode {
@@ -96,24 +92,10 @@ function Install-ClaudeCode {
         Write-UiSuccess "✓ 前置条件验证通过" -Level Detail
         $result.Data["NodeVersion"] = $nodeVersion
 
-        # 2. 检查是否已安装
+        # 2. 正常已安装场景会在 Test 阶段跳过
         if (Test-CommandAvailable -Command "claude") {
             $existingVersion = Get-CommandVersion -Command "claude"
-            Write-UiInfo "检测到已安装的 Claude Code (版本: $existingVersion)" -Level Detail
-
-            # 询问是否重新安装或更新
-            $options = @("保持现有版本", "重新安装最新版本")
-            $choice = Show-SingleSelectMenu -Title "Claude Code 已安装，选择操作：" -Options $options
-
-            if ($choice -eq 0) {
-                $result.Success = $true
-                $result.Message = "保持现有 Claude Code 安装"
-                $result.Data["ClaudeVersion"] = $existingVersion
-                Write-UiSuccess "✓ 保持现有 Claude Code 安装" -Level Detail
-                return $result
-            } else {
-                Write-UiPrimary "将重新安装 Claude Code..." -Level Detail
-            }
+            Write-UiInfo "检测到已有 Claude Code 命令 (版本: $existingVersion)" -Level Detail
         }
 
         # 3. 使用 npm 全局安装 Claude Code
