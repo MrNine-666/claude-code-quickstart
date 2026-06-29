@@ -436,6 +436,10 @@ function Test-BuildManifestContract {
                 Assert-PathExists "build.Windows.$role CoreFile" (Join-Path $script:InstallerRoot $corePath)
             }
         }
+
+        if ($role -eq 'Install') {
+            Assert-Equal 'build.Windows.Install.OutputEncoding' 'asciiTrampoline' ([string]$artifact['OutputEncoding'])
+        }
     }
 
     foreach ($artifact in $macOSArtifacts) {

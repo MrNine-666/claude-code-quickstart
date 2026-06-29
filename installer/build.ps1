@@ -260,6 +260,24 @@ function Build-SingleFileScript {
         [string]$OutputEncoding = 'UTF8'
     )
 
+    function ConvertTo-Base64LineList {
+        param(
+            [Parameter(Mandatory)]
+            [string]$Text,
+
+            [int]$LineWidth = 76
+        )
+
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+        $base64 = [Convert]::ToBase64String($bytes)
+        $lines = [System.Collections.Generic.List[string]]::new()
+        for ($offset = 0; $offset -lt $base64.Length; $offset += $LineWidth) {
+            $length = [Math]::Min($LineWidth, $base64.Length - $offset)
+            $lines.Add($base64.Substring($offset, $length))
+        }
+        return ,@($lines)
+    }
+
     foreach ($relPath in @($FileOrder)) {
         $fullPath = Join-Path $InstallerRoot $relPath
         if (-not (Test-Path $fullPath -PathType Leaf)) {
@@ -328,12 +346,36 @@ function Build-SingleFileScript {
         New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
     }
 
+    # Release install.ps1 必须是纯 ASCII trampoline：Windows PowerShell 5.1 的 Invoke-RestMethod
+    # 对 GitHub Release application/octet-stream 会按 Latin1/ANSI 解码，BOM 也无法纠正。
+    # 让外层脚本只包含 ASCII，再在本机用 UTF-8 还原真实脚本，才能保留 irm|iex 入口。
+    $scriptText = $buffer -join "`r`n"
+    $outputText = $scriptText
+    $effectiveEncoding = $OutputEncoding
+    if ($OutputEncoding -eq 'asciiTrampoline') {
+        $base64Lines = @(ConvertTo-Base64LineList -Text $scriptText)
+        $trampoline = [System.Collections.Generic.List[string]]::new()
+        $trampoline.Add('#Requires -Version 5.1')
+        $trampoline.Add('# This ASCII trampoline preserves irm|iex compatibility on Windows PowerShell 5.1.')
+        $trampoline.Add('$ErrorActionPreference = ''Stop''')
+        $trampoline.Add('$script = @''')
+        foreach ($base64Line in $base64Lines) {
+            $trampoline.Add($base64Line)
+        }
+        $trampoline.Add('''@')
+        $trampoline.Add('$bytes = [Convert]::FromBase64String(($script -replace ''\s'', ''''))')
+        $trampoline.Add('$text = [Text.Encoding]::UTF8.GetString($bytes)')
+        $trampoline.Add('& ([scriptblock]::Create($text)) @args')
+        $outputText = $trampoline -join "`r`n"
+        $effectiveEncoding = 'ascii'
+    }
+
     # 临时文件用 .tmp 而非 .ps1 扩展名：含 irm|iex 下载-执行特征的 install.ps1，其 .ps1 临时文件
     # 可能被 Windows Defender 在 Move 前直接删除/隔离，导致 "Cannot find path"（重试无法挽回）。
     # .tmp 不触发 Defender 对 PowerShell 脚本的启发式扫描，规避临时阶段被删；Move 后才成为 .ps1。
     $tempPath = Join-Path $outputDir ("_tmp_" + [System.IO.Path]::GetRandomFileName() + ".tmp")
     try {
-        $buffer -join "`r`n" | Set-Content -Path $tempPath -Encoding $OutputEncoding -NoNewline
+        $outputText | Set-Content -Path $tempPath -Encoding $effectiveEncoding -NoNewline
         # Move 重试：Windows Defender 实时扫描可能瞬时锁定刚写入的大文件（尤其含下载-执行模式的
         # install.ps1），触发 Access denied。重试 5 次（间隔 300ms）让扫描句柄释放后再 Move。
         for ($moveAttempt = 1; ; $moveAttempt++) {
