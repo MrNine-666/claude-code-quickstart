@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 # Install.ps1 - CCQ（安装入口）
 # 功能: 首次安装入口（Onboarding），PS5.1 单运行时直跑——前置检测 + 基础环境直装
 #       （NodeJS / Git / ClaudeCode），无顶层菜单；进阶/管理功能由 Manage TUI 承载
