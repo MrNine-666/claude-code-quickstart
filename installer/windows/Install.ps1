@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 # Install.ps1 - CCQ（安装入口）
 # 功能: 首次安装入口（Onboarding），PS5.1 单运行时直跑——前置检测 + 基础环境直装
 #       （NodeJS / Git / ClaudeCode），无顶层菜单；进阶/管理功能由 Manage TUI 承载
@@ -13,6 +13,13 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# 将 param 默认值显式提升到 script 作用域（HC-15 trampoline 兼容）。
+# dist/install.ps1 经 irm|iex 走 ASCII trampoline：真实脚本由 [scriptblock]::Create 还原后
+# 以 & $sb 执行，此链路下 param 变量不会自动绑定到 $script: 作用域；而
+# Get-CcqReleaseDownloadBaseUrl 在 StrictMode 下读 $script:CcqReleaseTag 会抛"未设置"异常，
+# 导致 ccq 下载阶段整个安装器崩溃。源码 -File 模式碰巧能跑通，release 模式必现。
+$script:CcqReleaseTag = $CcqReleaseTag
 
 # ─── 中文编码修复（必须在 PS 版本检查前执行，不能移入 core/ 模块）─────────────
 # 注意：此块与 Manage.ps1 中的相同代码共用 _CcqKernel32Cp 类名。
@@ -384,6 +391,11 @@ function Confirm-CcqExecutableDownload {
         Write-Host ""
         Write-UiInfo "已跳过 ccq 可执行文件下载"
         Write-UiDim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
+        Write-Host ""
+        Write-UiPrimary "手动配置供应商（使用 Claude Code 必需）："
+        Write-UiInfo "  在 ~/.claude/settings.json 中添加 API Key，示例："
+        Write-UiDim "    { `"env`": { `"ANTHROPIC_AUTH_TOKEN`": `"sk-ant-...`" } }"
+        Write-UiInfo "  或稍后安装 ccq 后通过「供应商」菜单可视化配置"
         return
     }
 
@@ -417,23 +429,28 @@ function Confirm-CcqExecutableDownload {
 
     if ($installResult.Success) {
         Write-Host ""
-        Write-UiSuccess "════════════════════════════════════════════════════════════"
         Write-UiSuccess " ccq 可执行文件安装成功！"
-        Write-UiSuccess "════════════════════════════════════════════════════════════"
         Write-Host ""
-        Write-UiInfo "下次启动新终端后，可直接运行以下命令进入管理控制台："
+        Write-UiPrimary "下一步："
+        Write-UiInfo "  1. 打开 Windows Terminal，新建一个 PowerShell 7 标签页"
+        Write-UiDim "     （Windows Terminal 中点击标签栏的 ∨ 下拉菜单选择 PowerShell）"
+        Write-UiInfo "  2. 输入 ccq 进入管理控制台"
+        Write-UiInfo "  3. 选择「供应商」菜单配置 API Key，即可开始使用 Claude Code"
         Write-Host ""
-        Write-UiPrimary "    ccq"
-        Write-Host ""
-        Write-UiDim "（当前会话 PATH 尚未刷新，请开启新终端）"
+        Write-UiDim "（当前会话 PATH 尚未刷新，必须开启新终端 ccq 命令才生效）"
     } else {
         Write-Host ""
-        Write-UiWarning "ccq 可执行文件下载失败，但不影响 Claude Code 基础环境"
+        Write-UiWarning "ccq 可执行文件下载失败"
         Write-UiDim "  错误: $($installResult.ErrorMessage)"
         Write-UiInfo "您可以稍后手动下载："
         Write-UiInfo "  1. 访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
         Write-UiInfo "  2. 下载对应平台的可执行文件（$exeName）"
         Write-UiInfo "  3. 放置到任意 PATH 目录"
+        Write-Host ""
+        Write-UiPrimary "手动配置供应商（使用 Claude Code 必需）："
+        Write-UiInfo "  在 ~/.claude/settings.json 中添加 API Key，示例："
+        Write-UiDim "    { `"env`": { `"ANTHROPIC_AUTH_TOKEN`": `"sk-ant-...`" } }"
+        Write-UiInfo "  或等待 ccq 安装后通过「供应商」菜单可视化配置"
     }
 }
 

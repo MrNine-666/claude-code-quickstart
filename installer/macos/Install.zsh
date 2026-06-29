@@ -474,6 +474,11 @@ ccq_confirm_executable_download() {
     printf '\n'
     ccq_ui_info "已跳过 ccq 可执行文件下载"
     ccq_ui_dim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
+    printf '\n'
+    ccq_ui_primary "手动配置供应商（使用 Claude Code 必需）："
+    ccq_ui_info "  在 ~/.claude/settings.json 中添加 API Key，示例："
+    ccq_ui_dim '    { "env": { "ANTHROPIC_AUTH_TOKEN": "sk-ant-..." } }'
+    ccq_ui_info "  或稍后安装 ccq 后通过「供应商」菜单可视化配置"
     return 0
   fi
 
@@ -512,22 +517,26 @@ ccq_confirm_executable_download() {
   # 4. 执行下载与安装
   if ccq_install_executable "${download_url}"; then
     printf '\n'
-    ccq_ui_success "════════════════════════════════════════════════════════════"
     ccq_ui_success " ccq 可执行文件安装成功！"
-    ccq_ui_success "════════════════════════════════════════════════════════════"
     printf '\n'
-    ccq_ui_info "下次启动新终端后，可直接运行以下命令进入管理控制台："
+    ccq_ui_primary "下一步："
+    ccq_ui_info "  1. 打开一个新的终端窗口"
+    ccq_ui_info "  2. 输入 ccq 进入管理控制台"
+    ccq_ui_info "  3. 选择「供应商」菜单配置 API Key，即可开始使用 Claude Code"
     printf '\n'
-    ccq_ui_primary "    ccq"
-    printf '\n'
-    ccq_ui_dim "（当前会话 PATH 尚未刷新，请开启新终端）"
+    ccq_ui_dim "（当前会话 PATH 尚未刷新，必须开启新终端 ccq 命令才生效）"
   else
     printf '\n'
-    ccq_ui_warning "ccq 可执行文件下载失败，但不影响 Claude Code 基础环境"
+    ccq_ui_warning "ccq 可执行文件下载失败"
     ccq_ui_info "您可以稍后手动下载："
     ccq_ui_info "  1. 访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
     ccq_ui_info "  2. 下载对应平台的可执行文件（${exe_name}）"
     ccq_ui_info "  3. 放置到 ~/.local/bin 并设置可执行权限（chmod +x）"
+    printf '\n'
+    ccq_ui_primary "手动配置供应商（使用 Claude Code 必需）："
+    ccq_ui_info "  在 ~/.claude/settings.json 中添加 API Key，示例："
+    ccq_ui_dim '    { "env": { "ANTHROPIC_AUTH_TOKEN": "sk-ant-..." } }'
+    ccq_ui_info "  或等待 ccq 安装后通过「供应商」菜单可视化配置"
   fi
 }
 

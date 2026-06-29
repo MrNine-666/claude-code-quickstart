@@ -81,15 +81,35 @@ function Invoke-ExternalCommand {
                 }
                 $actualArguments = @('/d', '/s', '/c', $fullCommand)
             }
-            # 对于 .ps1 文件，通过 powershell 执行
+            # 对于 .ps1 文件：优先用同目录同名 .cmd shim（不依赖 PS7、不受执行策略约束）
             elseif ($extension -eq '.ps1') {
-                $actualFileName = 'pwsh.exe'
-                # 路径含空格时必须加引号，否则 ProcessStartInfo.Arguments（-join ' '）拼接后路径被截断
-                $ps1Path = $cmdInfo.Source
-                if ($ps1Path -match '\s') {
-                    $ps1Path = "`"$ps1Path`""
+                $ps1Dir = Split-Path -Parent $cmdInfo.Source
+                $baseName = [System.IO.Path]::GetFileNameWithoutExtension($cmdInfo.Source)
+                $cmdShimPath = Join-Path $ps1Dir "$baseName.cmd"
+
+                if (Test-Path $cmdShimPath -PathType Leaf) {
+                    # 同目录有 .cmd shim（npm.cmd / yarn.cmd / pnpm.cmd 等），走 cmd.exe
+                    $actualFileName = 'cmd.exe'
+                    $cmdPath = $cmdShimPath
+                    if ($cmdPath -match '\s') {
+                        $cmdPath = "`"$cmdPath`""
+                    }
+                    $fullCommand = $cmdPath
+                    if ($Arguments.Count -gt 0) {
+                        $fullCommand += " " + ($Arguments -join ' ')
+                    }
+                    $actualArguments = @('/d', '/s', '/c', $fullCommand)
+                    $result.ResolvedPath = $cmdShimPath
+                } else {
+                    # 无 .cmd shim，回退 PowerShell 引擎（优先 pwsh，不可用则 powershell.exe）
+                    $psEngine = if (Get-Command 'pwsh.exe' -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+                    $actualFileName = $psEngine
+                    $ps1Path = $cmdInfo.Source
+                    if ($ps1Path -match '\s') {
+                        $ps1Path = "`"$ps1Path`""
+                    }
+                    $actualArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ps1Path) + $Arguments
                 }
-                $actualArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ps1Path) + $Arguments
             }
             # 对于 .exe 文件，直接使用解析后的完整路径
             elseif ($extension -eq '.exe') {
