@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {existsSync} from 'node:fs';
-import {contractPath, loadContract, resolveContractsDir} from '../src/core/contracts.ts';
+import {contractPath, loadContract, loadTextContract, resolveContractsDir} from '../src/core/contracts.ts';
 
 // TDR-10 拆分后 TUI 契约位于 tui/contracts/（install 链契约在 installer/contracts/）。
 const dir = resolveContractsDir();
@@ -18,8 +18,11 @@ assert.ok(providers && typeof providers === 'object', 'providers.json 应解析�
 const mcpServers = loadContract('mcp-servers.json');
 assert.ok(mcpServers && typeof mcpServers === 'object', 'mcp-servers.json 应解析为对象');
 
-const ccgWorkflow = loadContract('ccg-workflow.json');
-assert.ok(ccgWorkflow && typeof ccgWorkflow === 'object', 'ccg-workflow.json 应解析为对象');
+const claudeMdBase = loadTextContract('templates/claude-md.base.md');
+assert.ok(claudeMdBase.includes('# Claude Code 增强配置'), 'claude-md.base.md 应加载为模板文本');
+
+const claudeMdWindows = loadTextContract('templates/claude-md.platform-windows.md');
+assert.ok(claudeMdWindows.includes('Windows / PowerShell'), 'claude-md.platform-windows.md 应加载为模板文本');
 
 // install 链契约 steps.json 属 installer/contracts/，不应在 TUI 契约目录（边界保护）
 assert.throws(() => loadContract('steps.json'), /契约文件不存在/,

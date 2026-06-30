@@ -16,10 +16,8 @@ export type ModalProps = {
 	readonly children: React.ReactNode;
 };
 
-const MODAL_BACKGROUND = '#16110D';
 const DEFAULT_MODAL_WIDTH = 40;
 const DEFAULT_MODAL_HEIGHT = 8;
-
 export function Modal({
 	active,
 	title,
@@ -50,7 +48,7 @@ export function Modal({
 			flexDirection="column"
 			borderStyle="rounded"
 			borderColor={accent}
-			backgroundColor={MODAL_BACKGROUND}
+			backgroundColor={colors.modalBackground}
 			paddingX={1}
 		>
 			<text fg={accent} attributes={TextAttributes.BOLD}>{title}</text>

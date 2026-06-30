@@ -158,7 +158,8 @@ function mcpShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		{command: MCP_COMMANDS.ADD, label: '新增'},
 		{command: MCP_COMMANDS.EDIT, label: '编辑'},
 		{command: MCP_COMMANDS.DELETE, label: '删除'},
-		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}
+		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
+		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
 	]);
 }
 
@@ -201,7 +202,8 @@ function skillsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		{command: SKILLS_COMMANDS.UPDATE_ALL, label: '更新全部'},
 		{command: SKILLS_COMMANDS.UNINSTALL, label: '卸载'},
 		{command: SKILLS_COMMANDS.REFRESH, label: '刷新'},
-		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}
+		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
+		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
 	]);
 }
 
@@ -212,7 +214,8 @@ function promptsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 			{command: PROMPTS_COMMANDS.EDIT_ENTRY, label: '编辑'},
 			{command: PROMPTS_COMMANDS.PREVIEW_UP, label: '滚动'},
 			{command: PROMPTS_COMMANDS.PREVIEW_DOWN, label: '滚动'},
-			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
 		]);
 	}
 
@@ -220,7 +223,8 @@ function promptsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	if (subMode === 'view-empty') {
 		return buildShortcuts([
 			{command: PROMPTS_COMMANDS.ADD, label: '新建'},
-			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
 		]);
 	}
 
@@ -269,7 +273,8 @@ function configShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 			{command: CONFIG_COMMANDS.EDIT_ENTRY, label: '编辑'},
 			{command: CONFIG_COMMANDS.PREVIEW_UP, label: '滚动'},
 			{command: CONFIG_COMMANDS.PREVIEW_DOWN, label: '滚动'},
-			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
 		]);
 	}
 
@@ -277,7 +282,8 @@ function configShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	if (subMode === 'view-empty') {
 		return buildShortcuts([
 			{command: CONFIG_COMMANDS.ADD, label: '新建'},
-			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
 		]);
 	}
 

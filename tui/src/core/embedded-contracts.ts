@@ -1,24 +1,19 @@
 /**
  * 内嵌契约 - 编译时静态导入
  *
- * Bun build --compile 会将这些 import 的文件内容内嵌进可执行文件
- * 使用 `with { type: "file" }` 确保文件以原始形式内嵌
+ * Bun build --compile 会将 text loader 的文件内容以内联字符串形式打进可执行文件。
+ * 不使用 file loader：file loader 返回的是文件路径，不能作为契约内容解析。
  */
 
 // JSON 契约
-import providersJson from "../../contracts/providers.json" with { type: "file" };
-import mcpServersJson from "../../contracts/mcp-servers.json" with { type: "file" };
-import claudeConfigJson from "../../contracts/claude-config.json" with { type: "file" };
-import ccgWorkflowJson from "../../contracts/ccg-workflow.json" with { type: "file" };
-import templatesIndexJson from "../../contracts/templates/index.json" with { type: "file" };
+import providersJson from "../../contracts/providers.json" with { type: "text" };
+import mcpServersJson from "../../contracts/mcp-servers.json" with { type: "text" };
+import claudeConfigJson from "../../contracts/claude-config.json" with { type: "text" };
 
 // Markdown 模板
-import claudeMdBase from "../../contracts/templates/claude-md.base.md" with { type: "file" };
-import claudeMdWindows from "../../contracts/templates/claude-md.platform-windows.md" with { type: "file" };
-import claudeMdMacos from "../../contracts/templates/claude-md.platform-macos.md" with { type: "file" };
-
-// JavaScript 契约
-import claudeConfigDrift from "../../contracts/claude-config-drift.js" with { type: "file" };
+import claudeMdBase from "../../contracts/templates/claude-md.base.md" with { type: "text" };
+import claudeMdWindows from "../../contracts/templates/claude-md.platform-windows.md" with { type: "text" };
+import claudeMdMacos from "../../contracts/templates/claude-md.platform-macos.md" with { type: "text" };
 
 function fileAsset(value: unknown): string {
 	return value as string;
@@ -31,12 +26,9 @@ export const EMBEDDED_CONTRACTS = new Map<string, string>([
 	["providers.json", fileAsset(providersJson)],
 	["mcp-servers.json", fileAsset(mcpServersJson)],
 	["claude-config.json", fileAsset(claudeConfigJson)],
-	["ccg-workflow.json", fileAsset(ccgWorkflowJson)],
-	["templates/index.json", fileAsset(templatesIndexJson)],
 	["templates/claude-md.base.md", fileAsset(claudeMdBase)],
 	["templates/claude-md.platform-windows.md", fileAsset(claudeMdWindows)],
 	["templates/claude-md.platform-macos.md", fileAsset(claudeMdMacos)],
-	["claude-config-drift.js", fileAsset(claudeConfigDrift)],
 ]);
 
 /**

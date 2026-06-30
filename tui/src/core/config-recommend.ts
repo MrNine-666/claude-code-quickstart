@@ -1,6 +1,5 @@
 import {existsSync, readFileSync} from 'node:fs';
-import {resolveContractsDir} from './contracts.js';
-import {join} from 'node:path';
+import {loadContract} from './contracts.js';
 import {atomicWrite} from './fs-utils.js';
 import {settingsPath} from './paths.js';
 
@@ -60,13 +59,8 @@ function displayValue(value: unknown): string {
 
 /** 读取 claude-config.json 契约；不可用时返回 null（视图据此提示契约缺失）。 */
 export function loadConfigContract(): ConfigContract | null {
-	const path = join(resolveContractsDir(), 'claude-config.json');
-	if (!existsSync(path)) {
-		return null;
-	}
-
 	try {
-		return JSON.parse(readFileSync(path, 'utf8')) as ConfigContract;
+		return loadContract<ConfigContract>('claude-config.json');
 	} catch {
 		return null;
 	}

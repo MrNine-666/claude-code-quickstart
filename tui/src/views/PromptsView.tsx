@@ -172,7 +172,8 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 		// Ctrl+O 直接导入推荐，不再弹确认浮层：导入只写入编辑缓冲，不落盘，可 Ctrl+Z 撤销。
 		// ── view 态 ──
 		if (mode === 'view') {
-			if (name === 'escape') { onExitToNav(); return; }
+			// Esc/← 返回左侧导航（对齐 ProviderView/McpView/SkillsView 列表态返回键）
+			if (name === 'escape' || name === 'left' || name === 'arrowleft') { onExitToNav(); return; }
 			if (name === 'e' && hasContent) { enterEdit(readCurrentClaudeMd() ?? ''); return; }
 			if (name === 'a' && !hasContent) { enterEdit(''); return; }
 			// ↑/↓ 滚动展示区（scrollbox 需主动驱动，否则默认不响应键盘）

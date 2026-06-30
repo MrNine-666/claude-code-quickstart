@@ -237,7 +237,7 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 						</scrollbox>
 					) : (
 						<scrollbox style={{ flexGrow: 1 }}>
-							<line-number fg="#6b7280" bg="#161b22" minWidth={3} paddingRight={1} showLineNumbers style={{ flexGrow: 1 }}>
+							<line-number fg={colors.lineNumberForeground} bg={colors.lineNumberBackground} minWidth={3} paddingRight={1} showLineNumbers style={{ flexGrow: 1 }}>
 								<code
 									content={previewContent}
 									filetype={codeFiletype(filetype)}

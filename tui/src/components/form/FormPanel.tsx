@@ -164,7 +164,7 @@ export function FormPanel({
 					</box>
 					{field.helpText ? (
 						<box marginLeft={FORM_VALUE_MARGIN_LEFT}>
-							<text fg="gray" attributes={TextAttributes.DIM}>{field.helpText}</text>
+							<text fg={colors.muted} attributes={TextAttributes.DIM}>{field.helpText}</text>
 						</box>
 					) : null}
 				</box>

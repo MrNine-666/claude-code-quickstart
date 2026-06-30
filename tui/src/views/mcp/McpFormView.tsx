@@ -228,7 +228,7 @@ export function McpFormView({mode, serverId, initialJson, active, contentHeight 
 			{/* 凭据获取提示（选内置模板带出 / edit env-file 提示）*/}
 			{credHint ? (
 				<box marginBottom={1}>
-					<text fg="gray" attributes={TextAttributes.DIM}>{`凭据获取：${credHint}`}</text>
+					<text fg={colors.muted} attributes={TextAttributes.DIM}>{`凭据获取：${credHint}`}</text>
 				</box>
 			) : null}
 

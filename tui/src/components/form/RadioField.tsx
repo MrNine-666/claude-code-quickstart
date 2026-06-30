@@ -25,7 +25,7 @@ export function RadioField({ label, value, options, helpText, focused }: RadioFi
 							return (
 								<text
 									key={option.value}
-									fg={selected ? '#1A1A1A' : focused ? colors.primary : undefined}
+									fg={selected ? colors.navSelectedForeground : focused ? colors.primary : undefined}
 									bg={selected ? colors.primary : undefined}
 									attributes={selected ? TextAttributes.BOLD : 0}
 								>
@@ -38,7 +38,7 @@ export function RadioField({ label, value, options, helpText, focused }: RadioFi
 			</box>
 			{helpText ? (
 				<box marginLeft={FORM_VALUE_MARGIN_LEFT}>
-					<text fg="gray" attributes={TextAttributes.DIM}>
+					<text fg={colors.muted} attributes={TextAttributes.DIM}>
 						{helpText}
 					</text>
 				</box>

@@ -30,7 +30,7 @@ export function KeyValueField({ label, entries, text, helpText, focused, active,
 					{active && focused ? (
 						<input value={text} placeholder="KEY=VALUE,KEY2=VALUE2" onInput={onChange} focused />
 					) : entries.length === 0 ? (
-						<text fg="gray">（无）</text>
+						<text fg={colors.muted}>（无）</text>
 					) : (
 						<text fg={colors.muted}>{entries.slice(0, 3).map((entry) => `${entry.key}=${entry.value}`).join(', ')}</text>
 					)}
@@ -38,7 +38,7 @@ export function KeyValueField({ label, entries, text, helpText, focused, active,
 			</box>
 			{helpText ? (
 				<box marginLeft={FORM_VALUE_MARGIN_LEFT}>
-					<text fg="gray" attributes={TextAttributes.DIM}>
+					<text fg={colors.muted} attributes={TextAttributes.DIM}>
 						{helpText}
 					</text>
 				</box>

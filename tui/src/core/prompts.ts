@@ -1,6 +1,6 @@
 import {existsSync, readFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {resolveContractsDir} from './contracts.js';
+import {loadTextContract} from './contracts.js';
 import {atomicWrite} from './fs-utils.js';
 import {claudeDir} from './paths.js';
 
@@ -18,20 +18,10 @@ export type PromptsRecommendation = {
 	readonly lineCount: number;
 };
 
-/** templates 目录下指定文件名的绝对路径。 */
-function templateFilePath(fileName: string): string {
-	return join(resolveContractsDir(), 'templates', fileName);
-}
-
 /** 读 templates 目录下任意文件；缺失或读取失败返回 null，不抛。 */
 function readTemplateFile(fileName: string): string | null {
-	const path = templateFilePath(fileName);
-	if (!existsSync(path)) {
-		return null;
-	}
-
 	try {
-		return readFileSync(path, 'utf8');
+		return loadTextContract(`templates/${fileName}`);
 	} catch {
 		return null;
 	}

@@ -37,7 +37,7 @@ export function SelectField({ label, value, options, helpText, focused, onChange
 			</box>
 			{helpText ? (
 				<box marginLeft={FORM_VALUE_MARGIN_LEFT}>
-					<text fg="gray" attributes={TextAttributes.DIM}>
+					<text fg={colors.muted} attributes={TextAttributes.DIM}>
 						{helpText}
 					</text>
 				</box>

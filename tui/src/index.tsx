@@ -4,6 +4,7 @@ import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui";
 import { KeymapProvider } from "@opentui/keymap/react";
 import App from "./app.js";
 import { applyPendingUpdateOnStartup, startBackgroundUpdateCheck } from "./core/update.js";
+import { setActiveTheme, type AppThemeMode } from "./theme/index.js";
 
 // non-TTY 守卫：管道/重定向时输出只读提示，不进交互 TUI（对齐 HC-NON-TTY）
 if (!process.stdin.isTTY) {
@@ -31,8 +32,15 @@ const renderer = await createCliRenderer({
 // 运行时版本已对齐到 0.4.2，这里只做 CliRenderer 私有类型桥接。
 const keymap = createDefaultOpenTuiKeymap(renderer as never);
 
+// 终端主题检测：OpenTUI 用 DEC 2031 实时上报 + OSC 10/11 亮度回退；
+// waitForThemeMode 短暂阻塞首帧以确定 dark/light，超时返回 null → 默认 dark。
+// 主题确定后注入 theme/index.ts 的 activeTheme，随后 App 内 theme_mode 事件负责实时跟随。
+const detectedMode = await renderer.waitForThemeMode(500);
+const initialThemeMode: AppThemeMode = detectedMode === 'light' ? 'light' : 'dark';
+setActiveTheme(initialThemeMode);
+
 createRoot(renderer).render(
 	<KeymapProvider keymap={keymap}>
-		<App />
+		<App initialThemeMode={initialThemeMode} />
 	</KeymapProvider>
 );

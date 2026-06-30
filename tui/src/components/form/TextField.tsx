@@ -1,5 +1,6 @@
 import React from 'react';
 import { TextAttributes } from '@opentui/core';
+import { colors } from '../../theme/index.js';
 import { FormLabel, FORM_VALUE_MARGIN_LEFT } from './FormLabel.js';
 import { FormControlFrame } from './FormControlFrame.js';
 
@@ -31,13 +32,13 @@ export function TextField({ label, value, secret = false, helpText, focused, act
 					{active && focused ? (
 						<input value={value} placeholder={secret ? '输入密钥（不会显示）' : `输入 ${label}`} onInput={onChange} focused />
 					) : (
-						<text fg={value ? undefined : 'gray'}>{displayValue || '（空）'}</text>
+						<text fg={value ? undefined : colors.muted}>{displayValue || '（空）'}</text>
 					)}
 				</FormControlFrame>
 			</box>
 			{helpText ? (
 				<box marginLeft={FORM_VALUE_MARGIN_LEFT}>
-					<text fg="gray" attributes={TextAttributes.DIM}>
+					<text fg={colors.muted} attributes={TextAttributes.DIM}>
 						{helpText}
 					</text>
 				</box>

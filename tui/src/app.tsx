@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRenderer } from '@opentui/react';
-import { TextAttributes, getTreeSitterClient, SyntaxStyle, RGBA } from '@opentui/core';
+import { TextAttributes, getTreeSitterClient, SyntaxStyle, RGBA, type ThemeMode as OpenTuiThemeMode } from '@opentui/core';
 import { useManageInput } from './hooks/use-manage-input.js';
 import { useDetectionCache, type DetectionCache } from './hooks/use-detection-cache.js';
 import {
@@ -14,8 +14,8 @@ import {
 } from './state/manage-state.js';
 import { navShortcuts, viewShortcuts } from './state/shortcuts.js';
 import { Modal, ShortcutBar, ToastViewport, toast, type StatusDotKind } from './components/index.js';
-import { colors, borderColors, borderStyles, PRIMARY } from './theme/index.js';
-import { CCQ_LOGO, CCQ_LOGO_COLORS } from './theme/logo.js';
+import { colors, borderColors, borderStyles, PRIMARY, getTheme, setActiveTheme, type AppThemeMode, type ThemePalette } from './theme/index.js';
+import { CCQ_LOGO } from './theme/logo.js';
 import { CCQ_VERSION } from './version.js';
 import { applyUpdate, checkLatestVersion, downloadUpdate, restartExecutable } from './core/update.js';
 import { displayWidth } from './core/text-utils.js';
@@ -54,7 +54,47 @@ type UpdateScreen =
 
 type UpdateStatus = UpdateScreen['kind'];
 
-export default function App() {
+type AppProps = {
+	readonly initialThemeMode: AppThemeMode;
+};
+
+function normalizeThemeMode(mode: OpenTuiThemeMode | null | undefined): AppThemeMode {
+	return mode === 'light' ? 'light' : 'dark';
+}
+
+function createSyntaxStyle(theme: ThemePalette): SyntaxStyle {
+	const { syntax } = theme;
+	return SyntaxStyle.fromStyles({
+		// code token（fenced code block：TS/JS）
+		keyword: { fg: RGBA.fromHex(syntax.keyword), bold: true },
+		string: { fg: RGBA.fromHex(syntax.string) },
+		number: { fg: RGBA.fromHex(syntax.number) },
+		comment: { fg: RGBA.fromHex(syntax.comment), italic: true },
+		function: { fg: RGBA.fromHex(syntax.function) },
+		type: { fg: RGBA.fromHex(syntax.type) },
+		operator: { fg: RGBA.fromHex(syntax.operator) },
+		// markdown markup token（全局规则页 CLAUDE.md：标题/粗体/列表/引用/代码/链接着色）
+		'markup.heading': { fg: RGBA.fromHex(syntax.markupHeading), bold: true },
+		'markup.heading.1': { fg: RGBA.fromHex(syntax.markupHeading1), bold: true },
+		'markup.heading.2': { fg: RGBA.fromHex(syntax.markupHeading2), bold: true },
+		'markup.heading.3': { fg: RGBA.fromHex(syntax.markupHeading3), bold: true },
+		'markup.bold': { fg: RGBA.fromHex(syntax.markupBold), bold: true },
+		'markup.strong': { fg: RGBA.fromHex(syntax.markupBold), bold: true },
+		'markup.italic': { fg: RGBA.fromHex(syntax.markupBold), italic: true },
+		'markup.list': { fg: RGBA.fromHex(syntax.markupList) },
+		'markup.list.checked': { fg: RGBA.fromHex(syntax.markupListChecked) },
+		'markup.quote': { fg: RGBA.fromHex(syntax.markupQuote), italic: true },
+		'markup.raw': { fg: RGBA.fromHex(syntax.markupRaw) },
+		'markup.raw.block': { fg: RGBA.fromHex(syntax.markupRaw) },
+		'markup.link': { fg: RGBA.fromHex(syntax.markupLink), underline: true },
+		'markup.link.url': { fg: RGBA.fromHex(syntax.markupLink), underline: true },
+		default: { fg: RGBA.fromHex(syntax.default) }
+	});
+}
+
+export default function App({ initialThemeMode }: AppProps) {
+	const [themeMode, setThemeMode] = useState<AppThemeMode>(initialThemeMode);
+	const theme = useMemo(() => getTheme(themeMode), [themeMode]);
 	const [state, setState] = useState(createInitialManageState);
 	const [viewSubMode, setViewSubMode] = useState<string>('');
 	const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
@@ -63,12 +103,25 @@ export default function App() {
 	const [displayMenuId, setDisplayMenuId] = useState<ManageModuleId>(menuItems[0]!.id);
 	const renderer = useRenderer();
 	useEffect(() => {
+		const handleThemeMode = (nextMode: OpenTuiThemeMode): void => {
+			const normalized = normalizeThemeMode(nextMode);
+			setActiveTheme(normalized);
+			setThemeMode(normalized);
+		};
+
+		renderer.on('theme_mode', handleThemeMode);
+		return () => {
+			renderer.off('theme_mode', handleThemeMode);
+		};
+	}, [renderer]);
+
+	useEffect(() => {
 		if (state.selectedIndex < menuItems.length) {
 			setDisplayMenuId(menuItems[state.selectedIndex]!.id);
 		}
 	}, [state.selectedIndex]);
 
-	// 初始化 Tree-sitter 语法高亮（Phase 5B.1）
+	// 初始化 Tree-sitter 语法高亮（Phase 5B.1），配色随终端 dark/light 主题重建。
 	const [syntaxStyle, setSyntaxStyle] = useState<SyntaxStyle | null>(null);
 	useEffect(() => {
 		// 编译产物中 Tree-sitter worker 无法启动（见 IS_COMPILED_EXECUTABLE 注释），
@@ -83,39 +136,12 @@ export default function App() {
 			await client.initialize();
 			if (!mounted) return;
 
-			// GitHub Dark 主题配色
-			const style = SyntaxStyle.fromStyles({
-				// code token（fenced code block：TS/JS）
-				keyword: { fg: RGBA.fromHex('#FF7B72'), bold: true },
-				string: { fg: RGBA.fromHex('#A5D6FF') },
-				number: { fg: RGBA.fromHex('#79C0FF') },
-				comment: { fg: RGBA.fromHex('#8B949E'), italic: true },
-				function: { fg: RGBA.fromHex('#D2A8FF') },
-				type: { fg: RGBA.fromHex('#FFA657') },
-				operator: { fg: RGBA.fromHex('#FF7B72') },
-				// markdown markup token（全局规则页 CLAUDE.md：标题/粗体/列表/引用/代码/链接着色）
-				'markup.heading': { fg: RGBA.fromHex('#58A6FF'), bold: true },
-				'markup.heading.1': { fg: RGBA.fromHex('#79C0FF'), bold: true },
-				'markup.heading.2': { fg: RGBA.fromHex('#58A6FF'), bold: true },
-				'markup.heading.3': { fg: RGBA.fromHex('#58A6FF'), bold: true },
-				'markup.bold': { fg: RGBA.fromHex('#F0F6FC'), bold: true },
-				'markup.strong': { fg: RGBA.fromHex('#F0F6FC'), bold: true },
-				'markup.italic': { fg: RGBA.fromHex('#F0F6FC'), italic: true },
-				'markup.list': { fg: RGBA.fromHex('#FF7B72') },
-				'markup.list.checked': { fg: RGBA.fromHex('#3FB950') },
-				'markup.quote': { fg: RGBA.fromHex('#8B949E'), italic: true },
-				'markup.raw': { fg: RGBA.fromHex('#A5D6FF') },
-				'markup.raw.block': { fg: RGBA.fromHex('#A5D6FF') },
-				'markup.link': { fg: RGBA.fromHex('#58A6FF'), underline: true },
-				'markup.link.url': { fg: RGBA.fromHex('#58A6FF'), underline: true },
-				default: { fg: RGBA.fromHex('#E6EDF3') }
-			});
-			setSyntaxStyle(style);
+			setSyntaxStyle(createSyntaxStyle(theme));
 		})();
 		return () => {
 			mounted = false;
 		};
-	}, []);
+	}, [theme]);
 
 	// Skills 视图：services + cache（检测已安装 skills）
 	const skillsViewServices = useMemo(() => createSkillsViewServices(), []);
@@ -216,7 +242,7 @@ export default function App() {
 					{/* Logo 区域：逐行垂直渐变（橙色系，亮→深），制造炫彩光泽；alignItems 居中 */}
 					<box flexDirection="column" alignItems="center">
 						{CCQ_LOGO.map((line, i) => (
-							<text key={i} fg={CCQ_LOGO_COLORS[i] ?? PRIMARY} attributes={TextAttributes.BOLD}>
+							<text key={i} fg={theme.logoColors[i] ?? PRIMARY} attributes={TextAttributes.BOLD}>
 								{line}
 							</text>
 						))}
@@ -323,9 +349,8 @@ function NavRow({ label, selected, navActive, width, statusKind }: {
 	const indicator = selected ? '▸ ' : '  ';
 	const statusText = statusKind ? '● ' : '';
 	const raw = `${indicator}${statusText}${label}`;
-	const text = raw + ' '.repeat(Math.max(0, width - displayWidth(raw)));
-	const fg = selected ? (navActive ? '#1A1A1A' : colors.primary) : colors.muted;
-	const bg = selected ? (navActive ? PRIMARY : '#3A2A20') : undefined;
+	const fg = selected ? (navActive ? colors.navSelectedForeground : colors.primary) : colors.muted;
+	const bg = selected ? (navActive ? PRIMARY : colors.navInactiveSelectedBackground) : undefined;
 	return (
 		<box marginBottom={1}>
 			<box flexDirection="row" width={width} backgroundColor={bg}>

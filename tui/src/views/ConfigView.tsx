@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { TextAttributes, type ScrollBoxRenderable } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
-import { borderColors, colors, PRIMARY } from '../theme/index.js';
+import { borderColors, colors, getActiveTheme, PRIMARY } from '../theme/index.js';
 import {
 	TextareaEditor,
 	ViewHeader,
@@ -170,7 +170,8 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 
 		// ── view 态 ──
 		if (mode === 'view') {
-			if (name === 'escape') { onExitToNav(); return; }
+			// Esc/← 返回左侧导航（对齐 ProviderView/McpView/SkillsView 列表态返回键）
+			if (name === 'escape' || name === 'left' || name === 'arrowleft') { onExitToNav(); return; }
 			if (name === 'e' && hasContent) { enterEdit(readCurrentSettingsTextStripped() || '{}'); return; }
 			if (name === 'a' && !hasContent) { enterEdit('{}'); return; }
 			// ↑/↓ 滚动展示区（scrollbox 需主动驱动，否则默认不响应键盘）
@@ -345,15 +346,16 @@ function tokenizeJsonLine(line: string): readonly JsonToken[] {
 	return tokens;
 }
 
-/** token → 颜色（对齐 app.tsx GitHub Dark 主题）。 */
+/** token → 颜色（随终端 dark/light 主题切换，对齐 app.tsx 语法高亮）。 */
 function jsonTokenColor(type: JsonTokenType): string {
+	const { jsonTokens } = getActiveTheme();
 	switch (type) {
-		case 'key': return '#FFA657';       // 橙：键名突出
-		case 'string': return '#A5D6FF';    // 浅蓝：字符串值
-		case 'number': return '#79C0FF';    // 蓝：数字
-		case 'boolean': return '#FF7B72';   // 红：true/false/null
-		case 'punct': return colors.muted;  // 灰：标点柔和
-		case 'space': return colors.info;   // 空白（占位，颜色无关）
+		case 'key': return jsonTokens.key;       // 键名突出
+		case 'string': return jsonTokens.string;  // 字符串值
+		case 'number': return jsonTokens.number;  // 数字
+		case 'boolean': return jsonTokens.boolean; // true/false/null
+		case 'punct': return jsonTokens.punct;  // 标点柔和
+		case 'space': return jsonTokens.space;   // 空白（占位，颜色无关）
 	}
 }
 
