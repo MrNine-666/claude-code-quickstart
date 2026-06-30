@@ -12,7 +12,7 @@ Windows 10/11 与 macOS 12+ 双平台的 **Claude Code 开发环境自动化安�
 claude-code-quickstart/
 ├── dist/                             # 默认构建输出：6 个 artifact（2 .ps1 + 2 .sh + 4 平台 ccq 可执行文件）
 ├── tui/                              # 根级 OpenTUI TUI 子项目：6 菜单（工具管理/供应商/配置文件/全局规则/MCP/Skills）（src/ → 4 平台可执行文件）
-│   └── contracts/                    # TUI 链契约（内嵌进可执行文件）：claude-config / mcp-servers / providers / templates / claude-config-drift.js
+│   └── contracts/                    # TUI 链契约：claude-config / mcp-servers / providers / templates（运行时内嵌）；ccg-workflow / claude-config-drift.js / templates/index.json 为磁盘源契约
 ├── installer/
 │   ├── build.ps1                     # Windows / GitHub Actions Windows job 构建入口（2 个 .ps1）
 │   ├── build.sh                      # macOS / Unix 构建入口（2 个 .sh artifact）
@@ -47,7 +47,7 @@ graph TD
     D --> D1["NodeJS (5 子模块) / Git / ClaudeCode（Basic 直装）"]
     D --> D2["Ccline / ClaudeConfig / ClaudeMd / OpenSpec / CodexCli / AntigravityCli（Advanced，迁 TUI）"]
     IC --> IC1["steps / build / cleanup-policy + Test-Contracts"]
-    TC --> TC1["claude-config / mcp-servers / providers / templates / drift.js"]
+    TC --> TC1["claude-config / mcp-servers / providers / templates（运行时内嵌）\nccg-workflow / drift.js（磁盘源契约）"]
     T --> T1["src/ → bun build --compile → 4 平台可执行文件"]
     G --> G1["Install.zsh（末尾下载 ccq）"]
     G --> G2["core: Ui / Process / Profile / Platform / PackageManager / Json / Registry + ccq 管理函数"]
@@ -75,7 +75,7 @@ NodeJS ─── ClaudeCode ─── Git
 | 模块 | 详细文档 | 职责 |
 |------|---------|------|
 | tui/ | [tui/README.md](tui/README.md) | OpenTUI 6 菜单 TUI，Bun 单文件可执行分发（工具管理/供应商/配置文件/全局规则/MCP/Skills） |
-| tui/contracts/ | [tui/contracts/README.md](tui/contracts/README.md) | TUI 链契约（内嵌进可执行文件）：claude-config / mcp-servers / providers / templates / claude-config-drift.js |
+| tui/contracts/ | [tui/contracts/README.md](tui/contracts/README.md) | TUI 链契约：claude-config / mcp-servers / providers / templates（运行时内嵌）+ ccg-workflow / drift / templates index（磁盘源契约） |
 | installer/ | [installer/CLAUDE.md](installer/CLAUDE.md) | Windows/macOS 平台目录、双构建入口、install 链契约（`installer/contracts/`）导航 |
 | installer/contracts/ | [installer/contracts/README.md](installer/contracts/README.md) | install 链契约：steps.json 分组、build.json、cleanup-policy.json + Test-Contracts.ps1（Windows/macOS 共享） |
 | installer/windows/ | [installer/CLAUDE.md](installer/CLAUDE.md) | Windows canonical 入口、core 与 steps |
@@ -97,7 +97,7 @@ NodeJS ─── ClaudeCode ─── Git
 | **HC-15** | **Release 单文件 / `irm\|iex` 兼容约束**：`dist/*.ps1` 通过 `irm ... \| iex` 执行时没有稳定脚本文件上下文，`$PSScriptRoot` 为空；同时 PS5.1 对 GitHub Release asset 会误解码非 ASCII 内容，因此远程入口必须保持 ASCII trampoline，禁止改回直接输出 UTF-8 脚本。进入单文件 artifact 的 Windows 代码，在 `Join-Path` / `Test-Path` / `Get-Content` / dot-source / contracts 或 templates 查找前必须判空；路径不可用时走 inline fallback、环境变量 fallback 或安全跳过。涉及 contracts、templates、单文件构建、远程入口时，必须同时验证 `pwsh -File` 源码模式与 `irm\|iex` Release 模式。 |
 | **HC-MAC-01** | macOS 入口使用 zsh/bash 脚本体系：首次云端入口 `curl -fsSL <install.sh URL> | bash`，脚本内部自动切换到 `/bin/zsh`；不要求 macOS 用户先安装 PowerShell |
 | **HC-MAC-02** | macOS 使用 Homebrew + nvm：最低 macOS 12+，**npm 只通过 nvm 管理（不支持 fnm / npm 全局包备份恢复）**，Profile 写入 `~/.zprofile` / `~/.zshrc`，PATH 分隔符为 `:`，禁止在 macOS 代码中调用 winget、注册表、MSI/EXE 或 Windows `$PROFILE` |
-| **HC-MAC-03** | Windows 与 macOS 共享 `installer/contracts/`（install 链：steps / build / cleanup-policy + Test-Contracts.ps1）业务契约与 JSON schema；TUI 链契约在 `tui/contracts/`（claude-config / mcp-servers / providers / templates / claude-config-drift.js），**内嵌进可执行文件**；**根级 `contracts/` 已删除**（TDR-10「谁用归谁」拆分）；平台差异只放在 Windows PowerShell runtime 或 macOS zsh runtime 中 |
+| **HC-MAC-03** | Windows 与 macOS 共享 `installer/contracts/`（install 链：steps / build / cleanup-policy + Test-Contracts.ps1）业务契约与 JSON schema；TUI 链契约在 `tui/contracts/`，其中 claude-config / mcp-servers / providers / claude-md templates 为**运行时内嵌契约**，ccg-workflow / claude-config-drift.js / templates/index.json 为**磁盘源契约**；**根级 `contracts/` 已删除**（TDR-10「谁用归谁」拆分）；平台差异只放在 Windows PowerShell runtime 或 macOS zsh runtime 中 |
 | **HC-MAC-04** | **macOS 官方安装模式**：Homebrew 与 nvm 均使用官方安装脚本，**不得手动写入** `~/.zprofile` / `~/.zshrc` 的 PATH 或环境变量初始化代码。所有 Profile 配置由官方安装脚本完成，安装器只需执行官方脚本并验证结果 |
 | **SC-3** | 状态指示器：`[PASS]` / `[FAIL]` / `[SKIP]`，macOS 额外支持 `[UNSUPPORTED]` / `[MANUAL]` 且不计为 Success |
 | **SC-5** | 错误展示：友好信息 + 按 `D` 展开技术详情 |
@@ -200,7 +200,7 @@ zsh -n installer/macos/Install.zsh
 
 - **构建方式**：`tui/scripts/build.ts` 调用 `bun build --compile` 交叉编译 4 平台可执行文件到 `tui/dist/`，`installer/build.ps1` / `installer/build.sh` 从 `tui/dist/` 拷贝到根 `dist/`，GitHub Release 上传 **6 个 artifact**（install.ps1 / install.sh / ccq-windows-x64.exe / ccq-windows-arm64.exe / ccq-darwin-x64 / ccq-darwin-arm64）。
 - **PATH 策略**：Windows 直接安装到 `%USERPROFILE%\.local\bin\ccq.exe` 并加入用户 PATH，macOS 直接安装到 `~/.local/bin/ccq` 并确保 `~/.local/bin` 在 PATH；两平台均与 Claude Code native installer 的 `claude[.exe]` 同目录。
-- **contracts 内嵌**：`tui/contracts/` 随可执行文件一起内嵌，通过 `import.meta.dir` 解析（开发时 `tui/contracts/`，打包后自动切换到可执行文件内部路径），无需外部文件或环境变量注入。
+- **contracts 内嵌**：`providers.json` / `mcp-servers.json` / `claude-config.json` / `templates/claude-md.*.md` 通过 Bun `text` loader 以内联字符串形式内嵌进可执行文件，运行时从 `EMBEDDED_CONTRACTS` Map 读取，不依赖 Bun 虚拟文件系统路径；`ccg-workflow.json` / `templates/index.json` / `claude-config-drift.js` 保留为磁盘源契约，供 CI、installer 合约测试或后续迁移使用。
 - **热更新**：整可执行文件热更新（后台检查 GitHub Release latest 版本 → 强确认下载 → 原子替换 `~/.local/bin/ccq[.exe]`），应用内手动入口为主（优先），后台自动为辅（启动时触发但不阻塞）。
 - **离线可用**：可执行文件自包含（零外部依赖 + contracts 内嵌），安装后完全离线运行。但 Skills 安装/更新、工具管理检测/安装、需远端资源的 MCP 操作、热更新检查仍需网络。
 - **旧链清理**：旧 Ink + Node (`manage/source/`) / 目录缓存 wrapper（ManageCore.ps1 / ManageCore.zsh）/ manage-tui.tgz 打包 / Manage.ps1 / Manage.zsh 入口全链已删除。

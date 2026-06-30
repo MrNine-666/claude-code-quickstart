@@ -34,18 +34,28 @@
 
 > 所有 UI 函数在 `SupportsAnsi = false` 时自动降级为纯文本 ASCII 模式。
 
-### 语义颜色系统（6 色）
+### 终端主题检测
 
-| 函数 | 语义角色 | 颜色（ANSI 模式） | 用途 |
-|------|---------|-----------------|------|
-| `Write-UiSuccess` | 成功 | 亮绿 `\e[92m` | 成功确认、完成提示 |
-| `Write-UiPrimary` | 品牌/进行中 | Claude Orange `\e[38;2;217;119;87m` | 标题、横幅、活跃进度 |
-| `Write-UiWarning` | 警告 | 亮黄 `\e[93m` | 警告、可恢复错误 |
-| `Write-UiDanger` | 危险 | 亮红 `\e[91m` | 错误、失败 |
-| `Write-UiInfo` | 信息 | 白色 `\e[97m` | 数据、路径、指令性文本 |
-| `Write-UiDim` | 次要 | 灰色 `\e[90m` | 时间戳、提示、装饰分隔线 |
+`Initialize-TerminalCapabilities` 末尾调用 `Detect-TerminalTheme` 判定终端明暗并存入 `$script:TerminalTheme`（`dark` / `light`），据此在 `$script:AnsiColorsDark` / `$script:AnsiColorsLight` 间选择 `$script:AnsiColors`。检测链：
 
-> **零逃逸约束**：`$script:AnsiColors` 和 `-ForegroundColor` **仅限** `Ui.ps1` 内部使用。外部文件通过 `Write-Ui*` 函数访问颜色。入口脚本在 Ui.ps1 加载前的早期错误处理块（PS 版本检查）例外。
+1. `Get-TerminalBackgroundRgbOsc11`：发送 `OSC 11;? BEL` 查询默认背景色，短超时（~160ms）读取控制台输入，解析 `rgb:rrrr/gggg/bbbb`（每通道 1-4 hex，由 `Convert-TerminalRgbComponentToByte` 归一为 0-255）；按 Rec.601 亮度 `0.299R + 0.587G + 0.114B` 判定 ≥0.5 为 light。输出被重定向（`[Console]::IsOutputRedirected`）或 legacy conhost 不响应时返回 `$null`。
+2. `Get-TerminalThemeFromColorFgBg`：解析 `$env:COLORFGBG` 末段，0-6/8 视为 dark，其余 light。
+3. 默认 `dark`（保守，与历史行为一致）。
+
+### 语义颜色系统（6 色，双套）
+
+深色终端用亮色前景（黑底清晰），浅色终端用深色前景（白底清晰）。`Write-Ui*` 函数读 `$script:AnsiColors`，主题切换后自动适配，零调用链改动。
+
+| 函数 | 语义角色 | dark（ANSI） | light（ANSI） | 用途 |
+|------|---------|-------------|--------------|------|
+| `Write-UiSuccess` | 成功 | 亮绿 `\e[92m` | 深绿 `\e[32m` | 成功确认、完成提示 |
+| `Write-UiPrimary` | 品牌/进行中 | Claude Orange `\e[38;2;217;119;87m` | Claude Orange 加深 `\e[38;2;184;92;62m` | 标题、横幅、活跃进度 |
+| `Write-UiWarning` | 警告 | 亮黄 `\e[93m` | 深黄 `\e[33m` | 警告、可恢复错误 |
+| `Write-UiDanger` | 危险 | 亮红 `\e[91m` | 深红 `\e[31m` | 错误、失败 |
+| `Write-UiInfo` | 信息 | 白色 `\e[97m` | 黑色 `\e[30m` | 数据、路径、指令性文本 |
+| `Write-UiDim` | 次要 | 灰色 `\e[90m` | 暗灰 `\e[38;2;106;106;106m` | 时间戳、提示、装饰分隔线 |
+
+> **零逃逸约束**：`$script:AnsiColors*` / `Detect-TerminalTheme` / `-ForegroundColor` **仅限** `Ui.ps1` 内部使用。外部文件通过 `Write-Ui*` 函数访问颜色。入口脚本在 Ui.ps1 加载前的早期错误处理块（PS 版本检查）例外。
 
 ### 通用输出调度器
 
