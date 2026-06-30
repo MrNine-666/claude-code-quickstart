@@ -11,6 +11,7 @@ Set-StrictMode -Version Latest
 $script:IsWindowsTerminal = $false
 $script:SupportsAnsi = $false
 $script:SupportsEmoji = $false
+$script:TerminalTheme = 'dark'
 
 function Enable-VirtualTerminalProcessing {
     <#
@@ -50,10 +51,142 @@ public class _CcqKernel32Vt {
     }
 }
 
+function Convert-TerminalRgbComponentToByte {
+    <#
+    .SYNOPSIS
+    将 OSC 11 返回的 rgb:rrrr/gggg/bbbb 分量转换为 0-255。
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Component
+    )
+
+    if ($Component -notmatch '^[0-9A-Fa-f]{1,4}$') {
+        return $null
+    }
+
+    $value = [Convert]::ToInt32($Component, 16)
+    switch ($Component.Length) {
+        1 { return [int]($value * 17) }
+        2 { return [int]$value }
+        3 { return [int][Math]::Round($value / 273) }
+        default { return [int]($value / 257) }
+    }
+}
+
+function Get-TerminalBackgroundRgbOsc11 {
+    <#
+    .SYNOPSIS
+    用 OSC 11 查询终端默认背景色，成功时返回 @{R;G;B}，失败/超时返回 $null。
+    .DESCRIPTION
+    Windows Terminal / 新版 OpenConsole 支持 OSC 11 查询；legacy conhost 或部分终端会忽略。
+    为避免阻塞安装入口，读取控制台输入只做短超时轮询。
+    #>
+    param()
+
+    if (-not $script:SupportsAnsi -or [Console]::IsOutputRedirected -or [Console]::IsInputRedirected) {
+        return $null
+    }
+
+    try {
+        while ([Console]::KeyAvailable) {
+            [void][Console]::ReadKey($true)
+        }
+    } catch {
+        return $null
+    }
+
+    try {
+        [Console]::Write("$script:EscapeChar]11;?`a")
+        $deadline = [DateTime]::UtcNow.AddMilliseconds(160)
+        $response = New-Object System.Text.StringBuilder
+
+        while ([DateTime]::UtcNow -lt $deadline) {
+            while ([Console]::KeyAvailable) {
+                $key = [Console]::ReadKey($true)
+                [void]$response.Append($key.KeyChar)
+                if ($key.KeyChar -eq [char]7) {
+                    break
+                }
+            }
+
+            if ($response.ToString() -match "rgb:([0-9A-Fa-f]{1,4})/([0-9A-Fa-f]{1,4})/([0-9A-Fa-f]{1,4})") {
+                $r = Convert-TerminalRgbComponentToByte $Matches[1]
+                $g = Convert-TerminalRgbComponentToByte $Matches[2]
+                $b = Convert-TerminalRgbComponentToByte $Matches[3]
+                if ($null -ne $r -and $null -ne $g -and $null -ne $b) {
+                    return @{ R = $r; G = $g; B = $b }
+                }
+            }
+
+            Start-Sleep -Milliseconds 10
+        }
+    } catch {
+        return $null
+    }
+
+    return $null
+}
+
+function Get-TerminalThemeFromColorFgBg {
+    <#
+    .SYNOPSIS
+    从 COLORFGBG 环境变量推断终端主题，无法判断时返回 $null。
+    #>
+    param()
+
+    if ([string]::IsNullOrWhiteSpace($env:COLORFGBG)) {
+        return $null
+    }
+
+    $parts = @($env:COLORFGBG -split ';')
+    if ($parts.Count -eq 0) {
+        return $null
+    }
+
+    $background = $parts[$parts.Count - 1]
+    $backgroundNumber = 0
+    if (-not [int]::TryParse($background, [ref]$backgroundNumber)) {
+        return $null
+    }
+
+    if ($backgroundNumber -le 6 -or $backgroundNumber -eq 8) {
+        return 'dark'
+    }
+
+    return 'light'
+}
+
+function Detect-TerminalTheme {
+    <#
+    .SYNOPSIS
+    检测终端背景明暗：OSC 11 查询 RGB → COLORFGBG 兜底 → 默认 dark。
+    .OUTPUTS
+    'dark' | 'light'
+    #>
+    param()
+
+    $rgb = Get-TerminalBackgroundRgbOsc11
+    if ($null -ne $rgb) {
+        $luminance = ((0.299 * [double]$rgb.R) + (0.587 * [double]$rgb.G) + (0.114 * [double]$rgb.B)) / 255
+        if ($luminance -ge 0.5) {
+            return 'light'
+        }
+        return 'dark'
+    }
+
+    $colorFgBgTheme = Get-TerminalThemeFromColorFgBg
+    if ($colorFgBgTheme -eq 'light' -or $colorFgBgTheme -eq 'dark') {
+        return $colorFgBgTheme
+    }
+
+    return 'dark'
+}
+
 function Initialize-TerminalCapabilities {
     <#
     .SYNOPSIS
-    检测终端能力并初始化 ANSI / Emoji 支持（不以 PS 版本为准，按 VT 启用结果判定）
+    检测终端能力并初始化 ANSI / Emoji / 主题支持（不以 PS 版本为准，按 VT 启用结果判定）
     #>
 
     # 检测 Windows Terminal
@@ -64,6 +197,14 @@ function Initialize-TerminalCapabilities {
 
     # Emoji 仅 Windows Terminal 字体可靠渲染（普通 conhost / PS7 conhost 不保证，避免乱码）
     $script:SupportsEmoji = $script:IsWindowsTerminal
+
+    # 终端主题：OSC 11 查询背景色，失败则 COLORFGBG 兜底，再失败默认 dark。
+    $script:TerminalTheme = Detect-TerminalTheme
+    if ($script:TerminalTheme -eq 'light') {
+        $script:AnsiColors = $script:AnsiColorsLight
+    } else {
+        $script:AnsiColors = $script:AnsiColorsDark
+    }
 }
 
 # Emoji 映射表（Emoji -> 纯文本替代）
@@ -143,11 +284,11 @@ function Convert-EmojiToText {
 # ANSI 颜色代码定义
 # 注意：PowerShell 5.1 不支持 `e 转义序列，需要使用 [char]27
 $script:EscapeChar = [char]27
-$script:AnsiColors = @{
+
+# 深色终端语义色（亮色前景，黑底清晰）
+$script:AnsiColorsDark = @{
     Reset         = "$script:EscapeChar[0m"
     Bold          = "$script:EscapeChar[1m"
-
-    # 6 色语义系统
     Success       = "$script:EscapeChar[92m"                    # BrightGreen
     Primary       = "$script:EscapeChar[38;2;217;119;87m"       # Claude #D97757
     BrightPrimary = "$script:EscapeChar[38;2;232;148;106m"      # Claude #E8946A（横幅高亮）
@@ -156,6 +297,21 @@ $script:AnsiColors = @{
     Info          = "$script:EscapeChar[97m"                    # White
     Dim           = "$script:EscapeChar[90m"                    # Gray
 }
+
+# 浅色终端语义色（深色前景，白底清晰）
+$script:AnsiColorsLight = @{
+    Reset         = "$script:EscapeChar[0m"
+    Bold          = "$script:EscapeChar[1m"
+    Success       = "$script:EscapeChar[32m"                    # Green
+    Primary       = "$script:EscapeChar[38;2;184;92;62m"        # Claude #B85C3E（白底加深）
+    BrightPrimary = "$script:EscapeChar[38;2;194;106;71m"       # Claude #C26A47
+    Warning       = "$script:EscapeChar[33m"                    # Yellow
+    Danger        = "$script:EscapeChar[31m"                    # Red
+    Info          = "$script:EscapeChar[30m"                    # Black
+    Dim           = "$script:EscapeChar[38;2;106;106;106m"      # #6A6A6A（白底暗灰）
+}
+
+$script:AnsiColors = $script:AnsiColorsDark
 
 # ─── 输出模式控制 ────────────────────────────────────────────────────────────
 

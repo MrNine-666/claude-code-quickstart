@@ -30,6 +30,88 @@ ccq_detect_tty_ansi() {
   [ -r /dev/tty ] && [ -w /dev/tty ] && [ "${TERM:-dumb}" != "dumb" ]
 }
 
+ccq_hex_component_to_byte() {
+  local component="${1:-}"
+  local length value
+  case "${component}" in
+    ''|*[!0-9A-Fa-f]*) return 1 ;;
+  esac
+  length="${#component}"
+  [ "${length}" -ge 1 ] && [ "${length}" -le 4 ] || return 1
+  value=$((16#${component}))
+  case "${length}" in
+    1) printf '%s\n' $((value * 17)) ;;
+    2) printf '%s\n' "${value}" ;;
+    3) printf '%s\n' $(((value + 136) / 273)) ;;
+    *) printf '%s\n' $((value / 257)) ;;
+  esac
+}
+
+ccq_theme_from_colorfgbg() {
+  local raw="${COLORFGBG:-}"
+  local -a parts
+  local bg
+  [ -n "${raw}" ] || return 1
+  parts=("${(@s/;/)raw}")
+  [ "${#parts[@]}" -gt 0 ] || return 1
+  bg="${parts[-1]}"
+  case "${bg}" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  if [ "${bg}" -le 6 ] || [ "${bg}" -eq 8 ]; then
+    printf 'dark\n'
+  else
+    printf 'light\n'
+  fi
+}
+
+ccq_query_background_rgb_osc11() {
+  local response="" ch i=0
+  local r g b rb gb bb luminance
+  ccq_detect_tty_ansi || return 1
+
+  printf '\033]11;?\a' > /dev/tty 2>/dev/null || return 1
+  while [ "${i}" -lt 20 ]; do
+    if IFS= read -r -s -k 1 -t 0.015 ch < /dev/tty 2>/dev/null; then
+      response="${response}${ch}"
+      [ "${ch}" = $'\a' ] && break
+    else
+      i=$((i + 1))
+    fi
+  done
+
+  if [[ "${response}" =~ 'rgb:([0-9A-Fa-f]{1,4})/([0-9A-Fa-f]{1,4})/([0-9A-Fa-f]{1,4})' ]]; then
+    r="${match[1]}"
+    g="${match[2]}"
+    b="${match[3]}"
+    rb="$(ccq_hex_component_to_byte "${r}" 2>/dev/null)" || return 1
+    gb="$(ccq_hex_component_to_byte "${g}" 2>/dev/null)" || return 1
+    bb="$(ccq_hex_component_to_byte "${b}" 2>/dev/null)" || return 1
+    luminance=$((299 * rb + 587 * gb + 114 * bb))
+    if [ "${luminance}" -ge 127500 ]; then
+      printf 'light\n'
+    else
+      printf 'dark\n'
+    fi
+    return 0
+  fi
+
+  return 1
+}
+
+ccq_detect_theme() {
+  local theme
+  theme="$(ccq_query_background_rgb_osc11 2>/dev/null || true)"
+  case "${theme}" in
+    dark|light) printf '%s\n' "${theme}"; return 0 ;;
+  esac
+  theme="$(ccq_theme_from_colorfgbg 2>/dev/null || true)"
+  case "${theme}" in
+    dark|light) printf '%s\n' "${theme}"; return 0 ;;
+  esac
+  printf 'dark\n'
+}
+
 if ccq_detect_ansi; then
   CCQ_ANSI_RESET='\033[0m'
   CCQ_ANSI_SUCCESS='\033[92m'
@@ -46,6 +128,16 @@ else
   CCQ_ANSI_DANGER=''
   CCQ_ANSI_INFO=''
   CCQ_ANSI_DIM=''
+fi
+
+CCQ_TERMINAL_THEME="$(ccq_detect_theme 2>/dev/null || printf 'dark')"
+if [ "${CCQ_TERMINAL_THEME}" = "light" ] && ccq_detect_ansi; then
+  CCQ_ANSI_SUCCESS='\033[32m'
+  CCQ_ANSI_PRIMARY='\033[38;2;184;92;62m'
+  CCQ_ANSI_WARNING='\033[33m'
+  CCQ_ANSI_DANGER='\033[31m'
+  CCQ_ANSI_INFO='\033[30m'
+  CCQ_ANSI_DIM='\033[38;2;106;106;106m'
 fi
 
 ccq_set_output_mode() {
