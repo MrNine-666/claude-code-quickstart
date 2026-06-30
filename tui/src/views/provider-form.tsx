@@ -333,7 +333,7 @@ export function ProviderForm({ model, active, contentHeight = 16, onCancel, onSa
 				/>
 
 				<box id={JSON_FIELD_ID} marginTop={1} flexDirection="column" flexShrink={0}>
-					<text fg={jsonFocused ? colors.primary : undefined} attributes={jsonFocused ? TextAttributes.BOLD : 0}>
+					<text fg={jsonFocused ? colors.primary : colors.text} attributes={jsonFocused ? TextAttributes.BOLD : 0}>
 						{jsonFocused ? '› ' : '  '}最终 JSON（可编辑 env）
 					</text>
 					<box height={jsonHeight} borderStyle="rounded" borderColor={jsonFocused ? borderColors.active : borderColors.inactive}>
@@ -343,6 +343,11 @@ export function ProviderForm({ model, active, contentHeight = 16, onCancel, onSa
 							focused={active && jsonFocused}
 							wrapMode="word"
 							style={{flexGrow: 1}}
+							textColor={colors.inputText}
+							focusedTextColor={colors.inputFocusedText}
+							cursorColor={colors.inputCursor}
+							selectionBg={colors.selectionBg}
+							selectionFg={colors.selectionFg}
 							onKeyDown={handleTextareaKey}
 							onContentChange={() => handleJsonChange(textareaRef.current?.plainText ?? jsonText)}
 						/>

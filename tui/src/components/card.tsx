@@ -13,6 +13,10 @@ import { borderColors, colors } from '../theme/index.js';
 
 export type CardProps = {
 	readonly title?: React.ReactNode;
+	// 标题文字颜色（可选，默认根据 focused 自动选择）
+	readonly titleColor?: string;
+	// 标题文字样式（可选，默认 BOLD）
+	readonly titleAttrs?: number;
 	// 标题行右侧内容（纵向布局专用，如检查更新状态）
 	readonly titleRight?: React.ReactNode;
 	// 左栏标记（左右两栏布局触发器）
@@ -29,6 +33,8 @@ export type CardProps = {
 
 export function Card({
 	title,
+	titleColor,
+	titleAttrs = TextAttributes.BOLD,
 	titleRight,
 	leading,
 	focused = false,
@@ -43,6 +49,8 @@ export function Card({
 			{children}
 		</box>
 	);
+
+	const finalTitleColor = titleColor ?? (focused ? colors.primary : colors.text);
 
 	// 左右两栏布局：左 leading 标记 + 右内容栏（title 行 + body 行）
 	if (leading !== undefined) {
@@ -61,7 +69,7 @@ export function Card({
 				<box flexDirection="column" flexGrow={1} minWidth={0} overflow="hidden">
 					{title === undefined ? null : (
 						<box flexDirection="row" height={1} overflow="hidden">
-							<text fg={focused ? colors.primary : undefined} attributes={TextAttributes.BOLD}>
+							<text fg={finalTitleColor} attributes={titleAttrs}>
 								{title}
 							</text>
 						</box>
@@ -90,7 +98,7 @@ export function Card({
 						{selected === undefined ? null : (
 							<text fg={selected ? colors.primary : colors.muted}>{selected ? '✅ ' : '⬜ '}</text>
 						)}
-						<text fg={focused ? colors.primary : undefined} attributes={TextAttributes.BOLD}>
+						<text fg={finalTitleColor} attributes={titleAttrs}>
 							{title}
 						</text>
 					</box>

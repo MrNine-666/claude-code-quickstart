@@ -284,6 +284,13 @@ export async function installTool(id: ToolId, onProgress?: ProgressCallback): Pr
 				break;
 		}
 
+		// CCG Workflow 和 shell-script 类型需要 PATH 更新，安装后立即检测会失败（环境变量未生效）
+		// 信任安装命令的 exit code，成功后直接返回 success（下次刷新检测时自然会识别到）
+		if (definition.kind === 'ccg-init' || definition.kind === 'shell-script') {
+			onProgress?.({level: 'success', message: `${definition.name} 安装成功（重启终端后生效）`, componentId: id});
+			return {id, success: true};
+		}
+
 		const status = await detectTool(definition);
 		if (status.installed) {
 			onProgress?.({level: 'success', message: `${definition.name} 安装成功${status.version ? ` (${status.version})` : ''}`, componentId: id});

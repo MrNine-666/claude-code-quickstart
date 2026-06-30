@@ -17,7 +17,7 @@ export function ErrorPanel({ title = '操作失败', message, detail }: ErrorPan
 			<text fg={colors.danger} attributes={TextAttributes.BOLD}>
 				{title}
 			</text>
-			<text>{message}</text>
+			<text fg={colors.text}>{message}</text>
 			{detail ? <text fg={colors.muted}>{detail}</text> : null}
 		</box>
 	);

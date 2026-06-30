@@ -468,13 +468,10 @@ ccq_confirm_executable_download() {
   ccq_ui_info "  • 配置文件管理"
   ccq_ui_info "  • 工具管理（ClaudeCode / Ccline / OpenSpec 等）"
   printf '\n'
-  ccq_ui_warning "是否现在下载 ccq 可执行文件到 ~/.local/bin ？"
-  ccq_ui_dim "  （拒绝则跳过，可稍后手动安装）"
-  printf '\n'
 
   # 确认选择
   local decision
-  decision="$(ccq_prompt_single "是否现在下载 ccq 可执行文件到 ~/.local/bin？" 0 "是，下载 ccq" "否，稍后手动安装")" || decision=1
+  decision="$(ccq_prompt_single "是否现在下载 ccq 可执行文件到 ~/.local/bin？（拒绝则跳过，可稍后手动安装）" 0 "是，下载 ccq" "否，稍后手动安装")" || decision=1
   if [ "${decision}" != "0" ]; then
     printf '\n'
     ccq_ui_info "已跳过 ccq 可执行文件下载"

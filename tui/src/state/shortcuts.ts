@@ -80,6 +80,16 @@ export function navShortcuts(): readonly Shortcut[] {
 	]);
 }
 
+// 左侧导航（「检查更新」按钮选中时）。
+export function updateButtonShortcuts(): readonly Shortcut[] {
+	return buildShortcuts([
+		{command: NAV_COMMANDS.NAV_UP, label: '菜单'},
+		{command: NAV_COMMANDS.NAV_DOWN, label: '菜单'},
+		{command: NAV_COMMANDS.NAV_ENTER, label: '检查更新'},
+		{command: NAV_COMMANDS.QUIT, label: '退出'}
+	]);
+}
+
 // 右侧视图：按菜单 + 子模式解析。subMode 为空时给出该视图的默认（list/grid）快捷键。
 export function viewShortcuts(menuId: ManageModuleId, subMode: ViewSubMode): readonly Shortcut[] {
 	switch (menuId) {

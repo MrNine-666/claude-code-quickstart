@@ -1,10 +1,8 @@
 import {
-	installMultipleSkillsForView,
-	listRepoSkillsForView,
-	searchSkillCatalogue,
 	installSearchResult,
-	updateAllSkills,
-	uninstallSelected
+	searchSkillCatalogue,
+	uninstallSelected,
+	updateAllSkills
 } from '../services/skills-service.js';
 import {createSkillsDetectionRunner, runSkillsDetection} from '../services/view-detection.js';
 import type {SkillsViewServices} from './SkillsView.js';
@@ -15,8 +13,6 @@ export function createSkillsViewServices(): SkillsViewServices {
 	return {
 		searchSkills: query => searchSkillCatalogue(query),
 		installResult: (result, onProgress) => installSearchResult(result, onProgress),
-		listRepoSkills: repo => listRepoSkillsForView(repo),
-		installMultiple: (input, onProgress) => installMultipleSkillsForView(input, onProgress),
 		updateAll: onProgress => updateAllSkills(onProgress),
 		uninstall: (names, onProgress) => uninstallSelected(names, onProgress),
 		createDetectionRunner: onChange => createSkillsDetectionRunner(onChange),

@@ -25,7 +25,7 @@ export function RadioField({ label, value, options, helpText, focused }: RadioFi
 							return (
 								<text
 									key={option.value}
-									fg={selected ? colors.navSelectedForeground : focused ? colors.primary : undefined}
+									fg={selected ? colors.navSelectedForeground : focused ? colors.primary : colors.text}
 									bg={selected ? colors.primary : undefined}
 									attributes={selected ? TextAttributes.BOLD : 0}
 								>

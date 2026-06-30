@@ -6,14 +6,13 @@ import {ActionHint, Checkbox, ErrorPanel, Modal, ProgressLog, ScrollList, Spinne
 import {borderColors, colors} from '../theme/index.js';
 import type {DetectionState} from '../services/async-detection.js';
 import type {DetectionCache} from '../hooks/use-detection-cache.js';
-import type {InstalledSkill, RepoSkill, SearchSkillResult} from '../core/skills.js';
+import type {InstalledSkill, SearchSkillResult} from '../core/skills.js';
 import type {ProgressCallback} from '../core/exec.js';
 import {
 	createInitialSkillsViewState,
 	filteredInstalled,
-	installTargets,
 	reduceSkillsViewState,
-	selectedRepo,
+	selectedResult,
 	shouldRunSearch,
 	uninstallTargets,
 	type SkillsViewAction,
@@ -23,11 +22,10 @@ import {
 
 type Dispatch = React.Dispatch<SkillsViewAction>;
 
-// Skills 视图（OpenTUI 适配）：三阶段安装架构（需求③）。
+// Skills 视图（OpenTUI 适配）：扁平安装架构。
 // 列表页：顶部本地过滤框（模糊查询已装）+ 已装列表；u 更新全部 / d 卸载单条 / r 刷新。
-// 安装页·父级：远程搜索框 + repo 列表（find 按 owner/repo 去重）；Enter 展开子 skill。
-// 安装页·子级：某 repo 下 skill 多选（Space 切换 / Enter 确认安装）；Esc 回父级。
-// 列表页 `a` → 安装页；Esc 逐级回退（子级→父级→列表页→导航）。
+// 安装页：远程搜索框 + 扁平 skill 列表；Enter 触发确认弹窗。
+// 列表页 `a` → 安装页；Esc 回退（安装页→列表页→导航）。
 // 确认弹窗统一使用绝对定位 Modal 居中覆盖，不挤占列表布局。
 // 检测缓存提升到 App 层：已安装检测由 cache 注入，切走再切回不重跑；r 键刷新。
 
@@ -36,13 +34,6 @@ export type SkillsViewServices = {
 		query: string
 	) => Promise<{ok: true; results: readonly SearchSkillResult[]} | {ok: false; error: string; rawSummary?: string}>;
 	readonly installResult: (result: SearchSkillResult, onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string}>;
-	readonly listRepoSkills: (
-		repo: string
-	) => Promise<{ok: true; skills: readonly RepoSkill[]} | {ok: false; error: string; rawSummary?: string}>;
-	readonly installMultiple: (
-		input: {source: string; skillNames: readonly string[]; displayName?: string},
-		onProgress?: ProgressCallback
-	) => Promise<{success: boolean; error?: string}>;
 	readonly updateAll: (onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string; noChange?: boolean}>;
 	readonly uninstall: (names: readonly string[], onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string}>;
 	readonly createDetectionRunner: (
@@ -145,11 +136,6 @@ function handleKey(
 		return;
 	}
 
-	if (view.mode === 'install-pick') {
-		handleInstallPickKey(keyEvent, view, dispatch);
-		return;
-	}
-
 	if (view.mode === 'install') {
 		handleInstallKey(keyEvent, view, dispatch, services);
 		return;
@@ -236,7 +222,7 @@ function handleListKey(
 	}
 }
 
-/** 安装页·父级按键：搜索框聚焦态 vs repo 浏览态。 */
+/** 安装页按键：搜索框聚焦态 vs skill 浏览态。 */
 function handleInstallKey(keyEvent: KeyEvent, view: SkillsViewState, dispatch: Dispatch, services: SkillsViewServices): void {
 	const name = keyEvent.name;
 
@@ -280,7 +266,7 @@ function handleInstallKey(keyEvent: KeyEvent, view: SkillsViewState, dispatch: D
 		return;
 	}
 
-	// repo 浏览态：Enter 展开当前光标 repo（触发 --list）/ Tab 回搜索框 / Esc 回列表页
+	// skill 浏览态：Enter 触发确认弹窗 / Tab 回搜索框 / Esc 回列表页
 	const mapped = mapActionKey(name);
 	switch (mapped) {
 		case 'up':
@@ -293,53 +279,10 @@ function handleInstallKey(keyEvent: KeyEvent, view: SkillsViewState, dispatch: D
 			dispatch({type: 'query-focus'});
 			return;
 		case 'enter':
-			if (view.repos.length > 0) {
-				dispatch({type: 'select-repo'});
-				runListRepoIfReady(view, services, dispatch);
+			if (view.results.length > 0) {
+				dispatch({type: 'select-skill'});
 			}
 
-			return;
-		case 'escape':
-			dispatch({type: 'cancel'});
-			return;
-	}
-}
-
-/** 安装页·子级按键：Space 多选 / Enter 确认安装 / ↑↓ 导航 / Esc 回父级。 */
-function handleInstallPickKey(keyEvent: KeyEvent, view: SkillsViewState, dispatch: Dispatch): void {
-	const name = keyEvent.name;
-
-	// --list 加载中：仅允许 Esc 回父级，其余禁用（避免在空列表上误操作）
-	if (view.loadingRepo) {
-		if (name === 'escape') {
-			dispatch({type: 'cancel'});
-		}
-
-		return;
-	}
-
-	// a 全选/取消全选（子级专用；仅在 install-pick 中生效，不与列表页 a 安装页冲突）
-	if (name === 'a') {
-		dispatch({type: 'toggle-all-picks'});
-		return;
-	}
-
-	// Space 切换当前光标 skill 选中（子级专用，未走 mapActionKey）
-	if (name === 'space') {
-		dispatch({type: 'toggle-pick'});
-		return;
-	}
-
-	const mapped = mapActionKey(name);
-	switch (mapped) {
-		case 'up':
-			dispatch({type: 'nav-up'});
-			return;
-		case 'down':
-			dispatch({type: 'nav-down'});
-			return;
-		case 'enter':
-			dispatch({type: 'confirm-pick'});
 			return;
 		case 'escape':
 			dispatch({type: 'cancel'});
@@ -424,38 +367,17 @@ function runSearch(query: string, services: SkillsViewServices, dispatch: Dispat
 	});
 }
 
-/** 选中父 repo 后异步拉取该 repo 全部子 skill（skills add <repo> --list）。 */
-function runListRepoIfReady(view: SkillsViewState, services: SkillsViewServices, dispatch: Dispatch): void {
-	const repo = selectedRepo(view);
-	if (!repo) {
-		return;
-	}
-
-	void services.listRepoSkills(repo.repo).then((outcome) => {
-		if (outcome.ok) {
-			dispatch({type: 'repo-skills-loaded', repo: repo.repo, skills: outcome.skills});
-			if (outcome.skills.length === 0) {
-				toast.info('该 repo 暂无 skill');
-			}
-		} else {
-			dispatch({type: 'repo-skills-failed', error: outcome.error, rawSummary: outcome.rawSummary});
-		}
-	});
-}
-
 function runConfirmedAction(view: SkillsViewState, services: SkillsViewServices, dispatch: Dispatch): void {
 	if (view.mode === 'confirm-install') {
-		const targets = installTargets(view);
-		if (targets.length === 0) {
+		const skill = selectedResult(view);
+		if (!skill) {
 			dispatch({type: 'action-failed', error: '没有可安装的 skill'});
 			return;
 		}
 
-		const source = targets[0]!.source;
-		const skillNames = targets.map(target => target.skillName);
-		void services.installMultiple({source, skillNames, displayName: source}, progressSink(dispatch)).then((res) => {
+		void services.installResult(skill, progressSink(dispatch)).then((res) => {
 			if (res.success) {
-				toast.success(`已安装 ${skillNames.length} 个 skill`);
+				toast.success(`已安装 ${skill.name}`);
 				dispatch({type: 'action-done'});
 			} else {
 				dispatch({type: 'action-failed', error: res.error ?? '安装失败'});
@@ -503,19 +425,15 @@ function isConfirmMode(mode: SkillsViewMode): boolean {
 	return mode === 'confirm-install' || mode === 'confirm-uninstall';
 }
 
-/** 当前应渲染的页（确认/执行时保持原页显示，仅叠加底部确认框/进度，需求①）。 */
-function pageOf(mode: SkillsViewMode, busyAction?: 'install' | 'update' | 'uninstall'): 'list' | 'install' | 'install-pick' {
-	if (mode === 'install') {
+/** 当前应渲染的页（确认/执行时保持原页显示，仅叠加底部确认框/进度）。 */
+function pageOf(mode: SkillsViewMode, busyAction?: 'install' | 'update' | 'uninstall'): 'list' | 'install' {
+	if (mode === 'install' || mode === 'confirm-install') {
 		return 'install';
 	}
 
-	if (mode === 'install-pick' || mode === 'confirm-install') {
-		return 'install-pick';
-	}
-
-	// busy(install) 保留子级多选视图 + 进度；busy(update/uninstall) 回列表页
+	// busy(install) 保留安装页 + 进度；busy(update/uninstall) 回列表页
 	if (mode === 'busy' && busyAction === 'install') {
-		return 'install-pick';
+		return 'install';
 	}
 
 	return 'list';
@@ -549,15 +467,15 @@ function renderDetectionNotice(status: DetectionState<InstalledSkill[]>['status'
 	return null;
 }
 
-/** 底部确认框（confirm-install 列多选汇总 / confirm-uninstall 单条）。 */
+/** 底部确认框（confirm-install 单个 skill / confirm-uninstall 单条）。 */
 function renderConfirm(view: SkillsViewState, viewportWidth: number, viewportHeight: number): React.ReactNode {
 	if (view.mode === 'confirm-install') {
-		const targets = installTargets(view);
-		const names = targets.map(target => target.skillName);
-		const repo = targets[0]?.source ?? '';
+		const skill = selectedResult(view);
+		const skillName = skill?.name ?? '';
+		const source = skill?.source ?? '';
 		return (
 			<Modal active title="确认安装 Skill" hint="Enter 确认  Esc 取消" viewportWidth={viewportWidth} viewportHeight={viewportHeight}>
-				<text>{names.length > 0 ? `即将安装 ${repo} 下：${names.join(', ')}` : '无可用结果'}</text>
+				<text fg={colors.text}>{skill ? `即将安装 ${skillName} (${source})` : '无可用结果'}</text>
 			</Modal>
 		);
 	}
@@ -565,7 +483,7 @@ function renderConfirm(view: SkillsViewState, viewportWidth: number, viewportHei
 	const names = uninstallTargets(view);
 	return (
 		<Modal active title="确认卸载 Skill" hint="Enter 确认  Esc 取消" tone="danger" viewportWidth={viewportWidth} viewportHeight={viewportHeight}>
-			<text>{names.length > 0 ? `即将卸载：${names.join(', ')}` : '无卸载目标'}</text>
+			<text fg={colors.text}>{names.length > 0 ? `即将卸载：${names.join(', ')}` : '无卸载目标'}</text>
 		</Modal>
 	);
 }
@@ -579,11 +497,7 @@ function renderPage(
 ): React.ReactNode {
 	const page = pageOf(view.mode, view.busyAction);
 	if (page === 'install') {
-		return renderInstallRepoPage(view, viewportHeight, confirmRows, stretchLists);
-	}
-
-	if (page === 'install-pick') {
-		return renderInstallPickPage(view, viewportHeight, confirmRows, stretchLists);
+		return renderInstallPage(view, viewportHeight, confirmRows, stretchLists);
 	}
 
 	// 列表页（默认）。detection 未就绪时由 detectionNotice 占位，body 留空。
@@ -627,65 +541,74 @@ function renderListPage(view: SkillsViewState, viewportHeight: number, confirmRo
 	);
 }
 
-/** 安装页·父级：远程搜索框 + repo 列表（find 结果按 owner/repo 去重）。 */
-function renderInstallRepoPage(view: SkillsViewState, viewportHeight: number, confirmRows: number, stretchLists: boolean): React.ReactNode {
-	const items = view.repos.map((group) => ({
-		key: group.repo,
-		title: group.repo,
-		titleRight: <text fg={colors.muted}>{`命中 ${group.hitCount}`}</text>
-	}));
+/** 安装页：远程搜索框 + 扁平 skill 列表 + 表头。 */
+function renderInstallPage(view: SkillsViewState, viewportHeight: number, confirmRows: number, stretchLists: boolean): React.ReactNode {
+	const items = view.results.map((skill) => {
+		// 解析 skill 名称：owner/repo@skill 格式，提取 @ 后的 skill 名
+		const skillName = skill.name.includes('@') ? skill.name.split('@')[1] ?? skill.name : skill.name;
+		const installCountText = skill.installCount ? formatInstallCount(skill.installCount) : '';
+
+		return {
+			key: skill.name,
+			title: skillName,
+			titleAttrs: TextAttributes.BOLD,
+			titleColor: colors.primary,
+			body: (
+				<box flexDirection="row" justifyContent="space-between" width="100%">
+					<text fg={colors.muted}>{skill.source}</text>
+					{installCountText ? <text fg={colors.muted}>{installCountText}</text> : null}
+				</box>
+			),
+			multiLine: true
+		};
+	});
+
+	const header = items.length > 0 ? (
+		<box flexDirection="row" justifyContent="space-between" paddingX={2} marginBottom={0}>
+			<text fg={colors.muted} attributes={TextAttributes.BOLD}>名称</text>
+			<text fg={colors.muted} attributes={TextAttributes.BOLD}>下载量</text>
+		</box>
+	) : undefined;
 
 	return (
 		<box flexDirection="column" flexGrow={stretchLists ? 1 : 0}>
-			<InputBox label="搜索" value={view.query} focused={view.queryFocused} placeholder="输入关键词，Enter 远程搜索 skills.sh" />
+			<InputBox label="搜索" value={view.query} focused={view.queryFocused} placeholder="输入关键词搜索 skills.sh" />
 			{view.searching ? (
 				<box marginTop={1}>
 					<text fg={colors.primary}>正在搜索...</text>
 				</box>
 			) : null}
 			{items.length > 0 ? (
-				<box marginTop={1} flexGrow={stretchLists ? 1 : 0}>
-					<ScrollList items={items} cursor={view.repoIndex} viewportHeight={viewportHeight} reservedRows={6 + confirmRows} stretch={stretchLists} />
+				<box marginTop={1} flexGrow={stretchLists ? 1 : 0} flexDirection="column">
+					<ScrollList
+						items={items}
+						cursor={view.resultIndex}
+						viewportHeight={viewportHeight}
+						reservedRows={7 + confirmRows}
+						stretch={stretchLists}
+						header={header}
+					/>
+				</box>
+			) : !view.searching ? (
+				<box marginTop={1} flexDirection="column" flexGrow={1} justifyContent="center">
+					<text fg={colors.muted}>输入关键词开始搜索</text>
 				</box>
 			) : null}
 		</box>
 	);
 }
 
-/** 安装页·子级：某 repo 下 skill 多选（Space 切换 / Enter 安装选中）。 */
-function renderInstallPickPage(view: SkillsViewState, viewportHeight: number, confirmRows: number, stretchLists: boolean): React.ReactNode {
-	const repo = view.currentRepo ?? '';
-	const items: Array<{
-		readonly key: string;
-		readonly title: string;
-		readonly leading: React.ReactNode;
-		readonly body?: React.ReactNode;
-		readonly multiLine: boolean;
-	}> = view.repoSkills.map((skill) => {
-		const picked = view.pickedSkills.includes(skill.name);
-		return {
-			key: skill.name,
-			title: skill.name,
-			leading: <Checkbox checked={picked} />,
-			body: skill.description ? <text fg={colors.muted}>{skill.description}</text> : undefined,
-			multiLine: true
-		};
-	});
+/** 格式化安装数（2.3M / 513.8K / 1234）。 */
+function formatInstallCount(count: number): string {
+	if (count >= 1e6) {
+		return `${(count / 1e6).toFixed(1)}M`;
+	}
 
-	return (
-		<box flexDirection="column" flexGrow={stretchLists ? 1 : 0}>
-			<box flexDirection="row" marginBottom={1}>
-				<text fg={colors.primary} attributes={TextAttributes.BOLD}>{repo}</text>
-				<text> 下 </text>
-				<text fg={colors.primary}>{view.repoSkills.length}</text>
-				<text fg={colors.muted}> 个 skill，可多选后安装</text>
-			</box>
-			{view.loadingRepo ? <Spinner label="正在拉取 repo skill 列表..." /> : null}
-			{!view.loadingRepo && items.length > 0 ? (
-				<ScrollList items={items} cursor={view.pickIndex} viewportHeight={viewportHeight} reservedRows={6 + confirmRows} emptyText="该 repo 暂无 skill" stretch={stretchLists} />
-			) : null}
-		</box>
-	);
+	if (count >= 1e3) {
+		return `${(count / 1e3).toFixed(1)}K`;
+	}
+
+	return String(count);
 }
 
 /** 顶部输入框（列表页过滤 / 安装页搜索共用）。聚焦时高亮边框 + 光标。 */
@@ -712,7 +635,7 @@ function InputBox({
 				flexGrow={1}
 			>
 				<text fg={colors.muted}>{label}：</text>
-				<text fg={value ? undefined : colors.muted}>{shown}</text>
+				<text fg={value ? colors.text : colors.muted}>{shown}</text>
 				{focused ? <text fg={colors.primary}>_</text> : null}
 			</box>
 		</box>

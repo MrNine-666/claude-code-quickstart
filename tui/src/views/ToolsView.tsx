@@ -187,6 +187,18 @@ function enterDefaultAction(view: ToolsViewState, services: ToolsViewServices, d
 		return;
 	}
 
+	const status = itemStatusOf(view, component.id);
+
+	// 失败状态：允许重试安装/更新
+	if (status === 'failed') {
+		if (!component.installed) {
+			installOne(component, services, dispatch, cache);
+		} else if (component.hasUpdate === true) {
+			updateOne(component, services, dispatch, cache);
+		}
+		return;
+	}
+
 	if (!component.installed) {
 		installOne(component, services, dispatch, cache);
 		return;
@@ -211,11 +223,14 @@ function installOne(component: ManagedComponent, services: ToolsViewServices, di
 	void services
 		.installComponent(component.id, progressSink(dispatch, component.id))
 		.then(async (outcome) => {
+			// 安装完成后立即刷新检测，获取最新状态（支持 ccg-init / shell-script 等需要环境变量刷新的工具）
+			cache.refresh();
+			// 等待检测完成后再更新状态
+			await new Promise(resolve => setTimeout(resolve, 1000));
 			const components = await services.detectComponents();
 			if (outcome.success) {
 				toast.success(`${component.name} 安装成功`);
 				dispatch({ type: 'item-done', id: component.id, components });
-				cache.refresh();
 			} else {
 				dispatch({ type: 'item-failed', id: component.id, error: outcome.error ?? `${component.name} 安装失败`, components });
 			}
@@ -371,7 +386,7 @@ function runUninstall(component: ManagedComponent, services: ToolsViewServices, 
 
 function renderDetectionNotice(status: DetectionState<ManagedComponent[]>['status']): React.ReactNode {
 	if (status === 'loading' || status === 'idle') {
-		return <Spinner label="正在检测组件状态与远程版本..." />;
+		return <Spinner label="检测中..." />;
 	}
 
 	return null;
@@ -440,10 +455,6 @@ function dotKindFor(component: ManagedComponent, status: ComponentItemStatus): {
 
 	if (status === 'uninstalling') {
 		return { kind: 'uninstalling', label: '卸载中' };
-	}
-
-	if (status === 'failed') {
-		return { kind: 'failed', label: '失败' };
 	}
 
 	if (!component.installed) {

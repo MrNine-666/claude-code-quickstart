@@ -10,6 +10,10 @@ import { colors } from '../theme/index.js';
 export type ScrollListItem = {
 	readonly key: string;
 	readonly title: React.ReactNode;
+	// 标题行颜色（可选，默认无）
+	readonly titleColor?: string;
+	// 标题行样式（可选，默认无）
+	readonly titleAttrs?: number;
 	// 标题行右侧内容（透传给 Card.titleRight，如检查更新状态）。
 	readonly titleRight?: React.ReactNode;
 	// 左栏标记（透传给 Card.leading，触发左右两栏布局：供应商/MCP 状态圆点、Skills 选中框）。
@@ -29,6 +33,8 @@ export type ScrollListProps = {
 	// 拉伸模式：由父容器 flex 分配高度，避免继续用 viewportHeight 手算列表高度。
 	readonly stretch?: boolean;
 	readonly emptyText?: string;
+	// 可选表头（渲染在列表上方）
+	readonly header?: React.ReactNode;
 };
 
 // 底部 (n/total) 计数占 1 行。
@@ -44,7 +50,8 @@ export function ScrollList({
 	viewportHeight,
 	reservedRows = 0,
 	stretch = false,
-	emptyText = '暂无数据'
+	emptyText = '暂无数据',
+	header
 }: ScrollListProps) {
 	const ref = useRef<ScrollBoxRenderable>(null);
 	const safeCursor = items.length === 0 ? 0 : Math.min(Math.max(cursor, 0), items.length - 1);
@@ -70,6 +77,7 @@ export function ScrollList({
 
 	return (
 		<box flexDirection="column" flexGrow={stretch ? 1 : 0}>
+			{header}
 			<scrollbox
 				ref={ref}
 				height={scrollboxHeight}
@@ -84,6 +92,8 @@ export function ScrollList({
 					<box key={item.key} id={id} flexDirection="column" flexShrink={0}>
 						<Card
 							title={item.title}
+							titleColor={item.titleColor}
+							titleAttrs={item.titleAttrs}
 							titleRight={item.titleRight}
 							leading={item.leading}
 							focused={index === safeCursor}

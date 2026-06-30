@@ -102,6 +102,16 @@ function reduceNavState(state: ManageState, keyName: ManageKeyName): ManageState
 		return appendLog({...state, selectedIndex: wrapIndex(state.selectedIndex + 1)}, '↓ 菜单下移');
 	}
 
+	// 在「检查更新」按钮位时，只有 Enter 键有效（由 App.tsx 处理打开浮窗），
+	// right/tab 不触发任何操作，避免误进右侧视图。
+	if (state.selectedIndex === menuItems.length) {
+		if (keyName === 'escape') {
+			return appendLog(state, 'Esc 保持导航焦点');
+		}
+		return state;
+	}
+
+	// 普通菜单项：enter/right/tab 都可以进入右侧视图
 	if (keyName === 'enter' || keyName === 'right' || keyName === 'tab') {
 		return appendLog({...state, focus: 'view'}, '进入右侧视图');
 	}

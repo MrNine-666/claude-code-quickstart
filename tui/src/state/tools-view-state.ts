@@ -25,7 +25,7 @@ export type ToolsViewMode =
 
 /** 单卡片执行态（idle = 未在操作）。进行时态触发 loading 圆点。 */
 export type ComponentAction = 'install' | 'update' | 'uninstall';
-export type ComponentItemStatus = 'idle' | 'installing' | 'updating' | 'uninstalling' | 'failed';
+export type ComponentItemStatus = 'idle' | 'installing' | 'updating' | 'uninstalling';
 
 /** 动作 → 进行时态（itemStatus 存储）。 */
 function progressTense(action: ComponentAction): ComponentItemStatus {
@@ -208,7 +208,7 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				uninstallTarget: undefined,
 				loaded: action.components !== undefined,
 				components: action.components ?? state.components,
-				itemStatus: {...state.itemStatus, [action.id]: 'failed'},
+				itemStatus: omit(state.itemStatus, action.id), // 失败后清除状态，允许重试
 				itemError: {...state.itemError, [action.id]: action.error},
 				progressByComponent: omit(state.progressByComponent, action.id),
 				errorText: action.error

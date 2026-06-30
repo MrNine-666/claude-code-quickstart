@@ -49,11 +49,17 @@ export type ThemePalette = {
 		readonly danger: string;
 		readonly info: string;
 		readonly muted: string;
+		readonly text: string;
 		readonly navSelectedForeground: string;
 		readonly navInactiveSelectedBackground: string;
 		readonly modalBackground: string;
 		readonly lineNumberForeground: string;
 		readonly lineNumberBackground: string;
+		readonly inputText: string;
+		readonly inputFocusedText: string;
+		readonly inputCursor: string;
+		readonly selectionBg: string;
+		readonly selectionFg: string;
 	};
 	readonly borderColors: {
 		readonly active: string;
@@ -130,11 +136,15 @@ export const darkTheme: ThemePalette = {
 		danger: 'red',
 		info: 'white',
 		muted: 'gray',
+		text: '#E6EDF3',
 		navSelectedForeground: '#1A1A1A',
 		navInactiveSelectedBackground: '#3A2A20',
 		modalBackground: '#16110D',
 		lineNumberForeground: '#6B7280',
-		lineNumberBackground: '#161B22'
+		lineNumberBackground: '#161B22',
+		inputText: '#E6EDF3',
+		inputFocusedText: '#FFFFFF',
+		inputCursor: '#D97757'
 	},
 	borderColors: {
 		active: '#D97757',
@@ -170,17 +180,23 @@ export const lightTheme: ThemePalette = {
 	colors: {
 		primary: '#B85C3E',
 		primaryBright: '#C26A47',
-		focusedBackground: '#F5E6DC',
+		focusedBackground: '#FBF8F5',
 		success: '#2E7D32',
 		warning: '#B58900',
 		danger: '#C0392B',
 		info: 'black',
 		muted: '#6A6A6A',
+		text: '#24292F',
 		navSelectedForeground: '#FFFFFF',
 		navInactiveSelectedBackground: '#F0D9CC',
 		modalBackground: '#FAF5F0',
 		lineNumberForeground: '#6A737D',
-		lineNumberBackground: '#F6F8FA'
+		lineNumberBackground: '#F6F8FA',
+		inputText: '#24292F',
+		inputFocusedText: '#000000',
+		inputCursor: '#B85C3E',
+		selectionBg: '#B8D4E8',
+		selectionFg: '#000000'
 	},
 	borderColors: {
 		active: '#B85C3E',

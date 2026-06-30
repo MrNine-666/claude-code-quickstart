@@ -179,7 +179,7 @@ export function ProviderView({
 					viewportWidth={viewportWidth}
 					viewportHeight={viewportHeight}
 				>
-					<text>
+					<text fg={colors.text}>
 						{current.isActive
 							? `${current.key} 是当前活跃供应商，删除前请先切换到其他供应商。`
 							: `即将删除供应商 ${current.key}，此操作不可撤销。`}

@@ -28,7 +28,16 @@ export function KeyValueField({ label, entries, text, helpText, focused, active,
 				<FormLabel label={label} focused={focused} />
 				<FormControlFrame>
 					{active && focused ? (
-						<input value={text} placeholder="KEY=VALUE,KEY2=VALUE2" onInput={onChange} focused />
+						<input
+						value={text}
+						placeholder="KEY=VALUE,KEY2=VALUE2"
+						onInput={onChange}
+						focused
+						textColor={colors.inputFocusedText}
+						cursorColor={colors.inputCursor}
+						selectionBg={colors.selectionBg}
+						selectionFg={colors.selectionFg}
+					/>
 					) : entries.length === 0 ? (
 						<text fg={colors.muted}>（无）</text>
 					) : (

@@ -12,7 +12,7 @@ import {
 	type ManageModuleId,
 	type ManageState
 } from './state/manage-state.js';
-import { navShortcuts, viewShortcuts } from './state/shortcuts.js';
+import { navShortcuts, viewShortcuts, updateButtonShortcuts } from './state/shortcuts.js';
 import { Modal, ShortcutBar, ToastViewport, toast, type StatusDotKind } from './components/index.js';
 import { colors, borderColors, borderStyles, PRIMARY, getTheme, setActiveTheme, type AppThemeMode, type ThemePalette } from './theme/index.js';
 import { CCQ_LOGO } from './theme/logo.js';
@@ -46,10 +46,7 @@ type UpdateScreen =
 	| { readonly kind: 'checking' }
 	| { readonly kind: 'latest' }
 	| { readonly kind: 'available'; readonly version: string; readonly downloadUrl: string }
-	| { readonly kind: 'downloading'; readonly version: string }
-	| { readonly kind: 'applying' }
-	| { readonly kind: 'confirm-restart'; readonly version: string }
-	| { readonly kind: 'updated'; readonly version: string }
+	| { readonly kind: 'updating'; readonly version: string }
 	| { readonly kind: 'error'; readonly message: string };
 
 type UpdateStatus = UpdateScreen['kind'];
@@ -170,7 +167,9 @@ export default function App({ initialThemeMode }: AppProps) {
 	};
 
 	const runUpdate = async (version: string, downloadUrl: string): Promise<void> => {
-		setUpdateScreen({ kind: 'downloading', version });
+		setUpdateDialogOpen(false);
+		setUpdateScreen({ kind: 'updating', version });
+
 		const downloaded = await downloadUpdate(downloadUrl);
 		if (!downloaded) {
 			toast.error('下载更新失败，请检查网络后重试');
@@ -178,7 +177,6 @@ export default function App({ initialThemeMode }: AppProps) {
 			return;
 		}
 
-		setUpdateScreen({ kind: 'applying' });
 		const applied = await applyUpdate();
 		if (!applied) {
 			toast.error('应用更新失败');
@@ -186,17 +184,23 @@ export default function App({ initialThemeMode }: AppProps) {
 			return;
 		}
 
-		toast.success(process.platform === 'win32' ? '更新已就绪，重启 ccq 后自动完成' : '更新完成，重启 ccq 生效');
-		setUpdateScreen({ kind: 'confirm-restart', version });
+		toast.success(process.platform === 'win32' ? '更新完成，重启 ccq 后生效' : '更新完成，重启 ccq 生效');
+		setUpdateScreen({ kind: 'latest' });
+
+		// Windows 平台自动重启
+		if (process.platform === 'win32') {
+			setTimeout(() => {
+				renderer?.destroy();
+				restartExecutable();
+			}, 1500);
+		}
 	};
 
 	useEffect(() => {
-		if (updateDialogOpen) {
-			void runUpdateCheck();
-		}
-		// 仅在打开浮窗时自动检查，避免 screen 改变导致重复请求。
+		// 启动时自动检查更新
+		void runUpdateCheck();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [updateDialogOpen]);
+	}, []);
 
 	// 全局键盘分发：nav 焦点始终激活；进入 view 后，凡是自带键盘处理的视图
 	// 都让位给视图自身处理，避免双重响应；浮窗打开时也让位给浮窗自身处理。
@@ -204,14 +208,33 @@ export default function App({ initialThemeMode }: AppProps) {
 	const viewModulesWithInput = useMemo(() => new Set(menuItems.map(item => item.id)), []);
 	const ownsViewInput = updateDialogOpen || (state.focus === 'view' && viewModulesWithInput.has(displayMenuId));
 	useManageInput(keyName => {
-		// 底部「检查更新」按钮：nav 焦点 + 按钮位 + 确认键 → 打开浮窗（不进 view）
+		// 底部「检查更新」按钮：nav 焦点 + 按钮位 + Enter 键处理
 		if (
 			state.focus === 'nav' &&
 			state.selectedIndex === menuItems.length &&
-			(keyName === 'enter' || keyName === 'right' || keyName === 'tab') &&
-			!updateDialogOpen
+			keyName === 'enter'
 		) {
-			setUpdateDialogOpen(true);
+			const currentStatus = updateScreen.kind;
+
+			// 'latest' 状态：重新检查更新
+			if (currentStatus === 'latest') {
+				void runUpdateCheck();
+				return;
+			}
+
+			// 'available' 状态：打开浮窗确认更新
+			if (currentStatus === 'available') {
+				setUpdateDialogOpen(true);
+				return;
+			}
+
+			// 'error' 状态：打开浮窗重试
+			if (currentStatus === 'error') {
+				setUpdateDialogOpen(true);
+				return;
+			}
+
+			// 'checking' 或 'updating' 状态：无操作
 			return;
 		}
 		setState(current => reduceManageState(current, keyName));
@@ -226,9 +249,38 @@ export default function App({ initialThemeMode }: AppProps) {
 	// 双卡片双层布局：
 	// 左卡片 = Logo（纯色） + 下划线分隔 + menu
 	// 右卡片 = content（flexGrow，焦点驱动滚动） + 下划线分隔 + footer
+
+	// Toast 主题配置：根据当前主题动态设置颜色
+	const toastOptions = useMemo(() => ({
+		style: {
+			backgroundColor: theme.colors.modalBackground,
+			foregroundColor: theme.colors.text,
+			borderColor: theme.borderColors.inactive,
+			mutedColor: theme.colors.muted,
+			borderStyle: 'rounded' as const,
+			paddingX: 1,
+			paddingY: 0,
+		},
+		duration: 4000,
+		success: {
+			style: { borderColor: theme.colors.success },
+			duration: 3000,
+		},
+		error: {
+			style: { borderColor: theme.colors.danger },
+			duration: 6000,
+		},
+		warning: {
+			style: { borderColor: theme.colors.warning },
+		},
+		info: {
+			style: { borderColor: theme.colors.info },
+		},
+	}), [theme]);
+
 	return (
 		<>
-			<ToastViewport position="bottom-right" stackingMode="stack" visibleToasts={3} />
+			<ToastViewport position="bottom-right" stackingMode="stack" visibleToasts={3} toastOptions={toastOptions} />
 			<box flexDirection="row" width={terminalWidth} height={terminalHeight}>
 				{/* 左侧导航栏 */}
 				<box
@@ -250,7 +302,7 @@ export default function App({ initialThemeMode }: AppProps) {
 
 					<Divider width={sidebarInnerWidth} />
 
-					{/* 菜单列表：active 项用 ▸ 指示器 + 背景高亮条（铺满菜单宽度）+ 粗体三重状态；行间 marginBottom 1 增高行距不显拥挤 */}
+					{/* 菜单列表：active 项用背景高亮条（铺满菜单宽度）+ 粗体三重状态；行间 marginBottom 1 增高行距不显拥挤 */}
 					<box flexDirection="column">
 						{menuItems.map((item, index) => (
 							<NavRow
@@ -268,13 +320,13 @@ export default function App({ initialThemeMode }: AppProps) {
 
 					<Divider width={sidebarInnerWidth} />
 
-					{/* 底部固定的「检查更新」按钮（占第 menuItems.length 个导航位，下键可达） */}
-					<NavRow
-						label={UPDATE_BUTTON.label}
+					{/* 底部固定的「检查更新」按钮（占第 menuItems.length 个导航位，下键可达，Enter 触发） */}
+					<UpdateButton
+						label={updateButtonLabel(updateScreen.kind)}
 						selected={state.selectedIndex === menuItems.length}
 						navActive={navActive}
 						width={sidebarInnerWidth}
-						statusKind={updateStatusKind(updateScreen.kind, updateDialogOpen)}
+						statusKind={updateStatusKind(updateScreen.kind)}
 					/>
 				</box>
 
@@ -309,11 +361,11 @@ export default function App({ initialThemeMode }: AppProps) {
 					<Divider width={terminalWidth - SIDEBAR_WIDTH - 4} />
 
 					{/* Footer 快捷键提示 */}
-					<ShortcutBar shortcuts={navActive ? navShortcuts() : viewShortcuts(displayMenuId, viewSubMode)} />
+					<ShortcutBar shortcuts={navActive && state.selectedIndex === menuItems.length ? updateButtonShortcuts() : (navActive ? navShortcuts() : viewShortcuts(displayMenuId, viewSubMode))} />
 				</box>
 			</box>
 
-			{/* 检查更新浮窗：底部按钮回车触发，统一 Modal 居中覆盖主界面（非独立页面） */}
+			{/* 检查更新浮窗：仅在 available 和 error 状态下显示 */}
 			<UpdateDialog
 				active={updateDialogOpen}
 				screen={updateScreen}
@@ -321,11 +373,6 @@ export default function App({ initialThemeMode }: AppProps) {
 				viewportHeight={terminalHeight}
 				onClose={() => setUpdateDialogOpen(false)}
 				onUpdate={(version, downloadUrl) => void runUpdate(version, downloadUrl)}
-				onRestart={() => {
-					renderer?.destroy();
-					restartExecutable();
-				}}
-				onRestartLater={(version) => setUpdateScreen({ kind: 'updated', version })}
 			/>
 		</>
 	);
@@ -336,62 +383,83 @@ function Divider({ width }: { readonly width: number }) {
 	return <text fg={colors.muted}>{'─'.repeat(Math.max(1, width))}</text>;
 }
 
-// 侧边栏导航行（菜单项与底部「检查更新」按钮共用渲染）：
-// ▸ 指示器 + 背景高亮条（铺满宽度）+ 粗体三重状态。抽组件避免菜单项与按钮渲染重复（DRY）。
-// marginBottom 拉开行距，避免菜单视觉拥挤。
-function NavRow({ label, selected, navActive, width, statusKind }: {
+// 侧边栏导航行（菜单项）：
+// 背景高亮条（铺满宽度）+ 粗体三重状态，无选中箭头。
+// marginBottom 拉开行距，paddingLeft 增加左侧缩进。
+function NavRow({ label, selected, navActive, width }: {
 	readonly label: string;
 	readonly selected: boolean;
 	readonly navActive: boolean;
 	readonly width: number;
-	readonly statusKind?: StatusDotKind;
 }) {
-	const indicator = selected ? '▸ ' : '  ';
-	const statusText = statusKind ? '● ' : '';
-	const raw = `${indicator}${statusText}${label}`;
 	const fg = selected ? (navActive ? colors.navSelectedForeground : colors.primary) : colors.muted;
 	const bg = selected ? (navActive ? PRIMARY : colors.navInactiveSelectedBackground) : undefined;
 	return (
 		<box marginBottom={1}>
-			<box flexDirection="row" width={width} backgroundColor={bg}>
+			<box flexDirection="row" width={width} backgroundColor={bg} paddingLeft={1}>
 				<text
 					fg={fg}
 					bg={bg}
 					attributes={selected ? TextAttributes.BOLD : 0}
 				>
-					{indicator}
-				</text>
-				{statusKind ? <text fg={statusDotColor(statusKind)} bg={bg}>● </text> : null}
-				<text
-					fg={fg}
-					bg={bg}
-					attributes={selected ? TextAttributes.BOLD : 0}
-				>
-					{statusKind ? ` ${label}${' '.repeat(Math.max(0, width - displayWidth(raw)))}` : `${label}${' '.repeat(Math.max(0, width - displayWidth(raw)))}`}
+					{label}
 				</text>
 			</box>
 		</box>
 	);
 }
 
-function updateStatusKind(status: UpdateStatus, active: boolean): StatusDotKind {
-	if (!active) {
-		return 'unknown';
-	}
+// 底部「检查更新」按钮（独立组件，紧贴底部无下边距）：
+// 状态点 + 背景高亮条 + 粗体三重状态，无选中箭头，paddingLeft 增加左侧缩进。
+function UpdateButton({ label, selected, navActive, width, statusKind }: {
+	readonly label: string;
+	readonly selected: boolean;
+	readonly navActive: boolean;
+	readonly width: number;
+	readonly statusKind: StatusDotKind;
+}) {
+	const fg = selected ? (navActive ? colors.navSelectedForeground : colors.primary) : colors.muted;
+	const bg = selected ? (navActive ? PRIMARY : colors.navInactiveSelectedBackground) : undefined;
+	return (
+		<box flexDirection="row" width={width} backgroundColor={bg} paddingLeft={1}>
+			<text fg={statusDotColor(statusKind)} bg={bg}>● </text>
+			<text
+				fg={fg}
+				bg={bg}
+				attributes={selected ? TextAttributes.BOLD : 0}
+			>
+				{label}
+			</text>
+		</box>
+	);
+}
 
+function updateStatusKind(status: UpdateStatus): StatusDotKind {
 	switch (status) {
 		case 'checking':
-		case 'downloading':
-		case 'applying':
+		case 'updating':
 			return 'updating';
 		case 'available':
 			return 'updatable';
 		case 'latest':
-		case 'confirm-restart':
-		case 'updated':
 			return 'latest';
 		case 'error':
 			return 'failed';
+	}
+}
+
+function updateButtonLabel(status: UpdateStatus): string {
+	switch (status) {
+		case 'checking':
+			return '正在检查更新';
+		case 'updating':
+			return '正在更新';
+		case 'available':
+			return '发现新版本';
+		case 'latest':
+			return '已是最新';
+		case 'error':
+			return '更新失败';
 	}
 }
 
@@ -401,9 +469,7 @@ function UpdateDialog({
 	viewportWidth,
 	viewportHeight,
 	onClose,
-	onUpdate,
-	onRestart,
-	onRestartLater
+	onUpdate
 }: {
 	readonly active: boolean;
 	readonly screen: UpdateScreen;
@@ -411,18 +477,10 @@ function UpdateDialog({
 	readonly viewportHeight: number;
 	readonly onClose: () => void;
 	readonly onUpdate: (version: string, downloadUrl: string) => void;
-	readonly onRestart: () => void;
-	readonly onRestartLater: (version: string) => void;
 }) {
 	useManageInput((keyName) => {
 		const isEnter = keyName === 'enter';
 		const isEsc = keyName === 'escape';
-
-		if (screen.kind === 'confirm-restart') {
-			if (isEnter) onRestart();
-			else if (isEsc) onRestartLater(screen.version);
-			return;
-		}
 
 		if (screen.kind === 'available') {
 			if (isEnter) onUpdate(screen.version, screen.downloadUrl);
@@ -430,8 +488,12 @@ function UpdateDialog({
 			return;
 		}
 
-		if (screen.kind === 'checking' || screen.kind === 'downloading' || screen.kind === 'applying') {
-			if (isEsc) onClose();
+		if (screen.kind === 'error') {
+			if (isEnter) {
+				// 从 error 状态恢复，需要重新触发检查获取下载地址
+				onClose();
+			}
+			else if (isEsc) onClose();
 			return;
 		}
 
@@ -450,22 +512,9 @@ function UpdateDialog({
 
 function updateDialogContent(screen: UpdateScreen): { readonly title: string; readonly body: React.ReactNode; readonly hint: string } {
 	switch (screen.kind) {
-		case 'checking':
-			return { title: '检查更新', body: <text fg={colors.muted}>正在检查最新版本...</text>, hint: 'Esc 取消' };
-		case 'latest':
-			return {
-				title: '检查更新',
-				body: (
-					<box flexDirection="column">
-						<text fg={colors.success}>✓ 已是最新版本</text>
-						<text fg={colors.muted}>{`  当前 v${CCQ_VERSION}`}</text>
-					</box>
-				),
-				hint: 'Esc 关闭'
-			};
 		case 'available':
 			return {
-				title: '检查更新',
+				title: '发现新版本',
 				body: (
 					<box flexDirection="column">
 						<text fg={PRIMARY}>发现新版本</text>
@@ -475,34 +524,10 @@ function updateDialogContent(screen: UpdateScreen): { readonly title: string; re
 				),
 				hint: 'Enter 更新  Esc 取消'
 			};
-		case 'downloading':
-			return { title: '检查更新', body: <text fg={colors.muted}>{`正在下载 v${screen.version}...`}</text>, hint: 'Esc 取消' };
-		case 'applying':
-			return { title: '检查更新', body: <text fg={colors.muted}>正在应用更新...</text>, hint: 'Esc 取消' };
-		case 'confirm-restart':
-			return {
-				title: '更新完成',
-				body: (
-					<box flexDirection="column">
-						<text fg={colors.success}>{`✓ 已更新到 v${screen.version}`}</text>
-						<text>是否立即重启 ccq？</text>
-					</box>
-				),
-				hint: 'Enter 重启  Esc 稍后'
-			};
-		case 'updated':
-			return {
-				title: '更新完成',
-				body: (
-					<box flexDirection="column">
-						<text fg={colors.success}>{`✓ 已更新到 v${screen.version}`}</text>
-						<text fg={colors.muted}>重启 ccq 后生效</text>
-					</box>
-				),
-				hint: 'Esc 关闭'
-			};
 		case 'error':
-			return { title: '检查更新', body: <text fg={colors.danger}>{`✗ 更新失败：${screen.message}`}</text>, hint: 'Esc 关闭' };
+			return { title: '更新失败', body: <text fg={colors.danger}>{`✗ 更新失败：${screen.message}`}</text>, hint: 'Enter 关闭  Esc 取消' };
+		default:
+			return { title: '检查更新', body: <text fg={colors.muted}>处理中...</text>, hint: 'Esc 关闭' };
 	}
 }
 

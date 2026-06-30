@@ -270,6 +270,11 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 					ref={taRef}
 					initialValue={initialContent}
 					focused={textareaFocused ?? active}
+					textColor={colors.inputText}
+					focusedTextColor={colors.inputFocusedText}
+					cursorColor={colors.inputCursor}
+					selectionBg={colors.selectionBg}
+					selectionFg={colors.selectionFg}
 					onContentChange={onContentChange ? () => onContentChange() : undefined}
 					onKeyDown={handleEditorKey}
 					style={{ flexGrow: 1 }}

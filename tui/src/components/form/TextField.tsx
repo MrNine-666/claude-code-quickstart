@@ -30,9 +30,18 @@ export function TextField({ label, value, secret = false, helpText, focused, act
 				<FormLabel label={label} focused={focused} />
 				<FormControlFrame>
 					{active && focused ? (
-						<input value={value} placeholder={secret ? '输入密钥（不会显示）' : `输入 ${label}`} onInput={onChange} focused />
+						<input
+							value={value}
+							placeholder={secret ? '输入密钥（不会显示）' : `输入 ${label}`}
+							onInput={onChange}
+							focused
+							textColor={colors.inputFocusedText}
+							cursorColor={colors.inputCursor}
+							selectionBg={colors.selectionBg}
+							selectionFg={colors.selectionFg}
+						/>
 					) : (
-						<text fg={value ? undefined : colors.muted}>{displayValue || '（空）'}</text>
+						<text fg={value ? colors.text : colors.muted}>{displayValue || '（空）'}</text>
 					)}
 				</FormControlFrame>
 			</box>

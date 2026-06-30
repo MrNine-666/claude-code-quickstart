@@ -20,9 +20,9 @@ export function DetailScreen({ title, actionsHint, children }: DetailScreenProps
 					<text fg={colors.primary} attributes={TextAttributes.BOLD}>
 						{'← 返回'}
 					</text>
-					<text attributes={TextAttributes.BOLD}>{'  '}{title}</text>
+					<text fg={colors.text} attributes={TextAttributes.BOLD}>{'  '}{title}</text>
 				</box>
-				{actionsHint ? <text attributes={TextAttributes.DIM}>{actionsHint}</text> : null}
+				{actionsHint ? <text fg={colors.muted} attributes={TextAttributes.DIM}>{actionsHint}</text> : null}
 			</box>
 			<box
 				flexDirection="column"

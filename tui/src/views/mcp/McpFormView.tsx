@@ -234,7 +234,7 @@ export function McpFormView({mode, serverId, initialJson, active, contentHeight 
 
 			{/* JSON 编辑区（真源）*/}
 			<box flexDirection="column">
-				<text fg={jsonFocused ? colors.primary : colors.muted} attributes={jsonFocused ? TextAttributes.BOLD : 0}>
+				<text fg={jsonFocused ? colors.primary : colors.text} attributes={jsonFocused ? TextAttributes.BOLD : 0}>
 					{`${jsonFocused ? '› ' : '  '}配置 JSON（直接编辑，保存时以此为准）`}
 				</text>
 				<box height={jsonHeight} borderStyle="rounded" borderColor={jsonFocused ? borderColors.active : borderColors.inactive}>
@@ -244,6 +244,11 @@ export function McpFormView({mode, serverId, initialJson, active, contentHeight 
 						focused={active && jsonFocused}
 						wrapMode="word"
 						style={{flexGrow: 1}}
+						textColor={colors.inputText}
+						focusedTextColor={colors.inputFocusedText}
+						cursorColor={colors.inputCursor}
+						selectionBg={colors.selectionBg}
+						selectionFg={colors.selectionFg}
 						onKeyDown={handleTextareaKey}
 						onContentChange={() => handleJsonChange(textareaRef.current?.plainText ?? jsonText)}
 					/>
