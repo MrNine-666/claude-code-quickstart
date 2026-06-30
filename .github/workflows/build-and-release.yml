@@ -127,8 +127,8 @@ jobs:
           set -eu
           expected="ccq-windows-x64.exe ccq-windows-arm64.exe ccq-darwin-x64 ccq-darwin-arm64"
           for file in ${expected}; do
-            test -f "tui/dist/${file}" || { echo "TUI 可执行文件不存在: ${file}" >&2; exit 1; }
-            size_kb="$(du -k "tui/dist/${file}" | cut -f1)"
+            test -f "dist/${file}" || { echo "TUI 可执行文件不存在: ${file}" >&2; exit 1; }
+            size_kb="$(du -k "dist/${file}" | cut -f1)"
             printf '[PASS] %s %s KB\n' "${file}" "${size_kb}"
           done
 
@@ -137,10 +137,10 @@ jobs:
         with:
           name: built-tui-${{ github.sha }}
           path: |
-            tui/dist/ccq-windows-x64.exe
-            tui/dist/ccq-windows-arm64.exe
-            tui/dist/ccq-darwin-x64
-            tui/dist/ccq-darwin-arm64
+            dist/ccq-windows-x64.exe
+            dist/ccq-windows-arm64.exe
+            dist/ccq-darwin-x64
+            dist/ccq-darwin-arm64
           retention-days: 7
 
   build-windows:
