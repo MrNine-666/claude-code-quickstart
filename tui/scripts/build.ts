@@ -47,10 +47,14 @@ async function buildTarget(
     `--outfile=${outfile}`,
   ];
 
-  // Windows x64 + 图标文件存在 → 添加 --windows-icon
-  if (useIcon && existsSync(ICON_PATH)) {
+  // Windows x64 + 图标文件存在 + 本机是 Windows → 添加 --windows-icon
+  // Bun 限制：--windows-icon 只能在 Windows 本机构建时使用，不支持交叉编译
+  const isWindows = process.platform === "win32";
+  if (useIcon && isWindows && existsSync(ICON_PATH)) {
     args.push(`--windows-icon=${ICON_PATH}`);
     console.log(`   图标: ${ICON_PATH}`);
+  } else if (useIcon && !isWindows) {
+    console.log(`   ⚠️  跳过图标嵌入（交叉编译限制：--windows-icon 仅支持 Windows 本机构建）`);
   } else if (useIcon) {
     console.warn(`   ⚠️  图标文件不存在，跳过: ${ICON_PATH}`);
   }
