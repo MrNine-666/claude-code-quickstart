@@ -88,11 +88,13 @@ $script:DefaultTimeoutSeconds  = 300
 | `Get-CommandVersion` | `-Command` | `string` 版本号 |
 | `Refresh-SessionPath` | — | void（刷新当前会话 PATH） |
 | `Invoke-NpmGlobalInstall` | `-PackageName [-Version] [-Force]` | `@{Success; Error; Data}` |
-| `Invoke-WingetInstall` | `-PackageId -PackageName [-Silent] [-AcceptLicense]` | `@{Success; ErrorMessage}` |
+| `Invoke-WingetInstall` | `-PackageId -PackageName [-Silent] [-AcceptLicense] [-InstallerType]` | `@{Success; ErrorMessage}` |
 
 > **注意**：`Invoke-NpmGlobalInstall` **无 `-DisplayName` 参数**，步骤文件调用时不要传此参数。
 
 > **HC-WINGET-SILENT（强约束）**：`Invoke-WingetInstall` 传入 `-Silent` 时，内部自动切换为重定向模式（`RedirectStandardOutput/Error = $true`）并异步消费缓冲区，以抑制 winget 进度条噪音（如 `Removed N of M files`）。**禁止**在 `-Silent` 模式下将 `RedirectStandardOutput/RedirectStandardError` 设为 `$false`——否则进度条输出会泄漏到终端且可能死锁。
+
+> **HC-WINGET-INSTALLER-TYPE（强约束）**：**PowerShell 7（`Microsoft.PowerShell`）必须通过 `-InstallerType "wix"` 强制 MSI 真身**。自 PS 7.6.0 起，winget 社区源 manifest 默认改发 **MSIX** 包（即便带 `--source winget`），MSIX 在无 Microsoft Store / Store 服务未就绪的虚拟机会半装失败，留下 `%LOCALAPPDATA%\Microsoft\WindowsApps\Microsoft.PowerShell_8wekyb3d8bbwe\pwsh.exe` 这个 0 字节执行别名空壳存根；后续任何 `pwsh` 调用一启动空壳即抛 `0xc0ea0001`（`APPMODEL_ERROR_NO_PACKAGE`：别名存在、包未注册）。`--installer-type wix` 强制 MSI 装到 `C:\Program Files\PowerShell\7\pwsh.exe`，不注册 WindowsApps 别名，虚拟机/无 Store 环境也稳。**不要对 `Microsoft.WindowsTerminal` 传此参数**——它是 MSIX-only 包，无 MSI 真身，强制 `wix` 必失败；其装失败属可选组件的正常跳过。其余 winget 包（Git.Git / OpenJS.NodeJS.LTS / CoreyButler.NVMforWindows）本就是 MSI/exe，无歧义，**不传** `-InstallerType`。
 
 > **HC-PS1-PATH-QUOTE（强约束）**：`Invoke-ExternalCommand` 对 `.ps1` 文件通过 `pwsh.exe -File` 执行时，若路径含空格**必须**加双引号包裹（`"`"$path"`"`），否则 `ProcessStartInfo.Arguments -join ' '` 拼接后路径被截断（如 `C:\Program Files\nodejs\npm.ps1` → `-File C:\Program`），退出码 64。
 

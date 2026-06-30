@@ -253,6 +253,9 @@ function Invoke-WingetInstall {
     静默安装
     .PARAMETER Force
     强制安装
+    .PARAMETER InstallerType
+    指定 winget 安装器类型（如 wix / msi / exe），用于消除同一包 ID 在多种安装器
+    （MSI 与 MSIX）间的歧义。留空则由 winget manifest 默认决定。
     .RETURNS
     安装结果对象
     #>
@@ -266,7 +269,9 @@ function Invoke-WingetInstall {
 
         [switch]$Silent,
 
-        [switch]$Force
+        [switch]$Force,
+
+        [string]$InstallerType = ""
     )
 
     # 检查 winget 可用性
@@ -280,6 +285,10 @@ function Invoke-WingetInstall {
     if ($AcceptLicense) { $arguments += "--accept-package-agreements", "--accept-source-agreements" }
     if ($Silent) { $arguments += "--silent" }
     if ($Force) { $arguments += "--force" }
+    # --installer-type：消除同包 ID 多安装器歧义（如 PowerShell 7.6+ winget 默认发 MSIX，
+    # 在无 Store/未就绪环境留下 0 字节执行别名空壳存根，启动时抛 0xc0ea0001；
+    # 指定 wix 强制 MSI 真身装到 Program Files，不注册 WindowsApps 别名）
+    if ($InstallerType) { $arguments += "--installer-type", $InstallerType }
 
     Write-UiPrimary "正在安装 $PackageName..."
 

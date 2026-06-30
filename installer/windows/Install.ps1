@@ -648,7 +648,10 @@ function Install-RecommendedPowerShell7 {
     }
 
     try {
-        $installResult = Invoke-WingetInstall -PackageId "Microsoft.PowerShell" -PackageName "PowerShell 7" -Silent -AcceptLicense
+        # --installer-type wix：强制 MSI 真身（PS 7.6+ winget 默认发 MSIX，在无 Store /
+        # 未就绪环境会留下 0 字节执行别名空壳存根，启动 pwsh 报 0xc0ea0001）。
+        # MSI 装到 Program Files，不注册 WindowsApps 别名，虚拟机/无 Store 环境也稳。
+        $installResult = Invoke-WingetInstall -PackageId "Microsoft.PowerShell" -PackageName "PowerShell 7" -Silent -AcceptLicense -InstallerType "wix"
         if ($installResult.Success) {
             Refresh-SessionPath
             Write-UiSuccess "PowerShell 7 安装成功（推荐组件）"
