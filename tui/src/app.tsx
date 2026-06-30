@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRenderer } from '@opentui/react';
 import { TextAttributes, getTreeSitterClient, SyntaxStyle, RGBA } from '@opentui/core';
@@ -33,6 +34,14 @@ import { createToolsViewServices } from './views/tools-view-services.js';
 // logo 每行 13 列宽（块面风格），侧边栏内宽 = SIDEBAR_WIDTH - 2(边框) - 2(paddingX) = 20，菜单标签充裕。
 const SIDEBAR_WIDTH = 24;
 
+// 是否运行在 Bun --compile 单文件可执行产物中。
+// 源码模式下 import.meta.dirname 是真实磁盘目录（existsSync=true）；
+// 编译产物下它是 Bun 虚拟路径（如 B:\~BUN\root），existsSync=false。
+// Tree-sitter worker 在编译产物中无法被正确嵌入/解析（Bun compile 不会嵌入
+// new Worker(new URL(...)) 动态引用的 worker 文件，且 existsSync 失效导致
+// OpenTUI 回退到不存在的 parser.worker.ts），故编译产物下禁用语法高亮、降级纯文本。
+const IS_COMPILED_EXECUTABLE = import.meta.dirname != null && !existsSync(import.meta.dirname);
+
 type UpdateScreen =
 	| { readonly kind: 'checking' }
 	| { readonly kind: 'latest' }
@@ -62,6 +71,12 @@ export default function App() {
 	// 初始化 Tree-sitter 语法高亮（Phase 5B.1）
 	const [syntaxStyle, setSyntaxStyle] = useState<SyntaxStyle | null>(null);
 	useEffect(() => {
+		// 编译产物中 Tree-sitter worker 无法启动（见 IS_COMPILED_EXECUTABLE 注释），
+		// 直接跳过：getTreeSitterClient() 构造即 startWorker 会触发 worker error 日志，
+		// 故连 client 都不创建；syntaxStyle 保持 null，视图自动降级为纯文本。
+		if (IS_COMPILED_EXECUTABLE) {
+			return;
+		}
 		let mounted = true;
 		(async () => {
 			const client = getTreeSitterClient();
