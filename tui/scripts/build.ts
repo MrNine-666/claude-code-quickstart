@@ -3,31 +3,34 @@
  * TUI 构建脚本 - 交叉编译 4 平台可执行文件
  *
  * 产物：
- * - dist/ccq-windows-x64.exe
- * - dist/ccq-windows-arm64.exe
+ * - dist/ccq-windows-x64.exe（带自定义图标）
+ * - dist/ccq-windows-arm64.exe（交叉编译限制，保留 Bun 默认图标）
  * - dist/ccq-darwin-x64
  * - dist/ccq-darwin-arm64
  *
  * 契约内嵌：通过 src/core/embedded-contracts.ts 静态 import 内嵌
+ * 图标：Windows x64 本机构建时自动嵌入 assets/ccq-icon.ico
  */
 
 import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
 
 const TARGETS = [
-  { platform: "windows", arch: "x64", ext: ".exe" },
-  { platform: "windows", arch: "arm64", ext: ".exe" },
-  { platform: "darwin", arch: "x64", ext: "" },
-  { platform: "darwin", arch: "arm64", ext: "" },
+  { platform: "windows", arch: "x64", ext: ".exe", icon: true },
+  { platform: "windows", arch: "arm64", ext: ".exe", icon: false }, // 交叉编译限制
+  { platform: "darwin", arch: "x64", ext: "", icon: false },
+  { platform: "darwin", arch: "arm64", ext: "", icon: false },
 ] as const;
 
-const DIST_DIR = join(import.meta.dir, "../dist");
+const DIST_DIR = join(import.meta.dir, "../../dist");
 const SRC_ENTRY = join(import.meta.dir, "../src/index.tsx");
+const ICON_PATH = join(import.meta.dir, "../assets/ccq-icon.ico");
 
 async function buildTarget(
   platform: string,
   arch: string,
-  ext: string
+  ext: string,
+  useIcon: boolean
 ): Promise<void> {
   const target = `bun-${platform}-${arch}`;
   const outfile = join(DIST_DIR, `ccq-${platform}-${arch}${ext}`);
@@ -36,14 +39,25 @@ async function buildTarget(
   console.log(`   入口: ${SRC_ENTRY}`);
   console.log(`   产物: ${outfile}`);
 
-  const proc = Bun.spawn([
+  const args = [
     "bun",
     "build",
     "--compile",
     `--target=${target}`,
     `--outfile=${outfile}`,
-    SRC_ENTRY,
-  ], {
+  ];
+
+  // Windows x64 + 图标文件存在 → 添加 --windows-icon
+  if (useIcon && existsSync(ICON_PATH)) {
+    args.push(`--windows-icon=${ICON_PATH}`);
+    console.log(`   图标: ${ICON_PATH}`);
+  } else if (useIcon) {
+    console.warn(`   ⚠️  图标文件不存在，跳过: ${ICON_PATH}`);
+  }
+
+  args.push(SRC_ENTRY);
+
+  const proc = Bun.spawn(args, {
     stdout: "inherit",
     stderr: "inherit",
   });
@@ -68,16 +82,43 @@ async function main(): Promise<void> {
     mkdirSync(DIST_DIR, { recursive: true });
   }
 
-  // 交叉编译 4 个平台
-  for (const { platform, arch, ext } of TARGETS) {
-    await buildTarget(platform, arch, ext);
+  // 交叉编译 4 个平台（arm64 失败不中断）
+  const results: Array<{ target: string; success: boolean; error?: string }> = [];
+
+  for (const { platform, arch, ext, icon } of TARGETS) {
+    const target = `${platform}-${arch}`;
+    try {
+      await buildTarget(platform, arch, ext, icon);
+      results.push({ target, success: true });
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error(`\n⚠️  ${target} 构建失败: ${errMsg}`);
+      results.push({ target, success: false, error: errMsg });
+
+      // arm64 交叉编译失败属于已知限制，不中断流程
+      if (arch === "arm64") {
+        console.log(`   → arm64 交叉编译失败是已知限制，继续构建其他平台...\n`);
+      }
+    }
   }
 
-  console.log("\n✅ 所有平台构建完成！");
-  console.log("\n产物列表:");
-  for (const { platform, arch, ext } of TARGETS) {
-    console.log(`  - ccq-${platform}-${arch}${ext}`);
+  console.log("\n✅ 构建完成！\n");
+  console.log("产物列表:");
+  for (const { target, success, error } of results) {
+    if (success) {
+      console.log(`  ✓ ccq-${target}${target.startsWith("windows") ? ".exe" : ""}`);
+    } else {
+      console.log(`  ✗ ccq-${target}${target.startsWith("windows") ? ".exe" : ""} (${error})`);
+    }
   }
+
+  // 至少一个平台成功即视为构建成功
+  const successCount = results.filter(r => r.success).length;
+  if (successCount === 0) {
+    throw new Error("所有平台构建均失败");
+  }
+
+  console.log(`\n成功: ${successCount}/${results.length} 个平台`);
 }
 
 main().catch((error) => {

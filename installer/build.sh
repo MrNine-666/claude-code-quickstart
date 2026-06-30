@@ -294,8 +294,8 @@ function buildManageTuiPackage() {
     return false;
   }
 
-  // macOS 构建入口只输出 macOS ccq 产物。
-  const tuiDistDir = path.join(tuiDir, 'dist');
+  // macOS 构建入口只输出 macOS ccq 产物；TUI 本地构建直接输出到 repo 根 dist/。
+  const tuiArtifactDir = path.join(repoRoot, 'dist');
   const expectedFiles = [
     'ccq-darwin-x64',
     'ccq-darwin-arm64'
@@ -303,7 +303,7 @@ function buildManageTuiPackage() {
 
   let allSuccess = true;
   for (const fileName of expectedFiles) {
-    const srcPath = path.join(tuiDistDir, fileName);
+    const srcPath = path.join(tuiArtifactDir, fileName);
     const destPath = path.join(outputDir, fileName);
 
     if (!fs.existsSync(srcPath)) {
@@ -312,8 +312,10 @@ function buildManageTuiPackage() {
       continue;
     }
 
-    // 复制到输出目录
-    fs.copyFileSync(srcPath, destPath);
+    // 复制到输出目录；若 OutputDir 与 TUI 产物目录相同则跳过。
+    if (path.resolve(srcPath) !== path.resolve(destPath)) {
+      fs.copyFileSync(srcPath, destPath);
+    }
     const sizeKB = Math.round((fs.statSync(destPath).size / 1024) * 10) / 10;
     pass(`${fileName} 已生成（${sizeKB} KB）`);
   }

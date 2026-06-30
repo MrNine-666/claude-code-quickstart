@@ -204,8 +204,8 @@ function Invoke-ManageTuiPackage {
         Pop-Location
     }
 
-    # 验证产物并复制到 OutputDir；Windows 构建入口只输出 Windows ccq 产物。
-    $tuiDistDir = Join-Path $tuiDir 'dist'
+    # 验证产物并复制到 OutputDir；TUI 本地构建直接输出到 repo 根 dist/。
+    $tuiArtifactDir = Join-Path $repoRoot 'dist'
     $expectedFiles = @(
         'ccq-windows-x64.exe',
         'ccq-windows-arm64.exe'
@@ -213,7 +213,7 @@ function Invoke-ManageTuiPackage {
 
     $allSuccess = $true
     foreach ($fileName in $expectedFiles) {
-        $srcPath = Join-Path $tuiDistDir $fileName
+        $srcPath = Join-Path $tuiArtifactDir $fileName
         $destPath = Join-Path $OutputDir $fileName
 
         if (-not (Test-Path $srcPath -PathType Leaf)) {
@@ -222,8 +222,12 @@ function Invoke-ManageTuiPackage {
             continue
         }
 
-        # 复制到输出目录
-        Copy-Item -Path $srcPath -Destination $destPath -Force
+        # TUI 本地构建已直接写入 OutputDir；若调用方改了 OutputDir，则再复制过去。
+        $srcFullPath = (Resolve-Path $srcPath).Path
+        $destFullPath = [System.IO.Path]::GetFullPath($destPath)
+        if ($srcFullPath -ne $destFullPath) {
+            Copy-Item -Path $srcPath -Destination $destPath -Force
+        }
         $sizeKB = [math]::Round((Get-Item $destPath).Length / 1KB, 1)
         Write-Host "[PASS] $fileName 已生成（$sizeKB KB）" -ForegroundColor Green
     }
