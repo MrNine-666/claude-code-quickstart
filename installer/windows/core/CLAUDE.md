@@ -12,14 +12,13 @@
 | 文件 | 行数 | 职责 |
 |------|------|------|
 | `Ui.ps1` | 893 | TUI 组件：语义颜色系统（6 色）、菜单、进度、摘要表格 |
-| `Process.ps1` | 492 | 外部命令执行、PATH 刷新、版本检测、npm/winget 封装 |
+| `Process.ps1` | 1784 | 外部命令执行、PATH 刷新、版本检测、npm/winget 封装；**ccq 可执行文件管理区段**（架构检测 / 下载 / PATH，见下文专节） |
 | `Profile.ps1` | 526 | `$PROFILE` 安全编辑：备份、标记块读写、原子写入 |
 | `Update.ps1` | ~310 | **更新状态管理**：更新清单、内容指纹、更新快照（与 macOS `Update.zsh` 对称的集中式 Update core，从 Profile.ps1 迁出） |
 | `Admin.ps1` | 137 | 管理员权限检测与自提权 |
 | `Net.ps1` | ~270 | 端点可达性检测、文件下载 |
 | `Registry.ps1` | 280 | **共享步骤注册表**：元数据、分组、依赖、迁移映射（消除 DRY 违规） |
 | `Bootstrap.ps1` | 617 | 步骤状态模型、生命周期调度、拓扑排序、恢复逻辑 |
-| `CcqExecutable.ps1` | ~200 | **ccq 可执行文件管理**：架构检测、下载、PATH 管理（Windows 使用 `%USERPROFILE%\.local\bin`） |
 
 旧 `ManageCore.ps1`（Manage TUI 目录型产物缓存 wrapper）已删除，Manage 改为 OpenTUI + Bun 单文件可执行分发。
 
@@ -273,27 +272,23 @@ $success = if ($result -is [bool]) { $result }
 
 ---
 
-## CcqExecutable.ps1
+## Process.ps1 — ccq 可执行文件管理区段
 
 ### 职责（ccq 可执行文件管理）
 
-**ccq 可执行文件管理模块**，负责检测 CPU 架构、从 GitHub Release 下载对应平台的单文件可执行产物、安装到 `%USERPROFILE%\.local\bin\ccq.exe`（与 Claude Code native installer 同目录），并加入用户 PATH 使 `ccq` 命令天然可达，**不注入 Profile**。
+ccq 可执行文件管理函数**内聚于 `Process.ps1` 末尾**（`# ─── CCQ 可执行文件管理 ───` 区段，约 1582 行起），而非独立模块文件。负责检测平台架构、从 GitHub Release 下载对应平台的单文件可执行产物、安装到 `%USERPROFILE%\.local\bin\ccq.exe`（与 Claude Code native installer 同目录），并加入用户 PATH 使 `ccq` 命令天然可达，**不注入 Profile**。
 
 ### 主要函数
 
 | 函数 | 职责 |
 |------|------|
-| `Get-CpuArchitecture` | 检测 CPU 架构，返回 `x64` 或 `arm64`（通过 `$env:PROCESSOR_ARCHITECTURE` + WMI 查询） |
-| `Install-CcqExecutable` | 下载 ccq 可执行文件到 `%USERPROFILE%\.local\bin\ccq.exe`（自动检测架构，从 GitHub Release 下载，原子替换） |
-| `Add-DirectoryToUserPath` | 将 `%USERPROFILE%\.local\bin` 加入用户 PATH（无需 Profile） |
-| `Test-CcqInstalled` | 检测 ccq 是否已安装且可执行（`ccq --version` 可达） |
+| `Get-CcqArchitecture` | 检测平台架构，返回 ccq target 名称 `windows-x64` 或 `windows-arm64`（通过 `$env:PROCESSOR_ARCHITECTURE`，ARM64 → arm64，其余统一 x64） |
+| `Get-CcqExecutablePath` | 返回 ccq 安装路径 `%USERPROFILE%\.local\bin\ccq.exe` |
+| `Test-CcqExecutableInstalled` | 检测 ccq 是否已安装（路径存在且 `ccq --version` 可达） |
+| `Install-CcqExecutable` | 下载 ccq 可执行文件到 `%USERPROFILE%\.local\bin\ccq.exe`（调用 `Invoke-FileDownload` 自绘进度条 + CTRL+C 可中断，原子替换），并确保目录在用户 PATH |
+| `Add-DirectoryToUserPath` | 将 `%USERPROFILE%\.local\bin` 加入用户 PATH（注册表 `HKCU\Environment`，无需 Profile） |
 
-### 配置常量
-
-```powershell
-$script:CcqGitHubReleaseBaseUrl = "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download"
-$script:CcqInstallDir           = "$env:USERPROFILE\.local\bin"  # 与 Claude Code native installer 同目录
-```
+> **注意**：Release 基址 URL 由入口脚本 `Install.ps1` 的 `Get-CcqReleaseDownloadBaseUrl` 提供，拼上 `Get-CcqArchitecture` 结果与 `ccq.exe` 文件名后作为 `-DownloadUrl` 传入 `Install-CcqExecutable`；`Process.ps1` 内**不**持有 `$script:CcqGitHubReleaseBaseUrl` / `$CcqInstallDir` 常量。
 
 ### Windows PATH 策略
 
@@ -302,7 +297,7 @@ Windows 使用用户级 `.local/bin` 方式（无需 Profile）：
 2. 将 `%USERPROFILE%\.local\bin` 加入用户 PATH（若已存在则跳过）
 3. 该路径与 Claude Code native installer 的 `%USERPROFILE%\.local\bin\claude.exe` 保持一致
 
-> **加载顺序**：CcqExecutable.ps1 在 Net.ps1 之后加载（依赖 `Invoke-FileDownload`），在 Bootstrap.ps1 之前加载。
+> **加载顺序**：ccq 管理函数随 `Process.ps1` 一同 dot-source 加载，位于 core 加载序列第二步（`Ui.ps1` → `Process.ps1` → …）。函数运行时解析，`Install-CcqExecutable` 在步骤执行时才调用 `Invoke-FileDownload`（`Net.ps1`），届时 `Net.ps1` 已加载，无前向引用问题。
 
 ---
 
@@ -315,14 +310,13 @@ macOS 安装器实现了与 Windows 功能对等的核心模块，采用 zsh 脚
 | Windows (PowerShell) | macOS (zsh) | 功能对齐度 |
 |---------------------|-------------|-----------|
 | `Ui.ps1` | `Ui.zsh` | 95% - 语义颜色、表格、菜单、错误展开 |
-| `Process.ps1` | `Process.zsh` | 95% - 命令执行、重试、超时、npm outdated 缓存 |
+| `Process.ps1` | `Process.zsh` | 95% - 命令执行、重试、超时、npm outdated 缓存；**ccq 可执行文件管理区段**（Windows `Get-CcqArchitecture`/`Install-CcqExecutable` ↔ macOS `ccq_get_architecture`/`ccq_install_executable`，两平台均内聚于 Process 而非独立文件） |
 | `Profile.ps1` | `Profile.zsh` | 98% - 原子写入、备份、受管区块（Manifest/Snapshot 已迁至 Update core） |
 | `Update.ps1` (~310行) | `Update.zsh` | **对称 - 更新清单、内容指纹、更新快照**（npm 检测留 Process.ps1，属合理职责划分差异；加载位置两平台不一致见 Update.ps1 章节） |
 | `Admin.ps1` | - | N/A - macOS 无需管理员自提权 |
 | `Net.ps1` | - | N/A - macOS 使用 curl/wget 原生工具 |
 | `Registry.ps1` | `Registry.zsh` | 98% - 步骤注册表、拓扑排序、Legacy 映射 |
 | `Bootstrap.ps1` | `Bootstrap.zsh` | 95% - 生命周期、Critical 失败策略、五类摘要 |
-| `CcqExecutable.ps1` (~200行) | `CcqExecutable.zsh` (~150行) | **100% - ccq 可执行文件管理，架构检测 / 下载 / PATH（Windows 与 macOS 均使用 `.local/bin`）** |
 
 ### 平台差异要点
 

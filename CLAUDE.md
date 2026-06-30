@@ -194,8 +194,8 @@ zsh -n installer/macos/Install.zsh
   Install.ps1 / Install.zsh（末尾确认下载 ccq 可执行文件）
     ↓
   core/ccq 管理函数（架构检测 / 下载 / PATH）
-    ├─ Windows: Get-CpuArchitecture / Install-CcqExecutable / Add-DirectoryToUserPath
-    └─ macOS: get_cpu_architecture / install_ccq_executable / ensure ~/.local/bin PATH
+    ├─ Windows: Get-CcqArchitecture / Install-CcqExecutable / Add-DirectoryToUserPath
+    └─ macOS: ccq_get_architecture / ccq_install_executable（内部直写 ~/.zprofile 确保 ~/.local/bin 在 PATH）
 ```
 
 - **构建方式**：`tui/scripts/build.ts` 调用 `bun build --compile` 交叉编译 4 平台可执行文件到 `tui/dist/`，`installer/build.ps1` / `installer/build.sh` 从 `tui/dist/` 拷贝到根 `dist/`，GitHub Release 上传 **6 个 artifact**（install.ps1 / install.sh / ccq-windows-x64.exe / ccq-windows-arm64.exe / ccq-darwin-x64 / ccq-darwin-arm64）。

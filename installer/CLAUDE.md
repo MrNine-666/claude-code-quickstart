@@ -166,8 +166,8 @@ Cannot bind argument to parameter 'Path' because it is an empty string.
   Install.ps1 / Install.zsh（末尾确认下载 ccq 可执行文件）
     ↓
   core/ccq 管理函数（架构检测 / 下载 / PATH）
-    ├─ Windows: Get-CpuArchitecture / Install-CcqExecutable / Add-DirectoryToUserPath
-    └─ macOS: get_cpu_architecture / install_ccq_executable / ensure ~/.local/bin PATH
+    ├─ Windows: Get-CcqArchitecture / Install-CcqExecutable / Add-DirectoryToUserPath
+    └─ macOS: ccq_get_architecture / ccq_install_executable（内部直写 ~/.zprofile 确保 ~/.local/bin 在 PATH）
 ```
 
 ### 离线与热更新

@@ -455,11 +455,19 @@ function Install-Winget {
                 throw "无法解析 winget 主包下载地址"
             }
 
-            # 下载依赖与主包（-UseBasicParsing：PS5.1 兼容且不依赖 IE 引擎）
+            # 下载依赖与主包（复用 Invoke-FileDownload：自绘进度条 + CTRL+C 可中断，规避 Invoke-WebRequest 原生进度条噪音）
             Write-UiInfo "下载 winget 依赖与主包..."
-            Invoke-WebRequest -Uri $vcLibsUrl -OutFile $vcLibsPath -UseBasicParsing -ErrorAction Stop
-            Invoke-WebRequest -Uri $uiXamlUrl -OutFile $uiXamlPath -UseBasicParsing -ErrorAction Stop
-            Invoke-WebRequest -Uri $wingetUrl -OutFile $wingetPath -UseBasicParsing -ErrorAction Stop
+            $wingetDownloads = @(
+                @{ Url = $vcLibsUrl; OutPath = $vcLibsPath; Desc = "VCLibs 依赖" },
+                @{ Url = $uiXamlUrl; OutPath = $uiXamlPath; Desc = "UI.Xaml 依赖" },
+                @{ Url = $wingetUrl;  OutPath = $wingetPath; Desc = "winget 主包" }
+            )
+            foreach ($pkg in $wingetDownloads) {
+                $dlRes = Invoke-FileDownload -Url $pkg.Url -OutputPath $pkg.OutPath -Description $pkg.Desc
+                if (-not $dlRes.Success) {
+                    throw "下载 $($pkg.Desc) 失败: $($dlRes.ErrorMessage)"
+                }
+            }
 
             # 安装顺序强约束：依赖先于主包（否则 HRESULT 0x80073CF3 依赖缺失）
             Add-AppxPackage -Path $vcLibsPath -ErrorAction Stop
@@ -1658,16 +1666,13 @@ function Install-CcqExecutable {
             Write-UiInfo "创建 ccq 目录: $ccqBinDir"
         }
 
-        # 2. 下载可执行文件
-        Write-UiInfo "正在下载 ccq 可执行文件..."
-        Write-UiDim "  URL: $DownloadUrl"
-
-        Invoke-WebRequest -Uri $DownloadUrl -OutFile $ccqPath -UseBasicParsing -ErrorAction Stop
-
-        # 3. 验证文件存在且非空
-        if (-not (Test-Path $ccqPath)) {
-            throw "下载后文件不存在: $ccqPath"
+        # 2. 下载可执行文件（复用 Invoke-FileDownload：自绘进度条 + CTRL+C 可中断，规避 Invoke-WebRequest 原生进度条噪音）
+        $downloadResult = Invoke-FileDownload -Url $DownloadUrl -OutputPath $ccqPath -Description "ccq 可执行文件"
+        if (-not $downloadResult.Success) {
+            throw "ccq 下载失败: $($downloadResult.ErrorMessage)"
         }
+
+        # 3. 验证文件非空（Invoke-FileDownload 已校验存在性与完整性，此处双重确认）
         $fileInfo = Get-Item $ccqPath
         if ($fileInfo.Length -eq 0) {
             throw "下载的文件为空"
