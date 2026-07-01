@@ -294,7 +294,7 @@ function buildManageTuiPackage() {
     return false;
   }
 
-  # macOS 构建入口只输出 macOS ccq 产物；TUI 本地构建直接输出到 repo 根 dist/。
+  // macOS 构建入口只输出 macOS ccq 产物；TUI 本地构建直接输出到 repo 根 dist/。
   const tuiArtifactDir = path.join(repoRoot, 'dist');
   const expectedFiles = [
     'ccq-macos-x64',
