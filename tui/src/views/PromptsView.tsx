@@ -214,7 +214,7 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
 						<ThemedScrollbox ref={viewScrollRef} style={{flexGrow: 1}}>
 							{syntaxStyle
-								? <code content={viewContent} filetype="markdown" syntaxStyle={syntaxStyle} conceal={false} style={{flexGrow: 1}} />
+								? <code content={viewContent} filetype="markdown" syntaxStyle={syntaxStyle} conceal={false} fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} style={{flexGrow: 1}} />
 								: <text fg={colors.info}>{viewContent}</text>}
 						</ThemedScrollbox>
 					</box>
@@ -265,7 +265,7 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 							paddingX={1}
 						>
 							<ThemedScrollbox ref={recommendScrollRef} style={{flexGrow: 1}}>
-								{syntaxStyle ? <code content={recommendationContent} filetype="markdown" syntaxStyle={syntaxStyle} conceal={false} style={{flexGrow: 1}} /> : <text fg={colors.info}>{recommendationContent}</text>}
+								{syntaxStyle ? <code content={recommendationContent} filetype="markdown" syntaxStyle={syntaxStyle} conceal={false} fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} style={{flexGrow: 1}} /> : <text fg={colors.info}>{recommendationContent}</text>}
 							</ThemedScrollbox>
 						</box>
 					</box>

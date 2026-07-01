@@ -175,7 +175,7 @@ export function ProviderView({
 					viewportWidth={viewportWidth}
 					viewportHeight={viewportHeight}
 				>
-					<text fg={colors.text}>
+					<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 						{current.isActive
 							? `${current.key} 是当前活跃供应商，删除前请先切换到其他供应商。`
 							: `即将删除供应商 ${current.key}，此操作不可撤销。`}
@@ -263,7 +263,7 @@ function ProviderTable({
 		title: profile.key,
 		leading: cardStatusDot(profile),
 		body: (
-			<text fg={colors.muted}>
+			<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 				{truncateToWidth(
 					`${profile.baseUrl} · ${profile.maskedApiKey} · ${modelSummary(loadProviderProfile(profile.profilePath))}`,
 					CARD_BODY_WIDTH
@@ -278,7 +278,7 @@ function ProviderTable({
 // 左栏状态圆点：active 用更新页同款绿点（latest 表示当前生效），非活跃用弱化灰点；
 // 仅圆点不带文字，活跃语义由绿/灰色彩承载，card 内保持紧凑。
 function cardStatusDot(profile: ProviderDisplayProfile): React.ReactNode {
-	return profile.isActive ? <StatusDot kind="latest" /> : <text fg={colors.muted}>●</text>;
+	return profile.isActive ? <StatusDot kind="latest" /> : <text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>●</text>;
 }
 
 // ── 列表输入订阅（OpenTUI useKeyboard） ────────────────────────────────────

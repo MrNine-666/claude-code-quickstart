@@ -1,5 +1,5 @@
 import React from 'react';
-import { statusDotColors } from '../theme/index.js';
+import { colors, statusDotColors } from '../theme/index.js';
 import { Spinner } from './spinner.js';
 
 // 状态圆点：彩色 ● + 文字（OpenTUI 适配）
@@ -27,7 +27,7 @@ export function StatusDot({ kind, label }: StatusDotProps) {
 	}
 
 	return (
-		<text fg={statusDotColors[kind]}>
+		<text fg={statusDotColors[kind]} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 			●{label ? ` ${label}` : ''}
 		</text>
 	);

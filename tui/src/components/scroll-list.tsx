@@ -73,7 +73,7 @@ export function ScrollList({
 	}, [activeItemId]);
 
 	if (items.length === 0) {
-		return <text fg={colors.muted}>{emptyText}</text>;
+		return <text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{emptyText}</text>;
 	}
 
 	return (
@@ -104,7 +104,7 @@ export function ScrollList({
 					</box>
 				))}
 			</ThemedScrollbox>
-			<text fg={colors.muted}>{`(${safeCursor + 1}/${items.length})`}</text>
+			<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`(${safeCursor + 1}/${items.length})`}</text>
 		</box>
 	);
 }

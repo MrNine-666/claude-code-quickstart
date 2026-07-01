@@ -358,7 +358,7 @@ function ColoredCodeLines({ content, jsonc = false }: { readonly content: string
 				const isComment = jsonc && line.trimStart().startsWith('//');
 				if (isComment) {
 					return (
-						<text key={i} fg={colors.muted} attributes={TextAttributes.DIM}>
+						<text key={i} fg={colors.muted} attributes={TextAttributes.DIM} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 							{line.length > 0 ? line : ' '}
 						</text>
 					);
@@ -366,9 +366,9 @@ function ColoredCodeLines({ content, jsonc = false }: { readonly content: string
 				return (
 					<box key={i} flexDirection="row">
 						{line.length === 0
-							? <text>{' '}</text>
+							? <text selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{' '}</text>
 							: tokenizeJsonLine(line).map((tok, j) => (
-								<text key={j} fg={jsonTokenColor(tok.type)}>
+								<text key={j} fg={jsonTokenColor(tok.type)} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 									{tok.text.length > 0 ? tok.text : ' '}
 								</text>
 							))}

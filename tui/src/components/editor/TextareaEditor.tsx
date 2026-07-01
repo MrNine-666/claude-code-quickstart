@@ -242,6 +242,9 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 									content={previewContent}
 									filetype={codeFiletype(filetype)}
 									syntaxStyle={syntaxStyle}
+									fg={colors.text}
+									selectionBg={colors.selectionBg}
+									selectionFg={colors.selectionFg}
 									style={{ flexGrow: 1 }}
 								/>
 							</line-number>

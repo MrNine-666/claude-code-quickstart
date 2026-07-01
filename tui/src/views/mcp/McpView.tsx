@@ -178,7 +178,7 @@ export default function McpView({active, viewportHeight = 16, viewportWidth = 52
 					viewportWidth={viewportWidth}
 					viewportHeight={viewportHeight}
 				>
-					<text>{`即将删除 MCP Server ${current.Id}，此操作不可撤销。`}</text>
+					<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`即将删除 MCP Server ${current.Id}，此操作不可撤销。`}</text>
 				</Modal>
 			) : null}
 

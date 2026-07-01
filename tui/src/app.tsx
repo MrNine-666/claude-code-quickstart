@@ -517,17 +517,17 @@ function updateDialogContent(screen: UpdateScreen): { readonly title: string; re
 				title: '发现新版本',
 				body: (
 					<box flexDirection="column">
-						<text fg={PRIMARY}>发现新版本</text>
-						<text fg={colors.muted}>{`  当前 v${CCQ_VERSION}`}</text>
-						<text fg={colors.muted}>{`  最新 v${screen.version}`}</text>
+						<text fg={PRIMARY} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>发现新版本</text>
+						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  当前 v${CCQ_VERSION}`}</text>
+						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  最新 v${screen.version}`}</text>
 					</box>
 				),
 				hint: 'Enter 更新  Esc 取消'
 			};
 		case 'error':
-			return { title: '更新失败', body: <text fg={colors.danger}>{`✗ 更新失败：${screen.message}`}</text>, hint: 'Enter 关闭  Esc 取消' };
+			return { title: '更新失败', body: <text fg={colors.danger} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`✗ 更新失败：${screen.message}`}</text>, hint: 'Enter 关闭  Esc 取消' };
 		default:
-			return { title: '检查更新', body: <text fg={colors.muted}>处理中...</text>, hint: 'Esc 关闭' };
+			return { title: '检查更新', body: <text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>处理中...</text>, hint: 'Esc 关闭' };
 	}
 }
 

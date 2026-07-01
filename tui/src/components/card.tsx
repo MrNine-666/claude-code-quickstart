@@ -69,7 +69,7 @@ export function Card({
 				<box flexDirection="column" flexGrow={1} minWidth={0} overflow="hidden">
 					{title === undefined ? null : (
 						<box flexDirection="row" height={1} overflow="hidden">
-							<text fg={finalTitleColor} attributes={titleAttrs}>
+							<text fg={finalTitleColor} attributes={titleAttrs} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 								{title}
 							</text>
 						</box>
@@ -96,9 +96,9 @@ export function Card({
 				<box flexDirection="row" height={1} overflow="hidden">
 					<box flexDirection="row" flexShrink={1} flexGrow={1} overflow="hidden">
 						{selected === undefined ? null : (
-							<text fg={selected ? colors.primary : colors.muted}>{selected ? '✅ ' : '⬜ '}</text>
+							<text fg={selected ? colors.primary : colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{selected ? '✅ ' : '⬜ '}</text>
 						)}
-						<text fg={finalTitleColor} attributes={titleAttrs}>
+						<text fg={finalTitleColor} attributes={titleAttrs} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 							{title}
 						</text>
 					</box>

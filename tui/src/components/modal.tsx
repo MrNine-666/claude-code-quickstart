@@ -51,8 +51,8 @@ export function Modal({
 			backgroundColor={colors.modalBackground}
 			paddingX={1}
 		>
-			<text fg={accent} attributes={TextAttributes.BOLD}>{title}</text>
-			<text fg={colors.muted}>{'─'.repeat(Math.max(1, width - 4))}</text>
+			<text fg={accent} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{title}</text>
+			<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{'─'.repeat(Math.max(1, width - 4))}</text>
 			{children}
 			<box flexGrow={1} />
 			{hint ? <ModalHint hint={hint} /> : null}
@@ -64,7 +64,7 @@ function ModalHint({ hint }: { readonly hint: string }) {
 	const parts = hint.split(/(Enter|Esc)/g);
 	return (
 		<box flexDirection="row" justifyContent="flex-end">
-			<text>
+			<text selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 				{parts.map((part, index) => (
 					<span key={`${part}-${index}`} fg={part === 'Enter' || part === 'Esc' ? PRIMARY : colors.muted} attributes={part === 'Enter' || part === 'Esc' ? TextAttributes.BOLD : 0}>
 						{part}

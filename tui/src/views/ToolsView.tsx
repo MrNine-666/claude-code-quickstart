@@ -350,11 +350,11 @@ function UninstallConfirm({
 		>
 			<box flexDirection="column">
 				{target.isBase ? (
-					<text fg={colors.danger} attributes={TextAttributes.BOLD}>
+					<text fg={colors.danger} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 						危险：这是基础组件，卸载将破坏整个 Claude Code 环境！
 					</text>
 				) : null}
-				<text>{target.isBase ? '基础组件卸载风险极高，确认继续？' : '确认卸载此组件？此操作不可撤销。'}</text>
+				<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{target.isBase ? '基础组件卸载风险极高，确认继续？' : '确认卸载此组件？此操作不可撤销。'}</text>
 			</box>
 		</Modal>
 	);

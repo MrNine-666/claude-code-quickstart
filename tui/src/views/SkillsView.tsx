@@ -475,7 +475,7 @@ function renderConfirm(view: SkillsViewState, viewportWidth: number, viewportHei
 		const source = skill?.source ?? '';
 		return (
 			<Modal active title="确认安装 Skill" hint="Enter 确认  Esc 取消" viewportWidth={viewportWidth} viewportHeight={viewportHeight}>
-				<text fg={colors.text}>{skill ? `即将安装 ${skillName} (${source})` : '无可用结果'}</text>
+				<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{skill ? `即将安装 ${skillName} (${source})` : '无可用结果'}</text>
 			</Modal>
 		);
 	}
@@ -483,7 +483,7 @@ function renderConfirm(view: SkillsViewState, viewportWidth: number, viewportHei
 	const names = uninstallTargets(view);
 	return (
 		<Modal active title="确认卸载 Skill" hint="Enter 确认  Esc 取消" tone="danger" viewportWidth={viewportWidth} viewportHeight={viewportHeight}>
-			<text fg={colors.text}>{names.length > 0 ? `即将卸载：${names.join(', ')}` : '无卸载目标'}</text>
+			<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{names.length > 0 ? `即将卸载：${names.join(', ')}` : '无卸载目标'}</text>
 		</Modal>
 	);
 }
@@ -551,9 +551,9 @@ function renderInstallPage(view: SkillsViewState, viewportHeight: number, confir
 			title: titleText,
 			titleColor: colors.primary,
 			titleAttrs: TextAttributes.BOLD,
-			titleRight: installCountText ? <text fg={colors.muted}>{installCountText}</text> : undefined,
+			titleRight: installCountText ? <text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{installCountText}</text> : undefined,
 			body: skill.url ? (
-				<text fg={colors.muted} attributes={TextAttributes.DIM}>{skill.url}</text>
+				<text fg={colors.muted} attributes={TextAttributes.DIM} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{skill.url}</text>
 			) : undefined,
 			multiLine: true
 		};
@@ -561,8 +561,8 @@ function renderInstallPage(view: SkillsViewState, viewportHeight: number, confir
 
 	const header = items.length > 0 ? (
 		<box flexDirection="row" justifyContent="space-between" paddingX={2} marginBottom={0}>
-			<text fg={colors.muted} attributes={TextAttributes.BOLD}>名称</text>
-			<text fg={colors.muted} attributes={TextAttributes.BOLD}>下载量</text>
+			<text fg={colors.muted} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>名称</text>
+			<text fg={colors.muted} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>下载量</text>
 		</box>
 	) : undefined;
 
