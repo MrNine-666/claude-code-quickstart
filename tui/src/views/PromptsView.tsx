@@ -7,6 +7,7 @@ import {
 	ViewHeader,
 	ListEmptyState,
 	toast,
+	ThemedScrollbox,
 	type TextEditorHandle
 } from '../components/index.js';
 import { assembleRecommendation } from '../core/prompts.js';
@@ -211,11 +212,11 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 				<ViewHeader title="全局规则管理" subtitle="查看、导入、复制与编辑全局 CLAUDE.md" />
 				{hasContent ? (
 					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
-						<scrollbox ref={viewScrollRef} style={{flexGrow: 1}} scrollY>
+						<ThemedScrollbox ref={viewScrollRef} style={{flexGrow: 1}}>
 							{syntaxStyle
 								? <code content={viewContent} filetype="markdown" syntaxStyle={syntaxStyle} conceal={false} style={{flexGrow: 1}} />
 								: <text fg={colors.info}>{viewContent}</text>}
-						</scrollbox>
+						</ThemedScrollbox>
 					</box>
 				) : (
 					<ListEmptyState
@@ -263,9 +264,9 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 							borderColor={focus === 'recommend' ? borderColors.active : borderColors.inactive}
 							paddingX={1}
 						>
-							<scrollbox ref={recommendScrollRef} style={{flexGrow: 1}} scrollY>
+							<ThemedScrollbox ref={recommendScrollRef} style={{flexGrow: 1}}>
 								{syntaxStyle ? <code content={recommendationContent} filetype="markdown" syntaxStyle={syntaxStyle} conceal={false} style={{flexGrow: 1}} /> : <text fg={colors.info}>{recommendationContent}</text>}
-							</scrollbox>
+							</ThemedScrollbox>
 						</box>
 					</box>
 					<box flexDirection="column" width="50%" marginLeft={1}>

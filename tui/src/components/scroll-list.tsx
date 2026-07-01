@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import type { ScrollBoxRenderable } from '@opentui/core';
 import { Card } from './card.js';
 import { colors } from '../theme/index.js';
+import { ThemedScrollbox } from './themed-scrollbox.js';
 
 // 卡片纵向列表 + 焦点驱动滚动（OpenTUI 适配）：列表项全部交给官方
 // <scrollbox viewportCulling> 管理可视裁剪，光标移动时用 scrollChildIntoView
@@ -78,21 +79,13 @@ export function ScrollList({
 	return (
 		<box flexDirection="column" flexGrow={stretch ? 1 : 0}>
 			{header}
-			<scrollbox
+			<ThemedScrollbox
 				ref={ref}
 				height={scrollboxHeight}
 				style={stretch ? {flexGrow: 1} : undefined}
-				width="100%"
 				viewportCulling
 				scrollY
 				scrollX={false}
-				verticalScrollbarOptions={{
-					showArrows: false,
-					trackOptions: {
-						foregroundColor: colors.primary,
-						backgroundColor: colors.navInactiveSelectedBackground
-					}
-				}}
 			>
 				{renderedItems.map(({item, index, id}) => (
 					<box key={item.key} id={id} flexDirection="column" flexShrink={0}>
@@ -110,7 +103,7 @@ export function ScrollList({
 						</Card>
 					</box>
 				))}
-			</scrollbox>
+			</ThemedScrollbox>
 			<text fg={colors.muted}>{`(${safeCursor + 1}/${items.length})`}</text>
 		</box>
 	);

@@ -7,6 +7,7 @@ import {
 	ViewHeader,
 	ListEmptyState,
 	toast,
+	ThemedScrollbox,
 	type TextEditorHandle
 } from '../components/index.js';
 import {
@@ -213,9 +214,9 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 				/>
 				{hasContent ? (
 					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
-						<scrollbox ref={viewScrollRef} style={{flexGrow: 1}} scrollY>
+						<ThemedScrollbox ref={viewScrollRef} style={{flexGrow: 1}}>
 							<ColoredCodeLines content={viewContent} />
-						</scrollbox>
+						</ThemedScrollbox>
 					</box>
 				) : (
 					<ListEmptyState
@@ -268,9 +269,9 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 							borderColor={focus === 'recommend' ? borderColors.active : borderColors.inactive}
 							paddingX={1}
 						>
-							<scrollbox ref={recommendScrollRef} style={{flexGrow: 1}} scrollY>
+							<ThemedScrollbox ref={recommendScrollRef} style={{flexGrow: 1}}>
 								<ColoredCodeLines content={recommendationContent} jsonc />
-							</scrollbox>
+							</ThemedScrollbox>
 						</box>
 					</box>
 					<box flexDirection="column" width="50%" marginLeft={1}>

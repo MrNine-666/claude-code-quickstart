@@ -15,7 +15,6 @@ export type InstalledSkill = {
 	readonly path: string;
 	readonly scope: string;
 	readonly agents: readonly string[];
-	readonly description?: string;
 };
 
 export type SearchSkillResult = {

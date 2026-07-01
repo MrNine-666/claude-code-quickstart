@@ -12,6 +12,7 @@ export { ViewHeader, type ViewHeaderProps } from './view-header.js';
 export { DataTable, type DataTableProps, type TableColumn } from './data-table.js';
 export { ErrorPanel, type ErrorPanelProps } from './error-panel.js';
 export { ScrollList, type ScrollListProps, type ScrollListItem } from './scroll-list.js';
+export { ThemedScrollbox } from './themed-scrollbox.js';
 export { DetailPanel, type DetailPanelProps, type DetailItem } from './detail-panel.js';
 export { DetailScreen, type DetailScreenProps } from './detail-screen.js';
 export { ProgressLog, type ProgressLogProps } from './progress-log.js';
