@@ -32,8 +32,8 @@ Windows（3 件）
 
 macOS（3 件）
 ├── install.sh                # bash→zsh 安装入口（前置检测 + Basic 直装 + 末尾下载 ccq）
-├── ccq-darwin-x64            # ccq macOS x64 单文件可执行
-└── ccq-darwin-arm64          # ccq macOS ARM64 单文件可执行（Apple Silicon）
+├── ccq-macos-x64             # ccq macOS x64 单文件可执行
+└── ccq-macos-arm64           # ccq macOS ARM64 单文件可执行（Apple Silicon）
 ```
 
 首次安装命令：
@@ -146,7 +146,7 @@ Cannot bind argument to parameter 'Path' because it is an empty string.
 
 ## ccq 可执行文件管理（OpenTUI + Bun 单文件）
 
-**OpenTUI + Bun 单文件可执行迁移**（2026-06-24）：Manage 从 Ink + Node 22 + 目录型 tgz 缓存迁移到 **OpenTUI + Bun `>=1.2.0` + 单文件可执行分发**。`tui/src/` TypeScript 经 `bun build --compile` 交叉编译为 **4 平台单文件可执行产物**，安装时下载到 `~/.local/bin/ccq[.exe]`，与 Claude Code native installer 的 `claude[.exe]` 同目录，并通过用户级 PATH 目录天然可达（**不注入 Profile**）。
+**OpenTUI + Bun 单文件可执行迁移**（2026-06-24）：Manage 从 Ink + Node 22 + 目录型 tgz 缓存迁移到 **OpenTUI + Bun `>=1.2.0` + 单文件可执行分发**。`tui/src/` TypeScript 经 `bun build --compile` 交叉编译为 **4 平台单文件可执行产物**（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），安装时下载到 `~/.local/bin/ccq[.exe]`，与 Claude Code native installer 的 `claude[.exe]` 同目录，并通过用户级 PATH 目录天然可达（**不注入 Profile**）。
 
 ### 架构流程
 

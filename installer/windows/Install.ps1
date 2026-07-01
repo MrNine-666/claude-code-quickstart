@@ -381,9 +381,6 @@ function Confirm-CcqExecutableDownload {
     Write-UiInfo "  • 配置文件管理"
     Write-UiInfo "  • 工具管理（ClaudeCode / Ccline / OpenSpec 等）"
     Write-Host ""
-    Write-UiWarning "是否现在下载 ccq 可执行文件到 PATH 目录？"
-    Write-UiDim "  （拒绝则跳过，可稍后手动安装）"
-    Write-Host ""
 
     $decision = Show-SingleSelectMenu `
         -Title "是否现在下载 ccq 可执行文件到 PATH 目录？" `

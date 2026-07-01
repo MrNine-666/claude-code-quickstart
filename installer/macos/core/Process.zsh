@@ -679,20 +679,20 @@ ccq_invoke_unified_check() {
 
 ccq_get_architecture() {
   # 检测当前平台架构，返回 ccq 可执行文件对应的 target 名称
-  # 输出: "darwin-x64" | "darwin-arm64"
+  # 输出: "macos-x64" | "macos-arm64"
   local arch
   arch="$(uname -m 2>/dev/null || true)"
 
   case "${arch}" in
     arm64|aarch64)
-      printf 'darwin-arm64'
+      printf 'macos-arm64'
       ;;
     x86_64|amd64)
-      printf 'darwin-x64'
+      printf 'macos-x64'
       ;;
     *)
       # 默认 x64
-      printf 'darwin-x64'
+      printf 'macos-x64'
       ;;
   esac
 }

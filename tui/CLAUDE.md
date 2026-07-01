@@ -7,7 +7,7 @@
 
 ## 项目概述
 
-**OpenTUI + Bun 单文件可执行 TUI**，实现 Claude Code Quickstart 的 6 菜单管理控制台（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-darwin-x64` / `ccq-darwin-arm64`），运行时消费契约以内联文本形式内嵌进可执行文件，安装后通过 `ccq` 命令天然可达（**不注入 Profile**）。
+**OpenTUI + Bun 单文件可执行 TUI**，实现 Claude Code Quickstart 的 6 菜单管理控制台（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），运行时消费契约以内联文本形式内嵌进可执行文件，安装后通过 `ccq` 命令天然可达（**不注入 Profile**）。
 
 ---
 
@@ -182,8 +182,8 @@ bun run build
 # 或直接调用 Bun
 bun build --compile --target bun-windows-x64 --outfile dist/ccq-windows-x64.exe src/index.tsx
 bun build --compile --target bun-windows-arm64 --outfile dist/ccq-windows-arm64.exe src/index.tsx
-bun build --compile --target bun-darwin-x64 --outfile dist/ccq-darwin-x64 src/index.tsx
-bun build --compile --target bun-darwin-arm64 --outfile dist/ccq-darwin-arm64 src/index.tsx
+bun build --compile --target bun-macos-x64 --outfile dist/ccq-macos-x64 src/index.tsx
+bun build --compile --target bun-macos-arm64 --outfile dist/ccq-macos-arm64 src/index.tsx
 ```
 
 ### contracts 内嵌策略

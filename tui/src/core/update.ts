@@ -604,7 +604,7 @@ function getPlatform(): string {
 	if (platform === 'win32') {
 		return arch === 'arm64' ? 'windows-arm64' : 'windows-x64';
 	} else if (platform === 'darwin') {
-		return arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64';
+		return arch === 'arm64' ? 'macos-arm64' : 'macos-x64';
 	} else {
 		throw new Error(`Unsupported platform: ${platform}-${arch}`);
 	}

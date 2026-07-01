@@ -176,7 +176,7 @@ zsh -n installer/macos/Install.zsh
 
 ## Manage TUI 架构
 
-**OpenTUI + Bun 单文件可执行迁移**（2026-06-24）：Manage 从 Ink + Node 22 + 目录型 tgz 缓存迁移到 **OpenTUI + Bun `>=1.2.0` + 单文件可执行分发**。`tui/src/` TypeScript 经 `bun build --compile --target bun-windows-x64 --outfile dist/ccq-windows-x64.exe` 交叉编译为 **4 平台单文件可执行产物**（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-darwin-x64` / `ccq-darwin-arm64`），contracts 内嵌进可执行文件（`import.meta.dir` 路径自适应），安装时下载到 `~/.local/bin/ccq[.exe]` 并通过用户级 PATH 目录天然可达（与 Claude Code native installer 的 `claude[.exe]` 同目录），**不注入 Profile**。**TUI 共 6 菜单**（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）；旧 Ink + Node + 目录缓存 wrapper（ManageCore.ps1 / ManageCore.zsh / manage-tui.tgz）全链已删除。
+**OpenTUI + Bun 单文件可执行迁移**（2026-06-24）：Manage 从 Ink + Node 22 + 目录型 tgz 缓存迁移到 **OpenTUI + Bun `>=1.2.0` + 单文件可执行分发**。`tui/src/` TypeScript 经 `bun build --compile --target bun-windows-x64 --outfile dist/ccq-windows-x64.exe` 交叉编译为 **4 平台单文件可执行产物**（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），contracts 内嵌进可执行文件（`import.meta.dir` 路径自适应），安装时下载到 `~/.local/bin/ccq[.exe]` 并通过用户级 PATH 目录天然可达（与 Claude Code native installer 的 `claude[.exe]` 同目录），**不注入 Profile**。**TUI 共 6 菜单**（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）；旧 Ink + Node + 目录缓存 wrapper（ManageCore.ps1 / ManageCore.zsh / manage-tui.tgz）全链已删除。
 
 ```
 安装后调用链：
@@ -198,7 +198,7 @@ zsh -n installer/macos/Install.zsh
     └─ macOS: ccq_get_architecture / ccq_install_executable（内部直写 ~/.zprofile 确保 ~/.local/bin 在 PATH）
 ```
 
-- **构建方式**：`tui/scripts/build.ts` 调用 `bun build --compile` 交叉编译 4 平台可执行文件到 `tui/dist/`，`installer/build.ps1` / `installer/build.sh` 从 `tui/dist/` 拷贝到根 `dist/`，GitHub Release 上传 **6 个 artifact**（install.ps1 / install.sh / ccq-windows-x64.exe / ccq-windows-arm64.exe / ccq-darwin-x64 / ccq-darwin-arm64）。
+- **构建方式**：`tui/scripts/build.ts` 调用 `bun build --compile` 交叉编译 4 平台可执行文件到 `tui/dist/`，`installer/build.ps1` / `installer/build.sh` 从 `tui/dist/` 拷贝到根 `dist/`，GitHub Release 上传 **6 个 artifact**（install.ps1 / install.sh / ccq-windows-x64.exe / ccq-windows-arm64.exe / ccq-macos-x64 / ccq-macos-arm64）。
 - **PATH 策略**：Windows 直接安装到 `%USERPROFILE%\.local\bin\ccq.exe` 并加入用户 PATH，macOS 直接安装到 `~/.local/bin/ccq` 并确保 `~/.local/bin` 在 PATH；两平台均与 Claude Code native installer 的 `claude[.exe]` 同目录。
 - **contracts 内嵌**：`providers.json` / `mcp-servers.json` / `claude-config.json` / `templates/claude-md.*.md` 通过 Bun `text` loader 以内联字符串形式内嵌进可执行文件，运行时从 `EMBEDDED_CONTRACTS` Map 读取，不依赖 Bun 虚拟文件系统路径；`ccg-workflow.json` / `templates/index.json` / `claude-config-drift.js` 保留为磁盘源契约，供 CI、installer 合约测试或后续迁移使用。
 - **热更新**：整可执行文件热更新（后台检查 GitHub Release latest 版本 → 强确认下载 → 原子替换 `~/.local/bin/ccq[.exe]`），应用内手动入口为主（优先），后台自动为辅（启动时触发但不阻塞）。

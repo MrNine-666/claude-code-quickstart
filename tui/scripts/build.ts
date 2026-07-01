@@ -5,8 +5,8 @@
  * 产物：
  * - dist/ccq-windows-x64.exe（带自定义图标）
  * - dist/ccq-windows-arm64.exe（交叉编译限制，保留 Bun 默认图标）
- * - dist/ccq-darwin-x64
- * - dist/ccq-darwin-arm64
+ * - dist/ccq-macos-x64
+ * - dist/ccq-macos-arm64
  *
  * 契约内嵌：通过 src/core/embedded-contracts.ts 静态 import 内嵌
  * 图标：Windows x64 本机构建时自动嵌入 assets/ccq-icon.ico
@@ -18,8 +18,8 @@ import { join } from "path";
 const TARGETS = [
   { platform: "windows", arch: "x64", ext: ".exe", icon: true },
   { platform: "windows", arch: "arm64", ext: ".exe", icon: false }, // 交叉编译限制
-  { platform: "darwin", arch: "x64", ext: "", icon: false },
-  { platform: "darwin", arch: "arm64", ext: "", icon: false },
+  { platform: "macos", arch: "x64", ext: "", icon: false },
+  { platform: "macos", arch: "arm64", ext: "", icon: false },
 ] as const;
 
 const DIST_DIR = join(import.meta.dir, "../../dist");
