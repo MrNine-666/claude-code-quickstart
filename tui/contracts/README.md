@@ -10,8 +10,8 @@ TUI 链契约目录（TDR-10 拆分后归位），保存根级 **OpenTUI TUI 子
 - `ccg-workflow.json`：CcgWorkflow 受管路径单一真理源——`verifyItems`（安装验证项：commands/agents/configToml/wrapper/pathAvailability/envConfig/mcpProtection）、`managedEnvDefaults`（4 个推荐 env 默认值）、`managedRuleFiles`（受管 rules 文件清单）。当前 TUI 工具管理仍以内联常量保持鲁棒，后续迁移时可读取本契约。**磁盘源契约，不作为运行时内嵌 entry**。
 - `claude-config-drift.js`：ClaudeConfig 漂移检测算法（analyze / install / update），由 `installer/build.sh` 与 CI 引用做契约 drift 校验。**install 链算法**随 ClaudeConfig 归 TUI，Windows 侧不引用。**磁盘源契约，不作为运行时内嵌 entry**。
 - `templates/`：CLAUDE.md 模板产物。
-  - `claude-md.base.md`：跨平台通用章节（一~三、五）。**TUI 运行时内嵌**。
-  - `claude-md.platform-windows.md` / `claude-md.platform-macos.md`：平台专属环境章节。**TUI 运行时内嵌**。
+  - `claude-md.base.md`：跨平台通用章节（一~五，含输出设置）。**TUI 运行时内嵌**。
+  - `claude-md.platform-windows.md`：Windows 专属环境章节（四-环境特定：PowerShell 分隔符 / 中文路径 / 管道传参），仅 Windows 拼接。**TUI 运行时内嵌**。
   - `index.json`：模板/渲染产物索引（SchemaVersion / Templates 数组，含 CLAUDE.md 模板段与历史 MCP rules 渲染项）。**磁盘源契约，installer 合约测试读取，不作为运行时内嵌 entry**。
 
 旧 `profile/ccq-function.ps1.txt` / `ccq-function.zsh.txt` 模板已删除（ccq 改为单文件可执行直跑，不注入 Profile）。

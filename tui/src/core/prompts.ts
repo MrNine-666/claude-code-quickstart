@@ -7,6 +7,7 @@ import {claudeDir} from './paths.js';
 // 全局规则菜单 core：推荐 CLAUDE.md 加载（base + 平台段）+ 整文件覆盖导入。
 // 与 installer/windows/steps/ClaudeMd.ps1 / macos/steps/ClaudeMd.zsh 的拼装逻辑对齐：
 //   base.TrimEnd() + "\n\n" + platform.TrimEnd() + "\n"
+// macOS 无专属平台模板，直接用通用 base；Windows 在 base 末尾拼接平台差异段。
 // Update 检测已收缩（HC-FU-08 不再检测 ClaudeMd），导入不写指纹种子。
 // 工作台消费：assembleRecommendation() 给左栏全文对照 + Ctrl+I 灌缓冲（整体，不分片段）。
 
@@ -39,13 +40,18 @@ function detectPlatform(): PromptsPlatform {
 
 /**
  * 拼装完整推荐 CLAUDE.md 内容（base + 平台段），与两端 installer 拼装规则一致。
- * 任一模板缺失则返回 null（视图据此提示契约不可用）。
+ * Windows：base + 平台差异段；macOS：无专属平台模板，直接用通用 base。
+ * base 缺失则返回 null（视图据此提示契约不可用）；平台段缺失则仅返回 base。
  */
 export function assembleRecommendation(platform: PromptsPlatform = detectPlatform()): string | null {
 	const base = readTemplate('base');
-	const platformContent = readTemplate(`platform-${platform}`);
-	if (!base || !platformContent) {
+	if (!base) {
 		return null;
+	}
+
+	const platformContent = readTemplate(`platform-${platform}`);
+	if (!platformContent) {
+		return `${base.trimEnd()}\n`;
 	}
 
 	return `${base.trimEnd()}\n\n${platformContent.trimEnd()}\n`;

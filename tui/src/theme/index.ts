@@ -144,7 +144,9 @@ export const darkTheme: ThemePalette = {
 		lineNumberBackground: '#161B22',
 		inputText: '#E6EDF3',
 		inputFocusedText: '#FFFFFF',
-		inputCursor: '#D97757'
+		inputCursor: '#D97757',
+		selectionBg: '#264F78',
+		selectionFg: '#FFFFFF'
 	},
 	borderColors: {
 		active: '#D97757',

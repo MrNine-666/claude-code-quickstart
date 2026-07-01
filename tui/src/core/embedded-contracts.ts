@@ -13,7 +13,6 @@ import claudeConfigJson from "../../contracts/claude-config.json" with { type: "
 // Markdown 模板
 import claudeMdBase from "../../contracts/templates/claude-md.base.md" with { type: "text" };
 import claudeMdWindows from "../../contracts/templates/claude-md.platform-windows.md" with { type: "text" };
-import claudeMdMacos from "../../contracts/templates/claude-md.platform-macos.md" with { type: "text" };
 
 function fileAsset(value: unknown): string {
 	return value as string;
@@ -28,7 +27,6 @@ export const EMBEDDED_CONTRACTS = new Map<string, string>([
 	["claude-config.json", fileAsset(claudeConfigJson)],
 	["templates/claude-md.base.md", fileAsset(claudeMdBase)],
 	["templates/claude-md.platform-windows.md", fileAsset(claudeMdWindows)],
-	["templates/claude-md.platform-macos.md", fileAsset(claudeMdMacos)],
 ]);
 
 /**

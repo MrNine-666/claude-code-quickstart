@@ -101,6 +101,7 @@ NodeJS ─── ClaudeCode ─── Git
 | **HC-MAC-04** | **macOS 官方安装模式**：Homebrew 与 nvm 均使用官方安装脚本，**不得手动写入** `~/.zprofile` / `~/.zshrc` 的 PATH 或环境变量初始化代码。所有 Profile 配置由官方安装脚本完成，安装器只需执行官方脚本并验证结果 |
 | **SC-3** | 状态指示器：`[PASS]` / `[FAIL]` / `[SKIP]`，macOS 额外支持 `[UNSUPPORTED]` / `[MANUAL]` 且不计为 Success |
 | **SC-5** | 错误展示：友好信息 + 按 `D` 展开技术详情 |
+| **HC-TEXTAREA-NO-SCROLLBAR** | **OpenTUI `<textarea>` 自带内部滚动但无可见滚动条**（`EditBufferRenderable` 仅有只读 `scrollY`，无 `scrollbarOptions`）。**禁止用 `<scrollbox>` 包裹 `<textarea>`**：scrollbox 会抑制 textarea 内部滚动导致完全不滚动（已实测，2026-07-01）；接受现状靠光标自动滚动。详见 [tui/CLAUDE.md](tui/CLAUDE.md) HC-TEXTAREA-NO-SCROLLBAR |
 
 ---
 

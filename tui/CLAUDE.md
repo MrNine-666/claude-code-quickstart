@@ -131,6 +131,13 @@ if (!process.stdin.isTTY) {
 - **ListLoadingState**：展示「加载中」提示 + Spinner 动画，自动居中布局。
 - **理由**：统一视觉风格，减少重复代码，简化视图实现（历史教训：ConfigView / PromptsView / SkillsView 曾各自实现空状态布局，代码重复且样式不一致）。
 
+### HC-TEXTAREA-NO-SCROLLBAR
+**OpenTUI `<textarea>` 自带内部滚动但无可见滚动条**。`EditBufferRenderable` 提供 `scrollY` 只读属性与光标自动滚动能力（`scrollMargin` 等），但**类型定义中无 `scrollbarOptions` 配置项**（不同于 `<scrollbox>` 的 `verticalScrollbarOptions`）。
+- **禁止**用 `<scrollbox>` 包裹 `<textarea>`：scrollbox 会接管/抑制 textarea 的内部滚动机制，导致 textarea 完全不滚动（已实测验证，2026-07-01）。
+- **接受现状**：textarea 靠光标自动滚动（功能正常），无可见滚动条指示器；用户编辑时光标到达视口边界会自动翻页。
+- **扩展方案**（未实施）：若需可见滚动位置指示，需自造独立指示器组件（读 `textareaRef.current.scrollY` 和 `lineCount` 算比例，在 textarea 旁渲染 `<box>` 模拟滚动条，监听 `onCursorChange` 实时更新），工作量大且收益有限。
+- **理由**：避免后续再次尝试 scrollbox 包裹方案踩坑（历史教训：2026-07-01 尝试为 TextareaEditor 套 `<ThemedScrollbox>`，导致编辑模式 textarea 完全不滚动，已回滚）。
+
 ---
 
 ## 开发调试
