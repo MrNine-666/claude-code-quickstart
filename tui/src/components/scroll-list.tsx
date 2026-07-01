@@ -86,7 +86,13 @@ export function ScrollList({
 				viewportCulling
 				scrollY
 				scrollX={false}
-				verticalScrollbarOptions={{showArrows: true}}
+				verticalScrollbarOptions={{
+					showArrows: false,
+					trackOptions: {
+						foregroundColor: colors.primary,
+						backgroundColor: colors.navInactiveSelectedBackground
+					}
+				}}
 			>
 				{renderedItems.map(({item, index, id}) => (
 					<box key={item.key} id={id} flexDirection="column" flexShrink={0}>

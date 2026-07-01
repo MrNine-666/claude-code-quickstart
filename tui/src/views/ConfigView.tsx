@@ -5,6 +5,7 @@ import { borderColors, colors, getActiveTheme, PRIMARY } from '../theme/index.js
 import {
 	TextareaEditor,
 	ViewHeader,
+	ListEmptyState,
 	toast,
 	type TextEditorHandle
 } from '../components/index.js';
@@ -217,24 +218,10 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 						</scrollbox>
 					</box>
 				) : (
-					<box
-						flexGrow={1}
-						flexDirection="column"
-						borderStyle="single"
-						borderColor={borderColors.inactive}
-						justifyContent="center"
-						alignItems="center"
-					>
-						<text fg={colors.primary} attributes={TextAttributes.BOLD}>尚无配置文件</text>
-						<box marginTop={1} flexDirection="row">
-							<text fg={colors.muted}>按 </text>
-							<text fg={PRIMARY} attributes={TextAttributes.BOLD}>a</text>
-							<text fg={colors.muted}> 新建 ~/.claude/settings.json</text>
-						</box>
-						<box marginTop={1}>
-							<text attributes={TextAttributes.DIM}>{settingsPath}</text>
-						</box>
-					</box>
+					<ListEmptyState
+						message="尚无配置文件"
+						hint={{label: `按 a 新建 ~/.claude/settings.json`, enabled: true}}
+					/>
 				)}
 			</box>
 		);

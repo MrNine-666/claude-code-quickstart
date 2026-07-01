@@ -5,6 +5,7 @@ import {
 	ScrollList,
 	StatusDot,
 	ViewHeader,
+	ListEmptyState,
 	toast,
 	type ScrollListItem,
 	type StatusDotKind
@@ -163,9 +164,7 @@ export default function McpView({active, viewportHeight = 16, viewportWidth = 52
 			<ViewHeader title="MCP Server 管理" subtitle="维护 Claude Code 可用的 MCP Server 连接" />
 
 			{visibleRows.length === 0 ? (
-				<box flexDirection="column" flexGrow={1} justifyContent="center">
-					<text fg={colors.muted}>暂无 MCP Server</text>
-				</box>
+				<ListEmptyState message="暂无 MCP Server" />
 			) : (
 				<ScrollList items={items} cursor={safeSelected} viewportHeight={viewportHeight} reservedRows={3} stretch />
 			)}

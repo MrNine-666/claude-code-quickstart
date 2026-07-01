@@ -51,6 +51,7 @@ tui/
 │   │   ├── modal.tsx          # Modal（自造，`<box border>` + 焦点栈）
 │   │   ├── data-table.tsx     # DataTable（官方 `<texttable>`）
 │   │   ├── status-dot.tsx     # StatusDot
+│   │   ├── list-state.tsx     # 列表状态组件（ListEmptyState / ListLoadingState）
 │   │   └── ...
 │   ├── hooks/                 # 自定义 hooks
 │   │   ├── use-keyboard.ts    # 全局键盘分发（替代 Ink useInput）
@@ -118,11 +119,17 @@ if (!process.stdin.isTTY) {
 ### HC-DELETE-LEGACY
 删除旧链时必须全仓 grep 零业务引用确认（`manage-tui.tgz`/`ManageCore`/`ink`/`react-ink-textarea`/`external-editor`/`ccq-function`/`function ccq` 业务引用清零，测试 fixture/历史 plan 文档除外）。
 
-### HC-SHORTCUT-SINGLE-SOURCE（新增）
+### HC-SHORTCUT-SINGLE-SOURCE
 快捷键说明**唯一**由 footer `ShortcutBar`（`app.tsx:178`）展示，按键文本从 `@opentui/keymap`（`config/keybindings.js` 绑定定义）经 `state/shortcuts.ts` 的 `formatCommandBindings` 动态解析——**单一数据源**。
 - **禁止**在视图/组件内硬编码键位字面量（`[I]`、`[Tab]`、`Ctrl+S` 等）；新增/改键一律走 `config/keybindings.js` 注册 + `shortcuts.ts` 映射，footer 自动同步。
 - 页面内 `ActionHint`（`components/action-hint.tsx`）**仅承载操作说明文字 + disabled 状态**（footer label 容纳不下的详细描述/禁用提示），**禁止带 `[hotkey]` 前缀**重复展示键位。
 - **理由**：键位变更只改 `keybindings.js` 一处，杜绝页面内硬编码与 footer 分裂（历史教训：PromptsView / ConfigView / SkillsView / provider-view 曾用 ActionHint `[hotkey]` 与 footer 双显重复）。
+
+### HC-LIST-STATE-COMPONENT
+列表空状态与加载状态统一使用 `components/list-state.tsx` 组件（`ListEmptyState` / `ListLoadingState`），禁止在视图内重复实现空状态/加载状态布局。
+- **ListEmptyState**：展示「暂无数据」等空状态提示 + 可选操作提示（hint），自动居中布局 + muted 配色。
+- **ListLoadingState**：展示「加载中」提示 + Spinner 动画，自动居中布局。
+- **理由**：统一视觉风格，减少重复代码，简化视图实现（历史教训：ConfigView / PromptsView / SkillsView 曾各自实现空状态布局，代码重复且样式不一致）。
 
 ---
 

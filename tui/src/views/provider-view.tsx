@@ -6,7 +6,7 @@ import {
 	ScrollList,
 	StatusDot,
 	ViewHeader,
-	ActionHint,
+	ListEmptyState,
 	toast,
 	type ScrollListItem
 } from '../components/index.js';
@@ -153,14 +153,10 @@ export function ProviderView({
 			) : null}
 
 			{profiles.length === 0 ? (
-				<box flexDirection="column" flexGrow={1} justifyContent="center">
-					<box flexDirection="column" marginBottom={1}>
-						<text fg={colors.muted}>暂无供应商配置</text>
-						<box marginTop={1}>
-							<ActionHint label="添加第一个供应商（可在表单内选择类型，含自定义）" enabled />
-						</box>
-					</box>
-				</box>
+				<ListEmptyState
+					message="暂无供应商配置"
+					hint={{label: '添加第一个供应商（可在表单内选择类型，含自定义）', enabled: true}}
+				/>
 			) : (
 				<ProviderTable
 					profiles={profiles}

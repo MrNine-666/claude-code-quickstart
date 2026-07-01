@@ -2,7 +2,7 @@ import React, {useEffect, useReducer} from 'react';
 import {TextAttributes} from '@opentui/core';
 import {useKeyboard} from '@opentui/react';
 import type {KeyEvent} from '@opentui/core';
-import {ActionHint, Checkbox, ErrorPanel, Modal, ProgressLog, ScrollList, Spinner, ViewHeader, toast} from '../components/index.js';
+import {ActionHint, Checkbox, ErrorPanel, ListEmptyState, ListLoadingState, Modal, ProgressLog, ScrollList, Spinner, ViewHeader, toast} from '../components/index.js';
 import {borderColors, colors} from '../theme/index.js';
 import type {DetectionState} from '../services/async-detection.js';
 import type {DetectionCache} from '../hooks/use-detection-cache.js';
@@ -520,14 +520,10 @@ function renderListPage(view: SkillsViewState, viewportHeight: number, confirmRo
 		<box flexDirection="column" flexGrow={stretchLists ? 1 : 0}>
 			<InputBox label="过滤" value={view.filterText} focused={view.filterFocused} placeholder="输入关键词模糊筛选已装 skill" />
 			{filtered.length === 0 ? (
-				<box flexDirection="column" flexGrow={1} justifyContent="center">
-					<text fg={colors.muted}>{view.installed.length === 0 ? '暂无已安装 skill' : '没有匹配的已装 skill'}</text>
-					{view.installed.length === 0 ? (
-						<box marginTop={1}>
-							<ActionHint label="按 a 进入安装页搜索安装" enabled />
-						</box>
-					) : null}
-				</box>
+				<ListEmptyState
+					message={view.installed.length === 0 ? '暂无已安装 skill' : '没有匹配的已装 skill'}
+					hint={view.installed.length === 0 ? {label: '按 a 进入安装页搜索安装', enabled: true} : undefined}
+				/>
 			) : stretchLists ? (
 				<box marginTop={1} flexGrow={1}>
 					<ScrollList items={items} cursor={view.installedIndex} viewportHeight={viewportHeight} reservedRows={6 + confirmRows} stretch />
@@ -547,18 +543,18 @@ function renderInstallPage(view: SkillsViewState, viewportHeight: number, confir
 		// 解析 skill 名称：owner/repo@skill 格式，提取 @ 后的 skill 名
 		const skillName = skill.name.includes('@') ? skill.name.split('@')[1] ?? skill.name : skill.name;
 		const installCountText = skill.installCount ? formatInstallCount(skill.installCount) : '';
+		// 拼接 title：name (source)
+		const titleText = `${skillName} (${skill.source})`;
 
 		return {
 			key: skill.name,
-			title: skillName,
-			titleAttrs: TextAttributes.BOLD,
+			title: titleText,
 			titleColor: colors.primary,
-			body: (
-				<box flexDirection="row" justifyContent="space-between" width="100%">
-					<text fg={colors.muted}>{skill.source}</text>
-					{installCountText ? <text fg={colors.muted}>{installCountText}</text> : null}
-				</box>
-			),
+			titleAttrs: TextAttributes.BOLD,
+			titleRight: installCountText ? <text fg={colors.muted}>{installCountText}</text> : undefined,
+			body: skill.url ? (
+				<text fg={colors.muted} attributes={TextAttributes.DIM}>{skill.url}</text>
+			) : undefined,
 			multiLine: true
 		};
 	});
@@ -574,11 +570,8 @@ function renderInstallPage(view: SkillsViewState, viewportHeight: number, confir
 		<box flexDirection="column" flexGrow={stretchLists ? 1 : 0}>
 			<InputBox label="搜索" value={view.query} focused={view.queryFocused} placeholder="输入关键词搜索 skills.sh" />
 			{view.searching ? (
-				<box marginTop={1}>
-					<text fg={colors.primary}>正在搜索...</text>
-				</box>
-			) : null}
-			{items.length > 0 ? (
+				<ListLoadingState message="正在搜索..." />
+			) : items.length > 0 ? (
 				<box marginTop={1} flexGrow={stretchLists ? 1 : 0} flexDirection="column">
 					<ScrollList
 						items={items}
@@ -589,11 +582,9 @@ function renderInstallPage(view: SkillsViewState, viewportHeight: number, confir
 						header={header}
 					/>
 				</box>
-			) : !view.searching ? (
-				<box marginTop={1} flexDirection="column" flexGrow={1} justifyContent="center">
-					<text fg={colors.muted}>输入关键词开始搜索</text>
-				</box>
-			) : null}
+			) : (
+				<ListEmptyState message="输入关键词开始搜索" />
+			)}
 		</box>
 	);
 }

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useReducer } from 'react';
 import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
-import { Card, ErrorPanel, Modal, Spinner, StatusDot, ViewHeader, toast, type StatusDotKind } from '../components/index.js';
+import { Card, ErrorPanel, ListEmptyState, ListLoadingState, Modal, Spinner, StatusDot, ViewHeader, toast, type StatusDotKind } from '../components/index.js';
 import { colors } from '../theme/index.js';
 import type { ProgressCallback } from '../core/exec.js';
 import type { DetectionState } from '../services/async-detection.js';
@@ -119,7 +119,8 @@ export function ToolsView({ services, cache, active = true, viewportHeight = 16,
 		<box flexDirection="column" flexGrow={1}>
 			<ViewHeader title="工具管理" subtitle="管理常用 CLI 工具的安装、更新与卸载" />
 			{renderDetectionNotice(detection.status)}
-			{renderGrid(view)}
+			{/* 检测中时隐藏网格，仅显示 Spinner；检测完成后才显示网格或空状态 */}
+			{detection.status !== 'loading' && detection.status !== 'idle' ? renderGrid(view) : null}
 			{activeProgressTasks(view).length > 0 ? <ActiveProgressTasks tasks={activeProgressTasks(view)} /> : null}
 			{view.errorText ? <ErrorPanel message={view.errorText} /> : null}
 			{view.mode === 'confirm-uninstall' ? <UninstallConfirm view={view} dispatch={dispatch} services={services} cache={cache} active={active} viewportWidth={viewportWidth} viewportHeight={viewportHeight} /> : null}
@@ -386,15 +387,16 @@ function runUninstall(component: ManagedComponent, services: ToolsViewServices, 
 
 function renderDetectionNotice(status: DetectionState<ManagedComponent[]>['status']): React.ReactNode {
 	if (status === 'loading' || status === 'idle') {
-		return <Spinner label="检测中..." />;
+		return <ListLoadingState message="检测中..." />;
 	}
 
 	return null;
 }
 
 function renderGrid(view: ToolsViewState): React.ReactNode {
+	// 加载态由 renderDetectionNotice 独占（Spinner「检测中...」），此处只处理「已加载但无组件」空状态，避免双重「检测中」。
 	if (view.components.length === 0) {
-		return <text attributes={TextAttributes.DIM}>{view.loaded ? '未检测到可管理的组件' : '检测中...'}</text>;
+		return view.loaded ? <ListEmptyState message="未检测到可管理的组件" /> : null;
 	}
 
 	// flex 自由换行：每卡固定宽度，按终端宽度自动排布（对齐原 UpdateView 范式）。

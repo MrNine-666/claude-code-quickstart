@@ -180,7 +180,7 @@ export const lightTheme: ThemePalette = {
 	colors: {
 		primary: '#B85C3E',
 		primaryBright: '#C26A47',
-		focusedBackground: '#FBF8F5',
+		focusedBackground: '#F5EDE5',
 		success: '#2E7D32',
 		warning: '#B58900',
 		danger: '#C0392B',
@@ -189,7 +189,7 @@ export const lightTheme: ThemePalette = {
 		text: '#24292F',
 		navSelectedForeground: '#FFFFFF',
 		navInactiveSelectedBackground: '#F0D9CC',
-		modalBackground: '#FAF5F0',
+		modalBackground: '#F5EDE5',
 		lineNumberForeground: '#6A737D',
 		lineNumberBackground: '#F6F8FA',
 		inputText: '#24292F',

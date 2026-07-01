@@ -5,6 +5,7 @@ import { borderColors, colors, PRIMARY } from '../theme/index.js';
 import {
 	TextareaEditor,
 	ViewHeader,
+	ListEmptyState,
 	toast,
 	type TextEditorHandle
 } from '../components/index.js';
@@ -217,24 +218,10 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 						</scrollbox>
 					</box>
 				) : (
-					<box
-						flexGrow={1}
-						flexDirection="column"
-						borderStyle="single"
-						borderColor={borderColors.inactive}
-						justifyContent="center"
-						alignItems="center"
-					>
-						<text fg={colors.primary} attributes={TextAttributes.BOLD}>尚无全局规则文件</text>
-						<box marginTop={1} flexDirection="row">
-							<text fg={colors.muted}>按 </text>
-							<text fg={PRIMARY} attributes={TextAttributes.BOLD}>a</text>
-							<text fg={colors.muted}> 新建 ~/.claude/CLAUDE.md</text>
-						</box>
-						<box marginTop={1}>
-							<text attributes={TextAttributes.DIM}>{claudeMdPath}</text>
-						</box>
-					</box>
+					<ListEmptyState
+						message="尚无全局规则文件"
+						hint={{label: `按 a 新建 ~/.claude/CLAUDE.md`, enabled: true}}
+					/>
 				)}
 			</box>
 		);

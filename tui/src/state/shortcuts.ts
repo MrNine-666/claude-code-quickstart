@@ -182,17 +182,17 @@ function skillsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		return manualShortcuts([{key: '请稍候', label: '执行中'}]);
 	}
 
-	// 安装页·父级：搜索框 + repo 列表（find 按 owner/repo 去重）
+	// 安装页：搜索框 + 扁平 skill 列表（skills find 结果直接展示，按 Enter 触发安装确认）
 	if (subMode === 'install') {
 		return manualShortcuts([
-			{key: 'Tab', label: '搜索框/repo'},
-			{key: '↑/↓', label: '选择 repo'},
-			{key: 'Enter', label: '展开子 skill'},
+			{key: 'Tab', label: '搜索框/列表'},
+			{key: '↑/↓', label: '选择 skill'},
+			{key: 'Enter', label: '安装 skill'},
 			{key: 'Esc', label: '返回列表页'}
 		]);
 	}
 
-	// 安装页·子级：某 repo 下 skill 多选（需求③）
+	// 安装页·子级：某 repo 下 skill 多选（需求③，暂未实现）
 	if (subMode === 'install-pick') {
 		return manualShortcuts([
 			{key: 'A', label: '全选/取消'},
