@@ -202,7 +202,7 @@ bun build --compile --target bun-macos-arm64 --outfile dist/ccq-macos-arm64 src/
 bun scripts/verify-compiled-contracts.mjs
 
 # 验证 non-TTY 行为
-echo | ./dist/ccq-darwin-arm64
+echo | ./dist/ccq-macos-arm64
 ```
 
 ---

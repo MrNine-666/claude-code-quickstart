@@ -116,7 +116,7 @@ ccq
 从 [Releases](../../releases) 下载：
 
 - Windows: `install.ps1` + `ccq-windows-{x64|arm64}.exe`（2 件）
-- macOS: `install.sh` + `ccq-darwin-{x64|arm64}`（2 件）
+- macOS: `install.sh` + `ccq-macos-{x64|arm64}`（2 件）
 
 Windows 执行示例：
 

@@ -398,12 +398,12 @@ function Test-BuildManifestContract {
     $macOSOutputs = @($macOSArtifacts | ForEach-Object { [string]$_['OutputFile'] })
     $allOutputs = @($windowsOutputs + $macOSOutputs)
     $windowsExeArtifacts = @('ccq-windows-x64.exe', 'ccq-windows-arm64.exe')
-    $macOSExeArtifacts = @('ccq-darwin-x64', 'ccq-darwin-arm64')
+    $macOSExeArtifacts = @('ccq-macos-x64', 'ccq-macos-arm64')
     $releaseOutputs = @($allOutputs + $windowsExeArtifacts + $macOSExeArtifacts)
 
     Assert-Equal 'build.windows.outputs' @('install.ps1') $windowsOutputs
     Assert-Equal 'build.macos.outputs' @('install.sh') $macOSOutputs
-    Assert-Equal 'build.release.outputs' @('install.ps1', 'install.sh', 'ccq-windows-x64.exe', 'ccq-windows-arm64.exe', 'ccq-darwin-x64', 'ccq-darwin-arm64') $releaseOutputs
+    Assert-Equal 'build.release.outputs' @('install.ps1', 'install.sh', 'ccq-windows-x64.exe', 'ccq-windows-arm64.exe', 'ccq-macos-x64', 'ccq-macos-arm64') $releaseOutputs
 
     $entrypoints = $Contract['BuildEntrypoints']
     Assert-Equal 'build.entrypoints.windows.script' 'installer/build.ps1' $entrypoints['Windows']['Script']
@@ -411,7 +411,7 @@ function Test-BuildManifestContract {
     Assert-Equal 'build.entrypoints.windows.artifacts' @('install.ps1', 'ccq-windows-x64.exe', 'ccq-windows-arm64.exe') @($entrypoints['Windows']['Artifacts'])
     Assert-Equal 'build.entrypoints.macos.script' 'installer/build.sh' $entrypoints['MacOS']['Script']
     Assert-Equal 'build.entrypoints.macos.allowed' @('macos') @($entrypoints['MacOS']['AllowedPlatforms'])
-    Assert-Equal 'build.entrypoints.macos.artifacts' @('install.sh', 'ccq-darwin-x64', 'ccq-darwin-arm64') @($entrypoints['MacOS']['Artifacts'])
+    Assert-Equal 'build.entrypoints.macos.artifacts' @('install.sh', 'ccq-macos-x64', 'ccq-macos-arm64') @($entrypoints['MacOS']['Artifacts'])
     Assert-Equal 'build.entrypoints.release-artifacts' $releaseOutputs @($entrypoints['ReleaseArtifacts'])
 
     foreach ($output in $releaseOutputs) {
@@ -489,7 +489,7 @@ function Test-CanonicalSourceLayout {
     }
 
     $distPath = Join-Path $script:RepoRoot 'dist'
-    $validReleaseArtifacts = @('ccq-windows-x64.exe', 'ccq-windows-arm64.exe', 'ccq-darwin-x64', 'ccq-darwin-arm64')
+    $validReleaseArtifacts = @('ccq-windows-x64.exe', 'ccq-windows-arm64.exe', 'ccq-macos-x64', 'ccq-macos-arm64')
     if (Test-Path $distPath -PathType Container) {
         foreach ($file in @(Get-ChildItem -Path $distPath -File)) {
             if ($file.Name -in $validReleaseArtifacts) { continue }

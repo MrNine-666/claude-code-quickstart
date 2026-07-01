@@ -2,7 +2,7 @@
 
 > 生成时间：2026-06-19 | 最近更新：TUI 视图层空状态/加载状态统一重构（list-state 组件）
 
-Windows 10/11 与 macOS 12+ 双平台的 **Claude Code 开发环境自动化安装器**。Windows 使用 **PS 5.1 单运行时**（前置检测内联 + winget 自动安装 + Basic 三步直装，PS7 作为推荐组件非阻塞安装、不 re-exec），macOS 使用 zsh + Homebrew + nvm 原生入口；install 仅装 Basic 三步（NodeJS / Git / ClaudeCode），进阶项（全局规则 / 配置 / 工具管理）搬进 Manage TUI；Manage 重构为根级 **OpenTUI TUI 子项目**（`tui/`，Bun `>=1.2.0`）**6 菜单**（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-darwin-x64` / `ccq-darwin-arm64`），ccq 经 PATH 目录天然可达（**不注入 Profile**），支持整可执行文件热更新；契约按「谁用归谁」拆分至 `installer/contracts/`（install 链）与 `tui/contracts/`（TUI 链，**内嵌进可执行文件**）。
+Windows 10/11 与 macOS 12+ 双平台的 **Claude Code 开发环境自动化安装器**。Windows 使用 **PS 5.1 单运行时**（前置检测内联 + winget 自动安装 + Basic 三步直装，PS7 作为推荐组件非阻塞安装、不 re-exec），macOS 使用 zsh + Homebrew + nvm 原生入口；install 仅装 Basic 三步（NodeJS / Git / ClaudeCode），进阶项（全局规则 / 配置 / 工具管理）搬进 Manage TUI；Manage 重构为根级 **OpenTUI TUI 子项目**（`tui/`，Bun `>=1.2.0`）**6 菜单**（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），ccq 经 PATH 目录天然可达（**不注入 Profile**），支持整可执行文件热更新；契约按「谁用归谁」拆分至 `installer/contracts/`（install 链）与 `tui/contracts/`（TUI 链，**内嵌进可执行文件**）。
 
 ---
 
@@ -52,7 +52,7 @@ graph TD
     G --> G1["Install.zsh（末尾下载 ccq）"]
     G --> G2["core: Ui / Process / Profile / Platform / PackageManager / Json / Registry + ccq 管理函数"]
     G --> G3["steps: 9 个安装步骤"]
-    H --> H1["install.ps1 / install.sh / ccq-windows-x64.exe / ccq-windows-arm64.exe / ccq-darwin-x64 / ccq-darwin-arm64"]
+    H --> H1["install.ps1 / install.sh / ccq-windows-x64.exe / ccq-windows-arm64.exe / ccq-macos-x64 / ccq-macos-arm64"]
     click C "./installer/windows/core/CLAUDE.md"
     click D "./installer/windows/steps/CLAUDE.md"
     click G "./installer/macos/README.md"

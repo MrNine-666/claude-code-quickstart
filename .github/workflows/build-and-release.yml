@@ -125,7 +125,7 @@ jobs:
       - name: 验证 TUI 可执行文件
         run: |
           set -eu
-          expected="ccq-windows-x64.exe ccq-windows-arm64.exe ccq-darwin-x64 ccq-darwin-arm64"
+          expected="ccq-windows-x64.exe ccq-windows-arm64.exe ccq-macos-x64 ccq-macos-arm64"
           for file in ${expected}; do
             test -f "dist/${file}" || { echo "TUI 可执行文件不存在: ${file}" >&2; exit 1; }
             size_kb="$(du -k "dist/${file}" | cut -f1)"
@@ -139,8 +139,8 @@ jobs:
           path: |
             dist/ccq-windows-x64.exe
             dist/ccq-windows-arm64.exe
-            dist/ccq-darwin-x64
-            dist/ccq-darwin-arm64
+            dist/ccq-macos-x64
+            dist/ccq-macos-arm64
           retention-days: 7
 
   build-windows:
@@ -164,7 +164,7 @@ jobs:
       - name: 清理非 Windows TUI 产物
         shell: pwsh
         run: |
-          Remove-Item -Path ".\dist\ccq-darwin-x64", ".\dist\ccq-darwin-arm64" -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path ".\dist\ccq-macos-x64", ".\dist\ccq-macos-arm64" -Force -ErrorAction SilentlyContinue
 
       - name: 构建 Windows 单文件脚本
         shell: pwsh
@@ -182,8 +182,8 @@ jobs:
           )
           $forbidden = @(
             ".\dist\install.sh",
-            ".\dist\ccq-darwin-x64",
-            ".\dist\ccq-darwin-arm64"
+            ".\dist\ccq-macos-x64",
+            ".\dist\ccq-macos-arm64"
           )
 
           foreach ($path in $expected) {
@@ -273,7 +273,7 @@ jobs:
       - name: 验证 macOS 构建产物
         run: |
           set -eu
-          for path in dist/install.sh dist/ccq-darwin-x64 dist/ccq-darwin-arm64; do
+          for path in dist/install.sh dist/ccq-macos-x64 dist/ccq-macos-arm64; do
             test -f "${path}" || { echo "构建产物不存在: ${path}" >&2; exit 1; }
             printf '[PASS] %s %s KB\n' "${path}" "$(du -k "${path}" | cut -f1)"
           done
@@ -291,8 +291,8 @@ jobs:
           name: built-macos-${{ github.sha }}
           path: |
             dist/install.sh
-            dist/ccq-darwin-x64
-            dist/ccq-darwin-arm64
+            dist/ccq-macos-x64
+            dist/ccq-macos-arm64
           retention-days: 7
 
   smoke-macos:
@@ -312,7 +312,7 @@ jobs:
       - name: Smoke 测试 macOS x64 可执行文件
         run: |
           set -eu
-          exe="./tui-dist/ccq-darwin-x64"
+          exe="./tui-dist/ccq-macos-x64"
           test -f "${exe}" || { echo "macOS x64 可执行文件不存在" >&2; exit 1; }
           chmod +x "${exe}"
           # Non-TTY 模式：应输出提示并退出码 0
@@ -360,7 +360,7 @@ jobs:
       - name: 验证 Release artifact 集合
         run: |
           set -eu
-          expected="install.ps1 install.sh ccq-windows-x64.exe ccq-windows-arm64.exe ccq-darwin-x64 ccq-darwin-arm64"
+          expected="install.ps1 install.sh ccq-windows-x64.exe ccq-windows-arm64.exe ccq-macos-x64 ccq-macos-arm64"
           for file in ${expected}; do
             test -f "dist/${file}" || { echo "Release 缺少 artifact: ${file}" >&2; exit 1; }
           done
@@ -371,7 +371,7 @@ jobs:
             exit 1
           fi
           # 显示可执行文件大小
-          for exe in ccq-windows-x64.exe ccq-windows-arm64.exe ccq-darwin-x64 ccq-darwin-arm64; do
+          for exe in ccq-windows-x64.exe ccq-windows-arm64.exe ccq-macos-x64 ccq-macos-arm64; do
             size_kb="$(du -k "dist/${exe}" | cut -f1)"
             printf '[PASS] %s %s KB\n' "${exe}" "${size_kb}"
           done
@@ -421,8 +421,8 @@ jobs:
             | `install.sh` | macOS bash → zsh | macOS 安装入口 |
             | `ccq-windows-x64.exe` | Windows x64 | ccq 管理控制台可执行文件（Windows x64） |
             | `ccq-windows-arm64.exe` | Windows ARM64 | ccq 管理控制台可执行文件（Windows ARM64） |
-            | `ccq-darwin-x64` | macOS Intel | ccq 管理控制台可执行文件（macOS Intel） |
-            | `ccq-darwin-arm64` | macOS Apple Silicon | ccq 管理控制台可执行文件（macOS Apple Silicon） |
+            | `ccq-macos-x64` | macOS Intel | ccq 管理控制台可执行文件（macOS Intel） |
+            | `ccq-macos-arm64` | macOS Apple Silicon | ccq 管理控制台可执行文件（macOS Apple Silicon） |
 
             **注意**：install 会自动下载对应平台的 ccq 可执行文件到 PATH 目录，开新终端即可使用 `ccq` 命令。
         env:

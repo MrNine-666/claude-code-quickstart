@@ -21,8 +21,8 @@
       ],
       "Artifacts": [
         "install.sh",
-        "ccq-darwin-x64",
-        "ccq-darwin-arm64"
+        "ccq-macos-x64",
+        "ccq-macos-arm64"
       ]
     },
     "ReleaseArtifacts": [
@@ -30,8 +30,8 @@
       "install.sh",
       "ccq-windows-x64.exe",
       "ccq-windows-arm64.exe",
-      "ccq-darwin-x64",
-      "ccq-darwin-arm64"
+      "ccq-macos-x64",
+      "ccq-macos-arm64"
     ]
   },
   "Windows": {

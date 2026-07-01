@@ -106,7 +106,7 @@ sh installer/build.sh
 sh installer/build.sh --check
 ```
 
-默认输出目录为 repo 根目录 `dist/`。CI Release job 汇总两个平台 job 产物后上传 **6 个 artifact**（`install.ps1` / `install.sh` / `ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-darwin-x64` / `ccq-darwin-arm64`）。
+默认输出目录为 repo 根目录 `dist/`。CI Release job 汇总两个平台 job 产物后上传 **6 个 artifact**（`install.ps1` / `install.sh` / `ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`）。
 
 ---
 

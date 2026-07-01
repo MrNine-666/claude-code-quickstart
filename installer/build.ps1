@@ -151,8 +151,8 @@ function Invoke-ManageTuiPackage {
       3. 产出 4 个可执行文件到 dist/:
          - ccq-windows-x64.exe
          - ccq-windows-arm64.exe
-         - ccq-darwin-x64
-         - ccq-darwin-arm64
+         - ccq-macos-x64
+         - ccq-macos-arm64
     契约已通过 src/core/embedded-contracts.ts 静态 import 内嵌进可执行文件（TDR-4）。
     Bun 不可用时 warn 跳过（不阻断平台 .ps1 产物构建；CI 通过 release artifact 校验强制可执行文件）。
 
