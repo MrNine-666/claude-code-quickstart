@@ -31,3 +31,4 @@ node_modules/
 npm-debug.log*
 .npm/
 tui/.*.bun-build
+PixPin_*.png
