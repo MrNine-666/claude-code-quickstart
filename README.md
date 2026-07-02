@@ -2,7 +2,7 @@
 
 Windows 与 macOS 双平台的 Claude Code 开发环境自动化安装器。
 
-> 目标：把「装环境」变成「跑脚本」——Windows 从 PowerShell 5.1 到 PowerShell 7，macOS 从 Homebrew / zsh / nvm 到 Claude Code，从基础依赖到 MCP/工作流，一次完成。
+> 目标：把「装环境」变成「跑脚本」——Windows 基于 PowerShell 5.1 单运行时，macOS 基于 Homebrew / zsh / nvm，一条命令装好 Node.js / Git / Claude Code 基础三件套，供应商 / 配置 / MCP / Skills / 工具等统一交给 `ccq` 管理控制台。
 
 ---
 
@@ -15,10 +15,8 @@ Windows 与 macOS 双平台的 Claude Code 开发环境自动化安装器。
   - [方式一：云端直接执行](#方式一云端直接执行推荐)
   - [方式二：下载单文件执行](#方式二下载单文件执行)
   - [方式三：从源码运行](#方式三从源码运行开发者)
-- [安装内容（install 仅装 Basic 三步）](#安装内容install-仅装-basic-三步)
-- [Manage 管理脚本](#manage-管理脚本)
-- [第三方供应商](#第三方供应商)
-- [MCP Server](#mcp-server)
+- [安装内容](#安装内容)
+- [Manage 管理控制台（ccq）](#manage-管理控制台ccq)
 - [项目结构](#项目结构)
 - [常见问题](#常见问题)
 - [License](#license)
@@ -37,7 +35,7 @@ Windows 与 macOS 双平台的 Claude Code 开发环境自动化安装器。
 - MCP Server 凭据重复录入
 - 组件升级后配置漂移
 
-CCQ 通过 Windows 双阶段脚本、macOS 原生入口与实时检测机制，把这些问题统一收敛到一个安装/管理入口。
+CCQ 通过 Windows PS 5.1 单运行时脚本、macOS 原生入口与实时检测机制，把这些问题统一收敛到一个安装/管理入口。
 
 ---
 
@@ -46,8 +44,8 @@ CCQ 通过 Windows 双阶段脚本、macOS 原生入口与实时检测机制，�
 - **双平台入口**：Windows 使用 PS 5.1 单运行时（前置检测内联 + Basic 直装，PS7 作为推荐组件非阻塞安装），macOS 使用 `curl ... | bash` 自动切换 zsh
 - **共享契约**：契约按「谁用归谁」拆分——`installer/contracts/`（install 链：步骤/构建/清理）与 `tui/contracts/`（TUI 链：供应商/MCP/ClaudeConfig/模板，**内嵌进 ccq 可执行文件**）
 - **实时检测**：每次运行都检测当前状态，已安装组件自动跳过
-- **分组安装**：install 仅装 Basic 三步（NodeJS / Git / ClaudeCode），进阶项（提示词 / 配置 / 工具管理）搬进 Manage TUI
-- **单文件可执行 TUI**：OpenTUI + Bun 构建的 `ccq` 可执行文件，通过 PATH 天然可达（**不注入 Profile**），提供 6 菜单（供应商 / MCP / Skills / 提示词 / 配置文件 / 工具管理）
+- **分组安装**：install 专注 Basic 三步（NodeJS / Git / ClaudeCode），工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills 由 `ccq` 管理控制台统一管理
+- **单文件可执行 TUI**：OpenTUI + Bun 构建的 `ccq` 可执行文件，通过用户级 PATH 天然可达，提供 6 菜单（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）
 - **供应商 Profile 化**：供应商配置持久化到 `~/.claude/providers/`
 - **MCP 凭据 Vault**：凭据持久化到 `~/.ccq/mcp-meta.json`
 - **整可执行文件热更新**：后台检查 GitHub Release 最新版本，强确认下载后原子替换 `~/.local/bin/ccq[.exe]`
@@ -76,12 +74,18 @@ CCQ 通过 Windows 双阶段脚本、macOS 原生入口与实时检测机制，�
 
 ##### 1) 安装脚本（PS 5.1+）
 
+请先以**管理员身份**打开 Windows PowerShell 5.1 或 PowerShell 7，再执行安装命令：
+
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
 irm 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/install.ps1' | iex
 ```
 
-PS 5.1 单运行时直跑：前置检测内联（Windows 版本 / winget 自动安装 / PS7 非阻塞推荐）+ Basic 三步直装（NodeJS / Git / ClaudeCode），**末尾确认下载 ccq.exe 到 `%USERPROFILE%\.local\bin\` 并加入用户 PATH（不注入 Profile）**。
+PS 5.1 单运行时直跑：前置检测内联（Windows 版本 / winget 自动安装 / PS7 非阻塞推荐）+ Basic 三步直装（NodeJS / Git / ClaudeCode），**末尾确认下载 ccq.exe 到 `%USERPROFILE%\.local\bin\` 并加入用户 PATH**。
+
+安装完成后，建议在 Windows Terminal 中将 PowerShell 7 配置为管理员方式打开；后续新开终端执行 `ccq` 进入管理控制台。
+
+![Windows 安装界面](./assets/screenshots/windows-install.png)
 
 ##### 2) 管理面板
 
@@ -91,7 +95,7 @@ PS 5.1 单运行时直跑：前置检测内联（Windows 版本 / winget 自动�
 ccq
 ```
 
-进入 6 菜单管理控制台（供应商 / MCP / Skills / 提示词 / 配置文件 / 工具管理）。
+进入 6 菜单管理控制台（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）。
 
 #### macOS
 
@@ -100,6 +104,8 @@ ccq
 ```sh
 curl -fsSL "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/install.sh" | bash
 ```
+
+![macOS 安装界面](./assets/screenshots/macos-install.png)
 
 安装完成后，**开新终端**直接运行：
 
@@ -188,96 +194,81 @@ bash dist/install.sh --list-steps
 
 ---
 
-## 安装内容（install 仅装 Basic 三步）
+## 安装内容
 
-### 基础环境（install 直装，必装）
+### Windows
 
-1. Node.js
+Windows 入口基于 PowerShell 5.1+ 单运行时执行，安装基础环境并准备 `ccq.exe`：
+
+1. Node.js LTS
 2. Git
 3. Claude Code
+4. `ccq.exe` 管理控制台（下载到 `%USERPROFILE%\.local\bin\` 并加入用户 PATH）
 
-### 进阶扩展（已迁移 Manage TUI，按需）
+### macOS
 
-进阶项不再出现在 install 流程，统一搬进 Manage 控制台：
+macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebrew + nvm 准备基础环境与 `ccq`：
 
-- **提示词**：CLAUDE.md 推荐 / 导入 / 外部编辑器
-- **配置文件**：settings.json fill-missing / 外部编辑器
-- **工具管理**：Ccline / CcgWorkflow / OpenSpec CLI / Codex CLI / Antigravity CLI 的安装 / 更新 / 卸载（全生命周期，含 ClaudeCode）
-- **供应商**：供应商 Profile 化管理
-- **MCP**：MCP Server 选装 / 凭据 / CRUD
-- **Skills**：Claude Code 全局 Skills 安装 / 更新 / 卸载
+1. Homebrew
+2. nvm + Node.js LTS
+3. Git
+4. Claude Code
+5. `ccq` 管理控制台（下载到 `~/.local/bin/` 并确保该目录在 PATH）
 
-第三方供应商配置（ApiKey）不再作为 install 步骤，统一经 Manage TUI → 供应商管理完成。
+安装完成后，供应商、配置、全局规则、MCP、Skills、工具等均在 `ccq` 管理控制台操作，详见下节。
 
 ---
 
 ## Manage 管理控制台（ccq）
 
-安装后直接运行 `ccq` 命令进入管理控制台。`ccq` 是 OpenTUI + Bun 构建的单文件可执行产物（`tui/` 子项目交叉编译而来），安装时下载到 `~/.local/bin/ccq[.exe]`（与 Claude Code native installer 同目录），通过用户级 PATH 天然可达，**不注入 Profile**。提供统一管理控制台 **6 菜单**：
+安装后直接运行 `ccq` 命令进入管理控制台。`ccq` 是 OpenTUI + Bun 构建的单文件可执行产物（`tui/` 子项目交叉编译而来），安装时下载到 `~/.local/bin/ccq[.exe]`（与 Claude Code native installer 同目录），通过用户级 PATH 天然可达。控制台提供 **6 菜单**：
 
-### 1) 供应商管理（Provider）
+### 1) 工具管理（Tools）
+
+- ClaudeCode 与 Ccline / CcgWorkflow / OpenSpec / CodexCli / AntigravityCli 全生命周期
+- 安装 / 更新 / 卸载（强确认 + snapshot 保护）
+- 侧边栏底部「检查更新」按钮可更新 ccq 可执行文件本体
+
+![工具管理](./assets/screenshots/tui-tool.png)
+
+### 2) 供应商（Provider）
 
 - 供应商 Profile 的新增 / 编辑 / 删除 / 切换 / 设置默认
-- 支持从 settings.json 同步历史配置
+- 支持从 settings.json 同步已有配置
+- 内置供应商：智谱 GLM（默认 GLM-5.2）、MiniMax（默认 MiniMax-M3）、Kimi Code（需 `sk-kimi-` 前缀 Key）、DeepSeek（默认 deepseek-v4-pro[1m]）、阿里云百炼（默认 `qwen3.7-plus`）、自定义供应商
+- 配置写入 `~/.claude/settings.json` 的 `env`，Profile 保存到 `~/.claude/providers/`
 
-### 2) MCP 管理（Mcp）
+![供应商管理](./assets/screenshots/tui-providers.png)
 
-- 查看状态（已启用 / 已禁用 / 未安装）
-- `i` 键选装内置 MCP（收集凭据 → 写入 `.claude.json` + Vault）
-- 启用 / 禁用 / 删除
-- 凭据通过 vault 持久化
+### 3) 配置文件（Config）
 
-### 3) Skills 管理（Skills）
+- 查看 settings.json 推荐配置（含 description）
+- 按缺失项补全（fill-missing）/ 复制 / 外部编辑器编辑
 
-- 安装 / 更新 / 卸载 Claude Code 全局 Skills
-- 安装入口先单选 source；集合类 source 可继续多选子 Skills
+![配置文件管理](./assets/screenshots/tui-config.png)
 
-### 4) 提示词（Prompts）
+### 4) 全局规则（Prompts）
 
-- 查看推荐 CLAUDE.md / 导入 / 复制 / 外部编辑器
+- 查看推荐 CLAUDE.md / 导入 / 复制 / 外部编辑器编辑
 
-### 5) 配置文件（Config）
+![全局规则管理](./assets/screenshots/tui-claudemd.png)
 
-- 查看 settings.json 推荐配置（含 description）/ fill-missing 导入 / 复制 / 外部编辑器
+### 5) MCP
 
-### 6) 工具管理（Tools）
+- 列表仅展示已安装 Server，行显示状态圆点 + Server ID
+- `A` 新增、`E` 编辑（JSON 即真源，内置模板一键带出配置与凭据提示）、`D` 删除
+- `Enter` 切换启用 / 禁用状态；凭据持久化到 `~/.ccq/mcp-meta.json`
+- 内置 MCP：Context7 / DeepWiki / Tavily / Playwright / Exa Search / ACE Tool / MasterGo / Figma / Chrome DevTools
+- 支持 none / single-key / args-token / url-embedded 等凭据类型，新增或编辑时按模板提示填写
 
-- ClaudeCode + Ccline / CcgWorkflow / OpenSpec / CodexCli / AntigravityCli 全生命周期
-- 安装 / 更新 / 卸载（强确认 + snapshot 保护）
-- 旧独立「检查更新」已并入此菜单
+![MCP 管理](./assets/screenshots/tui-mcp.png)
 
----
+### 6) Skills
 
-## 第三方供应商
+- 列表页：本地过滤框模糊查询已装 Skills；`u` 更新全部、`d` 卸载单条、`r` 刷新
+- 安装页（`a` 进入）：远程搜索框 + 扁平 Skill 列表，`Enter` 触发确认弹窗安装
 
-支持内置供应商：
-
-- 智谱 GLM（zhipu，默认 GLM-5.1）
-- MiniMax（minimax，默认 MiniMax-M3）
-- Kimi Code（moonshot，需 `sk-kimi-` 前缀 Key）
-- DeepSeek（deepseek）
-- 阿里云百炼（bailian，默认 `qwen3.7-plus`）
-- 自定义供应商（custom）
-
-配置会写入 `~/.claude/settings.json`（`env`，包含供应商认证/Base URL、可选模型环境键与供应商受管额外 env），并将 Profile 保存到 `~/.claude/providers/`。
-
----
-
-## MCP Server
-
-当前内置 MCP：
-
-- Context7
-- DeepWiki
-- Tavily
-- Playwright
-- Exa Search
-- ACE Tool
-- MasterGo
-- Figma
-- Chrome DevTools
-
-> 不同 MCP 的凭据类型不同（none / single-key / args-token / url-embedded 等），安装时会按需提示。
+![Skills 管理](./assets/screenshots/tui-skills.png)
 
 ---
 
@@ -302,7 +293,6 @@ claude-code-quickstart/
 │       ├── Install.zsh                # macOS 安装入口（前置检测内联 + Basic 直装 + 末尾下载 ccq）
 │       ├── core/                      # macOS zsh runtime core（含 ccq 可执行文件管理函数）
 │       └── steps/                     # macOS Basic 步骤实现
-└── test-syntax.ps1
 ```
 
 ---
@@ -318,7 +308,7 @@ claude-code-quickstart/
 按你的场景处理：
 
 1. **Windows 刚刚执行完 install**
-   - `ccq.exe` 已下载到 `%USERPROFILE%\.local\bin\` 并加入用户 PATH（不注入 `$PROFILE`），**先新开一个终端**再试：
+   - `ccq.exe` 已下载到 `%USERPROFILE%\.local\bin\` 并加入用户 PATH，**先新开一个终端**再试：
 
    ```powershell
    ccq
@@ -332,15 +322,12 @@ claude-code-quickstart/
    ```
 
 2. **macOS 用户**
-   - `ccq` 已下载到 `~/.local/bin/` 并确保该目录在 PATH（不注入 Profile），**新开 zsh 终端**，或在当前会话临时追加：
+   - `ccq` 已下载到 `~/.local/bin/` 并确保该目录在 PATH，**新开 zsh 终端**，或在当前会话临时追加：
 
    ```sh
    export PATH="$HOME/.local/bin:$PATH"
    ccq
    ```
-
-3. **历史安装用户（旧版本残留）**
-   - 旧版本曾把 `ccq` 函数写入 `$PROFILE` / `~/.zshrc`，新版改走 PATH 目录。重新执行一次最新安装脚本即可下载 `ccq` 可执行文件并修正 PATH。
 
 ---
 

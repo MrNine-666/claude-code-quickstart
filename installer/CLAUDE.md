@@ -53,9 +53,6 @@ curl -fsSL https://github.com/MrNine-666/claude-code-quickstart/releases/latest/
 ## Windows 源码调试命令
 
 ```powershell
-# 验证全部 PowerShell 文件语法
-pwsh -File test-syntax.ps1
-
 # 安装（PS5.1 单运行时直跑，末尾下载 ccq.exe）
 pwsh -File installer/windows/Install.ps1
 
@@ -160,7 +157,7 @@ Cannot bind argument to parameter 'Path' because it is an empty string.
     └─ App（6 菜单 + 整可执行文件热更新）
          ├─ 供应商        ├─ MCP
          ├─ Skills        ├─ 提示词
-         ├─ 配置文件       └─ 工具管理（ClaudeCode+Ccline/CcgWorkflow/OpenSpec/CodexCli/AntigravityCli）
+         ├─ 配置文件       └─ 工具管理（ClaudeCode+Ccline/CcgWorkflow/OpenSpec/CodeGraph/CodexCli/AntigravityCli）
 
 安装时调用链：
   Install.ps1 / Install.zsh（末尾确认下载 ccq 可执行文件）

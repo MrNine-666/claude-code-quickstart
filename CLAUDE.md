@@ -2,7 +2,7 @@
 
 > 生成时间：2026-06-19 | 最近更新：TUI 视图层空状态/加载状态统一重构（list-state 组件）
 
-Windows 10/11 与 macOS 12+ 双平台的 **Claude Code 开发环境自动化安装器**。Windows 使用 **PS 5.1 单运行时**（前置检测内联 + winget 自动安装 + Basic 三步直装，PS7 作为推荐组件非阻塞安装、不 re-exec），macOS 使用 zsh + Homebrew + nvm 原生入口；install 仅装 Basic 三步（NodeJS / Git / ClaudeCode），进阶项（全局规则 / 配置 / 工具管理）搬进 Manage TUI；Manage 重构为根级 **OpenTUI TUI 子项目**（`tui/`，Bun `>=1.2.0`）**6 菜单**（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），ccq 经 PATH 目录天然可达（**不注入 Profile**），支持整可执行文件热更新；契约按「谁用归谁」拆分至 `installer/contracts/`（install 链）与 `tui/contracts/`（TUI 链，**内嵌进可执行文件**）。
+Windows 10/11 与 macOS 12+ 双平台的 **Claude Code 开发环境自动化安装器**。Windows 使用 **PS 5.1 单运行时**（前置检测内联 + winget 自动安装 + Basic 三步直装，PS7 作为推荐组件非阻塞安装、不 re-exec），macOS 使用 zsh + Homebrew + nvm 原生入口；install 仅装 Basic 三步（NodeJS / Git / ClaudeCode），进阶项（全局规则 / 配置 / 工具管理）搬进 Manage TUI；Manage 重构为根级 **OpenTUI TUI + CLI 子命令子项目**（`tui/`，Bun `>=1.2.0`）**6 菜单**（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）+ 轻量命令行操作（`ccq cc <provider>` / `ccq ls` / `ccq use <provider>`），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），ccq 经 PATH 目录天然可达（**不注入 Profile**），支持整可执行文件热更新；契约按「谁用归谁」拆分至 `installer/contracts/`（install 链）与 `tui/contracts/`（TUI 链，**内嵌进可执行文件**）。
 
 ---
 
@@ -13,19 +13,18 @@ claude-code-quickstart/
 ├── dist/                             # 默认构建输出：6 个 artifact（2 .ps1 + 2 .sh + 4 平台 ccq 可执行文件）
 ├── tui/                              # 根级 OpenTUI TUI 子项目：6 菜单（工具管理/供应商/配置文件/全局规则/MCP/Skills）（src/ → 4 平台可执行文件）
 │   └── contracts/                    # TUI 链契约：claude-config / mcp-servers / providers / templates（运行时内嵌）；ccg-workflow / claude-config-drift.js / templates/index.json 为磁盘源契约
-├── installer/
-│   ├── build.ps1                     # Windows / GitHub Actions Windows job 构建入口（2 个 .ps1）
-│   ├── build.sh                      # macOS / Unix 构建入口（2 个 .sh artifact）
-│   ├── contracts/                    # install 链契约：steps / build / cleanup-policy + Test-Contracts.ps1
-│   ├── windows/
-│   │   ├── Install.ps1     # Windows PS 5.1+ 安装入口（前置检测内联 + Basic 直装 + 末尾确认下载 ccq 可执行文件）
-│   │   ├── core/                     # Windows PowerShell runtime core（含 ccq 可执行文件管理函数）
-│   │   └── steps/                    # Windows 9 个安装步骤（NodeJS 含 5 子模块；CcSwitch/CcgWorkflow/Mcp 已删）
-│   └── macos/
-│       ├── Install.zsh     # macOS zsh 安装入口（前置检测内联 + Basic 直装 + 末尾确认下载 ccq 可执行文件）
-│       ├── core/                     # macOS zsh runtime core（含 ccq 可执行文件管理函数）
-│       └── steps/                    # macOS 9 个安装步骤
-└── test-syntax.ps1                   # Windows PowerShell 语法校验
+└── installer/
+    ├── build.ps1                     # Windows / GitHub Actions Windows job 构建入口（2 个 .ps1）
+    ├── build.sh                      # macOS / Unix 构建入口（2 个 .sh artifact）
+    ├── contracts/                    # install 链契约：steps / build / cleanup-policy + Test-Contracts.ps1
+    ├── windows/
+    │   ├── Install.ps1     # Windows PS 5.1+ 安装入口（前置检测内联 + Basic 直装 + 末尾确认下载 ccq 可执行文件）
+    │   ├── core/                     # Windows PowerShell runtime core（含 ccq 可执行文件管理函数）
+    │   └── steps/                    # Windows 9 个安装步骤（NodeJS 含 5 子模块；CcSwitch/CcgWorkflow/Mcp 已删）
+    └── macos/
+        ├── Install.zsh     # macOS zsh 安装入口（前置检测内联 + Basic 直装 + 末尾确认下载 ccq 可执行文件）
+        ├── core/                     # macOS zsh runtime core（含 ccq 可执行文件管理函数）
+        └── steps/                    # macOS 9 个安装步骤
 ```
 
 ```mermaid
@@ -127,9 +126,6 @@ $PROFILE                    # PowerShell 配置文件（历史遗留块清理用
 ### Windows
 
 ```powershell
-# 验证全部 PowerShell 文件语法
-pwsh -File test-syntax.ps1
-
 # 重新运行安装（实时检测，自动跳过已安装组件；PS5.1 单运行时直装 Basic 三步 + 末尾下载 ccq.exe）
 pwsh -File installer/windows/Install.ps1
 
@@ -138,6 +134,11 @@ pwsh -File installer/windows/Install.ps1 -ListSteps
 
 # 直接运行 ccq（6 菜单：工具管理/供应商/配置文件/全局规则/MCP/Skills）
 ccq
+
+# CLI 子命令：临时用 provider 启动 Claude Code（不写盘）/ 列表 / 设默认
+ccq cc <provider> [claude-args...]
+ccq ls
+ccq use <provider>
 
 # 从源码运行 TUI（开发调试）
 cd tui
@@ -158,6 +159,11 @@ zsh installer/macos/Install.zsh --list-steps
 
 # 直接运行 ccq（6 菜单）
 ccq
+
+# CLI 子命令：临时用 provider 启动 Claude Code（不写盘）/ 列表 / 设默认
+ccq cc <provider> [claude-args...]
+ccq ls
+ccq use <provider>
 
 # 从源码运行 TUI（开发调试）
 cd tui
@@ -183,8 +189,9 @@ zsh -n installer/macos/Install.zsh
 安装后调用链：
   ccq（单文件可执行，通过 PATH 天然可达）
     ↓
-  tui/src/index.tsx（OpenTUI 渲染）
-    ├─ non-TTY 守卫（HC-NON-TTY）
+  tui/src/index.tsx（argv 子命令路由 + OpenTUI 渲染）
+    ├─ CLI 子命令：cc / ls / use / help / version（有子命令时不进 TUI）
+    ├─ non-TTY 守卫（HC-NON-TTY，仅无参 TUI 路径生效）
     ├─ 内嵌版本号（CCQ_VERSION，供热更新比对）
     └─ App（6 菜单 + 整可执行文件热更新）
          ├─ 工具管理      ├─ 供应商

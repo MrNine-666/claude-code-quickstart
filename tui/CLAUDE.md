@@ -7,7 +7,7 @@
 
 ## 项目概述
 
-**OpenTUI + Bun 单文件可执行 TUI**，实现 Claude Code Quickstart 的 6 菜单管理控制台（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），运行时消费契约以内联文本形式内嵌进可执行文件，安装后通过 `ccq` 命令天然可达（**不注入 Profile**）。
+**OpenTUI + Bun 单文件可执行 TUI + CLI 子命令入口**，实现 Claude Code Quickstart 的 6 菜单管理控制台（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）与轻量命令行操作（`ccq cc <provider>` / `ccq ls` / `ccq use <provider>`），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），运行时消费契约以内联文本形式内嵌进可执行文件，安装后通过 `ccq` 命令天然可达（**不注入 Profile**）。
 
 ---
 
@@ -29,8 +29,9 @@
 ```
 tui/
 ├── src/
-│   ├── index.tsx              # 入口：createCliRenderer + non-TTY 守卫 + CCQ_VERSION
+│   ├── index.tsx              # 入口：argv 子命令路由 + createCliRenderer + non-TTY 守卫 + CCQ_VERSION
 │   ├── app.tsx                # 双栏布局 + 6 菜单路由
+│   ├── cli/                   # 非交互 CLI 子命令（cc / ls / use / help / version）
 │   ├── core/                  # 业务逻辑（从 manage/source/core 零改写迁移）
 │   │   ├── contracts.ts       # 运行时契约内嵌读取（Bun text loader + 源码 fallback）
 │   │   ├── settings.ts        # settings.json 读写
@@ -104,6 +105,27 @@ SHALL 保持 OpenTUI 官方脚手架结构完整性，禁止破坏官方结构�
 - 默认构建命令保持 `bun build --compile --target ...`，不带 `--minify`。
 - 如需重新尝试 minify，必须先为 OpenTUI host component 注册、Tree-sitter 降级、contracts 内嵌和关键视图交互补齐编译产物级门禁，再逐项验证。
 - 第三方 host component 注册禁止依赖裸副作用 import；必须显式调用注册函数（如 `registerSpinner()`），确保 bundler 不会误删。
+
+### HC-CLI-SUBCOMMAND
+ccq 可执行文件支持「无参进 TUI + 子命令非交互」双入口。`src/index.tsx` 必须先解析 argv，再执行 non-TTY 守卫：
+- `ccq`（无参）保持进入 OpenTUI 6 菜单；若无参且 non-TTY，仍输出只读提示并退出码 0。
+- `ccq cc <provider> [claude-args...]` 用 `~/.claude/providers/<provider>.json` 作为 `claude --settings` 启动 Claude Code，**不写盘**，后续参数原样透传给 claude；必须用 `Bun.spawn(..., {stdio: ['inherit','inherit','inherit']})` 保持交互 TTY，禁止复用 `execCommand`（它 `stdio:'pipe'` 会吃掉 TTY）。
+- `ccq ls` 列 provider 并标记当前默认；`ccq use <provider>` 复用 `switchProvider` 设置默认（写入 `~/.claude/settings.json`，持久生效）。
+- `cc` 与 `use` 语义必须分离：`cc` = 临时 session 覆盖；`use` = 持久默认。新增 CLI 命令按 `ccq <verb> [object] [--flags] [-- passthrough]` 子命令骨架扩展，禁止把动作塞进裸 flag（如 `-cc`）。
+- **多工具命名预留（HC-CLI-MULTITOOL）**：当前 provider 体系纯 Claude 专用（`~/.claude/providers/`，env 全 `ANTHROPIC_*`）。未来扩展 codex 等**按"工具独立 profile + 独立动词"路线**，禁止复用 claude provider 文件或塞进 `~/.claude/settings.json`：
+  - 新工具 = 新增一个**独立短动词**（codex → `cx`），不动 `cc`：`ccq cx <provider> [codex-args...]`。
+  - codex 复用其原生 `~/.codex/<name>.config.toml` + `--profile <name>` 机制；凭据因 codex 用 `env_key` 指向环境变量名（key 值不落 config.toml），由 ccq vault 保管、启动时注入 env。
+  - `ls` 扩展为 `ccq ls [--tool claude|codex]`，`--tool` 缺省 = claude（当前 `ccq ls` 行为零破坏）；`use` 同理 `ccq use <provider> [--tool ...]`。codex 的 `use`（设默认=改写 `~/.codex/config.toml` 顶层 `model_provider`）侵入大，视情况再定，不强制与 claude 对齐。
+  - 工具动词表（预留，未实现）：`cc`=claude / `cx`=codex / 后续按需加。每个工具的 profile 存储、凭据保管、spawn 方式各自独立，**不强行抽象统一 provider 模型**（claude 全塞 `--settings` 单文件，codex 走 TOML profile + env 注入，协议本就不同，抽象会落空）。
+- **两类动词分类（HC-CLI-VERB-KIND）**：CLI 动词按"后续 token 语义"分两类，各动词的 `parseXxx` 函数独立解析后续 token，互不干扰；新增动词必须先归类：
+  | 动词类型 | 后续 token 语义 | `--` 透传 | 既有/预留示例 |
+  |---------|----------------|----------|--------------|
+  | **启动类** | 对象=provider 名 + 参数透传给**底层工具**（claude/codex） | ✅ 用（`--` 后甩给底层工具） | `cc`（既有）/ `cx`（预留） |
+  | **管理类** | 子命令 + **ccq 自有 flag**（`--all`/`--force`/`--json` 等），不透传给底层工具 | ❌ 不用（管理命令无底层工具可透传） | `ls`/`use`（既有）/ `mcp`/`update`/`skills`/`tools`（预留） |
+  - **禁止**给管理类动词套 `--` 透传语义：`--` 是为"启动类把参数转给 claude/codex"设计的，管理命令（如 `ccq mcp add`/`ccq update self`）该用自己的 flag 解析，不得复用 `parseCc` 的 `--` 逻辑。
+  - 管理类动词支持"动词 + 子对象"两级（如 `ccq mcp list` / `ccq mcp add` / `ccq mcp rm <id>` / `ccq update self|tools|skills`），子对象由该动词的 `parseXxx` 自行路由，不在 `parseCli` 顶层展开。
+  - 复用优先：管理类动词应直接包装既有 core 层能力（`core/update.ts` / `core/mcp.ts` / `core/skills-actions.ts` / `core/tools-manage.ts`），CLI 层只做参数解析 + 调用 + 退出码，不重复实现业务逻辑。
+- 新增/修改 CLI 路由必须同步 `scripts/verify-cli-subcommands.mjs` 与本文档；新增工具动词须在本约束补一行动词表 + 存储约定；新增管理类动词须归入上表两类之一。
 
 ### HC-NON-TTY
 ccq 可执行文件 non-TTY（管道 / 重定向 / CI）输出只读提示、不进交互 TUI、退出码 0。`src/index.tsx` 入口实现：
@@ -269,7 +291,7 @@ if (useIcon && existsSync(ICON_PATH)) {
 
 | 菜单 | 文件 | 功能 |
 |------|------|------|
-| 工具管理 | `views/tools-view.tsx` | ClaudeCode + 5 工具全生命周期（安装/更新/卸载 + 卡片范式 + 2D 导航） |
+| 工具管理 | `views/tools-view.tsx` | ClaudeCode + 6 工具全生命周期（安装/更新/卸载 + 卡片范式 + 2D 导航） |
 | 供应商 | `views/provider-view.tsx` + `provider-form.tsx` | 供应商 Profile CRUD + 设置默认 + extraEnv JSON 编辑 |
 | 配置文件 | `views/config-view.tsx` | 配置文件页（view-first，对齐 PromptsView）+ 字段级（settings.json 多页共享）：进入先渲染只读当前 settings.json（**手动 JSON 着色**：key/string/数字/布尔/标点分色，opentui 无 json grammar 的回退），标题标注「已排除供应商配置」（供应商 env 剥离展示，归供应商页管，HC-12；保存时自动合并保留）；无内容则空状态提示按 `a` 新建；`a`（空白新建 `{}`）/ `e`（编辑现有）进编辑器，`Ctrl+T` 开推荐边栏（带注释 JSONC 对照·注释行分色），`Ctrl+O` fill-missing 灌缓冲（仅补缺失）/ `Ctrl+S` 保存（合并保留供应商 env）/ `Esc` 取消回只读态 |
 | 全局规则 | `views/prompts-view.tsx` | 全局规则页（view-first）：进入先渲染只读本地 CLAUDE.md（`<markdown>`），无内容则空状态提示按 `a` 新建；`a`（空白新建）/ `e`（编辑现有）进编辑器，`Ctrl+T` 开源码推荐边栏（未渲染·语法高亮对照），`Ctrl+I` 推荐灌缓冲 / `Ctrl+S` 保存 / `Ctrl+P` 预览 / `Esc` 取消回只读态（有脏先确认） |
