@@ -38,14 +38,14 @@ const succeeded = outcomes.filter(item => item.success);
 assert.equal(succeeded.length, 2, '其余 2 项成功');
 console.log('[PASS] 批量安装失败隔离 (P-6)');
 
-// ── 工具定义完整性：5 个工具齐备 ─────────────────────────────────────────────
+// ── 工具定义完整性：6 个工具齐备 ─────────────────────────────────────────────
 const ids = TOOL_DEFINITIONS.map(item => item.id);
-assert.deepEqual(ids, ['Ccline', 'CcgWorkflow', 'OpenSpec', 'CodexCli', 'AntigravityCli'], '5 工具定义齐备且顺序固定');
+assert.deepEqual(ids, ['Ccline', 'CcgWorkflow', 'OpenSpec', 'CodeGraph', 'CodexCli', 'AntigravityCli'], '6 工具定义齐备且顺序固定');
 for (const tool of TOOL_DEFINITIONS) {
 	assert.ok(tool.command && tool.versionArgs.length > 0, `${tool.id} 有检测命令`);
 	assert.ok(tool.kind, `${tool.id} 有安装 kind`);
 }
-console.log('[PASS] 工具定义完整性（5 工具齐备）');
+console.log('[PASS] 工具定义完整性（6 工具齐备）');
 
 // ── 6.11 CcgWorkflow mcpServers 快照保护（CCQ_HOME 隔离）──────────────────────
 const home = mkdtempSync(join(tmpdir(), 'ccq-tools-test-'));

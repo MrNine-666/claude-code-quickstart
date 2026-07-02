@@ -15,7 +15,7 @@ import {atomicWrite} from './fs-utils.js';
 import {claudeDir, resolveHome, rulesDir, settingsPath} from './paths.js';
 
 // tools-manage core：工具管理单一真理源（design TDR-11）。
-// 融合 tools-install.ts（5 工具安装定义）与 update.ts（CLI 组件检测/快照/应用），
+// 融合 tools-install.ts（6 工具安装定义）与 update.ts（CLI 组件检测/快照/应用），
 // 新增 ClaudeCode 纳入受管（isBase=true），消除 TOOL_DEFINITIONS 与 NPM_COMPONENT_MAP/COMMAND_COMPONENTS 重复。
 // 检测不聚合 Skills/MCP（11.7）—— Skills/MCP 更新各归各家视图。
 // 安装路径复用 tools-install.installTool（11.8），更新路径复用 update.applyUpdates（11.9）。
@@ -53,7 +53,7 @@ export type ComponentInstallOutcome = {
 	readonly error?: string;
 };
 
-/** 安装依赖注入（仅 ClaudeCode 分支生效，供测试 mock exec；5 工具经 installTool 不支持注入）。 */
+/** 安装依赖注入（仅 ClaudeCode 分支生效，供测试 mock exec；6 工具经 installTool 不支持注入）。 */
 export type InstallComponentDeps = {
 	readonly exec?: typeof execCommand;
 };
@@ -75,8 +75,8 @@ const CLAUDE_CODE_DEFINITION: ComponentDefinition = {
 };
 
 /**
- * 全部受管组件定义（6 项）：ClaudeCode + 5 工具。
- * 5 工具复用 tools-install.TOOL_DEFINITIONS（DRY，单一真理源），叠加 isBase=false。
+ * 全部受管组件定义（7 项）：ClaudeCode + 6 工具。
+ * 6 工具复用 tools-install.TOOL_DEFINITIONS（DRY，单一真理源），叠加 isBase=false。
  */
 export const COMPONENT_DEFINITIONS: readonly ComponentDefinition[] = [
 	CLAUDE_CODE_DEFINITION,
@@ -100,8 +100,8 @@ function parseVersion(text: string): string {
 }
 
 /**
- * 检测全部受管组件（6 项），不聚合 Skills/MCP（11.7）。
- * 复用 update.checkCliToolUpdates（返回正好 6 个 CLI 组件：ClaudeCode/Ccline/CcgWorkflow/CodexCli/OpenSpec + AntigravityCli），
+ * 检测全部受管组件（7 项），不聚合 Skills/MCP（11.7）。
+ * 复用 update.checkCliToolUpdates（返回正好 7 个 CLI 组件：ClaudeCode/Ccline/CcgWorkflow/CodexCli/OpenSpec/CodeGraph + AntigravityCli），
  * join COMPONENT_DEFINITIONS 静态字段（description/kind/command/isBase 等）。
  */
 export async function detectComponents(onProgress?: ProgressCallback): Promise<ManagedComponent[]> {
@@ -129,7 +129,7 @@ export async function detectComponents(onProgress?: ProgressCallback): Promise<M
 /**
  * 安装单个组件（11.6 ClaudeCode 新增 / 11.8 五工具复用 installTool）。
  * ClaudeCode 走 npm install -g + 检测确认，支持 deps.exec 注入供测试；
- * 5 工具复用 tools-install.installTool（含 CcgWorkflow npx init / Antigravity shell 脚本），不重写。
+ * 6 工具复用 tools-install.installTool（含 CcgWorkflow npx init / Antigravity shell 脚本），不重写。
  */
 export async function installComponent(
 	id: ComponentId,
@@ -161,7 +161,7 @@ export async function installComponent(
 			return {id: 'ClaudeCode', success: false, error: '安装后命令不可用'};
 		}
 
-		// 5 工具复用 tools-install.installTool（11.8，不重写 Phase 6 已实现逻辑）
+		// 6 工具复用 tools-install.installTool（11.8，不重写 Phase 6 已实现逻辑）
 		return installTool(id, onProgress);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);

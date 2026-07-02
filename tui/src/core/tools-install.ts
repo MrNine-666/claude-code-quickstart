@@ -3,7 +3,7 @@ import {execCommand, type ProgressCallback} from './exec.js';
 import {atomicWrite} from './fs-utils.js';
 import {claudeDir, claudeJsonPath, settingsPath} from './paths.js';
 
-// 工具安装 core：检测 + 安装 5 个进阶工具（Ccline / CcgWorkflow / OpenSpec / CodexCli / AntigravityCli）。
+// 工具安装 core：检测 + 安装 6 个进阶工具（Ccline / CcgWorkflow / OpenSpec / CodeGraph / CodexCli / AntigravityCli）。
 // 全部经 core/exec.ts 的 execCommand spawn 外部命令（HC-TUI-NODE-ONLY），不调 PS/zsh 步骤函数。
 // 安装命令矩阵对齐 installer 步骤（design TDR-5）：
 //   Ccline       npm install -g @cometix/ccline + settings.json statusLine（仅补缺失）
@@ -15,7 +15,7 @@ import {claudeDir, claudeJsonPath, settingsPath} from './paths.js';
 
 type JsonObject = Record<string, unknown>;
 
-export type ToolId = 'Ccline' | 'CcgWorkflow' | 'OpenSpec' | 'CodexCli' | 'AntigravityCli';
+export type ToolId = 'Ccline' | 'CcgWorkflow' | 'OpenSpec' | 'CodeGraph' | 'CodexCli' | 'AntigravityCli';
 
 export type ToolInstallKind = 'npm' | 'ccg-init' | 'shell-script';
 
@@ -76,6 +76,16 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		command: 'openspec',
 		versionArgs: ['--version'],
 		npmPackage: '@fission-ai/openspec',
+		optional: false
+	},
+	{
+		id: 'CodeGraph',
+		name: 'CodeGraph',
+		description: '本地代码知识图谱（调用链/影响范围检索，npm 全局）',
+		kind: 'npm',
+		command: 'codegraph',
+		versionArgs: ['--version'],
+		npmPackage: '@colbymchenry/codegraph',
 		optional: false
 	},
 	{

@@ -45,7 +45,8 @@ const NPM_COMPONENT_MAP: Record<string, string> = {
 	Ccline: '@cometix/ccline',
 	CcgWorkflow: 'ccg-workflow',
 	CodexCli: '@openai/codex',
-	OpenSpec: '@fission-ai/openspec'
+	OpenSpec: '@fission-ai/openspec',
+	CodeGraph: '@colbymchenry/codegraph'
 };
 
 // CcgWorkflow 包名单一真理源（检测与 applyUpdates 特判共用），守卫锁定 package='ccg-workflow'
@@ -56,6 +57,7 @@ const COMMAND_COMPONENTS: Record<string, {command: string; versionArgs: string[]
 	Ccline: {command: 'ccline', versionArgs: ['--version']},
 	CodexCli: {command: 'codex', versionArgs: ['--version']},
 	OpenSpec: {command: 'openspec', versionArgs: ['--version']},
+	CodeGraph: {command: 'codegraph', versionArgs: ['--version']},
 	AntigravityCli: {command: 'agy', versionArgs: ['--version']}
 };
 
@@ -279,8 +281,8 @@ async function buildAntigravityStatus(): Promise<UpdateComponent> {
 	};
 }
 
-// export 供 tools-manage.ts 的 detectComponents 复用：返回 6 个 CLI 组件
-// （ClaudeCode/Ccline/CcgWorkflow/CodexCli/OpenSpec + AntigravityCli），不含 Skills/MCP。
+// export 供 tools-manage.ts 的 detectComponents 复用：返回 7 个 CLI 组件
+// （ClaudeCode/Ccline/CcgWorkflow/CodexCli/OpenSpec/CodeGraph + AntigravityCli），不含 Skills/MCP。
 export async function checkCliToolUpdates(outdated: NpmOutdated): Promise<UpdateComponent[]> {
 	const components: UpdateComponent[] = [];
 	for (const [id, packageName] of Object.entries(NPM_COMPONENT_MAP)) {

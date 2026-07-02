@@ -5,8 +5,8 @@ import {join} from 'node:path';
 
 // Phase 11B tools-manage core 门禁：工具管理单一真理源（design TDR-11）。
 // 覆盖：
-// - COMPONENT_DEFINITIONS 6 组件齐备（ClaudeCode + 5 工具）+ 顺序 + isBase 语义（11.4/11.6）
-// - detectComponents 返回 6 项且不聚合 Skills/MCP（11.5/11.7）
+// - COMPONENT_DEFINITIONS 7 组件齐备（ClaudeCode + 6 工具）+ 顺序 + isBase 语义（11.4/11.6）
+// - detectComponents 返回 7 项且不聚合 Skills/MCP（11.5/11.7）
 // - CcgWorkflow 版本取自 config.toml（复用 update.ts 检测，单一真理源）
 // - installComponent('ClaudeCode') 走 npm install + 检测确认（11.6/11.8，deps.exec 注入 mock）
 
@@ -33,8 +33,8 @@ const {COMPONENT_DEFINITIONS, detectComponents, installComponent} = await import
 const ids = COMPONENT_DEFINITIONS.map(c => c.id);
 assert.deepEqual(
 	ids,
-	['ClaudeCode', 'Ccline', 'CcgWorkflow', 'OpenSpec', 'CodexCli', 'AntigravityCli'],
-	'6 组件齐备且顺序固定（ClaudeCode + 5 工具）'
+	['ClaudeCode', 'Ccline', 'CcgWorkflow', 'OpenSpec', 'CodeGraph', 'CodexCli', 'AntigravityCli'],
+	'7 组件齐备且顺序固定（ClaudeCode + 6 工具）'
 );
 for (const def of COMPONENT_DEFINITIONS) {
 	assert.ok(def.name && def.description, `${def.id} 有 name + description`);
@@ -47,11 +47,11 @@ assert.equal(claude.isBase, true, 'ClaudeCode isBase=true（基础组件，卸�
 assert.equal(claude.npmPackage, '@anthropic-ai/claude-code', 'ClaudeCode npm 包名');
 assert.equal(claude.optional, false, 'ClaudeCode 非可选');
 assert.equal(COMPONENT_DEFINITIONS.filter(c => c.isBase).length, 1, '仅 ClaudeCode 为 isBase');
-console.log('[PASS] COMPONENT_DEFINITIONS 6 组件齐备 + isBase 语义 (11.4/11.6)');
+console.log('[PASS] COMPONENT_DEFINITIONS 7 组件齐备 + isBase 语义 (11.4/11.6)');
 
-// ── detectComponents 返回 6 项 + 不聚合 Skills/MCP（11.5/11.7）────────────────
+// ── detectComponents 返回 7 项 + 不聚合 Skills/MCP（11.5/11.7）────────────────
 const components = await detectComponents();
-assert.equal(components.length, 6, 'detectComponents 返回 6 项（不聚合 Skills/MCP）');
+assert.equal(components.length, 7, 'detectComponents 返回 7 项（不聚合 Skills/MCP）');
 const hasSkillsOrMcp = components.some(c => /^Skill:|^Mcp:/.test(c.id));
 assert.equal(hasSkillsOrMcp, false, '不含 Skill:/Mcp: 前缀组件（11.7 不聚合 Skills/MCP）');
 
@@ -63,7 +63,7 @@ assert.equal(ccg.hasUpdate, false, 'CcgWorkflow 无远程数据时不误报更�
 
 // ClaudeCode 纳入受管检测（11.6）
 assert.ok(components.some(c => c.id === 'ClaudeCode'), 'ClaudeCode 纳入受管检测（11.6）');
-console.log('[PASS] detectComponents 6 项 + 不聚合 Skills/MCP + CcgWorkflow 版本源 (11.5/11.7)');
+console.log('[PASS] detectComponents 7 项 + 不聚合 Skills/MCP + CcgWorkflow 版本源 (11.5/11.7)');
 
 // ── installComponent('ClaudeCode') npm install + 检测确认（11.6/11.8）────────
 const execCalls = [];

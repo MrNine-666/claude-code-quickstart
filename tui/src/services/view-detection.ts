@@ -24,7 +24,7 @@ export function runSkillsDetection(runner: DetectionRunner<InstalledSkill[]>): P
 	return runner.run(() => getInstalledSkills());
 }
 
-// 工具管理检测 runner（Phase 11D）：检测 6 受管组件（ClaudeCode + 5 工具），不聚合 Skills/MCP。
+// 工具管理检测 runner（Phase 11D）：检测 7 受管组件（ClaudeCode + 6 工具），不聚合 Skills/MCP。
 export function createToolsDetectionRunner(onChange: DetectionStateSink<ManagedComponent[]>): DetectionRunner<ManagedComponent[]> {
 	return createDetectionRunner(createInitialDetectionState<ManagedComponent[]>(), onChange);
 }
