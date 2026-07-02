@@ -189,14 +189,7 @@ function enterDefaultAction(view: ToolsViewState, services: ToolsViewServices, d
 	}
 
 	const status = itemStatusOf(view, component.id);
-
-	// 失败状态：允许重试安装/更新
-	if (status === 'failed') {
-		if (!component.installed) {
-			installOne(component, services, dispatch, cache);
-		} else if (component.hasUpdate === true) {
-			updateOne(component, services, dispatch, cache);
-		}
+	if (status !== 'idle') {
 		return;
 	}
 

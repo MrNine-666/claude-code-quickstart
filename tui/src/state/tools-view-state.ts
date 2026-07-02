@@ -281,7 +281,7 @@ function clamp(index: number, length: number): number {
 	return Math.min(Math.max(index, 0), length - 1);
 }
 
-function omit(record: Readonly<Record<string, string>>, key: string): Record<string, string> {
+function omit<T>(record: Readonly<Record<string, T>>, key: string): Record<string, T> {
 	const next = {...record};
 	delete next[key];
 	return next;
