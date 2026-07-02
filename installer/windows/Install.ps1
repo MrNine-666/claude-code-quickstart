@@ -749,6 +749,78 @@ function Invoke-InstallPreflight {
 }
 
 
+# ─── 旧 Profile 标记块迁移清理 ─────────────────────────────────────────────────
+
+function Invoke-ProfileLegacyCleanup {
+    <#
+    .SYNOPSIS
+    清理 $PROFILE 中历史遗留的 CCQ 标记块（旧 ccq 快捷函数注入残留）
+    .DESCRIPTION
+    旧 ClaudeConfig 步骤曾把 function ccq {...} 包在 HC-4 标记块里注入 $PROFILE
+    （commit 429637c），迁移到 ccq.exe + PATH 后注入逻辑已删，但用户机器残留未清。
+    旧 ccq 函数会 curl 旧 install.sh，与新 ccq.exe 冲突，故在前置检测后清理。
+    仅清标记块包裹内容，块外用户自定义不动；清理函数幂等，无块则 no-op。
+    失败仅告警，不阻断主安装流程（迁移兜底，非关键路径）。
+    #>
+    param()
+
+    # 历史注入目标：PS5.1 与 PS7 的 CurrentUserCurrentHost profile。
+    # 关键：不能用 $env:USERPROFILE\Documents 硬拼——Documents 可能被重定向到其他盘符
+    # （如 E:\Administrator\Documents）或 OneDrive，硬拼会命中不到真身。改用 .NET
+    # MyDocuments 解析真实 Documents 根，并纳入当前进程的 $PROFILE 作为最权威来源。
+    $candidateProfiles = [System.Collections.Generic.List[string]]::new()
+
+    # 1. 当前 PS5.1 进程的真实 $PROFILE（已正确解析重定向）
+    $currentProfile = $PROFILE.CurrentUserCurrentHost
+    if (-not [string]::IsNullOrWhiteSpace($currentProfile)) {
+        $candidateProfiles.Add($currentProfile)
+    }
+
+    # 2. 从真实 Documents 根构造 PS5.1 / PS7 两个 host 的 profile 路径
+    $docsRoot = ""
+    try {
+        $docsRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments)
+    } catch { }
+    if (-not [string]::IsNullOrWhiteSpace($docsRoot)) {
+        $candidateProfiles.Add((Join-Path $docsRoot "WindowsPowerShell\Microsoft.PowerShell_profile.ps1"))
+        $candidateProfiles.Add((Join-Path $docsRoot "PowerShell\Microsoft.PowerShell_profile.ps1"))
+    }
+
+    # 去重（$PROFILE 与构造路径可能重合），保留唯一路径
+    $seen = @{}
+    $uniqueProfiles = [System.Collections.Generic.List[string]]::new()
+    foreach ($p in $candidateProfiles) {
+        $key = $p.ToLowerInvariant()
+        if (-not $seen.ContainsKey($key)) {
+            $seen[$key] = $true
+            $uniqueProfiles.Add($p)
+        }
+    }
+
+    foreach ($profilePath in $uniqueProfiles) {
+        if (-not (Test-Path $profilePath)) {
+            continue
+        }
+
+        try {
+            if (-not (Test-ManagedBlockExists -FilePath $profilePath)) {
+                continue
+            }
+
+            Write-UiDim "检测到旧 CCQ 标记块: $profilePath" -Level Detail
+            $removed = Remove-ManagedBlockFromFile -FilePath $profilePath
+            if ($removed) {
+                Write-UiSuccess "✓ 已清理旧 ccq 快捷函数残留: $profilePath"
+            } else {
+                Write-UiWarning "清理旧 CCQ 标记块失败: $profilePath"
+            }
+        } catch {
+            Write-UiWarning "清理旧 CCQ 标记块出错（已跳过）: $($_.Exception.Message)"
+        }
+    }
+}
+
+
 # ─── 主函数 ──────────────────────────────────────────────────────────────────
 
 function Main {
@@ -777,6 +849,9 @@ function Main {
             Write-UiDanger "系统不兼容，安装中止"
             return
         }
+
+        # ── 旧 Profile 标记块迁移清理（幂等，无残留则 no-op）
+        Invoke-ProfileLegacyCleanup
 
         # ── 基础环境直装（NodeJS / Git / ClaudeCode），无顶层菜单
         $state = [InstallState]::new()

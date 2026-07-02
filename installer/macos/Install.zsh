@@ -161,6 +161,34 @@ ccq_preflight() {
   ccq_refresh_path
 }
 
+# ─── 旧 Profile 标记块迁移清理 ─────────────────────────────────────────────────
+
+ccq_cleanup_legacy_profile_blocks() {
+  # 清理 ~/.zshrc 中历史遗留的 CCQ 标记块（旧 ccq 快捷函数注入残留）。
+  # 旧 ClaudeConfig 步骤曾把 ccq() {...} 包在 HC-4 标记块里注入 ~/.zshrc（commit 429637c），
+  # 迁移到 ccq 单文件可执行 + PATH 后注入逻辑已删，但用户机器残留未清。旧 ccq 函数会
+  # curl 旧 install.sh，与新 ccq 可执行文件冲突，故在前置检测后清理。仅清标记块包裹内容，
+  # 块外用户自定义不动；清理函数幂等，无块则 no-op。失败仅告警，不阻断主安装流程。
+  local zshrc_path
+
+  zshrc_path="$(ccq_zshrc_path)"
+  [ -f "${zshrc_path}" ] || return 0
+
+  # 探测是否存在标记块；无块则静默跳过
+  if ! ccq_get_managed_block_content "${zshrc_path}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  ccq_ui_dim "检测到旧 CCQ 标记块: ${zshrc_path}" "developer"
+  if ccq_remove_managed_block_from_file "${zshrc_path}"; then
+    ccq_ui_success "✓ 已清理旧 ccq 快捷函数残留: ${zshrc_path}"
+  else
+    ccq_ui_warning "清理旧 CCQ 标记块失败: ${zshrc_path}"
+  fi
+
+  return 0
+}
+
 ccq_bool_true() {
   case "${1:-}" in
     true|True|TRUE|1|yes|Yes) return 0 ;;
@@ -423,6 +451,9 @@ ccq_main() {
 
   # 前置环境检测（macOS 12+ / Homebrew / nvm，zsh 单运行时）
   ccq_preflight || return 1
+
+  # 旧 Profile 标记块迁移清理（幂等，无残留则 no-op）
+  ccq_cleanup_legacy_profile_blocks
 
   # 基础环境直装（NodeJS / Git / ClaudeCode），无顶层菜单
   ccq_ui_primary "开始安装基础环境" "developer"
