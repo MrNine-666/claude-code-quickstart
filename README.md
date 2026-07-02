@@ -221,13 +221,28 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 
 ## Manage 管理控制台（ccq）
 
-安装后直接运行 `ccq` 命令进入管理控制台。`ccq` 是 OpenTUI + Bun 构建的单文件可执行产物（`tui/` 子项目交叉编译而来），安装时下载到 `~/.local/bin/ccq[.exe]`（与 Claude Code native installer 同目录），通过用户级 PATH 天然可达。控制台提供 **6 菜单**：
+安装后直接运行 `ccq` 命令进入管理控制台。`ccq` 是 OpenTUI + Bun 构建的单文件可执行产物（`tui/` 子项目交叉编译而来），安装时下载到 `~/.local/bin/ccq[.exe]`（与 Claude Code native installer 同目录），通过用户级 PATH 天然可达。控制台提供 **6 菜单**；也可以直接使用非交互 CLI 子命令完成常用操作：
+
+### CLI 子命令
+
+| 命令 | 说明 |
+|---|---|
+| `ccq` | 进入 OpenTUI 6 菜单管理控制台 |
+| `ccq cc <provider> [claude-args...]` | 临时使用指定 provider 启动 Claude Code；不写盘，后续参数透传给 `claude` |
+| `ccq ls` | 列出所有 provider，并标记当前默认 provider |
+| `ccq use <provider>` | 设置默认 provider，写入 `~/.claude/settings.json` 后持久生效 |
+| `ccq update [--check]` | 检查或更新 ccq 可执行文件；`--check` 只检查不下载 |
+| `ccq tools update [name]` | 更新全部可更新工具，或只更新指定工具 |
+| `ccq tools uninstall <name> [--yes\|-y]` | 卸载指定工具；默认要求 y/N 确认，传 `--yes` 或 `-y` 跳过确认 |
+| `ccq uninstall [--yes\|-y]` | 卸载 ccq 本体；默认要求 y/N 确认，传 `--yes` 或 `-y` 跳过确认 |
+
+卸载类命令在非 TTY 环境必须传 `--yes` 或 `-y`，否则会拒绝执行以避免误删；`ccq cc` 与 `ccq use` 职责分离，前者只影响当前会话，后者修改持久默认配置。
 
 ### 1) 工具管理（Tools）
 
 - ClaudeCode 与 Ccline / CcgWorkflow / OpenSpec / CodexCli / AntigravityCli 全生命周期
 - 安装 / 更新 / 卸载（强确认 + snapshot 保护）
-- 侧边栏底部「检查更新」按钮可更新 ccq 可执行文件本体
+- 侧边栏底部「检查更新」按钮可更新 ccq 可执行文件本体：发现新版本后弹窗确认，更新中在弹窗内显示 loading（Enter 禁用，Esc 停止更新），完成后可选择立即重启或稍后重启
 
 ![工具管理](./assets/screenshots/tui-tool.png)
 
@@ -266,7 +281,7 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 ### 6) Skills
 
 - 列表页：本地过滤框模糊查询已装 Skills；`u` 更新全部、`d` 卸载单条、`r` 刷新
-- 安装页（`a` 进入）：远程搜索框 + 扁平 Skill 列表，`Enter` 触发确认弹窗安装
+- 安装页（`a` 进入）：远程搜索框 + 扁平 Skill 列表，`Enter` 触发确认弹窗安装；`owner/repo@skill` 搜索结果仅安装选中的子 Skill
 
 ![Skills 管理](./assets/screenshots/tui-skills.png)
 

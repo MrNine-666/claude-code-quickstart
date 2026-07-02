@@ -7,7 +7,7 @@
 
 ## 项目概述
 
-**OpenTUI + Bun 单文件可执行 TUI + CLI 子命令入口**，实现 Claude Code Quickstart 的 6 菜单管理控制台（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）与轻量命令行操作（`ccq cc <provider>` / `ccq ls` / `ccq use <provider>`），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），运行时消费契约以内联文本形式内嵌进可执行文件，安装后通过 `ccq` 命令天然可达（**不注入 Profile**）。
+**OpenTUI + Bun 单文件可执行 TUI + CLI 子命令入口**，实现 Claude Code Quickstart 的 6 菜单管理控制台（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）与轻量命令行操作（`ccq cc <provider>` / `ccq ls` / `ccq use <provider>` / `ccq update` / `ccq tools update` / `ccq tools uninstall <name> [--yes|-y]` / `ccq uninstall [--yes|-y]`），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），运行时消费契约以内联文本形式内嵌进可执行文件，安装后通过 `ccq` 命令天然可达（**不注入 Profile**）。
 
 ---
 
@@ -31,7 +31,7 @@ tui/
 ├── src/
 │   ├── index.tsx              # 入口：argv 子命令路由 + createCliRenderer + non-TTY 守卫 + CCQ_VERSION
 │   ├── app.tsx                # 双栏布局 + 6 菜单路由
-│   ├── cli/                   # 非交互 CLI 子命令（cc / ls / use / help / version）
+│   ├── cli/                   # 非交互 CLI 子命令（cc / ls / use / update / tools / uninstall / help / version）
 │   ├── core/                  # 业务逻辑（从 manage/source/core 零改写迁移）
 │   │   ├── contracts.ts       # 运行时契约内嵌读取（Bun text loader + 源码 fallback）
 │   │   ├── settings.ts        # settings.json 读写
@@ -118,6 +118,10 @@ ccq 可执行文件支持「无参进 TUI + 子命令非交互」双入口。`sr
 - `ccq`（无参）保持进入 OpenTUI 6 菜单；若无参且 non-TTY，仍输出只读提示并退出码 0。
 - `ccq cc <provider> [claude-args...]` 用 `~/.claude/providers/<provider>.json` 作为 `claude --settings` 启动 Claude Code，**不写盘**，后续参数原样透传给 claude；必须用 `Bun.spawn(..., {stdio: ['inherit','inherit','inherit']})` 保持交互 TTY，禁止复用 `execCommand`（它 `stdio:'pipe'` 会吃掉 TTY）。
 - `ccq ls` 列 provider 并标记当前默认；`ccq use <provider>` 复用 `switchProvider` 设置默认（写入 `~/.claude/settings.json`，持久生效）。
+- `ccq update [--check]` 复用 `core/update.ts` 的整可执行文件热更新逻辑；`--check` 只检查，不下载/替换。
+- `ccq tools update [name]` 复用 `core/tools-manage.ts` 检测与 `updateComponents` 更新工具；未指定 name 时仅更新 `hasUpdate=true` 的组件。
+- `ccq tools uninstall <name> [--yes|-y]` 复用 `uninstallComponent` 卸载工具；默认必须输入 `y` 确认，追加 `--yes` 或 `-y` 才可跳过确认。非 TTY 环境未传 `--yes`/`-y` 时必须拒绝执行。
+- `ccq uninstall [--yes|-y]` 卸载 ccq 本体（删除 `~/.local/bin/ccq[.exe]`）；默认必须输入 `y` 确认，追加 `--yes` 或 `-y` 才可跳过确认。非 TTY 环境未传 `--yes`/`-y` 时必须拒绝执行。
 - `cc` 与 `use` 语义必须分离：`cc` = 临时 session 覆盖；`use` = 持久默认。新增 CLI 命令按 `ccq <verb> [object] [--flags] [-- passthrough]` 子命令骨架扩展，禁止把动作塞进裸 flag（如 `-cc`）。
 - **多工具命名预留（HC-CLI-MULTITOOL）**：当前 provider 体系纯 Claude 专用（`~/.claude/providers/`，env 全 `ANTHROPIC_*`）。未来扩展 codex 等**按"工具独立 profile + 独立动词"路线**，禁止复用 claude provider 文件或塞进 `~/.claude/settings.json`：
   - 新工具 = 新增一个**独立短动词**（codex → `cx`），不动 `cc`：`ccq cx <provider> [codex-args...]`。
@@ -128,7 +132,7 @@ ccq 可执行文件支持「无参进 TUI + 子命令非交互」双入口。`sr
   | 动词类型 | 后续 token 语义 | `--` 透传 | 既有/预留示例 |
   |---------|----------------|----------|--------------|
   | **启动类** | 对象=provider 名 + 参数透传给**底层工具**（claude/codex） | ✅ 用（`--` 后甩给底层工具） | `cc`（既有）/ `cx`（预留） |
-  | **管理类** | 子命令 + **ccq 自有 flag**（`--all`/`--force`/`--json` 等），不透传给底层工具 | ❌ 不用（管理命令无底层工具可透传） | `ls`/`use`（既有）/ `mcp`/`update`/`skills`/`tools`（预留） |
+  | **管理类** | 子命令 + **ccq 自有 flag**（`--all`/`--force`/`--json` 等），不透传给底层工具 | ❌ 不用（管理命令无底层工具可透传） | `ls`/`use`/`update`/`tools`/`uninstall`（既有）/ `mcp`/`skills`（预留） |
   - **禁止**给管理类动词套 `--` 透传语义：`--` 是为"启动类把参数转给 claude/codex"设计的，管理命令（如 `ccq mcp add`/`ccq update self`）该用自己的 flag 解析，不得复用 `parseCc` 的 `--` 逻辑。
   - 管理类动词支持"动词 + 子对象"两级（如 `ccq mcp list` / `ccq mcp add` / `ccq mcp rm <id>` / `ccq update self|tools|skills`），子对象由该动词的 `parseXxx` 自行路由，不在 `parseCli` 顶层展开。
   - 复用优先：管理类动词应直接包装既有 core 层能力（`core/update.ts` / `core/mcp.ts` / `core/skills-actions.ts` / `core/tools-manage.ts`），CLI 层只做参数解析 + 调用 + 退出码，不重复实现业务逻辑。
@@ -320,8 +324,10 @@ if (useIcon && existsSync(ICON_PATH)) {
 
 ### 应用内手动入口（优先）
 
-工具管理视图或独立菜单「检查 ccq 更新」：
-- 立即查最新版 + 下载 + 提示「重启 ccq 生效」
+工具管理视图或侧边栏底部「检查更新」入口：
+- 立即查最新版；发现新版本后弹窗确认，`Enter` 开始更新、`Esc` 取消
+- 更新过程中 Modal 不关闭，展示 loading；此时 `Enter` 禁用，`Esc` 停止更新（下载阶段通过 AbortSignal 取消）
+- 更新完成后 Modal 转为重启确认，`Enter` 立即重启 ccq，`Esc` 稍后手动重启
 - 不可行（交互受限）则仅保留后台自动
 
 ### P-5 失败不阻断 + P-6 版本相同零网络
@@ -369,8 +375,6 @@ if (useIcon && existsSync(ICON_PATH)) {
 
 ## contracts 目录
 
-详见 [tui/contracts/README.md](contracts/README.md)。
-
 TUI 链契约分为运行时内嵌契约与磁盘源契约：
 - `providers.json` — 供应商定义（运行时内嵌）
 - `mcp-servers.json` — MCP Server 配置（运行时内嵌）
@@ -386,7 +390,7 @@ TUI 链契约分为运行时内嵌契约与磁盘源契约：
 
 - [根目录 CLAUDE.md](../CLAUDE.md) — 整体架构与 Manage TUI 架构
 - [installer/CLAUDE.md](../installer/CLAUDE.md) — install 链与 ccq 可执行文件管理
-- [tui/contracts/README.md](contracts/README.md) — TUI 链契约边界
+- [installer/README.md](../installer/README.md) — 安装器开发入口
 
 ---
 

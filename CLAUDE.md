@@ -2,7 +2,7 @@
 
 > 生成时间：2026-06-19 | 最近更新：TUI 视图层空状态/加载状态统一重构（list-state 组件）
 
-Windows 10/11 与 macOS 12+ 双平台的 **Claude Code 开发环境自动化安装器**。Windows 使用 **PS 5.1 单运行时**（前置检测内联 + winget 自动安装 + Basic 三步直装，PS7 作为推荐组件非阻塞安装、不 re-exec），macOS 使用 zsh + Homebrew + nvm 原生入口；install 仅装 Basic 三步（NodeJS / Git / ClaudeCode），进阶项（全局规则 / 配置 / 工具管理）搬进 Manage TUI；Manage 重构为根级 **OpenTUI TUI + CLI 子命令子项目**（`tui/`，Bun `>=1.2.0`）**6 菜单**（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）+ 轻量命令行操作（`ccq cc <provider>` / `ccq ls` / `ccq use <provider>`），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），ccq 经 PATH 目录天然可达（**不注入 Profile**），支持整可执行文件热更新；契约按「谁用归谁」拆分至 `installer/contracts/`（install 链）与 `tui/contracts/`（TUI 链，**内嵌进可执行文件**）。
+Windows 10/11 与 macOS 12+ 双平台的 **Claude Code 开发环境自动化安装器**。Windows 使用 **PS 5.1 单运行时**（前置检测内联 + winget 自动安装 + Basic 三步直装，PS7 作为推荐组件非阻塞安装、不 re-exec），macOS 使用 zsh + Homebrew + nvm 原生入口；install 仅装 Basic 三步（NodeJS / Git / ClaudeCode），进阶项（全局规则 / 配置 / 工具管理）搬进 Manage TUI；Manage 重构为根级 **OpenTUI TUI + CLI 子命令子项目**（`tui/`，Bun `>=1.2.0`）**6 菜单**（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）+ 轻量命令行操作（`ccq cc <provider>` / `ccq ls` / `ccq use <provider>` / `ccq update` / `ccq tools update` / `ccq tools uninstall <name> [--yes|-y]` / `ccq uninstall [--yes|-y]`），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），ccq 经 PATH 目录天然可达（**不注入 Profile**），支持整可执行文件热更新；契约按「谁用归谁」拆分至 `installer/contracts/`（install 链）与 `tui/contracts/`（TUI 链，**内嵌进可执行文件**）。
 
 ---
 
@@ -74,13 +74,13 @@ NodeJS ─── ClaudeCode ─── Git
 | 模块 | 详细文档 | 职责 |
 |------|---------|------|
 | tui/ | [tui/README.md](tui/README.md) | OpenTUI 6 菜单 TUI，Bun 单文件可执行分发（工具管理/供应商/配置文件/全局规则/MCP/Skills） |
-| tui/contracts/ | [tui/contracts/README.md](tui/contracts/README.md) | TUI 链契约：claude-config / mcp-servers / providers / templates（运行时内嵌）+ ccg-workflow / drift / templates index（磁盘源契约） |
-| installer/ | [installer/CLAUDE.md](installer/CLAUDE.md) | Windows/macOS 平台目录、双构建入口、install 链契约（`installer/contracts/`）导航 |
-| installer/contracts/ | [installer/contracts/README.md](installer/contracts/README.md) | install 链契约：steps.json 分组、build.json、cleanup-policy.json + Test-Contracts.ps1（Windows/macOS 共享） |
+| tui/contracts/ | [tui/CLAUDE.md](tui/CLAUDE.md#contracts-目录) | TUI 链契约：claude-config / mcp-servers / providers / templates（运行时内嵌）+ ccg-workflow / drift / templates index（磁盘源契约） |
+| installer/ | [installer/README.md](installer/README.md) | Windows/macOS 安装器开发入口、平台目录、构建入口与契约边界 |
+| installer/contracts/ | [installer/README.md](installer/README.md#契约边界) | install 链契约：steps.json 分组、build.json、cleanup-policy.json + Test-Contracts.ps1（Windows/macOS 共享） |
 | installer/windows/ | [installer/CLAUDE.md](installer/CLAUDE.md) | Windows canonical 入口、core 与 steps |
 | installer/windows/core/ | [installer/windows/core/CLAUDE.md](installer/windows/core/CLAUDE.md) | Windows PowerShell runtime core（含 Registry + ccq 可执行文件管理函数） |
 | installer/windows/steps/ | [installer/windows/steps/CLAUDE.md](installer/windows/steps/CLAUDE.md) | Windows 9 个安装步骤模块（NodeJS 含 5 子模块；CcSwitch/CcgWorkflow/Mcp 已删） |
-| installer/macos/ | [installer/macos/README.md](installer/macos/README.md) | macOS zsh Install、core（含 ccq 管理函数）与 9 个安装步骤 |
+| installer/macos/ | [installer/README.md](installer/README.md) | macOS zsh Install、core（含 ccq 管理函数）与 9 个安装步骤 |
 
 ---
 
@@ -135,10 +135,14 @@ pwsh -File installer/windows/Install.ps1 -ListSteps
 # 直接运行 ccq（6 菜单：工具管理/供应商/配置文件/全局规则/MCP/Skills）
 ccq
 
-# CLI 子命令：临时用 provider 启动 Claude Code（不写盘）/ 列表 / 设默认
+# CLI 子命令：provider 临时启动/列表/设默认 + ccq 更新/卸载 + 工具更新/卸载
 ccq cc <provider> [claude-args...]
 ccq ls
 ccq use <provider>
+ccq update [--check]
+ccq tools update [name]
+ccq tools uninstall <name> [--yes|-y]
+ccq uninstall [--yes|-y]
 
 # 从源码运行 TUI（开发调试）
 cd tui
@@ -160,10 +164,14 @@ zsh installer/macos/Install.zsh --list-steps
 # 直接运行 ccq（6 菜单）
 ccq
 
-# CLI 子命令：临时用 provider 启动 Claude Code（不写盘）/ 列表 / 设默认
+# CLI 子命令：provider 临时启动/列表/设默认 + ccq 更新/卸载 + 工具更新/卸载
 ccq cc <provider> [claude-args...]
 ccq ls
 ccq use <provider>
+ccq update [--check]
+ccq tools update [name]
+ccq tools uninstall <name> [--yes|-y]
+ccq uninstall [--yes|-y]
 
 # 从源码运行 TUI（开发调试）
 cd tui
@@ -190,7 +198,7 @@ zsh -n installer/macos/Install.zsh
   ccq（单文件可执行，通过 PATH 天然可达）
     ↓
   tui/src/index.tsx（argv 子命令路由 + OpenTUI 渲染）
-    ├─ CLI 子命令：cc / ls / use / help / version（有子命令时不进 TUI）
+    ├─ CLI 子命令：cc / ls / use / update / tools / uninstall / help / version（有子命令时不进 TUI）
     ├─ non-TTY 守卫（HC-NON-TTY，仅无参 TUI 路径生效）
     ├─ 内嵌版本号（CCQ_VERSION，供热更新比对）
     └─ App（6 菜单 + 整可执行文件热更新）
