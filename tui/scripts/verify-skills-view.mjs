@@ -9,6 +9,7 @@ import {
 } from '../src/core/skills.ts';
 import {installSkill, installMultipleSkills, updateSkills, uninstallSkills} from '../src/core/skills-actions.ts';
 import {createSkillsDetectionRunner, runSkillsDetection} from '../src/services/view-detection.ts';
+import {skillNameFromSearchResult} from '../src/services/skills-service.ts';
 import {
 	createInitialSkillsViewState,
 	reduceSkillsViewState,
@@ -190,6 +191,20 @@ import {
 		const installRes = await installSkill({source: 'org/skill', displayName: 'skill'}, event => installEvents.push(event), okExec);
 		assert.equal(installRes.success, true);
 		assert.ok(installEvents.some(event => event.level === 'success'));
+
+		// install：指定子 skill 时必须传 --skill，避免误装整个 repo
+		const installArgs = [];
+		const installWithSkill = await installSkill(
+			{source: 'org/repo', displayName: 'org/repo@child', skillName: 'child'},
+			undefined,
+			async (_cmd, args) => {
+				installArgs.push(args);
+				return {code: 0, stdout: 'done', stderr: ''};
+			}
+		);
+		assert.equal(installWithSkill.success, true);
+		assert.equal(installArgs[0].includes('--skill'), true, '指定子 skill 安装必须带 --skill');
+		assert.equal(installArgs[0][installArgs[0].indexOf('--skill') + 1], 'child', '--skill 后应跟选中的子 skill 名');
 
 		// installMultipleSkills：单次多 --skill 批量安装（需求③）
 		const captured = [];
@@ -424,4 +439,20 @@ import {
 	console.log('[PASS] displaySkillName 取 @ 后 skill 名，confirm 弹窗与列表共用不重复 owner/repo');
 }
 
+
+// ── Search result → --skill 派生：只安装选中的子 skill ──────────────────────
+{
+	assert.equal(
+		skillNameFromSearchResult({name: 'openai/skills@pdf', source: 'openai/skills', description: ''}, 'openai/skills'),
+		'pdf',
+		'owner/repo@skill 应派生出 --skill 参数'
+	);
+	assert.equal(
+		skillNameFromSearchResult({name: 'standalone-skill', source: 'standalone-skill', description: ''}, 'standalone-skill'),
+		undefined,
+		'非 owner/repo@skill 形态不应强行派生 --skill'
+	);
+
+	console.log('[PASS] Search result 派生 --skill，仅安装选中的子 skill');
+}
 console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');

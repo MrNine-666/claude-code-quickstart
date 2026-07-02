@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useRenderer } from '@opentui/react';
 import { TextAttributes, getTreeSitterClient, SyntaxStyle, RGBA, type ThemeMode as OpenTuiThemeMode } from '@opentui/core';
 import { useManageInput } from './hooks/use-manage-input.js';
@@ -13,7 +13,7 @@ import {
 	type ManageState
 } from './state/manage-state.js';
 import { navShortcuts, viewShortcuts, updateButtonShortcuts } from './state/shortcuts.js';
-import { Modal, ShortcutBar, ToastViewport, toast, type StatusDotKind } from './components/index.js';
+import { Modal, ShortcutBar, Spinner, ToastViewport, toast, type StatusDotKind } from './components/index.js';
 import { colors, borderColors, borderStyles, PRIMARY, getTheme, setActiveTheme, type AppThemeMode, type ThemePalette } from './theme/index.js';
 import { CCQ_LOGO } from './theme/logo.js';
 import { CCQ_VERSION } from './version.js';
@@ -46,7 +46,8 @@ type UpdateScreen =
 	| { readonly kind: 'checking' }
 	| { readonly kind: 'latest' }
 	| { readonly kind: 'available'; readonly version: string; readonly downloadUrl: string }
-	| { readonly kind: 'updating'; readonly version: string }
+	| { readonly kind: 'updating'; readonly version: string; readonly downloadUrl: string; readonly stage: 'downloading' | 'applying' | 'cancelling' }
+	| { readonly kind: 'updated'; readonly version: string }
 	| { readonly kind: 'error'; readonly message: string };
 
 type UpdateStatus = UpdateScreen['kind'];
@@ -96,6 +97,7 @@ export default function App({ initialThemeMode }: AppProps) {
 	const [viewSubMode, setViewSubMode] = useState<string>('');
 	const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
 	const [updateScreen, setUpdateScreen] = useState<UpdateScreen>({ kind: 'checking' });
+	const updateAbortRef = useRef<AbortController | null>(null);
 	// 右侧内容区当前显示的菜单 id：selectedIndex 在菜单范围内时跟随，停在底部按钮位时保持上一个（按钮不切视图，回车只开浮窗）
 	const [displayMenuId, setDisplayMenuId] = useState<ManageModuleId>(menuItems[0]!.id);
 	const renderer = useRenderer();
@@ -166,34 +168,51 @@ export default function App({ initialThemeMode }: AppProps) {
 		setUpdateScreen(info ? { kind: 'available', version: info.version, downloadUrl: info.downloadUrl } : { kind: 'latest' });
 	};
 
-	const runUpdate = async (version: string, downloadUrl: string): Promise<void> => {
-		setUpdateDialogOpen(false);
-		setUpdateScreen({ kind: 'updating', version });
+	const restartUpdatedApp = (): void => {
+		renderer?.destroy();
+		restartExecutable();
+	};
 
-		const downloaded = await downloadUpdate(downloadUrl);
+	const cancelUpdate = (): void => {
+		const controller = updateAbortRef.current;
+		if (!controller) {
+			return;
+		}
+
+		controller.abort();
+		setUpdateScreen(current => current.kind === 'updating' ? {...current, stage: 'cancelling'} : current);
+	};
+
+	const runUpdate = async (version: string, downloadUrl: string): Promise<void> => {
+		const abortController = new AbortController();
+		updateAbortRef.current = abortController;
+		setUpdateDialogOpen(true);
+		setUpdateScreen({ kind: 'updating', version, downloadUrl, stage: 'downloading' });
+
+		const downloaded = await downloadUpdate(downloadUrl, abortController.signal);
+		if (abortController.signal.aborted) {
+			updateAbortRef.current = null;
+			setUpdateScreen({ kind: 'available', version, downloadUrl });
+			return;
+		}
+
 		if (!downloaded) {
+			updateAbortRef.current = null;
 			toast.error('下载更新失败，请检查网络后重试');
 			setUpdateScreen({ kind: 'error', message: '下载失败' });
 			return;
 		}
 
+		setUpdateScreen({ kind: 'updating', version, downloadUrl, stage: 'applying' });
 		const applied = await applyUpdate();
+		updateAbortRef.current = null;
 		if (!applied) {
 			toast.error('应用更新失败');
 			setUpdateScreen({ kind: 'error', message: '应用更新失败' });
 			return;
 		}
 
-		toast.success(process.platform === 'win32' ? '更新完成，重启 ccq 后生效' : '更新完成，重启 ccq 生效');
-		setUpdateScreen({ kind: 'latest' });
-
-		// Windows 平台自动重启
-		if (process.platform === 'win32') {
-			setTimeout(() => {
-				renderer?.destroy();
-				restartExecutable();
-			}, 1500);
-		}
+		setUpdateScreen({ kind: 'updated', version });
 	};
 
 	useEffect(() => {
@@ -228,8 +247,8 @@ export default function App({ initialThemeMode }: AppProps) {
 				return;
 			}
 
-			// 'error' 状态：打开浮窗重试
-			if (currentStatus === 'error') {
+			// 'updated' / 'error' 状态：打开浮窗确认下一步
+			if (currentStatus === 'updated' || currentStatus === 'error') {
 				setUpdateDialogOpen(true);
 				return;
 			}
@@ -365,7 +384,7 @@ export default function App({ initialThemeMode }: AppProps) {
 				</box>
 			</box>
 
-			{/* 检查更新浮窗：仅在 available 和 error 状态下显示 */}
+			{/* 检查更新浮窗：确认更新、更新进度与重启确认在同一 Modal 内完成 */}
 			<UpdateDialog
 				active={updateDialogOpen}
 				screen={updateScreen}
@@ -373,6 +392,8 @@ export default function App({ initialThemeMode }: AppProps) {
 				viewportHeight={terminalHeight}
 				onClose={() => setUpdateDialogOpen(false)}
 				onUpdate={(version, downloadUrl) => void runUpdate(version, downloadUrl)}
+				onCancelUpdate={cancelUpdate}
+				onRestart={restartUpdatedApp}
 			/>
 		</>
 	);
@@ -442,6 +463,7 @@ function updateStatusKind(status: UpdateStatus): StatusDotKind {
 		case 'available':
 			return 'updatable';
 		case 'latest':
+		case 'updated':
 			return 'latest';
 		case 'error':
 			return 'failed';
@@ -458,6 +480,8 @@ function updateButtonLabel(status: UpdateStatus): string {
 			return '发现新版本';
 		case 'latest':
 			return '已是最新';
+		case 'updated':
+			return '等待重启';
 		case 'error':
 			return '更新失败';
 	}
@@ -469,7 +493,9 @@ function UpdateDialog({
 	viewportWidth,
 	viewportHeight,
 	onClose,
-	onUpdate
+	onUpdate,
+	onCancelUpdate,
+	onRestart
 }: {
 	readonly active: boolean;
 	readonly screen: UpdateScreen;
@@ -477,6 +503,8 @@ function UpdateDialog({
 	readonly viewportHeight: number;
 	readonly onClose: () => void;
 	readonly onUpdate: (version: string, downloadUrl: string) => void;
+	readonly onCancelUpdate: () => void;
+	readonly onRestart: () => void;
 }) {
 	useManageInput((keyName) => {
 		const isEnter = keyName === 'enter';
@@ -488,12 +516,19 @@ function UpdateDialog({
 			return;
 		}
 
-		if (screen.kind === 'error') {
-			if (isEnter) {
-				// 从 error 状态恢复，需要重新触发检查获取下载地址
-				onClose();
-			}
+		if (screen.kind === 'updating') {
+			if (isEsc) onCancelUpdate();
+			return;
+		}
+
+		if (screen.kind === 'updated') {
+			if (isEnter) onRestart();
 			else if (isEsc) onClose();
+			return;
+		}
+
+		if (screen.kind === 'error') {
+			if (isEnter || isEsc) onClose();
 			return;
 		}
 
@@ -524,10 +559,43 @@ function updateDialogContent(screen: UpdateScreen): { readonly title: string; re
 				),
 				hint: 'Enter 更新  Esc 取消'
 			};
+		case 'updating':
+			return {
+				title: '正在更新 ccq',
+				body: (
+					<box flexDirection="column">
+						<Spinner label={updateStageLabel(screen.stage)} />
+						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  目标版本 v${screen.version}`}</text>
+					</box>
+				),
+				hint: screen.stage === 'cancelling' ? '正在停止更新...' : 'Enter 已禁用  Esc 停止更新'
+			};
+		case 'updated':
+			return {
+				title: '更新完成',
+				body: (
+					<box flexDirection="column">
+						<text fg={colors.success} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>更新已准备就绪</text>
+						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  新版本 v${screen.version} 将在重启后生效`}</text>
+					</box>
+				),
+				hint: 'Enter 立即重启  Esc 稍后重启'
+			};
 		case 'error':
 			return { title: '更新失败', body: <text fg={colors.danger} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`✗ 更新失败：${screen.message}`}</text>, hint: 'Enter 关闭  Esc 取消' };
 		default:
 			return { title: '检查更新', body: <text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>处理中...</text>, hint: 'Esc 关闭' };
+	}
+}
+
+function updateStageLabel(stage: Extract<UpdateScreen, {readonly kind: 'updating'}>['stage']): string {
+	switch (stage) {
+		case 'downloading':
+			return '正在下载更新...';
+		case 'applying':
+			return '正在应用更新...';
+		case 'cancelling':
+			return '正在停止更新...';
 	}
 }
 

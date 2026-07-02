@@ -164,6 +164,15 @@ async function installNpmPackage(definition: ToolDefinition, onProgress?: Progre
 	}
 }
 
+/** CodeGraph 后置：非交互接入 Claude Code MCP（只配置 Claude，避免误改其它 agent）。 */
+async function postInstallCodeGraph(onProgress?: ProgressCallback): Promise<void> {
+	onProgress?.({level: 'info', message: 'codegraph install --target=claude --location=global --yes', componentId: 'CodeGraph'});
+	const result = await execCommand('codegraph', ['install', '--target=claude', '--location=global', '--yes'], {timeout: INSTALL_TIMEOUT_MS});
+	if (result.code !== 0) {
+		throw new Error(friendlyError(result.stderr || result.stdout, `CodeGraph Claude Code 接入失败 (exit ${result.code})`));
+	}
+}
+
 /** Ccline 后置：写 statusLine（仅补缺失，保护用户配置）。 */
 async function postInstallCcline(onProgress?: ProgressCallback): Promise<void> {
 	// settings.json statusLine（fill-missing：已有 statusLine 则不覆盖，保护用户配置）
@@ -283,6 +292,10 @@ export async function installTool(id: ToolId, onProgress?: ProgressCallback): Pr
 				await installNpmPackage(definition, onProgress);
 				if (definition.id === 'Ccline') {
 					await postInstallCcline(onProgress);
+				}
+
+				if (definition.id === 'CodeGraph') {
+					await postInstallCodeGraph(onProgress);
 				}
 
 				break;

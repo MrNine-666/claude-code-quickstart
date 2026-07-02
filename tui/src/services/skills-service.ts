@@ -25,8 +25,23 @@ export function searchSkillCatalogue(query: string): Promise<SkillsSearchOutcome
 }
 
 export function installSearchResult(result: SearchSkillResult, onProgress?: ProgressCallback): Promise<SkillsActionResult> {
-	const input: InstallSkillInput = {source: result.source || result.name, displayName: result.name};
+	const source = result.source || result.name;
+	const input: InstallSkillInput = {
+		source,
+		displayName: result.name,
+		skillName: skillNameFromSearchResult(result, source)
+	};
 	return installSkill(input, onProgress);
+}
+
+export function skillNameFromSearchResult(result: SearchSkillResult, source: string): string | undefined {
+	const prefix = `${source}@`;
+	if (!source || !result.name.startsWith(prefix)) {
+		return undefined;
+	}
+
+	const skillName = result.name.slice(prefix.length).trim();
+	return skillName || undefined;
 }
 
 /** 需求③：列出某 repo 全部子 skill（skills add <repo> --list，--list 只列不装）。 */

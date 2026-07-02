@@ -277,6 +277,10 @@ export async function uninstallComponent(
 	try {
 		switch (definition.kind) {
 			case 'npm':
+				if (definition.id === 'CodeGraph') {
+					await uninstallCodeGraphIntegration(exec, onProgress);
+				}
+
 				await uninstallNpmPackage(definition, exec, onProgress);
 				if (definition.id === 'Ccline') {
 					restoreCclineStatusLine(onProgress);
@@ -314,6 +318,18 @@ async function uninstallNpmPackage(
 	const result = await exec('npm', ['uninstall', '-g', definition.npmPackage], {timeout: INSTALL_TIMEOUT_MS});
 	if (result.code !== 0) {
 		throw new Error(friendlyError(result.stderr || result.stdout, `npm uninstall 失败 (exit ${result.code})`));
+	}
+}
+
+/** CodeGraph 卸载前先非交互解除 Claude Code MCP 集成，避免 npm 包移除后残留配置。 */
+async function uninstallCodeGraphIntegration(
+	exec: typeof execCommand,
+	onProgress?: ProgressCallback
+): Promise<void> {
+	onProgress?.({level: 'info', message: 'codegraph uninstall --target=claude --location=global --yes', componentId: 'CodeGraph'});
+	const result = await exec('codegraph', ['uninstall', '--target=claude', '--location=global', '--yes'], {timeout: INSTALL_TIMEOUT_MS});
+	if (result.code !== 0) {
+		throw new Error(friendlyError(result.stderr || result.stdout, `CodeGraph Claude Code 集成解除失败 (exit ${result.code})`));
 	}
 }
 

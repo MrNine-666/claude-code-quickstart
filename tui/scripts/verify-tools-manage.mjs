@@ -230,6 +230,27 @@ console.log('[PASS] P-12 CcgWorkflow 深度卸载只删受管路径，用户内�
 }
 console.log('[PASS] npm 卸载命令 + Ccline 受管 statusLine 还原 (11.10/11.11)');
 
+// ── CodeGraph 卸载：先解除 Claude Code 集成，再卸载 npm 包 ────────────────
+{
+	const execCalls = [];
+	const mockExec = async (cmd, args) => {
+		execCalls.push({cmd, args});
+		return {code: 0, stdout: '', stderr: ''};
+	};
+	const outcome = await uninstallComponent('CodeGraph', undefined, {exec: mockExec});
+	assert.equal(outcome.success, true, 'CodeGraph 卸载成功');
+	assert.deepEqual(
+		execCalls[0],
+		{cmd: 'codegraph', args: ['uninstall', '--target=claude', '--location=global', '--yes']},
+		'先非交互解除 Claude Code 的 CodeGraph 集成'
+	);
+	assert.ok(
+		execCalls.some(c => c.cmd === 'npm' && c.args.includes('uninstall') && c.args.includes('@colbymchenry/codegraph')),
+		'再调起 npm uninstall -g @colbymchenry/codegraph'
+	);
+}
+console.log('[PASS] CodeGraph 卸载先解除 Claude Code 集成再卸载 npm 包');
+
 // 11.11 反例：用户自定义 statusLine（非受管值）卸载 Ccline 后不动
 {
 	const home4 = mkdtempSync(join(tmpdir(), 'ccq-uninstall-ccline-custom-'));

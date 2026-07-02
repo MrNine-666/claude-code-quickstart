@@ -47,6 +47,15 @@ for (const tool of TOOL_DEFINITIONS) {
 }
 console.log('[PASS] 工具定义完整性（6 工具齐备）');
 
+// ── CodeGraph 安装后接入 Claude Code MCP（非交互）──────────────────────────────
+const toolsInstallSource = readFileSync(new URL('../src/core/tools-install.ts', import.meta.url), 'utf8');
+assert.match(
+	toolsInstallSource,
+	/codegraph', \['install', '--target=claude', '--location=global', '--yes'\]/,
+	'CodeGraph 安装后应非交互接入 Claude Code MCP'
+);
+console.log('[PASS] CodeGraph 安装后接入 Claude Code MCP（非交互）');
+
 // ── 6.11 CcgWorkflow mcpServers 快照保护（CCQ_HOME 隔离）──────────────────────
 const home = mkdtempSync(join(tmpdir(), 'ccq-tools-test-'));
 process.env.CCQ_HOME = home;
