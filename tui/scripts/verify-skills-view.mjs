@@ -16,13 +16,13 @@ import {
 	shouldRunSearch,
 	canManageInstalled,
 	uninstallTargets,
-	selectedRepo,
-	installTargets,
-	canConfirmPick
+	selectedResult,
+	selectedInstalled,
+	displaySkillName
 } from '../src/state/skills-view-state.ts';
 
 // Phase 5 Skills TUI 门禁：parser fixture（7.4 / --list）、不依赖 catalogue（7.8）、
-// 进度 callback 不直接 console（7.9）、异步检测状态机（7.10）、视图状态机有界性（两级选择 + 多选）。
+// 进度 callback 不直接 console（7.9）、异步检测状态机（7.10）、视图状态机有界性（扁平安装架构）。
 
 // ── 7.4a skills find parser fixture：成功 / 无结果 / 不可解析 / 命令不可用 ──────
 {
@@ -274,7 +274,7 @@ import {
 	console.log('[PASS] 7.10 异步检测进行中不重复触发，loading → success/error 正确迁移');
 }
 
-// ── 视图状态机有界性 + 两级选择/多选不变量 ─────────────────────────────────
+// ── 视图状态机有界性 + 扁平架构单选/确认/cancel 不变量 ──────────────────────
 {
 	const actions = [
 		{type: 'nav-up'},
@@ -290,16 +290,12 @@ import {
 		{type: 'submit-search'},
 		{type: 'search-done', results: [{name: 'org/a@r1', source: 'org/a', description: 'd'}]},
 		{type: 'search-failed', error: 'boom', rawSummary: 's'},
-		{type: 'select-repo'},
-		{type: 'repo-skills-loaded', repo: 'org/a', skills: [{name: 's1', description: 'd'}]},
-		{type: 'repo-skills-failed', error: 'boom'},
-		{type: 'toggle-pick'},
-		{type: 'toggle-all-picks'},
-		{type: 'confirm-pick'},
+		{type: 'select-skill'},
 		{type: 'request-update'},
 		{type: 'request-uninstall'},
 		{type: 'confirm'},
 		{type: 'cancel'},
+		{type: 'progress', message: 'm'},
 		{type: 'action-done'},
 		{type: 'action-failed', error: 'boom'}
 	];
@@ -313,19 +309,20 @@ import {
 		]
 	});
 
-	const modes = new Set(['list', 'install', 'install-pick', 'confirm-install', 'confirm-uninstall', 'busy']);
+	const modes = new Set(['list', 'install', 'confirm-install', 'confirm-uninstall', 'busy']);
 	for (let i = 0; i < 600; i++) {
 		const action = actions[(i * 13 + 5) % actions.length];
 		state = reduceSkillsViewState(state, action);
 		assert.ok(modes.has(state.mode), `未知 mode: ${state.mode}`);
-		assert.ok(state.installedIndex >= 0 && state.installedIndex < Math.max(filteredInstalled(state).length, 1), `installedIndex 越界: ${state.installedIndex}`);
-		assert.ok(state.repoIndex >= 0 && state.repoIndex < Math.max(state.repos.length, 1), `repoIndex 越界: ${state.repoIndex}`);
-		assert.ok(state.pickIndex >= 0 && state.pickIndex < Math.max(state.repoSkills.length, 1), `pickIndex 越界: ${state.pickIndex}`);
-		assert.ok(state.pickedSkills.length <= state.repoSkills.length, `pickedSkills 越界: ${state.pickedSkills.length} > ${state.repoSkills.length}`);
+		assert.ok(
+			state.installedIndex >= 0 && state.installedIndex < Math.max(filteredInstalled(state).length, 1),
+			`installedIndex 越界: ${state.installedIndex}`
+		);
+		assert.ok(state.resultIndex >= 0 && state.resultIndex < Math.max(state.results.length, 1), `resultIndex 越界: ${state.resultIndex}`);
 		assert.ok(state.progress.length <= 8, `progress 未裁剪: ${state.progress.length}`);
 	}
 
-	// 两级选择全链路：搜索 → 父级 repo → select-repo → --list 回填 → 多选 → confirm-pick → 安装目标
+	// 扁平安装全链路：open-install → search → select-skill → confirm-install → busy → done
 	const base = reduceSkillsViewState(createInitialSkillsViewState(), {
 		type: 'installed-loaded',
 		installed: [{name: 'apple', path: '', scope: 'g', agents: []}]
@@ -346,56 +343,31 @@ import {
 			{name: 'org/b@z', source: 'org/b'}
 		]
 	});
-	assert.equal(searched.repos.length, 2, 'find 结果按 repo 去重为 2 个父级');
-	assert.equal(searched.queryFocused, false, '搜索完成后焦点直接切到 repo 列表');
-	assert.equal(selectedRepo(searched)?.repo, 'org/a', '默认光标首个 repo');
+	assert.equal(searched.results.length, 3, '扁平 skill 列表保留 3 个（不再按 repo 去重）');
+	assert.equal(searched.queryFocused, false, '搜索完成后焦点切到 skill 列表');
+	assert.equal(selectedResult(searched)?.name, 'org/a@x', '默认光标首个 skill');
 
-	const picked = reduceSkillsViewState(searched, {type: 'select-repo'});
-	assert.equal(picked.mode, 'install-pick', 'select-repo 进子级');
-	assert.equal(picked.loadingRepo, true, '子级初始 loadingRepo');
-	assert.equal(picked.currentRepo, 'org/a');
+	// select-skill：无光标项拦截 / 有项进 confirm-install
+	const emptyResults = reduceSkillsViewState(installPage, {type: 'search-done', results: []});
+	const emptySelect = reduceSkillsViewState(emptyResults, {type: 'select-skill'});
+	assert.equal(emptySelect.mode, 'install', '无可选 skill 时 select-skill 留在 install');
+	assert.ok(emptySelect.errorText, '无可选 skill 应提示');
+	const selected = reduceSkillsViewState(searched, {type: 'select-skill'});
+	assert.equal(selected.mode, 'confirm-install', 'select-skill 进 confirm-install');
+	assert.equal(selectedResult(selected)?.name, 'org/a@x', 'confirm-install 仍指向当前光标 skill');
 
-	// repo-skills-loaded 防竞态：repo 不匹配时忽略
-	const raced = reduceSkillsViewState(picked, {type: 'repo-skills-loaded', repo: 'org/other', skills: [{name: 'q'}]});
-	assert.equal(raced.repoSkills.length, 0, 'repo 不匹配的回填应忽略');
-	const loaded = reduceSkillsViewState(picked, {type: 'repo-skills-loaded', repo: 'org/a', skills: [{name: 'x'}, {name: 'y'}]});
-	assert.equal(loaded.loadingRepo, false);
-	assert.equal(loaded.repoSkills.length, 2);
+	// confirm-install：confirm → busy(install) / cancel → 回安装页（保留搜索结果）
+	const installBusy = reduceSkillsViewState(selected, {type: 'confirm'});
+	assert.equal(installBusy.mode, 'busy', 'confirm-install confirm 进 busy');
+	assert.equal(installBusy.busyAction, 'install', 'busyAction=install');
+	const backToInstall = reduceSkillsViewState(selected, {type: 'cancel'});
+	assert.equal(backToInstall.mode, 'install', 'confirm-install cancel 回安装页');
+	assert.equal(backToInstall.results.length, 3, 'cancel 保留搜索结果');
 
-	// 多选 toggle：选中 x → 下移到 y → 选中 y（累积）→ 回 x 再 toggle（取消 x）
-	const toggleX = reduceSkillsViewState(loaded, {type: 'toggle-pick'});
-	assert.deepEqual(toggleX.pickedSkills, ['x'], 'toggle 光标项 x 选中');
-	const atY = reduceSkillsViewState(toggleX, {type: 'nav-down'});
-	assert.equal(atY.pickIndex, 1);
-	const toggleY = reduceSkillsViewState(atY, {type: 'toggle-pick'});
-	assert.deepEqual(toggleY.pickedSkills, ['x', 'y'], '多选累积');
-	const allCleared = reduceSkillsViewState(toggleY, {type: 'toggle-all-picks'});
-	assert.deepEqual(allCleared.pickedSkills, [], '已全选时 a 取消全选');
-	const allPicked = reduceSkillsViewState(allCleared, {type: 'toggle-all-picks'});
-	assert.deepEqual(allPicked.pickedSkills, ['x', 'y'], '未全选时 a 全选');
-	const backToX = reduceSkillsViewState(toggleY, {type: 'nav-up'});
-	const toggleX2 = reduceSkillsViewState(backToX, {type: 'toggle-pick'});
-	assert.deepEqual(toggleX2.pickedSkills, ['y'], '再次 toggle x 取消');
-
-	// confirm-pick：空选拦截 / 非空进 confirm-install
-	assert.equal(canConfirmPick(loaded), false, '未选时不可确认');
-	const emptyConfirm = reduceSkillsViewState(loaded, {type: 'confirm-pick'});
-	assert.equal(emptyConfirm.mode, 'install-pick', '空选不进 confirm');
-	assert.ok(emptyConfirm.errorText, '空选应提示');
-	const ready = reduceSkillsViewState(toggleY, {type: 'confirm-pick'});
-	assert.equal(ready.mode, 'confirm-install', '非空进 confirm-install');
-	const targets = installTargets(ready);
-	assert.equal(targets.length, 2, '两个安装目标');
-	assert.equal(targets[0].source, 'org/a');
-	assert.equal(targets[0].skillName, 'x');
-
-	// confirm-install cancel 回子级（保留多选可调整）；install-pick cancel 回父级
-	const backToPick = reduceSkillsViewState(ready, {type: 'cancel'});
-	assert.equal(backToPick.mode, 'install-pick', 'confirm-install cancel 回子级');
-	assert.deepEqual(backToPick.pickedSkills, ['x', 'y'], 'cancel 保留多选');
-	const backToRepos = reduceSkillsViewState(backToPick, {type: 'cancel'});
-	assert.equal(backToRepos.mode, 'install', 'install-pick cancel 回父级');
-	assert.equal(backToRepos.currentRepo, undefined, '回父级清空 currentRepo');
+	// 安装页 cancel 回列表页（放弃搜索词/结果）
+	const backToList = reduceSkillsViewState(backToInstall, {type: 'cancel'});
+	assert.equal(backToList.mode, 'list', '安装页 cancel 回列表页');
+	assert.equal(backToList.queryFocused, false, '回列表页 queryFocused 复位');
 
 	// 无已安装时禁用 update
 	const noInstalled = createInitialSkillsViewState();
@@ -403,11 +375,53 @@ import {
 	const reqUpdate = reduceSkillsViewState(noInstalled, {type: 'request-update'});
 	assert.equal(reqUpdate.mode, 'list', '无已安装时 update 不进入 busy');
 
-	// 卸载目标：列表页单条光标项
-	const cursorDown = reduceSkillsViewState(base, {type: 'nav-down'});
-	assert.deepEqual(uninstallTargets(cursorDown), ['apple'], '卸载目标为当前光标项');
+	// 卸载：request-uninstall → confirm-uninstall → busy(uninstall)
+	// 双项列表验证光标跟随与卸载确认
+	const twoInstalled = reduceSkillsViewState(createInitialSkillsViewState(), {
+		type: 'installed-loaded',
+		installed: [
+			{name: 'apple', path: '', scope: 'g', agents: []},
+			{name: 'banana', path: '', scope: 'g', agents: []}
+		]
+	});
+	const cursorDown = reduceSkillsViewState(twoInstalled, {type: 'nav-down'});
+	assert.equal(selectedInstalled(cursorDown)?.name, 'banana', '光标下移到 banana');
+	assert.deepEqual(uninstallTargets(cursorDown), ['banana'], '卸载目标为当前光标项');
+	const reqUninstall = reduceSkillsViewState(twoInstalled, {type: 'request-uninstall'});
+	assert.equal(reqUninstall.mode, 'confirm-uninstall', 'request-uninstall 进确认');
+	const uninstallBusy = reduceSkillsViewState(reqUninstall, {type: 'confirm'});
+	assert.equal(uninstallBusy.mode, 'busy', 'confirm-uninstall confirm 进 busy');
+	assert.equal(uninstallBusy.busyAction, 'uninstall', 'busyAction=uninstall');
+	const cancelUninstall = reduceSkillsViewState(reqUninstall, {type: 'cancel'});
+	assert.equal(cancelUninstall.mode, 'list', 'confirm-uninstall cancel 回列表页');
 
-	console.log('[PASS] Skills 视图状态机有界 + 两级选择/多选/confirm-pick/防竞态/cancel 不变量');
+	// action-done 复位到 list（保留 installed）；action-failed 按动作回退到对应页
+	const afterDone = reduceSkillsViewState(installBusy, {type: 'action-done'});
+	assert.equal(afterDone.mode, 'list', 'action-done 复位 list');
+	assert.equal(afterDone.busyAction, undefined, 'action-done 清空 busyAction');
+	const installFailed = reduceSkillsViewState(installBusy, {type: 'action-failed', error: 'boom'});
+	assert.equal(installFailed.mode, 'install', 'install 失败回安装页');
+	assert.equal(installFailed.busyAction, undefined, 'action-failed 清空 busyAction');
+	assert.ok(installFailed.errorText, 'action-failed 应携带 errorText');
+	const uninstallFailed = reduceSkillsViewState(uninstallBusy, {type: 'action-failed', error: 'boom'});
+	assert.equal(uninstallFailed.mode, 'list', 'uninstall 失败回列表页');
+
+	console.log('[PASS] Skills 视图状态机有界 + 扁平安装/卸载/confirm/cancel/action 不变量');
+}
+
+// ── displaySkillName 派生：owner/repo@skill 只取 @ 后 skill 名，避免 confirm 弹窗与列表重复 owner/repo ──
+{
+	// 有 @：只取 skill 名（confirm 弹窗 `即将安装 <skill> (<source>)` 不再出现 owner/repo 重复）
+	assert.equal(displaySkillName('github/awesome-copilot@pdftk-server'), 'pdftk-server', '有 @ 时取 @ 后 skill 名');
+	assert.equal(displaySkillName('openai/skills@pdf'), 'pdf');
+
+	// 无 @：原样返回
+	assert.equal(displaySkillName('brainstorming'), 'brainstorming', '无 @ 时原样返回');
+
+	// 边界：@ 结尾（split 后为空串）回退原 name，绝不返回空
+	assert.equal(displaySkillName('org/repo@'), 'org/repo@', '@ 结尾回退原 name');
+
+	console.log('[PASS] displaySkillName 取 @ 后 skill 名，confirm 弹窗与列表共用不重复 owner/repo');
 }
 
 console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');

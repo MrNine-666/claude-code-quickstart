@@ -10,6 +10,7 @@ import type {InstalledSkill, SearchSkillResult} from '../core/skills.js';
 import type {ProgressCallback} from '../core/exec.js';
 import {
 	createInitialSkillsViewState,
+	displaySkillName,
 	filteredInstalled,
 	reduceSkillsViewState,
 	selectedResult,
@@ -471,7 +472,7 @@ function renderDetectionNotice(status: DetectionState<InstalledSkill[]>['status'
 function renderConfirm(view: SkillsViewState, viewportWidth: number, viewportHeight: number): React.ReactNode {
 	if (view.mode === 'confirm-install') {
 		const skill = selectedResult(view);
-		const skillName = skill?.name ?? '';
+		const skillName = skill ? displaySkillName(skill.name) : '';
 		const source = skill?.source ?? '';
 		return (
 			<Modal active title="确认安装 Skill" hint="Enter 确认  Esc 取消" viewportWidth={viewportWidth} viewportHeight={viewportHeight}>
@@ -540,8 +541,8 @@ function renderListPage(view: SkillsViewState, viewportHeight: number, confirmRo
 /** 安装页：远程搜索框 + 扁平 skill 列表 + 表头。 */
 function renderInstallPage(view: SkillsViewState, viewportHeight: number, confirmRows: number, stretchLists: boolean): React.ReactNode {
 	const items = view.results.map((skill) => {
-		// 解析 skill 名称：owner/repo@skill 格式，提取 @ 后的 skill 名
-		const skillName = skill.name.includes('@') ? skill.name.split('@')[1] ?? skill.name : skill.name;
+		// 解析 skill 名称：owner/repo@skill 格式，提取 @ 后的 skill 名（复用 displaySkillName）
+		const skillName = displaySkillName(skill.name);
 		const installCountText = skill.installCount ? formatInstallCount(skill.installCount) : '';
 		// 拼接 title：name (source)
 		const titleText = `${skillName} (${skill.source})`;

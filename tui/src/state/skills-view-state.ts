@@ -106,6 +106,16 @@ export function selectedResult(state: SkillsViewState): SearchSkillResult | unde
 	return state.results[state.resultIndex];
 }
 
+/** 从 `owner/repo@skill` 形态提取展示用 skill 名（@ 后部分）；无 @ 返回原 name。
+ *  安装页列表 title 与确认弹窗共用，避免 `owner/repo` 在 name 与 source 中重复显示。 */
+export function displaySkillName(name: string): string {
+	if (!name.includes('@')) {
+		return name;
+	}
+
+	return name.split('@')[1] || name;
+}
+
 export function reduceSkillsViewState(state: SkillsViewState, action: SkillsViewAction): SkillsViewState {
 	switch (action.type) {
 		case 'installed-loaded':
