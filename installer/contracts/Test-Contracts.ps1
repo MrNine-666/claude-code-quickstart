@@ -1,4 +1,4 @@
-#Requires -Version 7.0
+﻿#Requires -Version 7.0
 # Test-Contracts.ps1 - 跨平台契约一致性检查
 # 功能: 验证 installer/contracts/ + tui/contracts/ 契约与 Windows/macOS canonical runtime 不冲突
 # 位置：installer/contracts/（TDR-10 拆分后 installer 契约本地，TUI 契约跨目录读 tui/contracts/）

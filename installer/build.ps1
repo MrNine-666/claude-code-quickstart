@@ -1,4 +1,4 @@
-#Requires -Version 7.0
+﻿#Requires -Version 7.0
 # build.ps1 - Windows 单文件打包构建脚本
 # 作者: 哈雷酱 (本小姐的构建工具杰作！)
 # 功能: 将 Windows 多文件安装器打包成独立可分发的单文件脚本

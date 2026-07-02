@@ -106,6 +106,13 @@ SHALL 保持 OpenTUI 官方脚手架结构完整性，禁止破坏官方结构�
 - 如需重新尝试 minify，必须先为 OpenTUI host component 注册、Tree-sitter 降级、contracts 内嵌和关键视图交互补齐编译产物级门禁，再逐项验证。
 - 第三方 host component 注册禁止依赖裸副作用 import；必须显式调用注册函数（如 `registerSpinner()`），确保 bundler 不会误删。
 
+### HC-RELEASE-VERSION-SOURCE
+**TUI 发布版本号以 Git tag 为唯一数据源，禁止人工修改 `tui/package.json` 为发布版本。** 仓库内 `tui/package.json` 的 `version` 保持开发态哨兵值 `0.0.0-dev`；GitHub Actions 在 tag 构建（`GITHUB_REF_TYPE=tag`）时从 `GITHUB_REF_NAME` 去掉前缀 `v`，临时写入 `package.json` 后再执行 `bun run build`。
+- `src/version.ts` 继续从 `package.json` 读取 `CCQ_VERSION`，保证 `ccq --version`、`--help`、TUI 页脚与热更新比对共用同一内嵌版本。
+- CI tag 构建必须在构建前验证 `bun src/index.tsx --version` 等于 tag 版本，并在 Windows/macOS smoke 中验证编译产物 `--version`。
+- 非 tag 构建保留 `0.0.0-dev`，用于开发与主分支 smoke；不得为了发布手改、提交真实版本号。
+- 禁止运行时联网获取“当前版本”：当前版本必须内嵌，热更新只允许联网获取 latest release 作为对比端，避免破坏离线可用与启动性能。
+
 ### HC-CLI-SUBCOMMAND
 ccq 可执行文件支持「无参进 TUI + 子命令非交互」双入口。`src/index.tsx` 必须先解析 argv，再执行 non-TTY 守卫：
 - `ccq`（无参）保持进入 OpenTUI 6 菜单；若无参且 non-TTY，仍输出只读提示并退出码 0。

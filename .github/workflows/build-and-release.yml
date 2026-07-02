@@ -115,6 +115,31 @@ jobs:
           # --os=* --cpu=* 装齐所有平台的原生 optionalDependencies
           # （@opentui/core 经平台子包分发 Zig 原生内核，交叉编译时必须全部存在）
           bun install --frozen-lockfile --os=* --cpu=*
+
+          # 发布版本以 git tag 为唯一数据源：仓库内 package.json 保持开发态版本，tag 构建时自动注入。
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            CCQ_RELEASE_VERSION="${version}" node -e '
+              const fs = require("fs");
+              const version = process.env.CCQ_RELEASE_VERSION;
+              if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)) {
+                throw new Error(`Invalid CCQ release version: ${version}`);
+              }
+              const file = "package.json";
+              const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+              pkg.version = version;
+              fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
+            '
+            actual="$(bun src/index.tsx --version)"
+            if [ "${actual}" != "${version}" ]; then
+              echo "TUI 内嵌版本异常: ${actual} (期望 ${version})" >&2
+              exit 1
+            fi
+            echo "[PASS] TUI 发布版本已注入: ${actual}"
+          else
+            echo "[SKIP] 非 tag 构建，保留 package.json 开发版本"
+          fi
+
           bun run build
 
       - name: 验证 TUI 可执行文件
@@ -224,6 +249,22 @@ jobs:
           if (-not (Test-Path $exe -PathType Leaf)) {
             throw "Windows x64 可执行文件不存在"
           }
+
+          $expectedVersion = "0.0.0-dev"
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $expectedVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+          }
+          $versionOutput = @(& $exe --version 2>&1)
+          $versionExitCode = $LASTEXITCODE
+          $actualVersion = (($versionOutput | Select-Object -First 1).ToString() -replace '[^\x20-\x7E]', '').Trim()
+          if ($versionExitCode -ne 0) {
+            throw "Windows x64 可执行文件版本命令退出码异常: $versionExitCode`n$($versionOutput -join "`n")"
+          }
+          if ($actualVersion -ne $expectedVersion) {
+            throw "Windows x64 可执行文件版本异常: '$actualVersion' (期望 '$expectedVersion')"
+          }
+          Write-Host "[PASS] Windows x64 可执行文件版本: $actualVersion" -ForegroundColor Green
+
           # Non-TTY 模式：应输出提示并退出码 0
           $output = & $exe 2>&1
           if ($LASTEXITCODE -ne 0) {
@@ -310,6 +351,18 @@ jobs:
           exe="./tui-dist/ccq-macos-x64"
           test -f "${exe}" || { echo "macOS x64 可执行文件不存在" >&2; exit 1; }
           chmod +x "${exe}"
+
+          expected_version="0.0.0-dev"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            expected_version="${GITHUB_REF_NAME#v}"
+          fi
+          actual_version="$(${exe} --version)"
+          if [ "${actual_version}" != "${expected_version}" ]; then
+            echo "macOS x64 可执行文件版本异常: ${actual_version} (期望 ${expected_version})" >&2
+            exit 1
+          fi
+          echo "[PASS] macOS x64 可执行文件版本: ${actual_version}"
+
           # Non-TTY 模式：应输出提示并退出码 0
           output=$("${exe}" 2>&1 || true)
           echo "[PASS] macOS x64 可执行文件 smoke 通过"
