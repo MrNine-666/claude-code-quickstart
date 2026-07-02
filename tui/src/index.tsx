@@ -5,8 +5,26 @@ import { KeymapProvider } from "@opentui/keymap/react";
 import App from "./app.js";
 import { applyPendingUpdateOnStartup, startBackgroundUpdateCheck } from "./core/update.js";
 import { setActiveTheme, type AppThemeMode } from "./theme/index.js";
+import { parseCli } from "./cli/argv.js";
+import { runCli } from "./cli/index.js";
 
-// non-TTY 守卫：管道/重定向时输出只读提示，不进交互 TUI（对齐 HC-NON-TTY）
+// argv 子命令路由（HC-CLI-SUBCOMMAND）：有子命令 → 走非交互路径，不进 TUI。
+// 必须在 non-TTY 守卫之前执行，否则管道/CI 下 ccq ls 等命令会被守卫挡掉。
+const cliIntent = parseCli(process.argv.slice(2));
+if (cliIntent.kind !== 'tui') {
+	// 子命令不依赖 TUI；失败兜底，异常不影响无参 TUI 路径（无参不经此分支）。
+	try {
+		const code = await runCli(cliIntent);
+		process.exit(code);
+	} catch (error) {
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`ccq: ${msg}`);
+		process.exit(1);
+	}
+}
+
+// non-TTY 守卫：仅当「无子命令 + 非 TTY」时输出只读提示并退出（对齐 HC-NON-TTY）。
+// 有子命令的分支已在上方 process.exit 提前返回，不会到达此处。
 if (!process.stdin.isTTY) {
 	console.log('Claude Code Quickstart 管理控制台');
 	console.log('此工具需要交互式终端（TTY）运行。');
