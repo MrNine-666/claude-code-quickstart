@@ -6,6 +6,9 @@ import type { CliIntent } from './argv.js';
 import { helpFor, HELP_GENERAL } from './help.js';
 import { runCc } from './commands/cc.js';
 import { runLs } from './commands/ls.js';
+import { runTools } from './commands/tools.js';
+import { runUninstall } from './commands/uninstall.js';
+import { runUpdate } from './commands/update.js';
 import { runUse } from './commands/use.js';
 
 /** 执行已解析的 CliIntent，返回退出码。仅处理非 tui 意图。 */
@@ -44,6 +47,15 @@ export async function runCli(intent: CliIntent): Promise<number> {
 		case 'use':
 			return runUse(intent.name);
 
+		case 'update':
+			return runUpdate(intent.checkOnly);
+
+		case 'tools':
+			return runTools(intent.action, intent.name, intent.assumedYes);
+
+		case 'uninstall':
+			return runUninstall(intent.assumedYes);
+
 		case 'unknown': {
 			// 未知动词或缺参数的已知动词
 			if (intent.verb === 'cc') {
@@ -55,6 +67,24 @@ export async function runCli(intent: CliIntent): Promise<number> {
 			if (intent.verb === 'use') {
 				console.error('use 缺少 provider 名称。');
 				console.error('用法: ccq use <name>');
+				return 1;
+			}
+
+			if (intent.verb === 'update') {
+				console.error('update 参数无效。');
+				console.error('用法: ccq update [--check]');
+				return 1;
+			}
+
+			if (intent.verb === 'tools') {
+				console.error('tools 参数无效。');
+				console.error('用法: ccq tools update [name] | ccq tools uninstall <name> [--yes|-y]');
+				return 1;
+			}
+
+			if (intent.verb === 'uninstall') {
+				console.error('uninstall 参数无效。');
+				console.error('用法: ccq uninstall [--yes|-y]');
 				return 1;
 			}
 

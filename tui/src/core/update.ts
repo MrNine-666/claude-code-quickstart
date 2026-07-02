@@ -612,8 +612,8 @@ function getPlatform(): string {
 	}
 }
 
-// 获取可执行文件路径
-function getExecutablePath(): string {
+// 获取 ccq 可执行文件路径（安装目标路径，供热更新与 CLI 自卸载共用）。
+export function getCcqExecutablePath(): string {
 	const homeDir = resolveHome();
 	const platform = process.platform;
 
@@ -622,6 +622,10 @@ function getExecutablePath(): string {
 	} else {
 		return join(homeDir, '.local', 'bin', 'ccq');
 	}
+}
+
+function getExecutablePath(): string {
+	return getCcqExecutablePath();
 }
 
 // 获取临时更新文件路径
@@ -671,7 +675,7 @@ export async function checkLatestVersion(): Promise<{ version: string; downloadU
 }
 
 // 下载更新到临时文件
-export async function downloadUpdate(downloadUrl: string): Promise<boolean> {
+export async function downloadUpdate(downloadUrl: string, signal?: AbortSignal): Promise<boolean> {
 	try {
 		const tempPath = getTempUpdatePath();
 
@@ -682,7 +686,7 @@ export async function downloadUpdate(downloadUrl: string): Promise<boolean> {
 		}
 
 		// 下载文件
-		const response = await fetch(downloadUrl);
+		const response = await fetch(downloadUrl, { signal });
 		if (!response.ok) {
 			throw new Error(`Download failed: ${response.status}`);
 		}

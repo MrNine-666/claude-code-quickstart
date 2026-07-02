@@ -22,6 +22,18 @@ try {
 	assert.deepEqual(parseCli(['help', 'cc']), {kind: 'help', verb: 'cc'});
 	assert.deepEqual(parseCli(['ls']), {kind: 'ls'});
 	assert.deepEqual(parseCli(['use', 'glm']), {kind: 'use', name: 'glm'});
+	assert.deepEqual(parseCli(['update']), {kind: 'update', checkOnly: false});
+	assert.deepEqual(parseCli(['update', '--check']), {kind: 'update', checkOnly: true});
+	assert.deepEqual(parseCli(['tools', 'update']), {kind: 'tools', action: 'update', name: undefined, assumedYes: false});
+	assert.deepEqual(parseCli(['tools', 'update', 'CodeGraph']), {kind: 'tools', action: 'update', name: 'CodeGraph', assumedYes: false});
+	assert.deepEqual(parseCli(['tools', 'uninstall', 'CodeGraph']), {kind: 'tools', action: 'uninstall', name: 'CodeGraph', assumedYes: false});
+	assert.deepEqual(parseCli(['tools', 'uninstall', 'CodeGraph', '--yes']), {kind: 'tools', action: 'uninstall', name: 'CodeGraph', assumedYes: true});
+	assert.deepEqual(parseCli(['tools', 'uninstall', 'CodeGraph', '-y']), {kind: 'tools', action: 'uninstall', name: 'CodeGraph', assumedYes: true});
+	assert.deepEqual(parseCli(['tools', 'uninstall', 'CodeGraph', 'yes']), {kind: 'unknown', verb: 'tools', args: ['uninstall', 'CodeGraph', 'yes']});
+	assert.deepEqual(parseCli(['uninstall']), {kind: 'uninstall', assumedYes: false});
+	assert.deepEqual(parseCli(['uninstall', '--yes']), {kind: 'uninstall', assumedYes: true});
+	assert.deepEqual(parseCli(['uninstall', '-y']), {kind: 'uninstall', assumedYes: true});
+	assert.deepEqual(parseCli(['uninstall', 'yes']), {kind: 'unknown', verb: 'uninstall', args: ['yes']});
 	assert.deepEqual(parseCli(['cc', 'glm']), {kind: 'cc', name: 'glm', passthrough: []});
 	assert.deepEqual(parseCli(['cc', 'glm', '-p', 'hi']), {kind: 'cc', name: 'glm', passthrough: ['-p', 'hi']});
 	assert.deepEqual(parseCli(['cc', 'glm', '--', '-p', 'hi', '--verbose']), {
