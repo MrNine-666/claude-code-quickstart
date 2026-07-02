@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   test-windows:
-    name: Test Windows (PowerShell 5.1 + 7)
+    name: Test Windows (PowerShell 5.1)
     runs-on: windows-latest
     timeout-minutes: 15
 
@@ -26,29 +26,24 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 验证 Windows PowerShell 5.1 兼容入口语法
+      - name: 验证 Windows PowerShell 5.1 兼容语法
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $files = @(
-            '.\installer\windows\Install.ps1'
-          )
+          $files = @()
+          $files += Get-ChildItem '.\installer\windows' -Recurse -Filter '*.ps1'
+          $buildScript = Get-Item '.\installer\build.ps1' -ErrorAction SilentlyContinue
+          if ($buildScript) { $files += $buildScript }
           foreach ($file in $files) {
             $tokens = $null
             $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors) | Out-Null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors.Count -gt 0) {
               $errors | ForEach-Object { Write-Error $_.Message }
-              throw "PowerShell 5.1 语法检查失败: $file"
+              throw "PowerShell 5.1 语法检查失败: $($file.FullName)"
             }
-            Write-Host "[PASS] $file"
+            Write-Host "[PASS] $($file.FullName)"
           }
-
-      - name: 验证 PowerShell 7 脚本语法
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          & ".\test-syntax.ps1"
 
       - name: 验证 contracts JS 语法
         shell: pwsh
@@ -409,7 +404,7 @@ jobs:
             - Skills 管理
             - 提示词管理
             - 配置文件管理
-            - 工具管理（ClaudeCode / Ccline / OpenSpec / CodexCli / AntigravityCli）
+            - 工具管理（ClaudeCode / Ccline / OpenSpec / CodeGraph / CodexCli / AntigravityCli）
 
             ---
 
