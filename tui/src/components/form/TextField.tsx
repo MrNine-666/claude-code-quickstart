@@ -18,7 +18,7 @@ export type TextFieldProps = {
  * TextField：text/secret 单行文本输入（OpenTUI <input> 封装）
  * - secret 模式脱敏显示（非焦点时显示 ●●●●，焦点编辑时正常显示便于核对）
  * - focused + active 时渲染 <input> 接管字符输入；否则渲染只读 text
- * - Ctrl/Cmd+S 保存 / Esc 取消由 FormPanel 统一处理（input 不绑 onSubmit，避免双触发）
+ * - 保存按编辑语义触发 / Esc 取消由 FormPanel 统一处理（input 不绑 onSubmit，避免双触发）
  */
 export function TextField({ label, value, secret = false, helpText, focused, active, onChange }: TextFieldProps) {
 	// secret 非焦点脱敏；焦点编辑时明文显示便于核对（input 内）。

@@ -29,7 +29,7 @@ import { colors } from '../theme/index.js';
 
 // Provider TUI 视图（OpenTUI 适配）：
 // - 状态卡片列表：profile / 活跃圆点 / Base URL / 脱敏 API key / 模型摘要
-// - 新增（A）与编辑（E）统一走一屏表单，直接编辑、Ctrl/Cmd+S 保存、Esc 返回列表（无独立详情屏）
+// - 新增（A）与编辑（E）统一走一屏表单，直接编辑、保存按编辑语义触发、Esc 返回列表（无独立详情屏）
 // - Enter 切换活跃供应商、D 删除确认且禁止删除 active
 //
 // Phase 4 实现：列表屏 + 删除确认 Modal
@@ -95,7 +95,7 @@ export function ProviderView({
 		return next;
 	};
 
-	// 表单屏（add/edit 统一走 ProviderForm）：表单内编辑字段，Ctrl/Cmd+S 保存、Esc 返回列表。
+	// 表单屏（add/edit 统一走 ProviderForm）：表单内编辑字段，保存按编辑语义触发、Esc 返回列表。
 	if (screen.kind === 'add') {
 		const model = buildForm({ mode: 'add-builtin' });
 		return (

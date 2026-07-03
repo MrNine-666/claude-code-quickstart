@@ -3,11 +3,12 @@ import { TextAttributes } from '@opentui/core';
 import type { TextareaRenderable, SyntaxStyle, KeyEvent } from '@opentui/core';
 import { useKeyboard, useRenderer } from '@opentui/react';
 import { colors, borderColors } from '../../theme/index.js';
+import { isAppModifier } from '../../utils/keyboard.js';
 import { ErrorPanel } from '../error-panel.js';
 import { handleTextareaEditKeys, handleTextareaIndentKey } from './textarea-edit-keys.js';
 
 // TextareaEditor：编辑/预览双模式内嵌编辑器（HC-EDITOR-OPENTUI，零外部编辑器）
-// - 编辑模式：OpenTUI <textarea> 纯文本编辑，Ctrl/Cmd+S 保存、Ctrl/Cmd+Z 撤销、Ctrl/Cmd+C 复制选中、Esc 取消、Ctrl/Cmd+P 切预览、Tab 缩进（2 空格）
+// - 编辑模式：OpenTUI <textarea> 纯文本编辑，macOS Cmd+S 保存 / Cmd+C 复制，其他平台 Ctrl+S / Ctrl+C；Ctrl+P 切预览、Esc 取消、Tab 缩进（2 空格）
 // - 预览模式（只读）：markdown 用 <markdown>，代码/JSON 用 <line-number><code>（语法高亮 + 行号），Esc 返回编辑
 // - isJson 模式：保存前 JSON.parse 校验，失败显示错误但不退出（容忍中间态）
 // - 命令式能力（forwardRef）：insertText/replaceText/getText/focus/blur，供工作台等父视图程序化插入片段 / 灌缓冲
@@ -120,7 +121,7 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 		onModeChange?.('edit');
 	};
 
-	// Ctrl/Cmd+S 保存：isJson 模式先校验 JSON，再回调 onSave。
+	// 保存：macOS Cmd+S，其他平台 Ctrl+S；isJson 模式先校验 JSON，再回调 onSave。
 	const saveContent = (): void => {
 		const content = taRef.current?.plainText ?? '';
 
@@ -170,8 +171,7 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 		}
 
 		const name = keyEvent.name;
-		// 跨平台主修饰键：Windows/Linux=Ctrl，macOS=Cmd（KeyEvent.super，非 meta/Alt）。
-		const mod = keyEvent.ctrl || keyEvent.super === true;
+		// 预览是 TUI 应用功能，始终使用 Ctrl+P，避免占用 macOS Cmd+P 打印语义。
 
 		// 预览模式：Esc 返回编辑（滚动由 scrollbox 自身处理）。
 		if (mode === 'preview') {
@@ -191,13 +191,13 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 			return;
 		}
 
-		// Ctrl/Cmd+P 切预览（仅 filetype 支持时）；Tab 已归缩进/切焦点（onKeyDown）。
-		if (canPreview && name === 'p' && mod) {
+		// Ctrl+P 切预览（仅 filetype 支持时）；Tab 已归缩进/切焦点（onKeyDown）。
+		if (canPreview && name === 'p' && isAppModifier(keyEvent)) {
 			enterPreview();
 			return;
 		}
 
-		// Ctrl/Cmd+S 保存 · Ctrl+Z 撤销 · Ctrl+Shift+Z/Y 重做 · Ctrl/Cmd+C 复制选中（OSC52）。
+		// 保存/复制按编辑语义：macOS Cmd，其他平台 Ctrl；预览/面板类动作保留 Ctrl。
 		// onContentMutate：undo/redo 走底层 FFI 不触发 onContentChange，需手动通知脏标记 + 清错误。
 		handleTextareaEditKeys(keyEvent, taRef.current, renderer, saveContent, () => {
 			setError(null);

@@ -153,10 +153,12 @@ if (!process.stdin.isTTY) {
 删除旧链时必须全仓 grep 零业务引用确认（`manage-tui.tgz`/`ManageCore`/`ink`/`react-ink-textarea`/`external-editor`/`ccq-function`/`function ccq` 业务引用清零，测试 fixture/历史 plan 文档除外）。
 
 ### HC-SHORTCUT-SINGLE-SOURCE
-快捷键说明**唯一**由 footer `ShortcutBar`（`app.tsx:178`）展示，按键文本从 `@opentui/keymap`（`config/keybindings.js` 绑定定义）经 `state/shortcuts.ts` 的 `formatCommandBindings` 动态解析——**单一数据源**。
+快捷键说明**唯一**由 footer `ShortcutBar`（`app.tsx:178`）展示，按键文本从 `@opentui/keymap`（`config/keybindings.js` 绑定定义）经 `state/shortcuts.ts` 动态解析——**单一数据源**。
 - **禁止**在视图/组件内硬编码键位字面量（`[I]`、`[Tab]`、`Ctrl+S` 等）；新增/改键一律走 `config/keybindings.js` 注册 + `shortcuts.ts` 映射，footer 自动同步。
+- macOS 快捷键采用**编辑语义 Command + TUI 应用功能 Control**：复制 / 粘贴 / 撤回 / 重做 / 保存等编辑语义用 `⌘`（`KeyEvent.super`），不做 `⌃` 兼容；推荐边栏、导入/补全、面板/焦点切换等应用功能用 `⌃`（`KeyEvent.ctrl`）。非 macOS 仍显示 `Ctrl+...`。
+- macOS footer 使用符号展示：Command=`⌘`、Control=`⌃`、Shift=`⇧`、Option=`⌥`；若未来发现终端字体不支持，再在 formatter 中统一 fallback 为 `Cmd+` / `Ctrl+`，禁止视图内单独处理。
 - 页面内 `ActionHint`（`components/action-hint.tsx`）**仅承载操作说明文字 + disabled 状态**（footer label 容纳不下的详细描述/禁用提示），**禁止带 `[hotkey]` 前缀**重复展示键位。
-- **理由**：键位变更只改 `keybindings.js` 一处，杜绝页面内硬编码与 footer 分裂（历史教训：PromptsView / ConfigView / SkillsView / provider-view 曾用 ActionHint `[hotkey]` 与 footer 双显重复）。
+- **理由**：键位变更只改 `keybindings.js` / `utils/keyboard.ts` / `shortcuts.ts`，杜绝页面内硬编码与 footer 分裂（历史教训：PromptsView / ConfigView / SkillsView / provider-view 曾用 ActionHint `[hotkey]` 与 footer 双显重复）。
 
 ### HC-LIST-STATE-COMPONENT
 列表空状态与加载状态统一使用 `components/list-state.tsx` 组件（`ListEmptyState` / `ListLoadingState`），禁止在视图内重复实现空状态/加载状态布局。

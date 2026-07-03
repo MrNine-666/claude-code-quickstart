@@ -12,7 +12,7 @@ import {borderColors, colors} from '../../theme/index.js';
 // - add：模板（radio，←/→ 或 Tab 切换；选内置即带出 JSON + Server ID + 凭据提示）+ Server ID（可填）+ JSON 编辑区
 // - edit：Server ID 只读（标题展示）+ JSON 编辑区（加载现有 config）
 // - 焦点：字段区 ↑/↓ 切换（FormPanel 统一），JSON textarea 第一行 ↑ / 最后行 ↓ 切字段
-// - Ctrl/Cmd+S 保存（解析 JSON 落盘），Esc 取消
+// - 保存按编辑语义触发（解析 JSON 落盘），Esc 取消
 // 键位与供应商表单完全一致（复用 FormPanel + textarea-edit-keys），footer 已声明 ↑/↓ 字段 · ←/→ 选项。
 
 // 「自定义」模板占位值（对应空白 JSON）。
@@ -172,7 +172,7 @@ export function McpFormView({mode, serverId, initialJson, active, contentHeight 
 		}
 	}
 
-	// JSON 区全局键位：Ctrl/Cmd+S 保存 · Ctrl+Z/Y 撤销重做 · Ctrl/Cmd+C 复制（OSC52）；Esc 取消整个表单。
+	// JSON 区全局键位：保存按编辑语义触发 · Ctrl+Z/Y 撤销重做 · 复制按编辑语义触发（OSC52）；Esc 取消整个表单。
 	// 与供应商表单 JSON 区完全一致（复用 handleTextareaEditKeys）。
 	useKeyboard((keyEvent) => {
 		if (!active || !jsonFocused) {

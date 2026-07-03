@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { TextAttributes, type ScrollBoxRenderable } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 import { colors } from '../../theme/index.js';
+import { isEditingModifier } from '../../utils/keyboard.js';
 import { ErrorPanel } from '../error-panel.js';
 import { TextField } from './TextField.js';
 import { SelectField } from './SelectField.js';
@@ -13,7 +14,7 @@ import type { FormField } from './field-types.js';
 // 通用表单容器（Provider / MCP 复用）：
 // - ↑/↓ 切换可编辑字段（跳过 readonly/disabled，循环）
 // - radio/select 字段用 ←/→ 或 Tab/Shift+Tab 切换选项（上下键已让给字段切换）
-// - Ctrl/Cmd+S 统一保存，Esc 取消
+// - 保存按编辑语义：macOS Cmd+S，其他平台 Ctrl+S；Esc 取消
 // - 纯展示 + 回调：字段联动由父组件处理
 // - contentHeight 传入时字段区单独滚动；不传时输出纯字段流，由外层统一滚动。
 
@@ -100,11 +101,9 @@ export function FormPanel({
 		}
 
 		const name = keyEvent.name.toLowerCase();
-		// 跨平台主修饰键：Windows/Linux=Ctrl，macOS=Cmd（KeyEvent.super）。
-		const mod = keyEvent.ctrl || keyEvent.super === true;
 
-		// Ctrl/Cmd+S 统一保存（须在修饰键放行之前捕获，否则会被下面的放行逻辑吞掉）。
-		if (name === 's' && mod) {
+		// 保存按编辑语义处理：macOS Cmd+S，其他平台 Ctrl+S。
+		if (name === 's' && isEditingModifier(keyEvent)) {
 			onSubmit();
 			return;
 		}
@@ -147,7 +146,7 @@ export function FormPanel({
 			}
 		}
 
-		// 保存已统一为 Ctrl/Cmd+S；Enter 不再触发保存（textarea 字段 Enter 维持换行默认行为）。
+		// 保存由编辑语义快捷键触发；Enter 不再触发保存（textarea 字段 Enter 维持换行默认行为）。
 	});
 
 	const fieldNodes = fields.map((field, index) => {

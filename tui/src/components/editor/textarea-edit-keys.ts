@@ -1,4 +1,5 @@
 import type { TextareaRenderable, CliRenderer, KeyEvent } from '@opentui/core';
+import { isEditingModifier, shortcutPlatform } from '../../utils/keyboard.js';
 
 type KeyEventLike = {
 	readonly name: string;
@@ -8,14 +9,14 @@ type KeyEventLike = {
 };
 
 /**
- * textarea 通用编辑快捷键：Ctrl/Cmd+S 保存、Ctrl+Z 撤销、Ctrl+Shift+Z / Ctrl+Y 重做、
- * Ctrl/Cmd+C 复制选中文字（OSC52 写系统剪贴板）。
+ * textarea 通用编辑快捷键：macOS 使用 Cmd/Super，其他平台使用 Ctrl。
+ * 覆盖保存与 OSC52 复制；撤销/重做仍保留 Ctrl 分支给非 macOS 终端使用。
  *
  * 命中并处理时返回 true（调用方应立即 return，不再处理该按键）；未命中返回 false。
  *
  * 设计要点：
- * - Ctrl+Z / Ctrl+Y 仅绑 Ctrl：macOS Cmd+Z / Shift+Cmd+Z 由 textarea 默认 keyBindings 处理，避免双触发；
- * - Ctrl/Cmd+S 与 Ctrl/Cmd+C 绑主修饰键 mod（Windows/Linux=Ctrl，macOS=Cmd/super），跨平台一致；
+ * - macOS 编辑语义不做 Ctrl 兼容，避免同一动作多套快捷键；
+ * - Ctrl+Z / Ctrl+Y 仅服务非 macOS：macOS Cmd+Z / Shift+Cmd+Z 由 textarea 默认 keyBindings 处理，避免双触发；
  * - OSC52 复制在终端不支持或无选中文本时静默跳过。
  */
 export function handleTextareaEditKeys(
@@ -26,14 +27,15 @@ export function handleTextareaEditKeys(
 	onContentMutate?: () => void
 ): boolean {
 	const name = keyEvent.name.toLowerCase();
-	const mod = keyEvent.ctrl || keyEvent.super === true;
+	const platform = shortcutPlatform();
+	const editingMod = isEditingModifier(keyEvent, platform);
 
-	if (name === 's' && mod) {
+	if (name === 's' && editingMod) {
 		onSave();
 		return true;
 	}
 
-	if (name === 'z' && keyEvent.ctrl) {
+	if (platform !== 'darwin' && name === 'z' && keyEvent.ctrl) {
 		if (keyEvent.shift) {
 			textarea?.redo();
 		} else {
@@ -45,13 +47,13 @@ export function handleTextareaEditKeys(
 		return true;
 	}
 
-	if (name === 'y' && keyEvent.ctrl) {
+	if (platform !== 'darwin' && name === 'y' && keyEvent.ctrl) {
 		textarea?.redo();
 		onContentMutate?.();
 		return true;
 	}
 
-	if (name === 'c' && mod) {
+	if (name === 'c' && editingMod) {
 		if (textarea && textarea.hasSelection() && renderer?.isOsc52Supported()) {
 			const selected = textarea.getSelectedText();
 			if (selected) {

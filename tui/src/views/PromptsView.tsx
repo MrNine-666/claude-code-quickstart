@@ -2,12 +2,14 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { TextAttributes, type ScrollBoxRenderable } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 import { borderColors, colors, PRIMARY } from '../theme/index.js';
+import { isAppModifier, isEditingModifier } from '../utils/keyboard.js';
 import {
 	TextareaEditor,
 	ViewHeader,
 	ListEmptyState,
 	toast,
 	ThemedScrollbox,
+	CodePreview,
 	type TextEditorHandle
 } from '../components/index.js';
 import { assembleRecommendation } from '../core/prompts.js';
@@ -20,7 +22,7 @@ import {
 // 全局规则页（view-first）：
 // 进入先渲染只读本地 CLAUDE.md（<markdown>）；无内容则空状态提示按 a 新建。
 // e（编辑现有；空 md 时 a 新建）进入编辑器；Ctrl+T 开推荐边栏（未渲染纯文本源码，只读对照）；
-// Ctrl+O 推荐灌缓冲（Ctrl+I 在终端等同 Tab，故用 Ctrl+O）；Ctrl+S 保存后回只读展示；
+// Ctrl+O 推荐灌缓冲（Ctrl+I 在终端等同 Tab，故用 Ctrl+O）；保存按编辑语义（macOS Cmd+S，其他平台 Ctrl+S）后回只读展示；
 // Esc 取消编辑直接回 view（放弃未保存改动，toast 提示）。
 // HC-SHORTCUT-SINGLE-SOURCE：键位处理用 keyEvent.name，footer 文案由 shortcuts.ts 按 subMode 解析。
 
@@ -128,7 +130,7 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 		editorRef.current?.replaceText(recommendationContent);
 		setDirty(true);
 		setConfirm('none');
-		toast.success('已导入完整推荐到编辑器（Ctrl+Z 撤销 · Ctrl+S 保存）');
+		toast.success('已导入完整推荐到编辑器（可撤销，保存后生效）');
 	};
 
 	const handleSave = (content: string): { ok: boolean; error?: string } => {
@@ -169,7 +171,8 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 	useKeyboard((keyEvent) => {
 		if (!active) return;
 		const name = keyEvent.name;
-		const mod = keyEvent.ctrl || keyEvent.super === true;
+		const appMod = isAppModifier(keyEvent);
+		const editingMod = isEditingModifier(keyEvent);
 
 		// Ctrl+O 直接导入推荐，不再弹确认浮层：导入只写入编辑缓冲，不落盘，可 Ctrl+Z 撤销。
 		// ── view 态 ──
@@ -188,14 +191,14 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 		// Esc：取消编辑直接回 view
 		if (name === 'escape') { cancelEdit(); return; }
 
-		// 主操作：编辑器获焦时 Ctrl+S 由 TextareaEditor 自管；边栏获焦时由页面兜底保存。
-		if (mod && name === 's' && panel === 'split' && focus === 'recommend') {
+		// 主操作：编辑器获焦时保存由 TextareaEditor 自管；边栏获焦时由页面兜底保存。
+		if (editingMod && name === 's' && panel === 'split' && focus === 'recommend') {
 			handleSave(editorRef.current?.getText() ?? '');
 			return;
 		}
-		if (mod && name === 't') { togglePanel(); return; }
+		if (appMod && name === 't') { togglePanel(); return; }
 		// Ctrl+I 在终端等同 Tab（ASCII 0x09），改用 Ctrl+O 触发导入
-		if (mod && name === 'o') { requestImport(); return; }
+		if (appMod && name === 'o') { requestImport(); return; }
 
 		// 边栏焦点：↑/↓ 滚动推荐；Tab 切回编辑器
 		if (panel === 'split' && focus === 'recommend') {
@@ -213,9 +216,7 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 				{hasContent ? (
 					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
 						<ThemedScrollbox ref={viewScrollRef} style={{flexGrow: 1}}>
-							{syntaxStyle
-								? <code content={viewContent} filetype="markdown" syntaxStyle={syntaxStyle} conceal={false} fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} style={{flexGrow: 1}} />
-								: <text fg={colors.info}>{viewContent}</text>}
+							<CodePreview content={viewContent} filetype="markdown" />
 						</ThemedScrollbox>
 					</box>
 				) : (
@@ -265,7 +266,7 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 							paddingX={1}
 						>
 							<ThemedScrollbox ref={recommendScrollRef} style={{flexGrow: 1}}>
-								{syntaxStyle ? <code content={recommendationContent} filetype="markdown" syntaxStyle={syntaxStyle} conceal={false} fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} style={{flexGrow: 1}} /> : <text fg={colors.info}>{recommendationContent}</text>}
+								<CodePreview content={recommendationContent} filetype="markdown" />
 							</ThemedScrollbox>
 						</box>
 					</box>

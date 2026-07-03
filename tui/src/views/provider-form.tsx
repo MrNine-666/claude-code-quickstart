@@ -251,7 +251,7 @@ export function ProviderForm({ model, active, contentHeight = 16, onCancel, onSa
 			return;
 		}
 
-		// Ctrl/Cmd+S 保存 · Ctrl+Z 撤销 · Ctrl+Shift+Z/Y 重做 · Ctrl/Cmd+C 复制选中（OSC52）。
+		// 保存按编辑语义触发 · Ctrl+Z 撤销 · Ctrl+Shift+Z/Y 重做 · 复制按编辑语义触发选中（OSC52）。
 		// undo/redo 后主动重新解析 JSON 刷新错误（OpenTUI undo 走 FFI 不触发 onContentChange）。
 		if (handleTextareaEditKeys(
 			keyEvent,

@@ -19,7 +19,7 @@ export type KeyValueFieldProps = {
  * KeyValueField：键值对编辑（单行 `K=V,K2=V2` 文本形式）
  * - 编辑态用 <input> 录入逗号分隔的 K=V 文本，由 FormPanel 解析回 entries
  * - 非编辑态以多行只读形式展示当前键值对，便于阅读
- * - Ctrl/Cmd+S 保存、Esc 取消由 FormPanel 统一处理；Enter 维持 textarea 换行（本字段不绑 onSubmit）
+ * - 保存按编辑语义触发、Esc 取消由 FormPanel 统一处理；Enter 维持 textarea 换行（本字段不绑 onSubmit）
  */
 export function KeyValueField({ label, entries, text, helpText, focused, active, onChange }: KeyValueFieldProps) {
 	return (

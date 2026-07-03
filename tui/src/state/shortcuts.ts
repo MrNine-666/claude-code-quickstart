@@ -1,6 +1,6 @@
 import type {Binding} from '@opentui/keymap';
-import {formatCommandBindings, formatKeySequence} from '@opentui/keymap/extras';
 import type {Shortcut} from '../components/index.js';
+import {editingShortcutKey, formatShortcutKey} from '../utils/keyboard.js';
 import {
 	CONFIG_COMMANDS,
 	MCP_COMMANDS,
@@ -48,26 +48,6 @@ for (const binding of [
 	const bindings = bindingLookup.get(binding.cmd) ?? [];
 	bindingLookup.set(binding.cmd, [...bindings, binding]);
 }
-
-const KEY_NAME_ALIASES = {
-	escape: 'Esc',
-	enter: 'Enter',
-	return: 'Enter',
-	up: '↑',
-	down: '↓',
-	left: '←',
-	right: '→',
-	space: 'Space',
-	tab: 'Tab'
-} as const;
-
-const MODIFIER_ALIASES = {
-	ctrl: 'Ctrl',
-	shift: 'Shift',
-	meta: 'Meta',
-	super: 'Super',
-	hyper: 'Hyper'
-} as const;
 
 // 左侧导航（菜单焦点）。
 export function navShortcuts(): readonly Shortcut[] {
@@ -119,7 +99,7 @@ function providerShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		return manualShortcuts([
 			{key: '↑/↓', label: '字段'},
 			{key: '←/→', label: '选项'},
-			{key: 'Ctrl+S', label: '保存'},
+			{key: formatShortcutKey(editingShortcutKey('s')), label: '保存'},
 			{key: 'Esc', label: '取消'}
 		]);
 	}
@@ -146,7 +126,7 @@ function providerShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 
 function mcpShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	if (subMode === 'form') {
-		return manualShortcuts([{key: '↑/↓', label: '字段'}, {key: '←/→', label: '选项'}, {key: 'Ctrl+S', label: '保存'}, {key: 'Esc', label: '取消'}]);
+		return manualShortcuts([{key: '↑/↓', label: '字段'}, {key: '←/→', label: '选项'}, {key: formatShortcutKey(editingShortcutKey('s')), label: '保存'}, {key: 'Esc', label: '取消'}]);
 	}
 
 	if (subMode === 'confirm-remove') {
@@ -395,37 +375,9 @@ function mergeKeys(left: string, right: string): string {
 
 function formatCommand(command: string): string {
 	const bindings = bindingLookup.get(command) ?? [];
-	const parsed = bindings.map(binding => ({
-		sequence: parseKeySequence(binding.key)
-	}));
-
-	return formatCommandBindings(parsed, {
-		bindingSeparator: '/',
-		keyNameAliases: KEY_NAME_ALIASES,
-		modifierAliases: MODIFIER_ALIASES
-	}) ?? '';
+	return bindings.map(binding => formatShortcutKey(bindingKeyToString(binding.key))).filter(Boolean).join('/');
 }
 
-function parseKeySequence(key: Binding['key']) {
-	const value = typeof key === 'string' ? key : key.name;
-	return value.split(' ').map(part => parseKeyStroke(part));
-}
-
-function parseKeyStroke(value: string) {
-	const parts = value.split('+');
-	const rawName = parts[parts.length - 1] ?? value;
-	const name = rawName === 'return' ? 'enter' : rawName;
-	const stroke = {
-		name,
-		ctrl: parts.includes('ctrl'),
-		shift: parts.includes('shift'),
-		meta: parts.includes('meta'),
-		super: parts.includes('super')
-	};
-
-	return {
-		stroke,
-		display: value,
-		match: value
-	};
+function bindingKeyToString(key: Binding['key']): string {
+	return typeof key === 'string' ? key : key.name;
 }

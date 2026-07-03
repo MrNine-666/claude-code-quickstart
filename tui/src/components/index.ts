@@ -17,6 +17,7 @@ export { DetailPanel, type DetailPanelProps, type DetailItem } from './detail-pa
 export { DetailScreen, type DetailScreenProps } from './detail-screen.js';
 export { ProgressLog, type ProgressLogProps } from './progress-log.js';
 export { TextareaEditor, type TextareaEditorProps, type EditorFiletype, type TextEditorHandle } from './editor/TextareaEditor.js';
+export { CodePreview, type CodePreviewProps, type CodePreviewFiletype } from './code-preview.js';
 export { ListEmptyState, ListLoadingState } from './list-state.js';
 
 // Form 组件导出

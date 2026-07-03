@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { TextAttributes, type ScrollBoxRenderable } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
-import { borderColors, colors, getActiveTheme, PRIMARY } from '../theme/index.js';
+import { borderColors, colors, PRIMARY } from '../theme/index.js';
+import { isAppModifier, isEditingModifier } from '../utils/keyboard.js';
 import {
 	TextareaEditor,
 	ViewHeader,
 	ListEmptyState,
 	toast,
 	ThemedScrollbox,
+	CodePreview,
 	type TextEditorHandle
 } from '../components/index.js';
 import {
@@ -23,7 +25,7 @@ import {
 // 字段所有权（HC-12）：供应商 env（token/base_url/model 等，DoNotManageEnvKeys）从展示中剥离，归供应商页管；
 // 保存时自动从原文件恢复供应商 env，绝不丢失。标题标注「已排除供应商配置」。
 // e（编辑现有；空时 a 新建 {}）进入编辑器；Ctrl+T 开推荐边栏（带注释 JSONC 只读对照，注释行分色）；
-// Ctrl+O fill-missing 灌缓冲（仅补缺失，保留已有配置，可 Ctrl+Z 撤销）；Ctrl+S 保存后回只读展示；
+// Ctrl+O fill-missing 灌缓冲（仅补缺失，保留已有配置，可撤销）；保存按编辑语义（macOS Cmd+S，其他平台 Ctrl+S）后回只读展示；
 // Esc 取消编辑直接回 view（放弃未保存改动，toast 提示）。
 // HC-SHORTCUT-SINGLE-SOURCE：键位处理用 keyEvent.name，footer 文案由 shortcuts.ts 按 subMode 解析。
 
@@ -127,8 +129,8 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 		editorRef.current?.replaceText(result.text);
 		setDirty(true);
 		toast.success(result.changed === 0
-			? '配置已是最新，无需补全（Ctrl+Z 撤销 · Ctrl+S 保存）'
-			: `已补全 ${result.changed} 项缺失配置到编辑器（Ctrl+Z 撤销 · Ctrl+S 保存）`);
+			? '配置已是最新，无需补全（可撤销，保存后生效）'
+			: `已补全 ${result.changed} 项缺失配置到编辑器（可撤销，保存后生效）`);
 	};
 
 	const handleSave = (content: string): { ok: boolean; error?: string } => {
@@ -168,7 +170,8 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 	useKeyboard((keyEvent) => {
 		if (!active) return;
 		const name = keyEvent.name;
-		const mod = keyEvent.ctrl || keyEvent.super === true;
+		const appMod = isAppModifier(keyEvent);
+		const editingMod = isEditingModifier(keyEvent);
 
 		// ── view 态 ──
 		if (mode === 'view') {
@@ -186,14 +189,14 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 		// Esc：取消编辑直接回 view
 		if (name === 'escape') { cancelEdit(); return; }
 
-		// 主操作：编辑器获焦时 Ctrl+S 由 TextareaEditor 自管；边栏获焦时由页面兜底保存。
-		if (mod && name === 's' && panel === 'split' && focus === 'recommend') {
+		// 主操作：编辑器获焦时保存由 TextareaEditor 自管；边栏获焦时由页面兜底保存。
+		if (editingMod && name === 's' && panel === 'split' && focus === 'recommend') {
 			handleSave(editorRef.current?.getText() ?? '');
 			return;
 		}
-		if (mod && name === 't') { togglePanel(); return; }
+		if (appMod && name === 't') { togglePanel(); return; }
 		// Ctrl+I 在终端等同 Tab（ASCII 0x09），改用 Ctrl+O 触发 fill-missing 灌缓冲
-		if (mod && name === 'o') { doImport(); return; }
+		if (appMod && name === 'o') { doImport(); return; }
 
 		// 边栏焦点：↑/↓ 滚动推荐；Tab 切回编辑器
 		if (panel === 'split' && focus === 'recommend') {
@@ -215,7 +218,7 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 				{hasContent ? (
 					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
 						<ThemedScrollbox ref={viewScrollRef} style={{flexGrow: 1}}>
-							<ColoredCodeLines content={viewContent} />
+							<CodePreview content={viewContent} filetype="json" />
 						</ThemedScrollbox>
 					</box>
 				) : (
@@ -270,7 +273,7 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 							paddingX={1}
 						>
 							<ThemedScrollbox ref={recommendScrollRef} style={{flexGrow: 1}}>
-								<ColoredCodeLines content={recommendationContent} jsonc />
+								<CodePreview content={recommendationContent} filetype="jsonc" />
 							</ThemedScrollbox>
 						</box>
 					</box>
@@ -281,100 +284,6 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 			) : (
 				editorEl
 			)}
-		</box>
-	);
-}
-
-// ── JSON 手动着色（opentui 未内置 json grammar，回退：纯前端 token 分色）──
-
-type JsonTokenType = 'key' | 'string' | 'number' | 'boolean' | 'punct' | 'space';
-type JsonToken = {readonly type: JsonTokenType; readonly text: string};
-
-/** 按行 tokenize JSON：key（后跟冒号的字符串）/ string / number / boolean·null / 标点 / 空白。 */
-function tokenizeJsonLine(line: string): readonly JsonToken[] {
-	const tokens: JsonToken[] = [];
-	let i = 0;
-	while (i < line.length) {
-		const ch = line[i]!;
-		if (/\s/.test(ch)) {
-			let j = i + 1;
-			while (j < line.length && /\s/.test(line[j]!)) j++;
-			tokens.push({type: 'space', text: line.slice(i, j)});
-			i = j;
-		} else if (ch === '"') {
-			let j = i + 1;
-			while (j < line.length) {
-				if (line[j] === '\\') { j += 2; continue; }
-				if (line[j] === '"') { j++; break; }
-				j++;
-			}
-			const text = line.slice(i, j);
-			let k = j;
-			while (k < line.length && /\s/.test(line[k]!)) k++;
-			tokens.push({type: line[k] === ':' ? 'key' : 'string', text});
-			i = j;
-		} else if (ch === '{' || ch === '}' || ch === '[' || ch === ']' || ch === ':' || ch === ',') {
-			tokens.push({type: 'punct', text: ch});
-			i++;
-		} else if (ch === '-' || (ch >= '0' && ch <= '9')) {
-			let j = i + 1;
-			while (j < line.length && /[-+.eE0-9]/.test(line[j]!)) j++;
-			tokens.push({type: 'number', text: line.slice(i, j)});
-			i = j;
-		} else if (ch >= 'a' && ch <= 'z') {
-			let j = i + 1;
-			while (j < line.length && /[a-z]/.test(line[j]!)) j++;
-			tokens.push({type: 'boolean', text: line.slice(i, j)});
-			i = j;
-		} else {
-			tokens.push({type: 'string', text: ch});
-			i++;
-		}
-	}
-	return tokens;
-}
-
-/** token → 颜色（随终端 dark/light 主题切换，对齐 app.tsx 语法高亮）。 */
-function jsonTokenColor(type: JsonTokenType): string {
-	const { jsonTokens } = getActiveTheme();
-	switch (type) {
-		case 'key': return jsonTokens.key;       // 键名突出
-		case 'string': return jsonTokens.string;  // 字符串值
-		case 'number': return jsonTokens.number;  // 数字
-		case 'boolean': return jsonTokens.boolean; // true/false/null
-		case 'punct': return jsonTokens.punct;  // 标点柔和
-		case 'space': return jsonTokens.space;   // 空白（占位，颜色无关）
-	}
-}
-
-/**
- * 多行 JSON/JSONC 着色渲染（view 态纯 JSON + 边栏 JSONC 共用）。
- * 每行按 token 分色（key/string/number/boolean/punct）；jsonc=true 时 // 注释行用 muted+DIM 柔和区分。
- */
-function ColoredCodeLines({ content, jsonc = false }: { readonly content: string; readonly jsonc?: boolean }) {
-	return (
-		<box flexDirection="column">
-			{content.split('\n').map((line, i) => {
-				const isComment = jsonc && line.trimStart().startsWith('//');
-				if (isComment) {
-					return (
-						<text key={i} fg={colors.muted} attributes={TextAttributes.DIM} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-							{line.length > 0 ? line : ' '}
-						</text>
-					);
-				}
-				return (
-					<box key={i} flexDirection="row">
-						{line.length === 0
-							? <text selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{' '}</text>
-							: tokenizeJsonLine(line).map((tok, j) => (
-								<text key={j} fg={jsonTokenColor(tok.type)} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-									{tok.text.length > 0 ? tok.text : ' '}
-								</text>
-							))}
-					</box>
-				);
-			})}
 		</box>
 	);
 }

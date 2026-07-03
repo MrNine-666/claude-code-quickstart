@@ -20,3 +20,4 @@
 | 2026-06-28 | 36a1c3bd | (pending) | feat(tui): 重构配置页并统一浮窗交互 | 5 | 0 | medium |
 | 2026-06-28 | 19fcce8e | (pending) | fix(ci): 移除旧 Manage 入口引用并复用 TUI 产物 | 4 | 1 | medium |
 | 2026-07-03 | 2663ef2e | (pending) | refactor(installer): 优先复用现有 Node.js 运行时 | 3 | 0 | medium |
+| 2026-07-03 | 992236ca | (pending) | feat(tui): 适配 macOS 快捷键显示与编辑语义 | 4 | 0 | medium |

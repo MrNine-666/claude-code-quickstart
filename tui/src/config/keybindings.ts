@@ -1,5 +1,6 @@
 import type { Binding } from '@opentui/keymap';
 import { commandBindings } from '@opentui/keymap/extras';
+import { appShortcutKey, editingShortcutKey } from '../utils/keyboard.js';
 
 // ============================================================
 // Phase 1B.2：声明式键绑定配置
@@ -94,7 +95,7 @@ export const mcpBindings: Binding[] = commandBindings({
 	[MCP_COMMANDS.EDIT]: 'e',
 	[MCP_COMMANDS.DELETE]: 'd',
 	// form 子模式（与 list 复用按键，靠视图焦点/子模式控制生效时机）
-	[MCP_COMMANDS.FORM_SAVE]: 'ctrl+s',
+	[MCP_COMMANDS.FORM_SAVE]: editingShortcutKey('s'),
 	[MCP_COMMANDS.FORM_CANCEL]: 'escape'
 });
 
@@ -129,9 +130,9 @@ export const PROMPTS_COMMANDS = {
 	ADD: 'prompts:add',                          // a 新建（空白编辑器）
 	EDIT_ENTRY: 'prompts:edit-entry',            // e 编辑现有（载入磁盘内容）
 	// edit 态主操作
-	TOGGLE_PANEL: 'prompts:toggle-panel',        // ctrl+t 开/关推荐边栏
-	IMPORT: 'prompts:import',                    // ctrl+o 推荐灌入缓冲
-	EDITOR_SAVE: 'prompts:editor-save',          // ctrl+s 保存
+	TOGGLE_PANEL: 'prompts:toggle-panel',        // Ctrl+T 开/关推荐边栏（TUI 应用功能）
+	IMPORT: 'prompts:import',                    // Ctrl+O 推荐灌入缓冲（TUI 应用功能）
+	EDITOR_SAVE: 'prompts:editor-save',          // macOS Cmd+S / 其他平台 Ctrl+S 保存（编辑语义）
 	EDITOR_CANCEL: 'prompts:editor-cancel',      // escape 取消编辑回 view
 	// 双栏焦点切换
 	FOCUS_CYCLE: 'prompts:focus-cycle',          // tab 编辑器↔推荐边栏
@@ -143,9 +144,9 @@ export const PROMPTS_COMMANDS = {
 export const promptsBindings: Binding[] = commandBindings({
 	[PROMPTS_COMMANDS.ADD]: 'a',
 	[PROMPTS_COMMANDS.EDIT_ENTRY]: 'e',
-	[PROMPTS_COMMANDS.TOGGLE_PANEL]: 'ctrl+t',
-	[PROMPTS_COMMANDS.IMPORT]: 'ctrl+o',
-	[PROMPTS_COMMANDS.EDITOR_SAVE]: 'ctrl+s',
+	[PROMPTS_COMMANDS.TOGGLE_PANEL]: appShortcutKey('t'),
+	[PROMPTS_COMMANDS.IMPORT]: appShortcutKey('o'),
+	[PROMPTS_COMMANDS.EDITOR_SAVE]: editingShortcutKey('s'),
 	[PROMPTS_COMMANDS.EDITOR_CANCEL]: 'escape',
 	[PROMPTS_COMMANDS.FOCUS_CYCLE]: 'tab',
 	[PROMPTS_COMMANDS.PREVIEW_UP]: 'up',
@@ -160,9 +161,9 @@ export const CONFIG_COMMANDS = {
 	ADD: 'config:add',                          // a 新建（空白 {} 编辑器）
 	EDIT_ENTRY: 'config:edit-entry',            // e 编辑现有（载入磁盘内容）
 	// edit 态主操作
-	TOGGLE_PANEL: 'config:toggle-panel',        // ctrl+t 开/关推荐边栏
-	IMPORT: 'config:import',                    // ctrl+o fill-missing 灌入缓冲（仅补缺失，不覆盖已有）
-	EDITOR_SAVE: 'config:editor-save',          // ctrl+s 保存
+	TOGGLE_PANEL: 'config:toggle-panel',        // Ctrl+T 开/关推荐边栏（TUI 应用功能）
+	IMPORT: 'config:import',                    // Ctrl+O fill-missing 灌入缓冲（TUI 应用功能，仅补缺失）
+	EDITOR_SAVE: 'config:editor-save',          // macOS Cmd+S / 其他平台 Ctrl+S 保存（编辑语义）
 	EDITOR_CANCEL: 'config:editor-cancel',      // escape 取消编辑回 view
 	// 双栏焦点切换
 	FOCUS_CYCLE: 'config:focus-cycle',          // tab 编辑器↔推荐边栏
@@ -174,9 +175,9 @@ export const CONFIG_COMMANDS = {
 export const configBindings: Binding[] = commandBindings({
 	[CONFIG_COMMANDS.ADD]: 'a',
 	[CONFIG_COMMANDS.EDIT_ENTRY]: 'e',
-	[CONFIG_COMMANDS.TOGGLE_PANEL]: 'ctrl+t',
-	[CONFIG_COMMANDS.IMPORT]: 'ctrl+o',
-	[CONFIG_COMMANDS.EDITOR_SAVE]: 'ctrl+s',
+	[CONFIG_COMMANDS.TOGGLE_PANEL]: appShortcutKey('t'),
+	[CONFIG_COMMANDS.IMPORT]: appShortcutKey('o'),
+	[CONFIG_COMMANDS.EDITOR_SAVE]: editingShortcutKey('s'),
 	[CONFIG_COMMANDS.EDITOR_CANCEL]: 'escape',
 	[CONFIG_COMMANDS.FOCUS_CYCLE]: 'tab',
 	[CONFIG_COMMANDS.PREVIEW_UP]: 'up',
