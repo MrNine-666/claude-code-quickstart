@@ -1,4 +1,5 @@
 import type {ComponentId, ManagedComponent} from '../core/tools-manage.js';
+import type {ProgressLevel} from '../core/exec.js';
 
 // 工具管理视图状态机（Phase 11D，design TDR-11）：合并工具安装 + 检查更新为单一全生命周期菜单。
 // grid 卡片范式 + 2D 导航 + 一键批量更新 + 卸载强确认 + per-item install/update/uninstall busy。
@@ -55,6 +56,16 @@ export type ToolsViewState = {
 	readonly uninstallTarget?: ComponentId;
 	readonly errorText?: string;
 	readonly progressByComponent: Readonly<Record<string, string>>;
+	readonly progressLevelByComponent: Readonly<Record<string, ProgressLevel>>;
+};
+
+/** 单 item 完成时的局部字段补丁（就地更新对应 component，不整页重检测/强刷）。 */
+export type ComponentPatch = {
+	readonly installed?: boolean;
+	readonly currentVersion?: string;
+	readonly latestVersion?: string;
+	readonly hasUpdate?: boolean | null;
+	readonly statusHint?: string;
 };
 
 export type ToolsViewAction =
@@ -66,11 +77,12 @@ export type ToolsViewAction =
 	| {readonly type: 'cancel'}
 	| {readonly type: 'item-start'; readonly id: ComponentId; readonly action: ComponentAction}
 	| {readonly type: 'item-done'; readonly id: ComponentId; readonly components: readonly ManagedComponent[]}
+	| {readonly type: 'item-patched'; readonly id: ComponentId; readonly patch: ComponentPatch}
 	| {readonly type: 'item-failed'; readonly id: ComponentId; readonly error: string; readonly components?: readonly ManagedComponent[]}
 	| {readonly type: 'batch-start'; readonly action: ComponentAction; readonly ids: readonly ComponentId[]}
 	| {readonly type: 'batch-done'; readonly components: readonly ManagedComponent[]}
 	| {readonly type: 'batch-failed'; readonly error: string; readonly components?: readonly ManagedComponent[]}
-	| {readonly type: 'progress'; readonly id: string; readonly message: string};
+	| {readonly type: 'progress'; readonly id: string; readonly message: string; readonly level: ProgressLevel};
 
 export function createInitialToolsViewState(): ToolsViewState {
 	return {
@@ -80,7 +92,8 @@ export function createInitialToolsViewState(): ToolsViewState {
 		cursor: 0,
 		itemStatus: {},
 		itemError: {},
-		progressByComponent: {}
+		progressByComponent: {},
+		progressLevelByComponent: {}
 	};
 }
 
@@ -123,15 +136,37 @@ function actionTenseLabel(status: ComponentItemStatus): string {
 	}
 }
 
-/** 活跃任务列表：遍历进行中的组件，每个一项（组件名 + 最新进度），完成（离开进行时态）自动消失、下方上移补齐。 */
-export function activeProgressTasks(state: ToolsViewState): readonly {readonly id: string; readonly name: string; readonly message: string}[] {
+/** 活跃任务列表：遍历进行中的组件，每个一项（组件名 + 最新进度 + level），完成（离开进行时态）自动消失、下方上移补齐。 */
+export function activeProgressTasks(state: ToolsViewState): readonly {readonly id: string; readonly name: string; readonly message: string; readonly level: ProgressLevel}[] {
 	return state.components
 		.filter(component => PROGRESS_STATUSES.has(state.itemStatus[component.id] ?? 'idle'))
-		.map(component => ({
-			id: component.id,
-			name: component.name,
-			message: state.progressByComponent[component.id] ?? actionTenseLabel(state.itemStatus[component.id] ?? 'idle')
-		}));
+		.map(component => {
+			const status = state.itemStatus[component.id] ?? 'idle';
+			return {
+				id: component.id,
+				name: component.name,
+				message: state.progressByComponent[component.id] ?? actionTenseLabel(status),
+				level: state.progressLevelByComponent[component.id] ?? 'info'
+			};
+		});
+}
+
+/** 把 patch 应用到对应 id 的 component，返回新数组（未命中则原样返回）。 */
+function patchComponent(components: readonly ManagedComponent[], id: ComponentId, patch: ComponentPatch): readonly ManagedComponent[] {
+	const before = components.find(component => component.id === id);
+	if (!before) {
+		return components;
+	}
+
+	const patched: ManagedComponent = {
+		...before,
+		installed: patch.installed ?? before.installed,
+		currentVersion: patch.currentVersion ?? before.currentVersion,
+		latestVersion: patch.latestVersion ?? before.latestVersion,
+		hasUpdate: patch.hasUpdate ?? before.hasUpdate,
+		statusHint: patch.statusHint ?? before.statusHint
+	};
+	return components.map(component => (component.id === id ? patched : component));
 }
 
 export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAction): ToolsViewState {
@@ -197,7 +232,22 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				loaded: true,
 				components: action.components,
 				itemStatus: {...state.itemStatus, [action.id]: 'idle'},
-				progressByComponent: omit(state.progressByComponent, action.id)
+				progressByComponent: omit(state.progressByComponent, action.id),
+				progressLevelByComponent: omit(state.progressLevelByComponent, action.id)
+			};
+
+		case 'item-patched':
+			return {
+				...state,
+				mode: 'grid',
+				busyAction: undefined,
+				uninstallTarget: undefined,
+				components: patchComponent(state.components, action.id, action.patch),
+				itemStatus: {...state.itemStatus, [action.id]: 'idle'},
+				itemError: omit(state.itemError, action.id),
+				progressByComponent: omit(state.progressByComponent, action.id),
+				progressLevelByComponent: omit(state.progressLevelByComponent, action.id),
+				errorText: undefined
 			};
 
 		case 'item-failed':
@@ -211,6 +261,7 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				itemStatus: omit(state.itemStatus, action.id), // 失败后清除状态，允许重试
 				itemError: {...state.itemError, [action.id]: action.error},
 				progressByComponent: omit(state.progressByComponent, action.id),
+				progressLevelByComponent: omit(state.progressLevelByComponent, action.id),
 				errorText: action.error
 			};
 
@@ -235,7 +286,8 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				components: action.components,
 				itemStatus: {},
 				itemError: {},
-				progressByComponent: {}
+				progressByComponent: {},
+				progressLevelByComponent: {}
 			};
 
 		case 'batch-failed':
@@ -248,11 +300,16 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				itemStatus: {},
 				itemError: {},
 				progressByComponent: {},
+				progressLevelByComponent: {},
 				errorText: action.error
 			};
 
 		case 'progress':
-			return {...state, progressByComponent: {...state.progressByComponent, [action.id]: action.message}};
+			return {
+				...state,
+				progressByComponent: {...state.progressByComponent, [action.id]: action.message},
+				progressLevelByComponent: {...state.progressLevelByComponent, [action.id]: action.level}
+			};
 
 		default:
 			return state;

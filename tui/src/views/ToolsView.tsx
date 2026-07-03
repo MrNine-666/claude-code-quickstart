@@ -3,7 +3,7 @@ import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 import { Card, ErrorPanel, ListEmptyState, ListLoadingState, Modal, Spinner, StatusDot, ViewHeader, toast, type StatusDotKind } from '../components/index.js';
 import { colors } from '../theme/index.js';
-import type { ProgressCallback } from '../core/exec.js';
+import type {ProgressCallback, ProgressLevel} from '../core/exec.js';
 import type { DetectionState } from '../services/async-detection.js';
 import type { DetectionCache } from '../hooks/use-detection-cache.js';
 import type { DetectionRunner, DetectionStateSink } from '../services/detection-runner.js';
@@ -209,53 +209,55 @@ function enterDefaultAction(view: ToolsViewState, services: ToolsViewServices, d
 // ── 安装（单项 / 批量，失败隔离） ─────────────────────────────────────────────
 
 function progressSink(dispatch: Dispatch, fallbackId: string): ProgressCallback {
-	return (event) => dispatch({ type: 'progress', id: event.componentId ?? fallbackId, message: event.message });
+	return (event) => dispatch({type: 'progress', id: event.componentId ?? fallbackId, message: event.message, level: event.level});
 }
 
 function installOne(component: ManagedComponent, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
-	dispatch({ type: 'item-start', id: component.id, action: 'install' });
+	dispatch({type: 'item-start', id: component.id, action: 'install'});
 	void services
 		.installComponent(component.id, progressSink(dispatch, component.id))
-		.then(async (outcome) => {
-			// 安装完成后立即刷新检测，获取最新状态（支持 ccg-init / shell-script 等需要环境变量刷新的工具）
-			cache.refresh();
-			// 等待检测完成后再更新状态
-			await new Promise(resolve => setTimeout(resolve, 1000));
-			const components = await services.detectComponents();
+		.then((outcome) => {
 			if (outcome.success) {
 				toast.success(`${component.name} 安装成功`);
-				dispatch({ type: 'item-done', id: component.id, components });
+				// 就地 patch 单 item：装好后置为已安装、无更新；版本留空（下次检测/刷新对齐），不整页强刷。
+				dispatch({type: 'item-patched', id: component.id, patch: {installed: true, hasUpdate: false, currentVersion: '', statusHint: undefined}});
 			} else {
-				dispatch({ type: 'item-failed', id: component.id, error: outcome.error ?? `${component.name} 安装失败`, components });
+				dispatch({type: 'item-failed', id: component.id, error: outcome.error ?? `${component.name} 安装失败`});
 			}
 		})
-		.catch(async (error: unknown) => {
-			const components = await services.detectComponents().catch(() => [] as readonly ManagedComponent[]);
-			dispatch({ type: 'item-failed', id: component.id, error: errorMessage(error), components });
+		.catch((error: unknown) => {
+			dispatch({type: 'item-failed', id: component.id, error: errorMessage(error)});
 		});
 }
 
 // ── 更新（单项 / 一键） ───────────────────────────────────────────────────────
 
 function updateOne(component: ManagedComponent, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
-	dispatch({ type: 'item-start', id: component.id, action: 'update' });
+	dispatch({type: 'item-start', id: component.id, action: 'update'});
 	void services
 		.updateComponents([component], progressSink(dispatch, component.id))
-		.then(async (result) => {
-			const components = await services.detectComponents();
+		.then((result) => {
 			const failed = result.updatedItems.some((item) => item.startsWith(`failed::${component.id}`));
 			if (failed) {
-				dispatch({ type: 'item-failed', id: component.id, error: `${component.name} 更新失败`, components });
-			} else {
-				toast.success(`${component.name} 已更新`);
-				dispatch({ type: 'item-done', id: component.id, components });
+				dispatch({type: 'item-failed', id: component.id, error: `${component.name} 更新失败`});
+				return;
 			}
 
-			cache.refresh();
+			toast.success(`${component.name} 已更新`);
+			// 就地 patch：缓存的 latestVersion 即新安装的目标版本，置为 currentVersion 并清掉 hasUpdate，不整页强刷。
+			dispatch({
+				type: 'item-patched',
+				id: component.id,
+				patch: {
+					installed: true,
+					hasUpdate: false,
+					currentVersion: component.latestVersion || component.currentVersion,
+					statusHint: undefined
+				}
+			});
 		})
-		.catch(async (error: unknown) => {
-			const components = await services.detectComponents().catch(() => [] as readonly ManagedComponent[]);
-			dispatch({ type: 'item-failed', id: component.id, error: errorMessage(error), components });
+		.catch((error: unknown) => {
+			dispatch({type: 'item-failed', id: component.id, error: errorMessage(error)});
 		});
 }
 
@@ -354,25 +356,23 @@ function UninstallConfirm({
 }
 
 function runUninstall(component: ManagedComponent, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
-	dispatch({ type: 'confirm-uninstall' });
+	dispatch({type: 'confirm-uninstall'});
 	void services
 		.uninstallComponent(component.id, progressSink(dispatch, component.id))
-		.then(async (outcome) => {
-			const components = await services.detectComponents();
+		.then((outcome) => {
 			if (outcome.success) {
 				toast.success(`${component.name} 已卸载`);
-				dispatch({ type: 'item-done', id: component.id, components });
-				cache.refresh();
+				// 就地 patch：卸载后置为未安装，不整页强刷。
+				dispatch({type: 'item-patched', id: component.id, patch: {installed: false, hasUpdate: null, currentVersion: '', latestVersion: '', statusHint: undefined}});
 			} else {
 				const message = outcome.manualHint
 					? `${outcome.error ?? '卸载失败'}\n${outcome.manualHint}`
 					: outcome.error ?? `${component.name} 卸载失败`;
-				dispatch({ type: 'item-failed', id: component.id, error: message, components });
+				dispatch({type: 'item-failed', id: component.id, error: message});
 			}
 		})
-		.catch(async (error: unknown) => {
-			const components = await services.detectComponents().catch(() => [] as readonly ManagedComponent[]);
-			dispatch({ type: 'item-failed', id: component.id, error: errorMessage(error), components });
+		.catch((error: unknown) => {
+			dispatch({type: 'item-failed', id: component.id, error: errorMessage(error)});
 		});
 }
 
@@ -427,15 +427,29 @@ function ToolCard({
 }
 
 /** 活跃任务进度：遍历进行中的组件，每个一项；完成（离开进行时态）自动从列表消失，下方上移补齐。 */
-function ActiveProgressTasks({tasks}: {readonly tasks: readonly {readonly id: string; readonly name: string; readonly message: string}[]}) {
+function ActiveProgressTasks({tasks}: {readonly tasks: readonly {readonly id: string; readonly name: string; readonly message: string; readonly level: ProgressLevel}[]}) {
 	return (
 		<box flexDirection="column">
-			<text attributes={TextAttributes.BOLD}>执行进度</text>
+			<text fg={colors.text} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>执行进度</text>
 			{tasks.map(task => (
-				<text key={task.id}>· {task.name} · {task.message}</text>
+				<text key={task.id} fg={progressColor(task.level)} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>· {task.name} · {task.message}</text>
 			))}
 		</box>
 	);
+}
+
+/** 进度 level → 主题语义色（light 主题下避免继承默认前景色导致白底白字）。 */
+function progressColor(level: ProgressLevel): string {
+	switch (level) {
+		case 'success':
+			return colors.success;
+		case 'warning':
+			return colors.warning;
+		case 'danger':
+			return colors.danger;
+		default:
+			return colors.info;
+	}
 }
 
 /** 把组件状态 + 执行态映射为圆点语义。执行态优先于版本态。 */

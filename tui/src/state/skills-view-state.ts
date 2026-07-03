@@ -53,6 +53,7 @@ export type SkillsViewAction =
 	| {readonly type: 'cancel'}
 	| {readonly type: 'progress'; readonly message: string}
 	| {readonly type: 'action-done'}
+	| {readonly type: 'action-uninstall-done'; readonly names: readonly string[]}
 	| {readonly type: 'action-failed'; readonly error: string};
 
 export function createInitialSkillsViewState(): SkillsViewState {
@@ -231,6 +232,16 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				installed: state.installed,
 				progress: state.progress
 			};
+
+		case 'action-uninstall-done': {
+			const remaining = state.installed.filter(s => !action.names.includes(s.name));
+			return {
+				...createInitialSkillsViewState(),
+				installed: remaining,
+				installedIndex: clamp(state.installedIndex, filterInstalled(remaining, state.filterText).length),
+				progress: state.progress
+			};
+		}
 
 		case 'action-failed':
 			return {

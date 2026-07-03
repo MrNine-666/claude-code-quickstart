@@ -129,7 +129,7 @@ function handleKey(
 		const mapped = mapActionKey(keyEvent.name);
 		if (mapped === 'enter') {
 			dispatch({type: 'confirm'});
-			runConfirmedAction(view, services, dispatch);
+			runConfirmedAction(view, services, dispatch, cache);
 		} else if (mapped === 'escape') {
 			dispatch({type: 'cancel'});
 		}
@@ -368,7 +368,12 @@ function runSearch(query: string, services: SkillsViewServices, dispatch: Dispat
 	});
 }
 
-function runConfirmedAction(view: SkillsViewState, services: SkillsViewServices, dispatch: Dispatch): void {
+function runConfirmedAction(
+	view: SkillsViewState,
+	services: SkillsViewServices,
+	dispatch: Dispatch,
+	cache: DetectionCache<InstalledSkill[]>
+): void {
 	if (view.mode === 'confirm-install') {
 		const skill = selectedResult(view);
 		if (!skill) {
@@ -380,6 +385,7 @@ function runConfirmedAction(view: SkillsViewState, services: SkillsViewServices,
 			if (res.success) {
 				toast.success(`已安装 ${skill.name}`);
 				dispatch({type: 'action-done'});
+				cache.refresh();
 			} else {
 				dispatch({type: 'action-failed', error: res.error ?? '安装失败'});
 			}
@@ -397,7 +403,8 @@ function runConfirmedAction(view: SkillsViewState, services: SkillsViewServices,
 		void services.uninstall(names, progressSink(dispatch)).then((res) => {
 			if (res.success) {
 				toast.success(`已卸载 ${names.join(', ')}`);
-				dispatch({type: 'action-done'});
+				dispatch({type: 'action-uninstall-done', names});
+				cache.refresh();
 			} else {
 				dispatch({type: 'action-failed', error: res.error ?? '卸载失败'});
 			}
