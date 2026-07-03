@@ -86,7 +86,7 @@ cd tui
 bun run dev
 ```
 
-macOS 硬约束：最低 macOS 12+；使用 Homebrew + nvm（**只做 nvm，不支持 fnm/npm 全局包备份**）；Profile 写入 `~/.zprofile` / `~/.zshrc`；禁止调用 winget、注册表、MSI/EXE、Windows Terminal 或 Windows `$PROFILE`。
+NodeJS 硬约束：Windows/macOS 均优先复用现有 node/npm，版本达标直接跳过。不达标时优先在当前 provider 内安装/更新到 LTS，不做跨 provider 迁移、卸载、PATH 清理或 npm 全局包搬迁。Windows 无法安全修复时才使用 nvm-windows / Node.js 直装兜底。macOS 最低 macOS 12+；若当前 provider 为 fnm/nvm 则通过当前工具安装/切换 LTS，无法原地修复时通过 nvm 官方脚本兜底；Profile 写入 `~/.zprofile` / `~/.zshrc`；禁止调用 winget、注册表、MSI/EXE、Windows Terminal 或 Windows `$PROFILE`。
 
 ---
 

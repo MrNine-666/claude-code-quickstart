@@ -1,5 +1,5 @@
 ﻿# NodeJS-Common.ps1 - Node.js 通用工具层
-# 职责：备份/恢复、卸载、菜单、安装后配置等通用功能
+# 职责：运行时修复/兜底菜单、fnm 原地修复、安装后配置；旧迁移/卸载函数仅作 deprecated 回滚缓冲
 
 #Requires -Version 5.1
 Set-StrictMode -Version Latest
@@ -7,7 +7,9 @@ Set-StrictMode -Version Latest
 function Resolve-NpmForBackup {
     <#
     .SYNOPSIS
-    利用 snapshot 中的环境信息，主动定位并激活 npm（修复 PATH 缺失问题）
+    [已废弃] 利用 snapshot 中的环境信息，主动定位并激活 npm（修复 PATH 缺失问题）
+    .DESCRIPTION
+    新流程不再做跨 provider 迁移与 npm 全局包搬迁，此函数仅保留作为回滚缓冲，无调用点。
     .PARAMETER EnvSnapshot
     Test-NodeJSInstalled 返回的 Data 哈希表
     .RETURNS
@@ -113,7 +115,9 @@ function Resolve-NpmForBackup {
 function Backup-NpmGlobalPackages {
     <#
     .SYNOPSIS
-    备份 npm 全局包（名称和版本）
+    [已废弃] 备份 npm 全局包（名称和版本）
+    .DESCRIPTION
+    新流程不再做跨 provider 迁移，此函数仅保留作为回滚缓冲，无调用点。
     .RETURNS
     备份结果对象
     #>
@@ -185,7 +189,9 @@ function Backup-NpmGlobalPackages {
 function Restore-NpmGlobalPackages {
     <#
     .SYNOPSIS
-    恢复 npm 全局包
+    [已废弃] 恢复 npm 全局包
+    .DESCRIPTION
+    新流程不再做跨 provider 迁移，此函数仅保留作为回滚缓冲，无调用点。
     .PARAMETER Packages
     备份的全局包数组（@{Name;Version}）
     .RETURNS
@@ -250,18 +256,48 @@ function Restore-NpmGlobalPackages {
     return $result
 }
 
-function Show-NodeProviderMenu {
+function Get-NodeProviderDisplayName {
     <#
     .SYNOPSIS
-    干净机器上的 Node provider 选择菜单
+    返回 provider 的用户可见名称。
+    #>
+    param(
+        [string]$ProviderType
+    )
+
+    switch ($ProviderType) {
+        "fnm"      { return "fnm" }
+        "nvm"      { return "nvm-windows" }
+        "direct"   { return "Node.js 直装" }
+        "portable" { return "绿色版 Node.js" }
+        "mixed"    { return "混合 Node.js 环境" }
+        "none"     { return "未安装 Node.js" }
+        default     { return "未知来源 Node.js" }
+    }
+}
+
+function Show-NodeFallbackInstallMenu {
+    <#
+    .SYNOPSIS
+    无法安全原地修复时的兜底安装菜单。
     .RETURNS
     "nvm" / "direct" / "cancel"
     #>
-    param()
+    param(
+        [string]$ActiveProvider = "none",
+        [string]$Reason = ""
+    )
 
-    $choice = Show-SingleSelectMenu -Title "未检测到可用的 Node.js，请选择安装方式：" -Options @(
+    $providerLabel = Get-NodeProviderDisplayName -ProviderType $ActiveProvider
+    $title = if ([string]::IsNullOrWhiteSpace($Reason)) {
+        "当前 Node.js 运行时不可用或无法安全原地更新（来源: $providerLabel），请选择兜底安装方式："
+    } else {
+        "$Reason`n当前来源: $providerLabel`n请选择兜底安装方式："
+    }
+
+    $choice = Show-SingleSelectMenu -Title $title -Options @(
         "nvm-windows（推荐 - 可切换版本）",
-        "Node.js（直接安装，简单，不能切换版本）"
+        "Node.js 直装（简单，不能切换版本）"
     ) -DefaultIndex 0
 
     switch ($choice) {
@@ -271,16 +307,67 @@ function Show-NodeProviderMenu {
     }
 }
 
+function Show-NodeProviderMenu {
+    <#
+    .SYNOPSIS
+    干净机器上的 Node provider 选择菜单。
+    .RETURNS
+    "nvm" / "direct" / "cancel"
+    #>
+    param()
+
+    return (Show-NodeFallbackInstallMenu -ActiveProvider "none" -Reason "未检测到可用的 Node.js。")
+}
+
+function Show-NodeRuntimeRepairMenu {
+    <#
+    .SYNOPSIS
+    当前 provider 可修复时的原地安装/更新菜单。
+    .RETURNS
+    "repair" / "cancel"
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ActiveProvider,
+
+        [string]$NodeVersion = "",
+
+        [string]$RequiredNodeVersion = "20",
+
+        [bool]$NodeAvailable = $false,
+
+        [bool]$NpmAvailable = $false
+    )
+
+    $providerLabel = Get-NodeProviderDisplayName -ProviderType $ActiveProvider
+    $currentVersion = if ([string]::IsNullOrWhiteSpace($NodeVersion)) { "未知" } else { $NodeVersion }
+    $missingParts = @()
+    if (-not $NodeAvailable) { $missingParts += "node" }
+    if (-not $NpmAvailable) { $missingParts += "npm" }
+    $runtimeState = if ($missingParts.Count -gt 0) {
+        "缺失: $($missingParts -join ', ')"
+    } else {
+        "当前版本: $currentVersion，最低要求: v$RequiredNodeVersion+"
+    }
+
+    $choice = Show-SingleSelectMenu -Title "检测到 $providerLabel 可原地修复。`n$runtimeState`n是否通过当前工具安装/切换 Node.js LTS？" -Options @(
+        "安装/更新到 Node.js LTS",
+        "取消（不修改当前环境）"
+    ) -DefaultIndex 0
+
+    switch ($choice) {
+        0 { return "repair" }
+        default { return "cancel" }
+    }
+}
+
 function Show-NodeMigrationMenu {
     <#
     .SYNOPSIS
-    已有 Node 环境时的保留/迁移菜单
-    .PARAMETER CurrentProviderType
-    当前 provider（nvm/direct/portable/mixed）
-    .PARAMETER ProviderHealthy
-    当前 provider 是否健康
-    .RETURNS
-    "keep" / "nvm" / "direct" / "cancel"
+    已废弃：跨 provider 迁移菜单不再使用。
+    .DESCRIPTION
+    保留此函数仅为旧调用点提供兼容缓冲；新流程使用 Show-NodeRuntimeRepairMenu
+    或 Show-NodeFallbackInstallMenu，不卸载现有 provider，不清理 PATH。
     #>
     param(
         [Parameter(Mandatory = $true)]
@@ -289,103 +376,134 @@ function Show-NodeMigrationMenu {
         [bool]$ProviderHealthy = $false
     )
 
-    $title = ""
-    $options = @()
-    $defaultIndex = 0
+    Write-UiWarning "Show-NodeMigrationMenu 已废弃，改用运行时修复/兜底安装流程。" -Level Debug
+    return (Show-NodeFallbackInstallMenu -ActiveProvider $CurrentProviderType -Reason "当前旧菜单已停用。")
+}
 
-    switch ($CurrentProviderType) {
-        "nvm" {
-            $title = "检测到 nvm-windows ，选择后续策略："
-            $options = @(
-                "保留现有 nvm-windows（推荐 - 可切换版本）",
-                "迁移到 Node.js（直接安装，简单，但不能切换版本）"
-            )
-        }
-        "direct" {
-            $title = "检测到 Node.js ，选择后续策略："
-            $options = @(
-                "保留现有 Node.js（直接安装，简单，但不能切换版本）",
-                "迁移到 nvm-windows（推荐 - 可切换版本）"
-            )
-        }
-        "portable" {
-            if ($ProviderHealthy) {
-                $title = "检测到绿色版（portable）Node.js 环境，选择后续策略："
-                $options = @(
-                    "保留现有绿色版环境（最快 - 不迁移）",
-                    "迁移到 nvm-windows（推荐 - 可切换版本）",
-                    "迁移到 Node.js（直接安装，简单，但不能切换版本）"
-                )
-            } else {
-                $title = "检测到绿色版（portable）Node.js 环境，但版本不满足要求，请选择安装方式："
-                $options = @(
-                    "迁移到 nvm-windows（推荐 - 可切换版本）",
-                    "迁移到 Node.js（直接安装，简单，但不能切换版本）"
-                )
-            }
-        }
-        "mixed" {
-            $title = "检测到混合 Node.js 环境，建议迁移到单一 provider："
-            $options = @(
-                "保留现有冲突环境（不推荐 - 可能导致后续步骤异常）",
-                "迁移到 nvm-windows（推荐 - 可切换版本）",
-                "迁移到 Node.js（直接安装，简单，但不能切换版本）"
-            )
-            $defaultIndex = 1
-        }
-        default {
-            return Show-NodeProviderMenu
+function Sync-FnmNodeRuntimePath {
+    <#
+    .SYNOPSIS
+    fnm 安装/切换版本后，同步当前进程 PATH。
+    #>
+    param(
+        [hashtable]$Result = @{}
+    )
+
+    $candidateDirs = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($env:FNM_MULTISHELL_PATH)) {
+        $candidateDirs.Add($env:FNM_MULTISHELL_PATH)
+    }
+
+    $fnmRoots = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:FNM_DIR)) {
+        $fnmRoots += $env:FNM_DIR
+    }
+    $fnmRoots += (Join-Path $env:LOCALAPPDATA "fnm")
+    $fnmRoots += (Join-Path $env:USERPROFILE ".fnm")
+
+    foreach ($root in @($fnmRoots)) {
+        if ([string]::IsNullOrWhiteSpace($root) -or -not (Test-Path $root -PathType Container)) { continue }
+        $versionsRoot = Join-Path $root "node-versions"
+        if (-not (Test-Path $versionsRoot -PathType Container)) { continue }
+
+        $installationDirs = @(Get-ChildItem -Path $versionsRoot -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName "installation" } |
+            Where-Object { Test-Path (Join-Path $_ "node.exe") -PathType Leaf } |
+            Sort-Object -Descending)
+        foreach ($dir in $installationDirs) {
+            $candidateDirs.Add($dir)
         }
     }
 
-    $choice = Show-SingleSelectMenu -Title $title -Options $options -DefaultIndex $defaultIndex
-    if ($choice -eq -1) { return "cancel" }
+    foreach ($dir in @($candidateDirs)) {
+        if ([string]::IsNullOrWhiteSpace($dir)) { continue }
+        $hasNode = Test-Path (Join-Path $dir "node.exe") -PathType Leaf
+        $hasNpm = Test-Path (Join-Path $dir "npm.cmd") -PathType Leaf
+        if (-not ($hasNode -and $hasNpm)) { continue }
 
-    switch ($CurrentProviderType) {
-        "nvm" {
-            switch ($choice) {
-                0 { return "keep" }
-                1 { return "direct" }
+        $normalizedDir = $dir.TrimEnd('\')
+        $pathEntries = @($env:PATH -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $alreadyPresent = $false
+        foreach ($entry in $pathEntries) {
+            if ($entry.Trim().Trim('"').TrimEnd('\') -ieq $normalizedDir) {
+                $alreadyPresent = $true
+                break
             }
         }
-        "direct" {
-            switch ($choice) {
-                0 { return "keep" }
-                1 { return "nvm" }
-            }
+        if (-not $alreadyPresent) {
+            $env:PATH = "$normalizedDir;$env:PATH"
+            Write-UiInfo "  已将 fnm 当前 Node.js 路径注入 PATH: $normalizedDir" -Level Detail
         }
-        "portable" {
-            if ($ProviderHealthy) {
-                switch ($choice) {
-                    0 { return "keep" }
-                    1 { return "nvm" }
-                    2 { return "direct" }
-                }
-            } else {
-                switch ($choice) {
-                    0 { return "nvm" }
-                    1 { return "direct" }
-                }
-            }
-        }
-        "mixed" {
-            switch ($choice) {
-                0 { return "keep" }
-                1 { return "nvm" }
-                2 { return "direct" }
-            }
-        }
+
+        $Result["FnmRuntimePath"] = $normalizedDir
+        return
+    }
+}
+
+function Repair-NodeViaFnm {
+    <#
+    .SYNOPSIS
+    使用现有 fnm 安装/切换 Node.js LTS，不安装或卸载 fnm 本体。
+    .RETURNS
+    安装结果对象
+    #>
+    param()
+
+    $result = @{
+        Success = $false
+        Data = @{}
+        ErrorMessage = ""
+        Message = ""
     }
 
-    return "cancel"
+    try {
+        Write-UiPrimary "📦 通过 fnm 安装/切换 Node.js LTS..." -Level Detail
+        if (-not (Test-CommandAvailable -Command "fnm")) {
+            throw "fnm 命令不可用，无法原地修复当前 fnm 运行时"
+        }
+
+        $fnmVersion = Get-CommandVersion -Command "fnm"
+        if ($fnmVersion) {
+            $result.Data["FnmVersion"] = $fnmVersion
+            Write-UiSuccess "✓ fnm 可用 (版本: $fnmVersion)" -Level Detail
+        }
+
+        $installResult = Invoke-ExternalCommand -Command "fnm" -Arguments @("install", "--lts") -TimeoutSeconds 300 -RetryCount 0
+        if (-not $installResult.Success) {
+            throw "fnm install --lts 失败: $($installResult.Error)"
+        }
+
+        $defaultResult = Invoke-ExternalCommand -Command "fnm" -Arguments @("default", "lts-latest") -TimeoutSeconds 120 -RetryCount 0
+        if (-not $defaultResult.Success) {
+            throw "fnm default lts-latest 失败: $($defaultResult.Error)"
+        }
+
+        $useResult = Invoke-ExternalCommand -Command "fnm" -Arguments @("use", "--install-if-missing", "lts-latest") -TimeoutSeconds 120 -RetryCount 0
+        if (-not $useResult.Success) {
+            throw "fnm use lts-latest 失败: $($useResult.Error)"
+        }
+
+        Refresh-SessionPath
+        Sync-FnmNodeRuntimePath -Result $result.Data
+
+        $result.Success = $true
+        $result.Data["ProviderTarget"] = "fnm"
+        $result.Data["RepairMode"] = "InPlaceFnm"
+        return (Complete-NodeRuntimeInstall -Result $result -ProviderType "fnm")
+    } catch {
+        $result.ErrorMessage = "通过 fnm 修复 Node.js 失败: $($_.Exception.Message)"
+        Write-UiDanger "✗ $($result.ErrorMessage)"
+    }
+
+    return $result
 }
 
 function Remove-PortableNodeFromPath {
     <#
     .SYNOPSIS
-    从持久化 PATH 中移除绿色版（portable）Node.js 路径
+    [已废弃] 从持久化 PATH 中移除绿色版（portable）Node.js 路径
     .DESCRIPTION
-    仅清理 PATH 条目，不删除文件/目录。适用于 portable → nvm/direct 迁移场景。
+    新流程不再清理用户 PATH 或执行 portable → nvm/direct 迁移。此函数仅保留作为回滚缓冲，无调用点。
     .PARAMETER EnvSnapshot
     Test-NodeJSInstalled 返回的 Data 哈希表
     .RETURNS
@@ -539,10 +657,189 @@ function Remove-PortableNodeFromPath {
     return $result
 }
 
+function Uninstall-Fnm {
+    <#
+    .SYNOPSIS
+    [已废弃] 清理 fnm 及其 PATH/Profile 残留。
+    .DESCRIPTION
+    新流程不再卸载 fnm 或执行跨工具迁移。此函数仅保留作为回滚缓冲，无调用点。
+    .PARAMETER EnvSnapshot
+    Test-NodeJSInstalled 返回的 Data 哈希表
+    .RETURNS
+    @{ Success; ErrorMessage; CleanedPaths }
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$EnvSnapshot
+    )
+
+    $result = @{
+        Success = $false
+        ErrorMessage = ""
+        CleanedPaths = @()
+    }
+
+    try {
+        Write-UiWarning "⚠ 开始清理 fnm 环境..." -Level Detail
+
+        $candidatePaths = @(
+            "$env:LOCALAPPDATA\fnm",
+            "$env:USERPROFILE\.fnm"
+        )
+
+        $fnmPath = [string]$EnvSnapshot["FnmPath"]
+        if ($fnmPath -and (Test-Path $fnmPath -PathType Leaf)) {
+            $candidatePaths += (Split-Path -Parent $fnmPath)
+        }
+
+        $cleanedPathMap = @{}
+        foreach ($pathItem in $candidatePaths) {
+            if ([string]::IsNullOrWhiteSpace($pathItem)) { continue }
+            $normalized = $pathItem.Replace("/", "\").Trim().TrimEnd("\")
+            if (-not [string]::IsNullOrWhiteSpace($normalized)) {
+                $cleanedPathMap[$normalized.ToLower()] = $normalized
+            }
+        }
+        $cleanPaths = @($cleanedPathMap.Values)
+
+        if (Test-CommandAvailable -Command "winget") {
+            try {
+                $fnmUninstall = Invoke-ExternalCommand -Command "winget" -Arguments @("uninstall", "--id", "Schniz.fnm", "-e", "--disable-interactivity", "--accept-source-agreements") -SuppressOutput -TimeoutSeconds 240 -RetryCount 0
+                if ($fnmUninstall.Success) {
+                    Write-UiSuccess "✓ winget 卸载 fnm 成功" -Level Debug
+                } else {
+                    Write-UiWarning "⚠ winget 卸载 fnm 失败: $($fnmUninstall.Error)" -Level Debug
+                }
+            } catch {
+                Write-UiWarning "⚠ winget 卸载 fnm 异常: $($_.Exception.Message)" -Level Debug
+            }
+        }
+
+        foreach ($folderPath in $cleanPaths) {
+            if (Test-Path $folderPath) {
+                try {
+                    $oldProgressPreference = $ProgressPreference
+                    $ProgressPreference = 'SilentlyContinue'
+                    Remove-Item -Path $folderPath -Recurse -Force -ErrorAction Stop
+                    $ProgressPreference = $oldProgressPreference
+                    Write-UiSuccess "✓ 已清理目录: $folderPath" -Level Debug
+                } catch {
+                    $ProgressPreference = $oldProgressPreference
+                    Write-UiWarning "⚠ 清理目录失败: $folderPath，原因: $($_.Exception.Message)" -Level Debug
+                }
+            }
+        }
+
+        foreach ($scope in @("Process", "User")) {
+            [Environment]::SetEnvironmentVariable("FNM_DIR", $null, $scope)
+            [Environment]::SetEnvironmentVariable("FNM_MULTISHELL_PATH", $null, $scope)
+        }
+        Remove-Item Env:FNM_DIR -ErrorAction SilentlyContinue
+        Remove-Item Env:FNM_MULTISHELL_PATH -ErrorAction SilentlyContinue
+
+        # 内联清理 $PROFILE 里的 [CCQ:FNM:BEGIN]...[CCQ:FNM:END] 子段
+        # 不依赖已移除的 Profile 子段层死代码链（Remove-CcqSubsectionFromFile 等 6 个函数），
+        # 改为直接逐行剥离 fnm 子段标记块，保持零依赖自洽。仅在用户主动选择迁移时触发，
+        # 与「不主动动用户文件」的默认策略互不冲突。
+        if (Test-Path $PROFILE) {
+            try {
+                $profileContent = @(Get-Content -Path $PROFILE -ErrorAction Stop)
+                $newLines = [System.Collections.ArrayList]::new()
+                $inFnmSection = $false
+                $removedSection = $false
+                foreach ($line in $profileContent) {
+                    $trimmed = ([string]$line).Trim()
+                    if ($trimmed -eq "# [CCQ:FNM:BEGIN]") {
+                        $inFnmSection = $true
+                        $removedSection = $true
+                        continue
+                    }
+                    if ($inFnmSection -and $trimmed -eq "# [CCQ:FNM:END]") {
+                        $inFnmSection = $false
+                        continue
+                    }
+                    if (-not $inFnmSection) {
+                        $null = $newLines.Add($line)
+                    }
+                }
+                if ($removedSection) {
+                    # 用 UTF-8 无 BOM 写回（New-Object 第二参 $false = emitBOM=false），
+                    # 避免 Set-Content -Encoding UTF8 在 PS5.1 下写入 BOM 污染用户的 Profile。
+                    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+                    $linesArray = @($newLines | ForEach-Object { [string]$_ })
+                    [System.IO.File]::WriteAllLines($PROFILE, $linesArray, $utf8NoBom)
+                    Write-UiSuccess "✓ 已从 $PROFILE 移除 fnm 子段" -Level Debug
+                }
+            } catch {
+                Write-UiWarning "⚠ 清理 $PROFILE 的 fnm 子段失败: $($_.Exception.Message)" -Level Debug
+            }
+        }
+
+        $targetMap = @{}
+        foreach ($target in $cleanPaths) {
+            $normalizedTarget = $target.Replace("/", "\").Trim().Trim('"').TrimEnd("\").ToLower()
+            if (-not [string]::IsNullOrWhiteSpace($normalizedTarget)) {
+                $targetMap[$normalizedTarget] = $true
+            }
+        }
+
+        if ($targetMap.Keys.Count -gt 0) {
+            $sessionKept = @()
+            $sessionRemoved = @()
+            foreach ($entry in ($env:PATH -split ";")) {
+                $trimmed = $entry.Trim().Trim('"')
+                if (-not $trimmed) { continue }
+                $normalized = $trimmed.Replace("/", "\").TrimEnd("\").ToLower()
+                if ($targetMap.ContainsKey($normalized)) {
+                    $sessionRemoved += $trimmed
+                } else {
+                    $sessionKept += $trimmed
+                }
+            }
+            if ($sessionRemoved.Count -gt 0) {
+                $env:PATH = $sessionKept -join ";"
+                $result.CleanedPaths += $sessionRemoved
+            }
+
+            $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+            if ($userPath) {
+                $userKept = @()
+                $userRemoved = @()
+                foreach ($entry in ($userPath -split ";")) {
+                    $trimmed = $entry.Trim().Trim('"')
+                    if (-not $trimmed) { continue }
+                    $normalized = $trimmed.Replace("/", "\").TrimEnd("\").ToLower()
+                    if ($targetMap.ContainsKey($normalized)) {
+                        $userRemoved += $trimmed
+                    } else {
+                        $userKept += $trimmed
+                    }
+                }
+                if ($userRemoved.Count -gt 0) {
+                    [Environment]::SetEnvironmentVariable("PATH", ($userKept -join ";"), "User")
+                    $result.CleanedPaths += $userRemoved
+                }
+            }
+        }
+
+        Refresh-SessionPath
+
+        $result.Success = $true
+        Write-UiSuccess "✓ fnm 清理完成" -Level Detail
+    } catch {
+        $result.ErrorMessage = "清理 fnm 失败: $($_.Exception.Message)"
+        Write-UiDanger "✗ $($result.ErrorMessage)"
+    }
+
+    return $result
+}
+
 function Uninstall-ExistingNode {
     <#
     .SYNOPSIS
-    卸载冲突的 Node.js 管理工具和直接安装版本
+    [已废弃] 卸载冲突的 Node.js 管理工具和直接安装版本。
+    .DESCRIPTION
+    新流程不再卸载现有 nvm/direct provider 或清理其 PATH。此函数仅保留作为回滚缓冲，无调用点。
     .PARAMETER EnvSnapshot
     Test-NodeJSInstalled 返回的环境快照 Data
     .PARAMETER SkipDirect
@@ -587,12 +884,50 @@ function Uninstall-ExistingNode {
             $candidatePaths += (Split-Path -Parent $npmPath)
         }
 
+        # 计算受保护的 provider 路径归属基准（尊重 SkipNvm / SkipDirect）：
+        #   - nvm 归属：NvmHome 子树 / NVM_SYMLINK（symlink 目录，通常即 %ProgramFiles%\nodejs）
+        #   - direct 归属：%ProgramFiles%\nodejs / %ProgramFiles(x86)%\nodejs
+        #   - 若 %ProgramFiles%\nodejs 同时是 nvm 的 symlink，则优先算 nvm 归属
+        # 目的：迁移目标为某 provider 时该 provider 被故意保留，其 PATH 不应被清除，
+        #       否则会误删保留方的持久 PATH（历史 bug：SkipNvm 时仍清 nvm 路径）。
+        $nvmHomeNorm = [string]$EnvSnapshot["NvmHome"]
+        if ([string]::IsNullOrWhiteSpace($nvmHomeNorm)) { $nvmHomeNorm = Join-Path $env:APPDATA "nvm" }
+        $nvmHomeNorm = $nvmHomeNorm.Replace("/", "\").TrimEnd("\").ToLower()
+
+        $nvmSymlinkNorm = [Environment]::GetEnvironmentVariable("NVM_SYMLINK", "Process")
+        if ([string]::IsNullOrWhiteSpace($nvmSymlinkNorm)) { $nvmSymlinkNorm = [Environment]::GetEnvironmentVariable("NVM_SYMLINK", "User") }
+        if ([string]::IsNullOrWhiteSpace($nvmSymlinkNorm)) { $nvmSymlinkNorm = [Environment]::GetEnvironmentVariable("NVM_SYMLINK", "Machine") }
+        if (-not [string]::IsNullOrWhiteSpace($nvmSymlinkNorm)) {
+            $nvmSymlinkNorm = $nvmSymlinkNorm.Replace("/", "\").TrimEnd("\").ToLower()
+        } else {
+            $nvmSymlinkNorm = ""
+        }
+
+        $pfNodeNorm = "$env:ProgramFiles\nodejs".Replace("/", "\").TrimEnd("\").ToLower()
+        $pfx86NodeNorm = "${env:ProgramFiles(x86)}\nodejs".Replace("/", "\").TrimEnd("\").ToLower()
+
         foreach ($pathItem in $candidatePaths) {
             if ([string]::IsNullOrWhiteSpace($pathItem)) { continue }
             $normalized = $pathItem.Replace("/", "\").Trim().TrimEnd("\")
-            if (-not [string]::IsNullOrWhiteSpace($normalized)) {
-                $cleanedPathMap[$normalized.ToLower()] = $normalized
+            if ([string]::IsNullOrWhiteSpace($normalized)) { continue }
+            $normalizedLower = $normalized.ToLower()
+
+            # 归属判定
+            $isNvmOwned = ($normalizedLower -eq $nvmHomeNorm) -or
+                          $normalizedLower.StartsWith($nvmHomeNorm + "\") -or
+                          ($nvmSymlinkNorm -and $normalizedLower -eq $nvmSymlinkNorm)
+            $isDirectOwned = ($normalizedLower -eq $pfNodeNorm) -or ($normalizedLower -eq $pfx86NodeNorm)
+            # %ProgramFiles%\nodejs 若同时是 nvm symlink，优先算 nvm（避免 SkipNvm 时误清）
+            if ($nvmSymlinkNorm -and $nvmSymlinkNorm -eq $pfNodeNorm -and $normalizedLower -eq $pfNodeNorm) {
+                $isNvmOwned = $true
+                $isDirectOwned = $false
             }
+
+            # 保留方路径跳过：SkipNvm 保护 nvm 归属；SkipDirect 保护 direct 归属（且非 nvm 归属）
+            if ($SkipNvm -and $isNvmOwned) { continue }
+            if ($SkipDirect -and $isDirectOwned -and -not $isNvmOwned) { continue }
+
+            $cleanedPathMap[$normalizedLower] = $normalized
         }
         $cleanPaths = @($cleanedPathMap.Values)
 
@@ -847,8 +1182,10 @@ function Uninstall-ExistingNode {
         }
 
         # 卸载残留检查
+        # 注意：nvm/direct 残留检查必须带 -and -not $SkipNvm/-SkipDirect 守卫，
+        # 否则迁移目标本身就是该 provider（故意保留）时，会把「故意保留的安装」误报为残留并 throw。
         $residualIssues = @()
-        if ([bool]$EnvSnapshot["NvmDetected"]) {
+        if ([bool]$EnvSnapshot["NvmDetected"] -and -not $SkipNvm) {
             if (Test-Path "$env:APPDATA\nvm") {
                 $residualIssues += "$env:APPDATA\nvm 仍存在"
             }
@@ -1016,11 +1353,11 @@ function Sync-NvmNodeRuntimePath {
 function Complete-NodeRuntimeInstall {
     <#
     .SYNOPSIS
-    统一完成 Node.js安装后的校验、npm 配置与全局包恢复
+    统一完成 Node.js安装后的校验与 npm 配置
     .PARAMETER Result
     当前 provider 安装结果对象
     .PARAMETER ProviderType
-    provider 类型（nvm/direct）
+    provider 类型（fnm/nvm/direct）
     .PARAMETER ShouldRestoreGlobalPackages
     是否恢复 npm 全局包
     .PARAMETER GlobalPackagesBackup
@@ -1050,6 +1387,8 @@ function Complete-NodeRuntimeInstall {
         Refresh-SessionPath
         if ($ProviderType -eq "nvm") {
             Sync-NvmNodeRuntimePath -Result $Result
+        } elseif ($ProviderType -eq "fnm") {
+            Sync-FnmNodeRuntimePath -Result $Result.Data
         }
 
         if (-not (Test-CommandAvailable -Command "node")) {
@@ -1058,6 +1397,8 @@ function Complete-NodeRuntimeInstall {
         if (-not (Test-CommandAvailable -Command "npm")) {
             if ($ProviderType -eq "nvm") {
                 Sync-NvmNodeRuntimePath -Result $Result
+            } elseif ($ProviderType -eq "fnm") {
+                Sync-FnmNodeRuntimePath -Result $Result.Data
             }
             if (-not (Test-CommandAvailable -Command "npm")) {
                 throw "npm 安装后仍不可用，请检查 PATH 配置"
@@ -1167,9 +1508,9 @@ function Complete-NodeRuntimeInstall {
             Write-UiInfo "  无需恢复 npm 全局包" -Level Detail
         }
 
-        # nvm-windows / direct 均由各自工具或系统 PATH 管理，无需写入 PowerShell Profile
+        # fnm / nvm-windows / direct 均由各自工具或系统 PATH 管理，无需写入 PowerShell Profile
         $Result.Data["ProfileConfigured"] = $true
-        Write-UiInfo "  nvm/direct 无需写入 PowerShell Profile" -Level Detail
+        Write-UiInfo "  fnm/nvm/direct 无需写入 PowerShell Profile" -Level Detail
 
         $Result.Data["ProviderType"] = $ProviderType
         $Result.Data["ProviderHealthy"] = $true

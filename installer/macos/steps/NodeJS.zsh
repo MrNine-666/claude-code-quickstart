@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
-# NodeJS.zsh - macOS Node.js / nvm 安装步骤
-# 功能: 通过 nvm 官方安装脚本安装 Node.js LTS 并验证 node/npm
+# NodeJS.zsh - macOS Node.js / fnm / nvm 安装步骤
+# 功能: 优先复用现有 node/npm；不达标时优先使用当前 fnm/nvm 安装/切换 LTS，最后用 nvm 官方脚本兜底
 
 if [ -n "${CCQ_STEP_NODEJS_ZSH_LOADED:-}" ]; then
   return 0 2>/dev/null || exit 0
@@ -27,6 +27,75 @@ ccq_nodejs_major() {
   local version="${1:-}"
   version="${version#v}"
   printf '%s' "${version%%.*}"
+}
+
+ccq_nodejs_versions_ok() {
+  if ! ccq_command_exists node || ! ccq_command_exists npm; then
+    return 1
+  fi
+  local node_version node_major
+  node_version="$(node --version 2>/dev/null || true)"
+  node_major="$(ccq_nodejs_major "${node_version}")"
+  [ -n "${node_major}" ] && [ "${node_major}" -ge "${CCQ_REQUIRED_NODE_MAJOR}" ]
+}
+
+ccq_nodejs_command_path() {
+  local command_name="${1:-}"
+  [ -z "${command_name}" ] && return 1
+  command -v "${command_name}" 2>/dev/null || true
+}
+
+ccq_nodejs_command_source() {
+  local command_path="${1:-}"
+  [ -z "${command_path}" ] && {
+    printf '%s' 'unknown'
+    return 0
+  }
+
+  case "${command_path}" in
+    */.fnm/*|*/fnm/node-versions/*|*/fnm_multishells/*)
+      printf '%s' 'fnm'
+      return 0
+      ;;
+    */.nvm/*|*/nvm/versions/node/*)
+      printf '%s' 'nvm'
+      return 0
+      ;;
+    /opt/homebrew/*|/usr/local/*)
+      printf '%s' 'homebrew'
+      return 0
+      ;;
+    *)
+      printf '%s' 'portable'
+      return 0
+      ;;
+  esac
+}
+
+ccq_nodejs_active_provider() {
+  local node_path npm_path node_source npm_source
+  node_path="$(ccq_nodejs_command_path node)"
+  npm_path="$(ccq_nodejs_command_path npm)"
+  if [ -z "${node_path}" ] && [ -z "${npm_path}" ]; then
+    if ccq_nodejs_load_nvm >/dev/null 2>&1; then
+      printf '%s' 'nvm'
+      return 0
+    fi
+    printf '%s' 'none'
+    return 0
+  fi
+
+  node_source="$(ccq_nodejs_command_source "${node_path}")"
+  npm_source="$(ccq_nodejs_command_source "${npm_path}")"
+  if [ -n "${node_path}" ] && [ -n "${npm_path}" ] && [ "${node_source}" != "${npm_source}" ] && [ "${npm_source}" != "unknown" ]; then
+    printf '%s' 'unknown'
+    return 0
+  fi
+  if [ -n "${node_path}" ]; then
+    printf '%s' "${node_source}"
+  else
+    printf '%s' "${npm_source}"
+  fi
 }
 
 ccq_nodejs_nvm_dir() {
@@ -103,16 +172,6 @@ ccq_nodejs_extract_nvm_error() {
   [ -n "${last_line}" ] && printf '%s' "${last_line}" || printf '%s' '未获取到 nvm 安装输出'
 }
 
-ccq_nodejs_versions_ok() {
-  if ! ccq_command_exists node || ! ccq_command_exists npm; then
-    return 1
-  fi
-  local node_version node_major
-  node_version="$(node --version 2>/dev/null || true)"
-  node_major="$(ccq_nodejs_major "${node_version}")"
-  [ -n "${node_major}" ] && [ "${node_major}" -ge "${CCQ_REQUIRED_NODE_MAJOR}" ]
-}
-
 ccq_nodejs_install_nvm_official() {
   if ccq_nodejs_load_nvm; then
     return 0
@@ -169,36 +228,105 @@ ccq_nodejs_install_via_nvm() {
   fi
 }
 
-Test-NodeJSInstalled() {
-  ccq_refresh_path
+ccq_nodejs_install_via_existing_nvm() {
   if ! ccq_nodejs_load_nvm; then
-    ccq_nodejs_result false "$(node --version 2>/dev/null || true)" "nvm 未安装或当前会话无法加载，将通过 nvm 官方脚本安装 Node.js"
+    CCQ_NODEJS_ERROR="检测到 nvm，但当前会话无法加载：${CCQ_NODEJS_LOAD_ERROR:-未知错误}"
+    return 1
+  fi
+  ccq_nodejs_install_via_nvm
+}
+
+ccq_nodejs_install_via_fnm() {
+  if ! ccq_command_exists fnm; then
+    CCQ_NODEJS_ERROR="fnm 命令不可用，无法通过当前 fnm 安装 Node.js LTS"
+    return 1
+  fi
+
+  if ! ccq_run_native_command fnm install --lts; then
+    CCQ_NODEJS_ERROR="fnm install --lts 失败"
+    return 1
+  fi
+  if ! ccq_run_native_command fnm default lts-latest; then
+    CCQ_NODEJS_ERROR="fnm default lts-latest 失败"
+    return 1
+  fi
+  if ! ccq_run_native_command fnm use --install-if-missing lts-latest; then
+    CCQ_NODEJS_ERROR="fnm use lts-latest 失败"
+    return 1
+  fi
+  ccq_refresh_path
+}
+
+ccq_nodejs_install_runtime_lts() {
+  local active_provider="${1:-}"
+  case "${active_provider}" in
+    fnm)
+      ccq_nodejs_install_via_fnm
+      return $?
+      ;;
+    nvm)
+      ccq_nodejs_install_via_existing_nvm
+      return $?
+      ;;
+    *)
+      ccq_nodejs_install_via_nvm
+      return $?
+      ;;
+  esac
+}
+
+Test-NodeJSInstalled() {
+  if ccq_nodejs_versions_ok; then
+    ccq_nodejs_result true "$(node --version 2>/dev/null || true)" "Node.js 与 npm 已就绪"
     return 0
   fi
-  if ! ccq_nodejs_versions_ok; then
-    ccq_nodejs_result false "$(node --version 2>/dev/null || true)" "Node.js 未安装或版本低于 v${CCQ_REQUIRED_NODE_MAJOR}"
+
+  # 当前 PATH 不满足时再刷新常见路径 / nvm default 作为兜底；避免一开始就 source nvm
+  # 覆盖用户当前已可用的 fnm/Homebrew/直装 Node.js。
+  ccq_refresh_path
+  if ccq_nodejs_versions_ok; then
+    ccq_nodejs_result true "$(node --version 2>/dev/null || true)" "Node.js 与 npm 已就绪"
     return 0
   fi
-  ccq_nodejs_result true "$(node --version 2>/dev/null || true)" "Node.js 与 npm 已通过 nvm 就绪"
+
+  local active_provider
+  active_provider="$(ccq_nodejs_active_provider)"
+  case "${active_provider}" in
+    fnm)
+      ccq_nodejs_result false "$(node --version 2>/dev/null || true)" "Node.js 未安装、npm 不可用或版本低于 v${CCQ_REQUIRED_NODE_MAJOR}，将通过当前 fnm 安装/切换 LTS"
+      ;;
+    nvm)
+      ccq_nodejs_result false "$(node --version 2>/dev/null || true)" "Node.js 未安装、npm 不可用或版本低于 v${CCQ_REQUIRED_NODE_MAJOR}，将通过当前 nvm 安装/切换 LTS"
+      ;;
+    *)
+      ccq_nodejs_result false "$(node --version 2>/dev/null || true)" "Node.js 未安装、npm 不可用或版本低于 v${CCQ_REQUIRED_NODE_MAJOR}，将通过 nvm 官方脚本安装 Node.js"
+      ;;
+  esac
 }
 
 Install-NodeJS() {
-  local error_message=""
+  local error_message="" active_provider=""
 
-  ccq_refresh_path
-  if ccq_nodejs_load_nvm && ccq_nodejs_versions_ok; then
+  if ccq_nodejs_versions_ok; then
     ccq_nodejs_install_result true "$(node --version 2>/dev/null || true)" "$(npm --version 2>/dev/null || true)" ""
     return 0
   fi
 
-  ccq_nodejs_install_via_nvm || {
-    error_message="${CCQ_NODEJS_ERROR:-通过 nvm 官方方式安装 Node.js 失败}"
+  ccq_refresh_path
+  if ccq_nodejs_versions_ok; then
+    ccq_nodejs_install_result true "$(node --version 2>/dev/null || true)" "$(npm --version 2>/dev/null || true)" ""
+    return 0
+  fi
+
+  active_provider="$(ccq_nodejs_active_provider)"
+  ccq_nodejs_install_runtime_lts "${active_provider}" || {
+    error_message="${CCQ_NODEJS_ERROR:-安装 Node.js LTS 失败}"
     ccq_nodejs_install_result false "" "" "${error_message}"
     return 1
   }
 
   ccq_refresh_path
-  if ! ccq_nodejs_load_nvm || ! ccq_nodejs_versions_ok; then
+  if ! ccq_nodejs_versions_ok; then
     error_message="Node.js 安装后验证失败"
     ccq_nodejs_install_result false "$(node --version 2>/dev/null || true)" "$(npm --version 2>/dev/null || true)" "${error_message}"
     return 1
@@ -208,12 +336,19 @@ Install-NodeJS() {
 }
 
 Verify-NodeJS() {
-  ccq_refresh_path
-  if ccq_nodejs_load_nvm && ccq_nodejs_versions_ok; then
+  if ccq_nodejs_versions_ok; then
     printf 'Success=true\n'
     printf 'ErrorMessage=\n'
     return 0
   fi
+
+  ccq_refresh_path
+  if ccq_nodejs_versions_ok; then
+    printf 'Success=true\n'
+    printf 'ErrorMessage=\n'
+    return 0
+  fi
+
   printf 'Success=false\n'
   printf 'ErrorMessage=Node.js 或 npm 验证失败\n'
   return 1

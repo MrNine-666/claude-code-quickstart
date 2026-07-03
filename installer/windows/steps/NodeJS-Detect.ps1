@@ -1,13 +1,167 @@
 ﻿# NodeJS-Detect.ps1 - Node.js 环境检测层
-# 职责：检测 nvm/direct/portable 三种 provider 的安装状态
+# 职责：检测当前 node/npm 运行时状态，并推断实际生效 provider 以便原地修复
+# 注：fnm 仅在当前 node 来自 fnm 且 fnm 命令可用时尝试原地安装/切换 LTS，本安装器不再安装 fnm 或跨 provider 迁移
 
 #Requires -Version 5.1
 Set-StrictMode -Version Latest
 
+function Get-NodeEnvironmentValue {
+    <#
+    .SYNOPSIS
+    按 Process/User/Machine 顺序读取环境变量。
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    foreach ($scope in @("Process", "User", "Machine")) {
+        $value = [Environment]::GetEnvironmentVariable($Name, $scope)
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            return $value
+        }
+    }
+
+    return ""
+}
+
+function ConvertTo-NormalizedNodePath {
+    <#
+    .SYNOPSIS
+    归一化 Windows 路径，便于 provider 归属判断。
+    #>
+    param(
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    $normalized = $Path.Trim().Trim('"')
+    try {
+        $normalized = [System.IO.Path]::GetFullPath($normalized)
+    } catch {
+        # 部分 PATH 条目可能不是标准文件路径，保留原值继续做字符串判断。
+    }
+
+    return $normalized.Replace("/", "\").TrimEnd("\").ToLowerInvariant()
+}
+
+function Test-NodePathIsUnderRoot {
+    <#
+    .SYNOPSIS
+    判断路径是否等于 root 或位于 root 子树内。
+    #>
+    param(
+        [string]$Path,
+        [string]$Root
+    )
+
+    $normalizedPath = ConvertTo-NormalizedNodePath -Path $Path
+    $normalizedRoot = ConvertTo-NormalizedNodePath -Path $Root
+    if ([string]::IsNullOrWhiteSpace($normalizedPath) -or [string]::IsNullOrWhiteSpace($normalizedRoot)) {
+        return $false
+    }
+
+    return ($normalizedPath -eq $normalizedRoot) -or $normalizedPath.StartsWith($normalizedRoot + "\")
+}
+
+function Get-NodeCommandSource {
+    <#
+    .SYNOPSIS
+    根据 node/npm 实际解析路径推断 active provider。
+    .RETURNS
+    fnm / nvm / direct / portable / unknown
+    #>
+    param(
+        [string]$CommandPath,
+        [string]$NvmHome
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CommandPath)) {
+        return "unknown"
+    }
+
+    $normalizedPath = ConvertTo-NormalizedNodePath -Path $CommandPath
+    $commandDir = ""
+    try {
+        $commandDir = Split-Path -Parent $CommandPath
+    } catch {
+        $commandDir = ""
+    }
+    $normalizedDir = ConvertTo-NormalizedNodePath -Path $commandDir
+
+    if ($normalizedPath.Contains("\.fnm\") -or
+        $normalizedPath.Contains("\fnm\node-versions\") -or
+        $normalizedPath.Contains("\fnm_multishells\")) {
+        return "fnm"
+    }
+
+    $effectiveNvmHome = $NvmHome
+    if ([string]::IsNullOrWhiteSpace($effectiveNvmHome)) {
+        $effectiveNvmHome = Get-NodeEnvironmentValue -Name "NVM_HOME"
+    }
+    if ([string]::IsNullOrWhiteSpace($effectiveNvmHome)) {
+        $effectiveNvmHome = Join-Path $env:APPDATA "nvm"
+    }
+
+    $nvmSymlink = Get-NodeEnvironmentValue -Name "NVM_SYMLINK"
+    if ((Test-NodePathIsUnderRoot -Path $normalizedDir -Root $effectiveNvmHome) -or
+        (-not [string]::IsNullOrWhiteSpace($nvmSymlink) -and (ConvertTo-NormalizedNodePath -Path $normalizedDir) -eq (ConvertTo-NormalizedNodePath -Path $nvmSymlink))) {
+        return "nvm"
+    }
+
+    $programFilesNode = Join-Path $env:ProgramFiles "nodejs"
+    $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)", "Process")
+    $directRoots = @($programFilesNode)
+    if (-not [string]::IsNullOrWhiteSpace($programFilesX86)) {
+        $directRoots += (Join-Path $programFilesX86 "nodejs")
+    }
+
+    foreach ($directRoot in $directRoots) {
+        $normalizedDirectRoot = ConvertTo-NormalizedNodePath -Path $directRoot
+        if ((ConvertTo-NormalizedNodePath -Path $normalizedDir) -eq $normalizedDirectRoot) {
+            $directRootItem = Get-Item -Path $directRoot -Force -ErrorAction SilentlyContinue
+            if ($directRootItem -and ($directRootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                return "nvm"
+            }
+            return "direct"
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($normalizedPath)) {
+        return "portable"
+    }
+
+    return "unknown"
+}
+
+function Test-NodeProviderCanRepairInPlace {
+    <#
+    .SYNOPSIS
+    判断 active provider 是否能用同一工具安装/切换 LTS。
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ActiveProvider,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Data
+    )
+
+    switch ($ActiveProvider) {
+        "fnm"    { return [bool]$Data["FnmAvailable"] }
+        "nvm"    { return ([bool]$Data["NvmCommandAvailable"] -or (Test-CommandAvailable -Command "nvm")) }
+        "direct" { return $true }
+        default  { return $false }
+    }
+}
+
 function Test-NodeJSInstalled {
     <#
     .SYNOPSIS
-    测试步骤 01 是否已完成（Node.js 安装）
+    测试步骤 01 是否已完成（Node.js 运行时就绪；同时推断 active provider 以便原地修复）
     .RETURNS
     标准检测结果 hashtable（IsInstalled, Version, Data, Message）
     #>
@@ -25,12 +179,14 @@ function Test-NodeJSInstalled {
     }
 
     try {
-        Write-UiPrimary "🔍 检查 Node.js 安装状态..." -Level Detail
+        Write-UiPrimary "🔍 检查 Node.js 运行时状态..." -Level Detail
 
-        # 检查 node/npm 是否可用（使用 ReturnDetails 获取完整信息）
+        # 检查 fnm/node/npm 是否可用（使用 ReturnDetails 获取完整信息）
+        $fnmDetails = Test-CommandAvailable -Command "fnm" -ReturnDetails
         $nodeDetails = Test-CommandAvailable -Command "node" -ReturnDetails
         $npmDetails = Test-CommandAvailable -Command "npm" -ReturnDetails
 
+        $fnmAvailable = [bool]$fnmDetails.Available
         $nodeAvailable = [bool]$nodeDetails.Available
         $npmAvailable = [bool]$npmDetails.Available
 
@@ -79,7 +235,7 @@ function Test-NodeJSInstalled {
                     }
                 } catch {
                     # 0x8A150014 (-1978335212) = APPINSTALLER_CLI_ERROR_NO_APPLICATIONS_FOUND
-                    # winget 未找到匹配包是正常情况（Node.js 可能通过 nvm 安装），静默忽略
+                    # winget 未找到匹配包是正常情况（Node.js 可能通过 fnm/nvm 安装），静默忽略
                     if ($_.Exception.Message -notmatch '-1978335212|8A150014|找不到.*匹配') {
                         Write-UiWarning "⚠ winget list Node.js 检测失败: $($_.Exception.Message)" -Level Detail
                     }
@@ -92,9 +248,13 @@ function Test-NodeJSInstalled {
 
         # 检测绿色版（portable）Node.js：node/npm 可用但无任何已知 provider 信号
         $portableNodeDetected = $nodeAvailable -and $npmAvailable -and
-            -not $nvmDetected -and -not $directNodeDetected
+            -not $fnmAvailable -and -not $nvmDetected -and -not $directNodeDetected
 
         # 核心检测数据
+        $result.Data["FnmAvailable"] = $fnmAvailable
+        $result.Data["FnmPath"] = $fnmDetails.ResolvedPath
+        $result.Data["NodeAvailable"] = $nodeAvailable
+        $result.Data["NpmAvailable"] = $npmAvailable
         $result.Data["NodePath"] = $nodeDetails.ResolvedPath
         $result.Data["NpmPath"] = $npmDetails.ResolvedPath
         $result.Data["NvmDetected"] = $nvmDetected
@@ -104,21 +264,38 @@ function Test-NodeJSInstalled {
         $result.Data["PortableNodeDetected"] = $portableNodeDetected
         $result.Data["WingetNodeInstalledId"] = $wingetNodeInstalledId
 
+        $nodePathSource = if ($nodeAvailable) { Get-NodeCommandSource -CommandPath $nodeDetails.ResolvedPath -NvmHome $nvmHome } else { "unknown" }
+        $npmPathSource = if ($npmAvailable) { Get-NodeCommandSource -CommandPath $npmDetails.ResolvedPath -NvmHome $nvmHome } else { "unknown" }
+        $activeProvider = if ($nodeAvailable) { $nodePathSource } elseif ($npmAvailable) { $npmPathSource } else { "none" }
+        if ($nodeAvailable -and $npmAvailable -and $nodePathSource -ne $npmPathSource -and $npmPathSource -ne "unknown") {
+            $activeProvider = "unknown"
+        }
+
+        $result.Data["NodePathSource"] = $nodePathSource
+        $result.Data["NpmPathSource"] = $npmPathSource
+        $result.Data["ActiveProvider"] = $activeProvider
+
         # 输出检测结果
+        if ($fnmAvailable) {
+            Write-UiInfo "ℹ 检测到 fnm 环境（用于原地安装/切换 LTS，不会迁移或卸载 fnm）" -Level Detail
+            $fnmVersion = Get-CommandVersion -Command "fnm"
+            if ($fnmVersion) { Write-UiInfo "  fnm 版本: $fnmVersion" -Level Detail }
+        }
+
         if ($nvmDetected) {
-            Write-UiWarning "⚠ 检测到 nvm-windows 环境" -Level Detail
+            Write-UiInfo "ℹ 检测到 nvm-windows 环境" -Level Detail
             if ($nvmHome) { Write-UiInfo "  NVM_HOME: $nvmHome" -Level Detail }
         }
 
         if ($directNodeDetected) {
-            Write-UiWarning "⚠ 检测到直接安装的 Node.js 环境" -Level Detail
+            Write-UiInfo "ℹ 检测到直接安装的 Node.js 环境" -Level Detail
             if ($wingetNodeInstalledId) {
                 Write-UiInfo "  winget 安装记录: $wingetNodeInstalledId" -Level Detail
             }
         }
 
         if ($portableNodeDetected) {
-            Write-UiInfo "✓ 检测到绿色版（portable）Node.js 环境" -Level Detail
+            Write-UiInfo "ℹ 检测到绿色版（portable）Node.js 环境" -Level Detail
             if ($nodeDetails.ResolvedPath) {
                 Write-UiInfo "  路径: $($nodeDetails.ResolvedPath)" -Level Detail
             }
@@ -163,6 +340,7 @@ function Test-NodeJSInstalled {
 
         # Provider 信号判定（基于直接信号，不依赖路径推断）
         $providerSignals = @{}
+        if ($fnmAvailable) { $providerSignals["fnm"] = $true }
         if ($nvmDetected) { $providerSignals["nvm"] = $true }
         if ($directNodeDetected) { $providerSignals["direct"] = $true }
         if ($portableNodeDetected) { $providerSignals["portable"] = $true }
@@ -176,32 +354,31 @@ function Test-NodeJSInstalled {
 
         $providerHealthy = $false
         switch ($providerType) {
+            "fnm"      { $providerHealthy = $nodeAvailable -and $npmAvailable -and $nodeVersionSatisfied -and $fnmAvailable }
             "nvm"      { $providerHealthy = $nodeAvailable -and $npmAvailable -and $nodeVersionSatisfied -and $nvmDetected }
             "direct"   { $providerHealthy = $nodeAvailable -and $npmAvailable -and $nodeVersionSatisfied -and $directNodeDetected }
             "portable" { $providerHealthy = $nodeAvailable -and $npmAvailable -and $nodeVersionSatisfied }
         }
+        $nodeRuntimeSatisfied = $nodeAvailable -and $npmAvailable -and $nodeVersionSatisfied
+        $canRepairInPlace = Test-NodeProviderCanRepairInPlace -ActiveProvider $activeProvider -Data $result.Data
         $result.Data["ProviderType"] = $providerType
         $result.Data["ProviderHealthy"] = $providerHealthy
+        $result.Data["NodeRuntimeSatisfied"] = $nodeRuntimeSatisfied
+        $result.Data["CanRepairInPlace"] = $canRepairInPlace
 
         # 判断是否已满足安装要求
-        # SkipIfInstalled = $true：仅在 providerHealthy 且非 mixed 时才真正跳过
-        Write-UiInfo "Provider: $providerType, 健康: $providerHealthy" -Level Debug
-        if ($providerType -eq "mixed") {
-            # mixed 但 node/npm/版本全部满足 → 视为已安装（避免自动补依赖时误入迁移流程）
-            if ($nodeAvailable -and $npmAvailable -and $nodeVersionSatisfied) {
-                $result.IsInstalled = $true
-                $result.Message = "检测到混合 Node.js 环境，但运行时满足要求"
-            } else {
-                $result.IsInstalled = $false
-                $result.Message = "检测到混合 Node.js 环境，需要进入安装阶段选择 provider"
-            }
-        } elseif ($providerHealthy) {
+        # 新策略：只要当前 node/npm 可用且 Node.js 版本达标（不管来源是 fnm/nvm/direct/portable/mixed），
+        # 就直接视为已安装并跳过，不再为了 provider 规范化弹迁移菜单或清理用户环境。
+        Write-UiInfo "Provider: $providerType, Active: $activeProvider, 可原地修复: $canRepairInPlace, 运行时满足: $nodeRuntimeSatisfied" -Level Debug
+        if ($nodeRuntimeSatisfied) {
             $result.IsInstalled = $true
-            $result.Message = "检测到健康 Node.js 环境（provider: $providerType），可直接跳过或进入迁移菜单"
+            $result.Message = "Node.js 与 npm 已就绪（provider: $providerType），版本满足要求"
         } elseif ($providerType -eq "none") {
             $result.Message = "未检测到 Node.js，需要选择安装方式"
+        } elseif ($providerType -eq "mixed") {
+            $result.Message = "检测到混合 Node.js 环境，但运行时不满足要求，需要选择 provider"
         } else {
-            $result.Message = "Node.js 不完整，需要安装或修复"
+            $result.Message = "Node.js 不完整或版本过低，需要安装或修复"
         }
 
     } catch {

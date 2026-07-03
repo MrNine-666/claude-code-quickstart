@@ -89,5 +89,5 @@ sh installer/build.sh --check
 - Windows 安装入口必须兼容 PowerShell 5.1，不得使用 PS7 专有语法。
 - Windows Release `dist/install.ps1` 必须保持纯 ASCII trampoline，以兼容 `irm ... | iex` 在 PS5.1 下的编码行为。
 - `dist/*.ps1` 通过 `irm ... | iex` 执行时没有稳定 `$PSScriptRoot`，进入单文件 artifact 的路径读取必须先判空并提供 fallback。
-- macOS 使用 zsh/bash + Homebrew + nvm，不调用 Windows 专属能力（winget、注册表、MSI/EXE、`$PROFILE`）。
+- NodeJS 步骤采用运行时优先：Windows/macOS 现有 node/npm 版本达标均直接跳过；不达标时优先在当前 provider 内安装/更新到 LTS，不做跨 provider 迁移；Windows 无法安全修复时使用 nvm/direct 兜底，macOS 无法原地修复时通过 nvm 官方脚本兜底。
 - 修改 contracts、templates、构建拼接、远程入口相关代码后，需要同时验证源码模式与 Release 模式。

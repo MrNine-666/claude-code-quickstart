@@ -1,7 +1,7 @@
 # installer/windows/steps/ — Windows 安装步骤模块
 
 > 面包屑：[根目录](../../../CLAUDE.md) › [installer/](../../CLAUDE.md) › windows/ › steps/
-> 生成时间：2026-06-30 (Phase：砍掉 fnm provider，NodeJS 简化为 nvm-windows / Node.js 直装二选一，保留 nvm↔direct 双向迁移与 portable 检测)
+> 生成时间：2026-07-03 (Phase：Windows/macOS NodeJS 均采用“现有 node/npm 版本达标即跳过”策略；Windows 不达标时优先在当前 provider 内安装/更新到 LTS，无法安全修复时才使用 nvm-windows / Node.js 直装兜底；废弃跨 provider 迁移)
 
 ---
 
@@ -71,25 +71,25 @@ Windows 与 macOS 保持相同 StepId、分组、依赖和用户可见能力边�
 
 | StepId | 名称 | 文件 | 可选 | SkipIfInstalled | 可更新 | 主要依赖 | 分组 |
 |--------|------|------|:----:|:---------------:|:------:|---------|------|
-| NodeJS | Node.js (nvm/direct) | `NodeJS.ps1` | — | ✓ | — | 无 | 基础 |
+| NodeJS | Node.js (runtime-first, nvm/direct fallback) | `NodeJS.ps1` | — | ✓ | — | 无 | 基础 |
 | Git | Git | `Git.ps1` | — | ✓ | — | 无 | 基础 |
 | ClaudeCode | Claude Code | `ClaudeCode.ps1` | — | ✓ | ✓ | NodeJS | 基础 |
 
 ---
 
-## NodeJS — Node.js (nvm-windows / 直装)
+## NodeJS — Node.js (现有运行时优先 / nvm-windows 或直装兜底)
 
 **文件**：`NodeJS.ps1`（子模块：`NodeJS-Detect.ps1` / `NodeJS-Common.ps1` / `NodeJS-Nvm.ps1` / `NodeJS-Direct.ps1`）
 **依赖核心模块**：`Process.ps1`, `Ui.ps1`, `Net.ps1`
 
-**支持 provider**：nvm-windows（可切换版本，推荐）/ Node.js 直装（简单，不可切换）。保留 portable（绿色版）检测与 nvm↔direct 双向迁移能力；fnm provider 已移除。
+**支持 provider**：优先复用当前可用的 Node.js 运行时（无论来源是 fnm / nvm / direct / portable / mixed）；只要 `node`/`npm` 可用且 Node.js 版本满足要求即直接跳过，不弹迁移菜单、不清理环境。版本不达标时优先根据 active provider 原地安装/切换 LTS：fnm 使用现有 `fnm`，nvm 使用现有 nvm-windows，direct 使用 winget/MSI 更新；portable / unknown / none 无法安全原地修复时，才提供 nvm-windows（可切换版本，推荐）/ Node.js 直装（简单，不可切换）作为兜底。
 
 **安装流程**：
-1. 检测现有 Node.js 环境（nvm / direct / portable / mixed）
-2. 干净机器：菜单二选一（nvm-windows / Node.js 直装）
-3. 已有环境：保留 / 迁移到 nvm 或 direct（可选 npm 全局包备份恢复）
-4. nvm 路径：`winget install CoreyButler.NVMforWindows` → `nvm install lts` → `nvm use`
-5. direct 路径：`winget install OpenJS.NodeJS.LTS`
+1. 检测当前 `node` / `npm` 与 Node.js 版本；版本达标则直接跳过
+2. 根据 `node`/`npm` 实际解析路径推断 active provider（fnm / nvm / direct / portable / unknown）
+3. active provider 为 fnm / nvm / direct 且可修复时，提示是否通过当前工具安装/切换 Node.js LTS
+4. active provider 为 portable / unknown / none，或当前工具不可用时，进入 nvm-windows / Node.js 直装兜底选择
+5. 不卸载现有 provider，不清理 PATH，不迁移 npm 全局包
 6. 验证 `node --version` / `npm --version`，配置 npm 镜像（国内网络）
 
 ---

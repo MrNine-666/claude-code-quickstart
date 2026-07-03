@@ -349,8 +349,8 @@ macOS 安装器实现了与 Windows 功能对等的核心模块，采用 zsh 脚
 - macOS: `brew` (Homebrew)
 
 **Node.js 安装**：
-- Windows: nvm-windows（`winget install CoreyButler.NVMforWindows`，可切换版本）/ Node.js 直装（`OpenJS.NodeJS.LTS`，简单不可切换）；保留 portable 检测与 nvm↔direct 双向迁移
-- macOS: `nvm` 官方脚本
+- Windows: 现有 `node`/`npm` 版本达标则跳过；否则优先在当前 active provider 内安装/更新到 LTS（fnm / nvm-windows / direct）；无法安全修复时才进入 nvm-windows（`winget install CoreyButler.NVMforWindows`，可切换版本）/ Node.js 直装（`OpenJS.NodeJS.LTS`，简单不可切换）兜底选择；不做跨 provider 迁移、卸载或 PATH 清理
+- macOS: 现有 `node`/`npm` 版本达标则跳过；否则优先通过当前 fnm/nvm 安装/切换 Node.js LTS；无法原地修复时通过 `nvm` 官方脚本兜底
 
 **状态指示器**：
 - Windows: `[PASS]` / `[FAIL]` / `[SKIP]`

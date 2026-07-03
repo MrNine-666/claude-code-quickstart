@@ -7,14 +7,11 @@ Set-StrictMode -Version Latest
 function Install-NodeViaDirect {
     <#
     .SYNOPSIS
-    直接安装 Node.js LTS（通过 winget 或 MSI）
+    直接安装/更新 Node.js LTS（通过 winget 或 MSI）
     .RETURNS
     安装结果对象
     #>
-    param(
-        [bool]$ShouldRestoreGlobalPackages = $false,
-        [array]$GlobalPackagesBackup = @()
-    )
+    param()
 
     $result = @{
         Success = $false
@@ -24,22 +21,45 @@ function Install-NodeViaDirect {
     }
 
     try {
-        Write-UiPrimary "📦 直接安装 Node.js LTS..." -Level Detail
+        Write-UiPrimary "📦 直接安装/更新 Node.js LTS..." -Level Detail
 
         $wingetSuccess = $false
 
-        # 阶段 1：尝试 winget 安装
+        # 阶段 1：优先尝试 winget upgrade；无可升级版本时再走 install，最后 fallback MSI。
         if (Test-CommandAvailable -Command "winget") {
             try {
-                $nodeInstall = Invoke-WingetInstall -PackageId "OpenJS.NodeJS.LTS" -PackageName "Node.js LTS" -Silent -AcceptLicense
-                if ($nodeInstall.Success) {
-                    Write-UiSuccess "✓ Node.js LTS 通过 winget 安装成功" -Level Detail
-                    $wingetSuccess = $true
+                $upgradeResult = Invoke-ExternalCommand -Command "winget" -Arguments @(
+                    "upgrade", "--id", "OpenJS.NodeJS.LTS", "-e", "--silent",
+                    "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"
+                ) -SuppressOutput -TimeoutSeconds 600 -RetryCount 0
+                if ($upgradeResult.Success) {
+                    Refresh-SessionPath
+                    $nodeVersionAfterUpgrade = if (Test-CommandAvailable -Command "node") { Get-CommandVersion -Command "node" } else { "" }
+                    if ((Test-CommandAvailable -Command "npm") -and $nodeVersionAfterUpgrade -match '^v?(\d+)\.' -and [int]$matches[1] -ge [int]$script:RequiredNodeVersion) {
+                        Write-UiSuccess "✓ Node.js LTS 通过 winget 更新成功" -Level Detail
+                        $wingetSuccess = $true
+                    } else {
+                        Write-UiInfo "  winget upgrade 未得到满足要求的运行时，继续尝试安装/修复" -Level Debug
+                    }
                 } else {
-                    Write-UiWarning "⚠ winget 安装失败，回退到 MSI 下载..." -Level Detail
+                    Write-UiInfo "  winget 未完成更新，继续尝试安装/修复: $($upgradeResult.Error)" -Level Debug
                 }
             } catch {
-                Write-UiWarning "⚠ winget 安装异常: $($_.Exception.Message)，回退到 MSI 下载..." -Level Detail
+                Write-UiInfo "  winget upgrade 异常，继续尝试安装/修复: $($_.Exception.Message)" -Level Debug
+            }
+
+            if (-not $wingetSuccess) {
+                try {
+                    $nodeInstall = Invoke-WingetInstall -PackageId "OpenJS.NodeJS.LTS" -PackageName "Node.js LTS" -Silent -AcceptLicense
+                    if ($nodeInstall.Success) {
+                        Write-UiSuccess "✓ Node.js LTS 通过 winget 安装成功" -Level Detail
+                        $wingetSuccess = $true
+                    } else {
+                        Write-UiWarning "⚠ winget 安装失败，回退到 MSI 下载..." -Level Detail
+                    }
+                } catch {
+                    Write-UiWarning "⚠ winget 安装异常: $($_.Exception.Message)，回退到 MSI 下载..." -Level Detail
+                }
             }
         } else {
             Write-UiWarning "⚠ winget 不可用，尝试 MSI 直接下载安装..." -Level Detail
@@ -96,8 +116,8 @@ function Install-NodeViaDirect {
         $result.Success = $true
         $result.Data["DirectNodeDetected"] = $true
         $result.Data["DirectNodePath"] = $directNodePath
-        $result.Data["MigrationTarget"] = "direct"
-        return (Complete-NodeRuntimeInstall -Result $result -ProviderType "direct" -ShouldRestoreGlobalPackages:$ShouldRestoreGlobalPackages -GlobalPackagesBackup $GlobalPackagesBackup)
+        $result.Data["ProviderTarget"] = "direct"
+        return (Complete-NodeRuntimeInstall -Result $result -ProviderType "direct")
     } catch {
         $result.ErrorMessage = "安装阶段失败: $($_.Exception.Message)"
         Write-UiDanger "✗ $($result.ErrorMessage)"

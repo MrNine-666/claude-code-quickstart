@@ -1,6 +1,7 @@
 ﻿# NodeJS.ps1 - Node.js 安装和配置（主入口）
 # 作者: 哈雷酱 (本小姐的 Node.js 管理杰作！)
-# 功能: 支持 nvm-windows / Node.js 直装，统一 Node.js 安装与迁移（nvm↔direct 双向）
+# 功能: 优先复用现有 node/npm 运行时（版本达标即跳过）；不达标时优先用当前 provider 原地修复，无法修复时才用 nvm-windows / Node.js 直装兜底
+#       不再执行跨 provider 迁移、卸载现有 provider、清理 PATH 或搬迁 npm 全局包
 
 #Requires -Version 5.1
 Set-StrictMode -Version Latest
@@ -25,7 +26,7 @@ $stepRoot = $PSScriptRoot
 function Install-NodeJS {
     <#
     .SYNOPSIS
-    执行步骤 01 安装（Node.js provider 选择 + 安装/迁移）
+    执行步骤 01 安装（运行时优先 + 原地修复 + nvm/direct 兜底）
     .RETURNS
     安装结果对象
     #>
@@ -41,10 +42,6 @@ function Install-NodeJS {
     try {
         Write-UiPrimary "📦 开始配置 Node.js..." -Level Detail
 
-        $shouldRestoreGlobalPackages = $false
-        $globalPackagesBackup = @()
-        $providerTarget = ""
-
         $snapshot = Test-NodeJSInstalled
         if ($snapshot -and $snapshot.Data) {
             foreach ($key in $snapshot.Data.Keys) {
@@ -53,168 +50,67 @@ function Install-NodeJS {
         }
 
         $providerType = if ($result.Data.ContainsKey("ProviderType")) { [string]$result.Data["ProviderType"] } else { "none" }
-        $providerHealthy = if ($result.Data.ContainsKey("ProviderHealthy")) { [bool]$result.Data["ProviderHealthy"] } else { $false }
+        $activeProvider = if ($result.Data.ContainsKey("ActiveProvider")) { [string]$result.Data["ActiveProvider"] } else { $providerType }
+        $nodeRuntimeSatisfied = if ($result.Data.ContainsKey("NodeRuntimeSatisfied")) { [bool]$result.Data["NodeRuntimeSatisfied"] } else { $false }
+        $canRepairInPlace = if ($result.Data.ContainsKey("CanRepairInPlace")) { [bool]$result.Data["CanRepairInPlace"] } else { $false }
+        $nodeAvailable = if ($result.Data.ContainsKey("NodeAvailable")) { [bool]$result.Data["NodeAvailable"] } else { $false }
+        $npmAvailable = if ($result.Data.ContainsKey("NpmAvailable")) { [bool]$result.Data["NpmAvailable"] } else { $false }
+        $nodeVersion = if ($result.Data.ContainsKey("NodeVersion")) { [string]$result.Data["NodeVersion"] } else { "" }
 
-        switch ($providerType) {
-            "none" {
-                $providerTarget = Show-NodeProviderMenu
-                if ($providerTarget -eq "cancel") {
-                    throw "用户取消了 Node.js 安装方式选择"
-                }
-                $result.Data["MigrationMode"] = "FreshInstall"
+        # 新策略：当前 node/npm 可用且版本达标时直接跳过，不再因 provider 类型进入迁移菜单。
+        # 这样可安全保留用户已有的 fnm/nvm/direct/portable/mixed 环境，不做迁移、卸载或 PATH 清理。
+        if ($nodeRuntimeSatisfied) {
+            $result.Success = $true
+            $result.Message = "Node.js 与 npm 已就绪（provider: ${providerType}，active: ${activeProvider}），已跳过变更"
+            $result.Data["SkippedProviderInstall"] = $true
+            $result.Data["RepairMode"] = "KeepExistingRuntime"
+            return $result
+        }
+
+        $providerTarget = ""
+        if ($canRepairInPlace -and $activeProvider -in @("fnm", "nvm", "direct")) {
+            $repairChoice = Show-NodeRuntimeRepairMenu -ActiveProvider $activeProvider `
+                -NodeVersion $nodeVersion `
+                -RequiredNodeVersion $script:RequiredNodeVersion `
+                -NodeAvailable:$nodeAvailable `
+                -NpmAvailable:$npmAvailable
+            if ($repairChoice -eq "cancel") {
+                throw "用户取消了 Node.js 原地修复"
             }
-            default {
-                if ($providerType -eq "mixed") {
-                    Write-UiWarning "⚠ 检测到混合 Node.js 环境" -Level Detail
-                }
-                $migrationChoice = Show-NodeMigrationMenu -CurrentProviderType $providerType -ProviderHealthy:$providerHealthy
-                if ($migrationChoice -eq "cancel") {
-                    throw "用户取消了迁移操作"
-                }
-                if ($migrationChoice -eq "keep") {
-                    if ($providerHealthy -or $providerType -eq "mixed") {
-                        $result.Success = $true
-                        $result.Message = "保留现有 $providerType 环境，已跳过变更"
-                        $result.Data["SkippedProviderInstall"] = $true
-                        $result.Data["MigrationMode"] = "KeepExisting"
-                        return $result
-                    }
-                    $providerTarget = $providerType
-                    $result.Data["MigrationMode"] = "RepairExisting"
-                } else {
-                    $providerTarget = $migrationChoice
-                }
+
+            $providerTarget = $activeProvider
+            $result.Data["RepairMode"] = "InPlaceRepair"
+        } else {
+            $reason = if ($activeProvider -in @("portable", "unknown")) {
+                "当前 Node.js 版本过低或不完整，但来源无法安全原地更新。"
+            } elseif ($activeProvider -eq "none" -or $providerType -eq "none") {
+                "未检测到可用的 Node.js。"
+            } else {
+                "当前 Node.js 运行时无法通过原 provider 安全修复。"
             }
+            $providerTarget = Show-NodeFallbackInstallMenu -ActiveProvider $activeProvider -Reason $reason
+            if ($providerTarget -eq "cancel") {
+                throw "用户取消了 Node.js 兜底安装方式选择"
+            }
+            $result.Data["RepairMode"] = "FallbackInstall"
         }
 
         if ([string]::IsNullOrWhiteSpace($providerTarget)) {
-            throw "未选择有效的 Node.js provider"
+            throw "未选择有效的 Node.js 安装/修复方式"
         }
 
-        $result.Data["MigrationTarget"] = $providerTarget
-
-        $requiresMigration = ($providerType -ne "none") -and ($providerType -eq "mixed" -or $providerTarget -ne $providerType)
-        if ($requiresMigration) {
-            $globalPkgChoice = Show-SingleSelectMenu -Title "迁移时如何处理 npm 全局包？" -Options @(
-                "迁移并恢复 npm 全局包（推荐）",
-                "迁移但不恢复 npm 全局包"
-            ) -DefaultIndex 0
-            if ($globalPkgChoice -eq -1) {
-                throw "用户取消了迁移设置"
-            }
-            $shouldRestoreGlobalPackages = ($globalPkgChoice -eq 0)
-            $result.Data["MigrationMode"] = if ($shouldRestoreGlobalPackages) { "MigrateWithRestore" } else { "FreshInstall" }
-
-            $currentProviderLabel = switch ($providerType) { "nvm" { "nvm-windows" } "direct" { "Node.js" } "portable" { "绿色版 Node.js" } default { $providerType } }
-            $targetProviderLabel = switch ($providerTarget) { "nvm" { "nvm-windows" } "direct" { "Node.js" } default { $providerTarget } }
-            if ($providerType -eq "portable") {
-                $confirmTitle = "⚠ 将清理当前绿色版 Node.js 的 PATH 并安装 [$targetProviderLabel]。"
-            } else {
-                $confirmTitle = "⚠ 将卸载当前的 [$currentProviderLabel] 并安装 [$targetProviderLabel]。"
-            }
-            if ($shouldRestoreGlobalPackages) {
-                $confirmTitle += "`n  您的全局 npm 包将自动备份并恢复。"
-            }
-            $confirmTitle += "`n  是否继续？"
-            $confirm = Show-SingleSelectMenu -Title $confirmTitle -Options @("继续执行", "取消") -DefaultIndex 0
-            if ($confirm -ne 0) {
-                throw "用户取消了卸载操作"
-            }
-
-            if ($shouldRestoreGlobalPackages) {
-                $npmResolve = Resolve-NpmForBackup -EnvSnapshot $snapshot.Data
-                if ($npmResolve.Available) {
-                    Write-UiInfo "npm 已就绪（方式: $($npmResolve.Method)），开始备份..." -Level Detail
-                } else {
-                    Write-UiWarning "$($npmResolve.ErrorMessage)" -Level Detail
-                    Write-UiWarning "  无法备份 npm 全局包，您可以选择：" -Level Detail
-                    $failChoice = Show-SingleSelectMenu -Title "npm 定位失败，请选择处理方式：" -Options @(
-                        "继续迁移（跳过全局包恢复，后续可手动安装）",
-                        "中止迁移（保留现有环境不做任何更改）"
-                    ) -DefaultIndex 0
-                    if ($failChoice -eq 1 -or $failChoice -eq -1) {
-                        $result.Success = $true
-                        $result.Message = "用户选择中止迁移，保留现有环境"
-                        $result.Data["MigrationMode"] = "AbortedByUser"
-                        Write-UiWarning "已中止迁移，保留现有环境"
-                        return $result
-                    }
-                    $shouldRestoreGlobalPackages = $false
-                    $result.Data["BackupSkipped"] = $true
-                    $result.Data["BackupSkipReason"] = $npmResolve.ErrorMessage
-                }
-
-                if ($shouldRestoreGlobalPackages) {
-                    $backupResult = Backup-NpmGlobalPackages
-                    if (-not $backupResult.Success) {
-                        Write-UiWarning "npm 全局包备份失败: $($backupResult.ErrorMessage)" -Level Detail
-                        Write-UiWarning "  将继续迁移但跳过全局包恢复" -Level Detail
-                        $shouldRestoreGlobalPackages = $false
-                        $result.Data["BackupSkipped"] = $true
-                        $result.Data["BackupSkipReason"] = $backupResult.ErrorMessage
-                    } else {
-                        $globalPackagesBackup = @($backupResult.Packages)
-                        $result.Data["GlobalPackagesBackupCount"] = $globalPackagesBackup.Count
-                        $result.Data["GlobalPackagesBackup"] = $globalPackagesBackup
-                    }
-                }
-            }
-
-            $hasPortableSignal = [bool]$snapshot.Data["PortableNodeDetected"]
-            $hasOtherProviderSignal = [bool]$snapshot.Data["NvmDetected"] -or [bool]$snapshot.Data["DirectNodeDetected"]
-
-            if ($hasOtherProviderSignal) {
-                $skipDirectFlag = ($providerTarget -eq "direct")
-                $skipNvmFlag   = ($providerTarget -eq "nvm")
-                $uninstallResult = Uninstall-ExistingNode -EnvSnapshot $snapshot.Data `
-                    -SkipDirect:$skipDirectFlag -SkipNvm:$skipNvmFlag
-                if (-not $uninstallResult.Success) {
-                    throw "卸载现有 Node 环境失败: $($uninstallResult.ErrorMessage)"
-                }
-                $result.Data["UninstallCompleted"] = $true
-                $result.Data["UninstallCleanedPaths"] = @($uninstallResult.CleanedPaths)
-            }
-
-            if ($hasPortableSignal) {
-                $portableCleanResult = Remove-PortableNodeFromPath -EnvSnapshot $snapshot.Data
-                if (-not $portableCleanResult.Success) {
-                    throw "清理绿色版 Node.js PATH 失败: $($portableCleanResult.ErrorMessage)"
-                }
-                $result.Data["PortablePathCleaned"] = ($portableCleanResult.CleanedPaths.Count -gt 0)
-                $result.Data["PortableCleanedPaths"] = @($portableCleanResult.CleanedPaths)
-            }
-
-            Refresh-SessionPath
-            Write-UiSuccess "✓ 迁移前清理完成，继续安装目标 provider" -Level Detail
-        } elseif (-not $result.Data.ContainsKey("MigrationMode")) {
-            $result.Data["MigrationMode"] = "NoConflict"
-        }
+        $result.Data["ProviderTarget"] = $providerTarget
 
         $providerResult = $null
         switch ($providerTarget) {
+            "fnm" {
+                $providerResult = Repair-NodeViaFnm
+            }
             "nvm" {
-                $nvmAlreadyPresent = [bool]$snapshot.Data["NvmDetected"] -and ($providerType -eq "mixed")
-                if ($nvmAlreadyPresent) {
-                    Write-UiSuccess "✓ nvm-windows 已存在，无需重新安装" -Level Detail
-                    Refresh-SessionPath
-                    Get-Command -All node, npm -ErrorAction SilentlyContinue | Out-Null
-                    $baseResult = @{ Success = $true; ErrorMessage = ""; Data = @{ SkippedReinstall = $true; MigrationTarget = "nvm" } }
-                    $providerResult = Complete-NodeRuntimeInstall -Result $baseResult -ProviderType "nvm" -ShouldRestoreGlobalPackages:$shouldRestoreGlobalPackages -GlobalPackagesBackup $globalPackagesBackup
-                } else {
-                    $providerResult = Install-NodeViaNvm -ShouldRestoreGlobalPackages:$shouldRestoreGlobalPackages -GlobalPackagesBackup $globalPackagesBackup
-                }
+                $providerResult = Install-NodeViaNvm
             }
             "direct" {
-                $directAlreadyPresent = [bool]$snapshot.Data["DirectNodeDetected"] -and ($providerType -eq "mixed")
-                if ($directAlreadyPresent) {
-                    Write-UiSuccess "✓  Node.js 已存在，无需重新安装" -Level Detail
-                    Refresh-SessionPath
-                    Get-Command -All node, npm -ErrorAction SilentlyContinue | Out-Null
-                    $baseResult = @{ Success = $true; ErrorMessage = ""; Data = @{ SkippedReinstall = $true; MigrationTarget = "direct" } }
-                    $providerResult = Complete-NodeRuntimeInstall -Result $baseResult -ProviderType "direct" -ShouldRestoreGlobalPackages:$shouldRestoreGlobalPackages -GlobalPackagesBackup $globalPackagesBackup
-                } else {
-                    $providerResult = Install-NodeViaDirect -ShouldRestoreGlobalPackages:$shouldRestoreGlobalPackages -GlobalPackagesBackup $globalPackagesBackup
-                }
+                $providerResult = Install-NodeViaDirect
             }
             default {
                 throw "不支持的 provider: $providerTarget"
@@ -222,7 +118,7 @@ function Install-NodeJS {
         }
 
         if (-not $providerResult) {
-            throw "provider 安装未返回结果"
+            throw "Node.js 安装/修复未返回结果"
         }
         if ($providerResult.Data) {
             $mergedData = @{}

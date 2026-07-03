@@ -34,7 +34,7 @@
     {
       "StepId": "NodeJS",
       "StepName": "Node.js",
-      "Description": "安装 Node.js，Windows 支持 nvm-windows / Node.js 二选一（可跨 provider 迁移），macOS 通过 nvm 官方脚本安装",
+      "Description": "安装 Node.js，Windows/macOS 均优先复用现有 node/npm：版本达标则直接跳过；不达标时优先在当前 provider 内安装/更新到 LTS；Windows 无法安全修复时提供 nvm-windows / Node.js 直装兜底，macOS 无法原地修复时通过 nvm 官方脚本兜底；不做跨 provider 迁移",
       "StepFile": "windows/steps/NodeJS.ps1",
       "MacOSStepFile": "macos/steps/NodeJS.zsh",
       "SubModules": [
@@ -47,7 +47,7 @@
       "InstallFunction": "Install-NodeJS",
       "VerifyFunction": "Verify-NodeJS",
       "UpdateFunction": "",
-      "SkipIfInstalled": false,
+      "SkipIfInstalled": true,
       "MacOSSkipIfInstalled": true,
       "SkipIfInstalledWhenAutoAdded": true,
       "IsOptional": false,

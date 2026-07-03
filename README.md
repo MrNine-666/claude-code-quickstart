@@ -60,7 +60,7 @@ CCQ 通过 Windows PS 5.1 单运行时脚本、macOS 原生入口与实时检测
 | 操作系统 | Windows 10 1903 (18362)+ / Windows 11 | macOS 12 Monterey 或更新版本 |
 | Shell / 运行时 | PowerShell 5.1+ 单运行时直跑（PS7 作为推荐组件非阻塞安装，不 re-exec） | `/bin/zsh`，云端入口兼容 `curl ... | bash` |
 | 包管理器 | winget | Homebrew |
-| Node.js | 安装脚本自动准备 Node.js LTS | 通过 nvm 官方脚本安装 Node.js LTS |
+| Node.js | 现有 node/npm 版本达标则跳过；否则优先在当前 provider 内安装/更新到 LTS；无法安全修复时才选择 nvm-windows 或 Node.js 直装兜底 | 现有 node/npm 版本达标则跳过；否则优先通过当前 fnm/nvm 安装/切换 LTS；无法原地修复时通过 nvm 官方脚本兜底 |
 | 权限 | 管理员权限（建议） | 普通用户即可；Homebrew 安装可能需要用户确认 |
 | 网络 | 可访问 GitHub、npm registry | 可访问 GitHub、npm registry、Homebrew 源 |
 
@@ -207,10 +207,10 @@ Windows 入口基于 PowerShell 5.1+ 单运行时执行，安装基础环境并�
 
 ### macOS
 
-macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebrew + nvm 准备基础环境与 `ccq`：
+macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebrew + Node.js 检测（nvm 官方安装兜底）准备基础环境与 `ccq`：
 
 1. Homebrew
-2. nvm + Node.js LTS
+2. Node.js LTS（现有 node/npm 版本达标则跳过；否则优先通过当前 fnm/nvm 安装/切换 LTS，无法原地修复时通过 nvm 官方脚本兜底）
 3. Git
 4. Claude Code
 5. `ccq` 管理控制台（下载到 `~/.local/bin/` 并确保该目录在 PATH）

@@ -46,10 +46,7 @@ function Install-NodeViaNvm {
     .RETURNS
     安装结果对象
     #>
-    param(
-        [bool]$ShouldRestoreGlobalPackages = $false,
-        [array]$GlobalPackagesBackup = @()
-    )
+    param()
 
     $result = @{
         Success = $false
@@ -59,7 +56,7 @@ function Install-NodeViaNvm {
     }
 
     try {
-        Write-UiPrimary "📦 通过 nvm-windows 安装 Node.js..." -Level Detail
+        Write-UiPrimary "📦 通过 nvm-windows 安装/激活 Node.js LTS..." -Level Detail
 
         Sync-NvmSessionEnvironment
 
@@ -119,8 +116,8 @@ function Install-NodeViaNvm {
         Sync-NvmNodeRuntimePath -Result $result.Data
 
         $result.Success = $true
-        $result.Data["MigrationTarget"] = "nvm"
-        return (Complete-NodeRuntimeInstall -Result $result -ProviderType "nvm" -ShouldRestoreGlobalPackages:$ShouldRestoreGlobalPackages -GlobalPackagesBackup $GlobalPackagesBackup)
+        $result.Data["ProviderTarget"] = "nvm"
+        return (Complete-NodeRuntimeInstall -Result $result -ProviderType "nvm")
     } catch {
         $result.ErrorMessage = "通过 nvm-windows 安装 Node.js 失败: $($_.Exception.Message)"
         Write-UiDanger "✗ $($result.ErrorMessage)"

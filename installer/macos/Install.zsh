@@ -449,7 +449,7 @@ ccq_main() {
     return 0
   fi
 
-  # 前置环境检测（macOS 12+ / Homebrew / nvm，zsh 单运行时）
+  # 前置环境检测（macOS 12+ / Homebrew / Node.js 检测+nvm 兜底，zsh 单运行时）
   ccq_preflight || return 1
 
   # 旧 Profile 标记块迁移清理（幂等，无残留则 no-op）

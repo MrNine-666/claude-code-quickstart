@@ -36,7 +36,7 @@ ccq_registry_init_bootstrap_snapshot() {
   CCQ_BOOTSTRAP_STEP_NAME[Git]="Git"
   CCQ_BOOTSTRAP_STEP_NAME[ClaudeCode]="Claude Code"
 
-  CCQ_BOOTSTRAP_STEP_DESCRIPTION[NodeJS]="通过 nvm 官方脚本安装 Node.js LTS 并验证 node/npm"
+  CCQ_BOOTSTRAP_STEP_DESCRIPTION[NodeJS]="现有 node/npm 版本达标则跳过，否则优先通过当前 fnm/nvm 安装 LTS，无法原地修复时通过 nvm 官方脚本兜底"
   CCQ_BOOTSTRAP_STEP_DESCRIPTION[Git]="通过 Homebrew 安装 Git 并应用推荐配置"
   CCQ_BOOTSTRAP_STEP_DESCRIPTION[ClaudeCode]="通过 npm 全局安装 Claude Code CLI"
 
