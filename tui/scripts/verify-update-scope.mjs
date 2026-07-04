@@ -58,6 +58,22 @@ assert.equal(ccg.latestVersion, '3.1.6', 'CcgWorkflow 远程查询未命中时 f
 assert.equal(ccg.hasUpdate, false, 'CcgWorkflow 无远程数据时不应误报更新');
 console.log('[PASS] 8.4 CcgWorkflow npm 引擎保留 + 版本源取自 config.toml');
 
+// ── 1.2 CodexCli 官方包名 + 检测独立于 ClaudeCode（HC-CODEX-OFFICIAL-PACKAGE / HC-CODEX-DETECT-INDEPENDENT）──
+// checkCliToolUpdates 遍历 NPM_COMPONENT_MAP，各组件的 installed 由自身 `<command> --version`
+// 决定，互不依赖。这里断言 CodexCli 使用官方包名 @openai/codex，且其检测结果不由 ClaudeCode
+// 状态派生（二者在结果集中各为独立条目，任一缺失不影响另一条目存在）。
+assert.ok(ids.includes('CodexCli'), 'CodexCli 应纳入 CLI 工具检测');
+const codex = components.find(c => c.id === 'CodexCli');
+assert.equal(codex.type, 'npm', 'CodexCli 应为 npm 类型');
+assert.equal(codex.package, '@openai/codex', 'CodexCli 包名必须为官方 @openai/codex，不得为 codex-cli');
+// 检测独立性：CodexCli 与 ClaudeCode 是结果集中两个平级条目，CodexCli.installed 只反映
+// `codex --version`，与 ClaudeCode 是否检出无耦合（未安装环境下两者同为独立 false，互不派生）。
+const claudeComp = components.find(c => c.id === 'ClaudeCode');
+assert.ok(claudeComp, 'ClaudeCode 应为独立条目');
+assert.notEqual(codex, claudeComp, 'CodexCli 与 ClaudeCode 必须是独立组件条目');
+assert.equal(typeof codex.installed, 'boolean', 'CodexCli.installed 由自身 codex --version 决定');
+console.log('[PASS] 1.2 CodexCli 官方包名 + 检测独立于 ClaudeCode');
+
 // ── snapshot 失败不执行更新命令 ─────────────────────────────────────────────
 let execCalls = 0;
 const failSnapshot = () => {

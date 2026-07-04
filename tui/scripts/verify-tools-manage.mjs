@@ -49,6 +49,19 @@ assert.equal(claude.optional, false, 'ClaudeCode 非可选');
 assert.equal(COMPONENT_DEFINITIONS.filter(c => c.isBase).length, 1, '仅 ClaudeCode 为 isBase');
 console.log('[PASS] COMPONENT_DEFINITIONS 7 组件齐备 + isBase 语义 (11.4/11.6)');
 
+// ── 1.1 CodexCli 官方包名与命令（HC-CODEX-OFFICIAL-PACKAGE）──────────────────
+const codexDef = COMPONENT_DEFINITIONS.find(c => c.id === 'CodexCli');
+assert.ok(codexDef, 'CodexCli 在 COMPONENT_DEFINITIONS 中');
+assert.equal(codexDef.npmPackage, '@openai/codex', 'CodexCli npm 包名为 @openai/codex');
+assert.equal(codexDef.command, 'codex', 'CodexCli 检测命令为 codex');
+assert.deepEqual(codexDef.versionArgs, ['--version'], 'CodexCli 版本检测参数为 --version');
+assert.equal(codexDef.kind, 'npm', 'CodexCli 安装 kind 为 npm');
+// update.ts 的 NPM_COMPONENT_MAP / COMMAND_COMPONENTS 同源
+const updateSource = readFileSync(new URL('../src/core/update.ts', import.meta.url), 'utf8');
+assert.match(updateSource, /CodexCli:\s*'@openai\/codex'/, 'update.ts NPM_COMPONENT_MAP CodexCli = @openai/codex');
+assert.match(updateSource, /CodexCli:\s*\{\s*command:\s*'codex'/, 'update.ts COMMAND_COMPONENTS CodexCli command = codex');
+console.log('[PASS] 1.1 CodexCli 使用 @openai/codex 与 codex --version');
+
 // ── detectComponents 返回 7 项 + 不聚合 Skills/MCP（11.5/11.7）────────────────
 const components = await detectComponents();
 assert.equal(components.length, 7, 'detectComponents 返回 7 项（不聚合 Skills/MCP）');

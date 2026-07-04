@@ -123,20 +123,47 @@ ccq 可执行文件支持「无参进 TUI + 子命令非交互」双入口。`sr
 - `ccq tools uninstall <name> [--yes|-y]` 复用 `uninstallComponent` 卸载工具；默认必须输入 `y` 确认，追加 `--yes` 或 `-y` 才可跳过确认。非 TTY 环境未传 `--yes`/`-y` 时必须拒绝执行。
 - `ccq uninstall [--yes|-y]` 卸载 ccq 本体（删除 `~/.local/bin/ccq[.exe]`）；默认必须输入 `y` 确认，追加 `--yes` 或 `-y` 才可跳过确认。非 TTY 环境未传 `--yes`/`-y` 时必须拒绝执行。
 - `cc` 与 `use` 语义必须分离：`cc` = 临时 session 覆盖；`use` = 持久默认。新增 CLI 命令按 `ccq <verb> [object] [--flags] [-- passthrough]` 子命令骨架扩展，禁止把动作塞进裸 flag（如 `-cc`）。
-- **多工具命名预留（HC-CLI-MULTITOOL）**：当前 provider 体系纯 Claude 专用（`~/.claude/providers/`，env 全 `ANTHROPIC_*`）。未来扩展 codex 等**按"工具独立 profile + 独立动词"路线**，禁止复用 claude provider 文件或塞进 `~/.claude/settings.json`：
-  - 新工具 = 新增一个**独立短动词**（codex → `cx`），不动 `cc`：`ccq cx <provider> [codex-args...]`。
-  - codex 复用其原生 `~/.codex/<name>.config.toml` + `--profile <name>` 机制；凭据因 codex 用 `env_key` 指向环境变量名（key 值不落 config.toml），由 ccq vault 保管、启动时注入 env。
-  - `ls` 扩展为 `ccq ls [--tool claude|codex]`，`--tool` 缺省 = claude（当前 `ccq ls` 行为零破坏）；`use` 同理 `ccq use <provider> [--tool ...]`。codex 的 `use`（设默认=改写 `~/.codex/config.toml` 顶层 `model_provider`）侵入大，视情况再定，不强制与 claude 对齐。
-  - 工具动词表（预留，未实现）：`cc`=claude / `cx`=codex / 后续按需加。每个工具的 profile 存储、凭据保管、spawn 方式各自独立，**不强行抽象统一 provider 模型**（claude 全塞 `--settings` 单文件，codex 走 TOML profile + env 注入，协议本就不同，抽象会落空）。
+- **多工具命名与 agentContext（HC-CLI-MULTITOOL）**：ccq 支持 Claude Code 与 Codex 双 Agent（内部键 `agentContext: 'cc' | 'cx'`，界面只展示全称 `Claude Code` / `Codex`，不显示缩写）。两工具的 provider/profile 独立存储，**禁止复用 claude provider 文件或塞进 `~/.claude/settings.json`**：
+  - 独立短动词：claude = `cc`，codex = `cx`（`ccq cx <key> [codex-args...]`）；`cc` 语义不变。
+  - Codex 走官方 `$CODEX_HOME/<key>.config.toml`（默认 `~/.codex`）+ `codex --profile <key>` 机制；**不支持** `$CODEX_HOME/provider/*.config.toml`，Codex 0.134.0+ 不再读 `[profiles.<key>]` 与顶层 `profile = "<key>"` selector。
+  - **Codex key = 唯一身份**：用户只填一个 key，同时作为 `<key>.config.toml` 文件名、`--profile` 名、`model_provider` id、`[model_providers.<key>]` table id 与默认显示名；不设独立 profileName/providerId/displayName。
+  - **Codex API key = 直写 profile TOML**：写入 `[model_providers.<key>].experimental_bearer_token`，同一 provider table 禁止再写 `env_key` / `auth` / `requires_openai_auth`；**不写 ccq vault、`ccq cx` 不注入 env**；UI 字段默认 mask，日志/toast/error/verify 输出全链脱敏。`official login` 类型不要求 API key，靠 `codex login` 完成认证。
+  - `ls`/`use` 扩展 `--tool claude|codex`，`--tool` 缺省 = claude（`ccq ls` / `ccq use` 行为零破坏）；`ccq use <key> --tool codex` 结构化写 `~/.codex/config.toml` 的 provider/default 路径，**不写** `profile =` / `[profiles.<key>]`。
+  - `cx` 与 `cc` 同为启动类：`Bun.spawn(..., {stdio:['inherit','inherit','inherit']})` 继承 TTY，退出码透传，ENOENT=127。
+  - TOML 读写统一走 `core/toml-edit.ts` 结构化编辑（parse/get/set/delete/atomicWrite），**不默认使用 managed marker block**，只更新明确路径、保留无关字段/注释。
+  - 每个工具的 profile 存储、凭据保管、spawn 方式各自独立，**不强行抽象统一 provider 模型**（claude 全塞 `--settings` 单文件，codex 走官方 TOML profile；协议本就不同，抽象会落空），只复用 UI/表单/校验/服务边界。
 - **两类动词分类（HC-CLI-VERB-KIND）**：CLI 动词按"后续 token 语义"分两类，各动词的 `parseXxx` 函数独立解析后续 token，互不干扰；新增动词必须先归类：
   | 动词类型 | 后续 token 语义 | `--` 透传 | 既有/预留示例 |
   |---------|----------------|----------|--------------|
-  | **启动类** | 对象=provider 名 + 参数透传给**底层工具**（claude/codex） | ✅ 用（`--` 后甩给底层工具） | `cc`（既有）/ `cx`（预留） |
+  | **启动类** | 对象=provider 名 + 参数透传给**底层工具**（claude/codex） | ✅ 用（`--` 后甩给底层工具） | `cc`（既有）/ `cx`（本 change 实现） |
   | **管理类** | 子命令 + **ccq 自有 flag**（`--all`/`--force`/`--json` 等），不透传给底层工具 | ❌ 不用（管理命令无底层工具可透传） | `ls`/`use`/`update`/`tools`/`uninstall`（既有）/ `mcp`/`skills`（预留） |
   - **禁止**给管理类动词套 `--` 透传语义：`--` 是为"启动类把参数转给 claude/codex"设计的，管理命令（如 `ccq mcp add`/`ccq update self`）该用自己的 flag 解析，不得复用 `parseCc` 的 `--` 逻辑。
   - 管理类动词支持"动词 + 子对象"两级（如 `ccq mcp list` / `ccq mcp add` / `ccq mcp rm <id>` / `ccq update self|tools|skills`），子对象由该动词的 `parseXxx` 自行路由，不在 `parseCli` 顶层展开。
   - 复用优先：管理类动词应直接包装既有 core 层能力（`core/update.ts` / `core/mcp.ts` / `core/skills-actions.ts` / `core/tools-manage.ts`），CLI 层只做参数解析 + 调用 + 退出码，不重复实现业务逻辑。
 - 新增/修改 CLI 路由必须同步 `scripts/verify-cli-subcommands.mjs` 与本文档；新增工具动词须在本约束补一行动词表 + 存储约定；新增管理类动词须归入上表两类之一。
+
+### HC-AGENT-CONTEXT-SHELL
+TUI 不新增第 7 个 Codex 菜单；改由右侧 content 顶部的全局 **Header** 用全称 `Claude Code` / `Codex` 切换 `agentContext`（内部键 `cc` / `cx`，界面不展示缩写）。左侧导航恒为 6 项（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills），Header 切换**不改变**菜单顺序，只重渲染当前模块的 Agent 数据域；默认 `Claude Code`。`agentContext` 下发给 Tools / Provider / Config / Prompts / MCP / Skills 各视图及其 service，视图不自行推断路径、不直接写运行时配置文件（写盘只在 core/service 层）。骨架门禁 `scripts/verify-agent-context.mjs`。
+
+### HC-TOOLS-AGENT-GROUP
+工具管理按 `group` 分组并按 `agentContext` 决定可见性（骨架 `scripts/verify-tools-context.mjs`）：
+- **Agent 组**（ClaudeCode / CodexCli / AntigravityCli）：两种上下文**常显**，主 Agent 不因切换被隐藏。
+- **Cometixline 组**（Ccline）：**仅 Claude Code** 上下文显示。
+- **Tools 组**（OpenSpec / CcgWorkflow / CodeGraph）：两种上下文都显示。
+- install/update/uninstall 经 lifecycle command resolver 按 `agentContext` 返回不同指令：
+  - **CodeGraph**：install 确保 `@colbymchenry/codegraph` CLI 后执行 `codegraph install --target=<claude|codex> --location=global --yes`；**默认 uninstall** 只执行 `codegraph uninstall --target=<claude|codex> --yes`，**不 `npm uninstall`、不删 `.codegraph/` 项目索引**；「移除 CLI」是需强确认的独立高级动作（骨架 `scripts/verify-codegraph-lifecycle.mjs`）。
+  - **CcgWorkflow**：Claude 走 `npx ccg-workflow@latest init ... --install-dir ~/.claude`（保留 mcpServers 快照保护）；Codex Mode 无官方非交互入口，首期 install 只提示走官方菜单 `X. Codex Mode`，Codex uninstall 只删 CCG-managed 文件/marker（`agents/ccg-*.toml`、`hooks/ccg-workflow.py`、CCG-managed `hooks.json` 条目、CCG-marked `AGENTS.md` 内容），**绝不删 `CODEX_HOME/config.toml`**（骨架 `scripts/verify-ccgworkflow-codex.mjs`）。
+
+### HC-CONFIG-RULES-REUSE
+Config / Global Rules 视图按 `agentContext` 切换目标文件但复用同一 UI（预览页 / `e` 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入 / 损坏文件拒绝覆盖 / 脏编辑保护），骨架 `scripts/verify-config-rules-reuse.mjs`：
+- **Config**：Claude 读写 `~/.claude/settings.json`；Codex 读写 `CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`），经 `core/toml-edit.ts` 结构化写入；Codex 推荐配置不管理 provider/MCP/hooks/Skills/AGENTS.md。
+- **Global Rules**：Claude 读写 `~/.claude/CLAUDE.md`；Codex **只**读写 `CODEX_HOME/AGENTS.md`（默认 `~/.codex/AGENTS.md`），推荐规则内容复用 cc 推荐规则。
+
+### HC-MCP-FILE-SOURCE
+MCP 状态以运行时配置文件为唯一事实源，**忽略 vault 历史 `disabled` 字段**（骨架 `scripts/verify-mcp-multitool.mjs`）：Claude 读 `~/.claude.json` 的 `mcpServers.<id>` 是否存在；Codex 读 `CODEX_HOME/config.toml` 的 `[mcp_servers.<id>]`（`enabled = false` 判 Disabled）。同一 MCP 可在 Claude Code / Codex 独立启用。vault 只保管 MCP 凭据、配置备份、definition hash，**不作 Active/Disabled 状态源，也不保存 Codex API key**。
+
+### HC-SKILLS-AGENT
+Skills 的 `SKILLS_CLI_AGENT` 硬编码改为按 `agentContext` 参数化：Claude Code → `--agent claude-code`，Codex → `--agent codex`（骨架 `scripts/verify-skills-agent.mjs`）。物理存储与目录映射交由 `skills` CLI（`~/.agents/skills`），ccq 不手写 symlink/copy。
 
 ### HC-NON-TTY
 ccq 可执行文件 non-TTY（管道 / 重定向 / CI）输出只读提示、不进交互 TUI、退出码 0。`src/index.tsx` 入口实现：
