@@ -29,6 +29,18 @@ export const navBindings: Binding[] = commandBindings({
 });
 
 // ------------------------------------------------------------
+// 全局 Agent 上下文切换 command（nav / view 焦点均可用）
+// Header 提示与 footer 快捷键共用此单一数据源（HC-SHORTCUT-SINGLE-SOURCE）。
+// ------------------------------------------------------------
+export const AGENT_COMMANDS = {
+	TOGGLE: 'agent:toggle'
+} as const;
+
+export const agentBindings: Binding[] = commandBindings({
+	[AGENT_COMMANDS.TOGGLE]: 'shift+tab'
+});
+
+// ------------------------------------------------------------
 // 视图通用 commands（所有视图共享）
 // ------------------------------------------------------------
 export const VIEW_COMMON_COMMANDS = {
@@ -214,6 +226,7 @@ export const toolsBindings: Binding[] = commandBindings({
 // ------------------------------------------------------------
 export const allBindings: Binding[] = [
 	...navBindings,
+	...agentBindings,
 	...viewCommonBindings,
 	...providerBindings,
 	...mcpBindings,

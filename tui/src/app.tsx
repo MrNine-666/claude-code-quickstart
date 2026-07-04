@@ -8,12 +8,15 @@ import {
 	createInitialManageState,
 	menuItems,
 	reduceManageState,
+	AGENT_CONTEXT_LABELS,
+	AGENT_CONTEXT_ORDER,
 	UPDATE_BUTTON,
+	type AgentContext,
 	type ManageModuleId,
 	type ManageState
 } from './state/manage-state.js';
-import { navShortcuts, viewShortcuts, updateButtonShortcuts } from './state/shortcuts.js';
-import { Modal, ShortcutBar, Spinner, ToastViewport, toast, type StatusDotKind } from './components/index.js';
+import { navShortcuts, viewShortcuts, updateButtonShortcuts, agentToggleShortcut } from './state/shortcuts.js';
+import { Modal, ShortcutBar, Spinner, ToastViewport, toast, type Shortcut, type StatusDotKind } from './components/index.js';
 import { colors, borderColors, borderStyles, PRIMARY, getTheme, setActiveTheme, type AppThemeMode, type ThemePalette } from './theme/index.js';
 import { CCQ_LOGO } from './theme/logo.js';
 import { CCQ_VERSION } from './version.js';
@@ -357,10 +360,14 @@ export default function App({ initialThemeMode }: AppProps) {
 					borderColor={!navActive ? borderColors.active : borderColors.inactive}
 					paddingX={1}
 				>
+					{/* Agent 上下文 Header（全称切换 Claude Code / Codex，shift+tab 切换；不展示 cc/cx 缩写） */}
+					<AgentHeader agentContext={state.agentContext} />
+
 					{/* 内容视图区域 */}
 					<box flexDirection="column" flexGrow={1} height={contentViewportHeight} overflow="hidden">
 						<ModuleContent
 							moduleId={displayMenuId}
+							agentContext={state.agentContext}
 							viewportHeight={contentViewportHeight}
 							contentWidth={contentWidth}
 							active={state.focus === 'view'}
@@ -380,7 +387,7 @@ export default function App({ initialThemeMode }: AppProps) {
 					<Divider width={terminalWidth - SIDEBAR_WIDTH - 4} />
 
 					{/* Footer 快捷键提示 */}
-					<ShortcutBar shortcuts={navActive && state.selectedIndex === menuItems.length ? updateButtonShortcuts() : (navActive ? navShortcuts() : viewShortcuts(displayMenuId, viewSubMode))} />
+					<ShortcutBar shortcuts={footerShortcuts(navActive, state.selectedIndex === menuItems.length, displayMenuId, viewSubMode)} />
 				</box>
 			</box>
 
@@ -402,6 +409,31 @@ export default function App({ initialThemeMode }: AppProps) {
 // 卡片内分区下划线（替代独立 card 边框，Logo/menu 与 content/footer 各自一卡内分隔）
 function Divider({ width }: { readonly width: number }) {
 	return <text fg={colors.muted}>{'─'.repeat(Math.max(1, width))}</text>;
+}
+
+// Agent 上下文 Header：右侧 content 顶部，全称标签 Claude Code / Codex 切换。
+// spec manage-tui-shell：可见标签必须为全称，禁止 cc/cx 缩写；切换不改左侧 6 菜单顺序/选中。
+// 切换键 shift+tab 由 reduceManageState 处理；Header 只反映 state.agentContext。
+function AgentHeader({ agentContext }: { readonly agentContext: AgentContext }) {
+	return (
+		<box flexDirection="row" marginBottom={0}>
+			{AGENT_CONTEXT_ORDER.map(ctx => {
+				const active = ctx === agentContext;
+				const label = AGENT_CONTEXT_LABELS[ctx];
+				return (
+					<box key={ctx} flexDirection="row" marginRight={2}>
+						<text fg={active ? PRIMARY : colors.muted} attributes={active ? TextAttributes.BOLD : 0}>
+							{active ? '▶ ' : '  '}
+						</text>
+						<text fg={active ? PRIMARY : colors.muted} attributes={active ? TextAttributes.BOLD : 0}>
+							{label}
+						</text>
+					</box>
+				);
+			})}
+			<text fg={colors.muted} attributes={TextAttributes.DIM}>{`  ${agentToggleShortcut().key} 切换`}</text>
+		</box>
+	);
 }
 
 // 侧边栏导航行（菜单项）：
@@ -617,9 +649,25 @@ function statusDotColor(kind: StatusDotKind): string {
 	}
 }
 
+// Footer 快捷键组装：nav 焦点用 nav/更新按钮键位；view 焦点用视图键位 + 追加「切换 Agent」。
+// Header 切换（shift+tab）在 nav 与 view 顶层焦点均可用，故两者 footer 都含切换项（单一数据源）。
+function footerShortcuts(
+	navActive: boolean,
+	onUpdateButton: boolean,
+	displayMenuId: ManageModuleId,
+	viewSubMode: string
+): readonly Shortcut[] {
+	if (navActive) {
+		return onUpdateButton ? updateButtonShortcuts() : navShortcuts();
+	}
+
+	return [...viewShortcuts(displayMenuId, viewSubMode), agentToggleShortcut()];
+}
+
 // 右侧内容区路由：六个模块视图
 function ModuleContent({
 	moduleId,
+	agentContext,
 	viewportHeight,
 	contentWidth,
 	active,
@@ -632,6 +680,7 @@ function ModuleContent({
 	syntaxStyle
 }: {
 	readonly moduleId: string;
+	readonly agentContext: AgentContext;
 	readonly viewportHeight: number;
 	readonly contentWidth: number;
 	readonly active: boolean;
@@ -643,6 +692,9 @@ function ModuleContent({
 	readonly onExitToNav: () => void;
 	readonly syntaxStyle: SyntaxStyle | null;
 }) {
+	// agentContext 管道已就绪：Phase 3-8 各视图（Tools/Provider/Config/Prompts/MCP/Skills）
+	// 落地 agent-aware service 时按需消费，Phase 2 仅 Header 切换 + state 下发。
+	void agentContext;
 	// 根据 moduleId 渲染对应的视图组件
 	switch (moduleId) {
 		case 'provider':

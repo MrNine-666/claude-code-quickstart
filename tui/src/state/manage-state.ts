@@ -2,6 +2,9 @@ export type FocusMode = 'nav' | 'view' | 'form' | 'modal';
 
 export type ManageModuleId = 'provider' | 'mcp' | 'skills' | 'prompts' | 'config' | 'tools' | 'update';
 
+// 当前 Agent 上下文：内部键用短名（cc/cx），界面 Header 只展示全称（AGENT_CONTEXT_LABELS）。
+export type AgentContext = 'cc' | 'cx';
+
 export type ManageKeyName =
 	| 'up'
 	| 'down'
@@ -23,6 +26,8 @@ export type ManageMenuItem = {
 export type ManageState = {
 	readonly focus: FocusMode;
 	readonly selectedIndex: number;
+	// 当前 Agent 上下文（cc=Claude Code / cx=Codex）：Header 切换，左侧 6 菜单顺序与选中不受影响。
+	readonly agentContext: AgentContext;
 	readonly eventLog: readonly string[];
 	readonly shouldExit: boolean;
 };
@@ -48,11 +53,28 @@ export const UPDATE_BUTTON: ManageMenuItem = {
 const navCount = menuItems.length + 1;
 const maxMenuIndex = navCount - 1;
 
+// Header 可见标签（全称，禁止展示 cc/cx 缩写）。单一数据源，供 App Header 与 verify 共用。
+export const AGENT_CONTEXT_LABELS: Readonly<Record<AgentContext, string>> = {
+	cc: 'Claude Code',
+	cx: 'Codex'
+};
+
+// Header 切换顺序（左→右），toggle 在其间循环。
+export const AGENT_CONTEXT_ORDER: readonly AgentContext[] = ['cc', 'cx'];
+
+/** 切换到下一个 Agent 上下文（cc ↔ cx 循环）。 */
+export function nextAgentContext(current: AgentContext): AgentContext {
+	const index = AGENT_CONTEXT_ORDER.indexOf(current);
+	return AGENT_CONTEXT_ORDER[(index + 1) % AGENT_CONTEXT_ORDER.length]!;
+}
+
 export function createInitialManageState(): ManageState {
 	return {
 		// 启动即聚焦右侧视图：首个菜单（工具管理）直接获焦，无需先按 enter 进入
 		focus: 'view',
 		selectedIndex: 0,
+		// 默认 Claude Code（spec manage-tui-shell：初始 agentContext 默认 cc）
+		agentContext: 'cc',
 		eventLog: ['Manage TUI PoC 已启动'],
 		shouldExit: false
 	};
@@ -71,6 +93,13 @@ export function reduceManageState(state: ManageState, keyName: ManageKeyName): M
 
 	if (keyName === 'q' && (state.focus === 'nav' || state.focus === 'view')) {
 		return appendLog({...state, shouldExit: true}, 'q 退出');
+	}
+
+	// Header 切换（全局，nav/view 焦点均可用）：shift+tab 循环 Claude Code ↔ Codex。
+	// 只改 agentContext，左侧菜单选中项与焦点不变（design D2 / spec：切换不改变菜单顺序与选中）。
+	if (keyName === 'shift-tab' && (state.focus === 'nav' || state.focus === 'view')) {
+		const next = nextAgentContext(state.agentContext);
+		return appendLog({...state, agentContext: next}, `切换 Agent 上下文 → ${AGENT_CONTEXT_LABELS[next]}`);
 	}
 
 	switch (state.focus) {
