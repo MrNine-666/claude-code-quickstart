@@ -7,6 +7,7 @@ import {
 	type ComponentInstallOutcome
 } from '../core/tools-manage.js';
 import type {ProgressCallback} from '../core/exec.js';
+import type {AgentContext} from '../state/manage-state.js';
 import {createToolsDetectionRunner, runToolsDetection} from '../services/view-detection.js';
 import type {ToolsViewServices} from './ToolsView.js';
 
@@ -15,10 +16,11 @@ import type {ToolsViewServices} from './ToolsView.js';
 export function createToolsViewServices(): ToolsViewServices {
 	return {
 		detectComponents: () => detectComponents(),
-		installComponent: (id, onProgress) => installComponent(id, onProgress),
-		installMultiple: (ids, onProgress) => installMultipleComponents(ids, onProgress),
+		// agentContext 透传给 core：CodeGraph 接入目标 / CcgWorkflow Codex 分支按当前上下文解析（design D3-D5）。
+		installComponent: (id, onProgress, agentContext) => installComponent(id, onProgress, {agentContext}),
+		installMultiple: (ids, onProgress, agentContext) => installMultipleComponents(ids, onProgress, agentContext),
 		updateComponents: (components, onProgress) => updateComponents(components, onProgress),
-		uninstallComponent: (id, onProgress) => uninstallComponent(id, onProgress),
+		uninstallComponent: (id, onProgress, agentContext) => uninstallComponent(id, onProgress, {agentContext}),
 		createDetectionRunner: onChange => createToolsDetectionRunner(onChange),
 		runDetection: runner => runToolsDetection(runner)
 	};
@@ -27,11 +29,12 @@ export function createToolsViewServices(): ToolsViewServices {
 /** 批量安装（串行 + 失败隔离 P-6），带进度上报。 */
 async function installMultipleComponents(
 	ids: readonly ComponentId[],
-	onProgress?: ProgressCallback
+	onProgress?: ProgressCallback,
+	agentContext?: AgentContext
 ): Promise<readonly ComponentInstallOutcome[]> {
 	const outcomes: ComponentInstallOutcome[] = [];
 	for (const id of ids) {
-		const outcome = await installComponent(id, onProgress);
+		const outcome = await installComponent(id, onProgress, {agentContext});
 		outcomes.push(outcome);
 	}
 

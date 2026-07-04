@@ -243,26 +243,45 @@ console.log('[PASS] P-12 CcgWorkflow 深度卸载只删受管路径，用户内�
 }
 console.log('[PASS] npm 卸载命令 + Ccline 受管 statusLine 还原 (11.10/11.11)');
 
-// ── CodeGraph 卸载：先解除 Claude Code 集成，再卸载 npm 包 ────────────────
+// ── CodeGraph 默认卸载：只解除当前 Agent 集成，不 npm uninstall、不删 .codegraph/（design D4，3.9）──
+// 旧「先解除集成再 npm uninstall」语义已废止；npm 卸载 CLI 改为独立高级动作（3.10）。
 {
 	const execCalls = [];
 	const mockExec = async (cmd, args) => {
 		execCalls.push({cmd, args});
 		return {code: 0, stdout: '', stderr: ''};
 	};
-	const outcome = await uninstallComponent('CodeGraph', undefined, {exec: mockExec});
-	assert.equal(outcome.success, true, 'CodeGraph 卸载成功');
+
+	// Claude Code 上下文（默认 agentContext='cc'）
+	const outcomeCc = await uninstallComponent('CodeGraph', undefined, {exec: mockExec});
+	assert.equal(outcomeCc.success, true, 'CodeGraph Claude Code 默认卸载成功');
 	assert.deepEqual(
 		execCalls[0],
-		{cmd: 'codegraph', args: ['uninstall', '--target=claude', '--location=global', '--yes']},
-		'先非交互解除 Claude Code 的 CodeGraph 集成'
+		{cmd: 'codegraph', args: ['uninstall', '--target=claude', '--yes']},
+		'Claude Code 默认卸载只执行 codegraph uninstall --target=claude --yes（无 --location=global）'
 	);
-	assert.ok(
-		execCalls.some(c => c.cmd === 'npm' && c.args.includes('uninstall') && c.args.includes('@colbymchenry/codegraph')),
-		'再调起 npm uninstall -g @colbymchenry/codegraph'
+	assert.equal(
+		execCalls.some(c => c.cmd === 'npm' && c.args.includes('uninstall')),
+		false,
+		'Claude Code 默认卸载不得 npm uninstall（CLI 移除是独立高级动作）'
+	);
+
+	// Codex 上下文（agentContext='cx'）
+	execCalls.length = 0;
+	const outcomeCx = await uninstallComponent('CodeGraph', undefined, {exec: mockExec, agentContext: 'cx'});
+	assert.equal(outcomeCx.success, true, 'CodeGraph Codex 默认卸载成功');
+	assert.deepEqual(
+		execCalls[0],
+		{cmd: 'codegraph', args: ['uninstall', '--target=codex', '--yes']},
+		'Codex 默认卸载只执行 codegraph uninstall --target=codex --yes'
+	);
+	assert.equal(
+		execCalls.some(c => c.cmd === 'npm' && c.args.includes('uninstall')),
+		false,
+		'Codex 默认卸载不得 npm uninstall'
 	);
 }
-console.log('[PASS] CodeGraph 卸载先解除 Claude Code 集成再卸载 npm 包');
+console.log('[PASS] CodeGraph 默认卸载只解除当前 Agent 集成（不 npm uninstall / 不删 .codegraph）(3.9)');
 
 // 11.11 反例：用户自定义 statusLine（非受管值）卸载 Ccline 后不动
 {

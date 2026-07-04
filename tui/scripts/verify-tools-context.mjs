@@ -1,49 +1,73 @@
 import assert from 'node:assert/strict';
+import {
+	COMPONENT_META,
+	COMPONENT_DEFINITIONS,
+	isComponentVisible,
+	visibleComponentDefinitions,
+	filterVisibleComponents,
+	TOOL_GROUP_ORDER
+} from '../src/core/tools-manage.ts';
 
-// Task 1.5 骨架：工具管理按 agentContext 的可见性契约冻结（design D3/PBT-3）。
-// 本阶段冻结分组与可见性矩阵；阶段 3 落地 group/visibility resolver 后改为 import 真实定义断言。
+// Task 1.5 → Phase 3：工具分组与可见性（design D3/PBT-3），断言真实 COMPONENT_META。
 
-// ── 冻结的工具分组与可见性矩阵 ────────────────────────────────────────────────
-// group: agent = 主 Agent（两上下文常显）；companion = 仅 Claude Code；tool = 两上下文通用
-const TOOL_MATRIX = {
-	ClaudeCode: {group: 'agent', contexts: ['cc', 'cx']},
-	CodexCli: {group: 'agent', contexts: ['cc', 'cx']},
-	AntigravityCli: {group: 'agent', contexts: ['cc', 'cx']},
-	Ccline: {group: 'companion', contexts: ['cc']},
-	OpenSpec: {group: 'tool', contexts: ['cc', 'cx']},
-	CcgWorkflow: {group: 'tool', contexts: ['cc', 'cx']},
-	CodeGraph: {group: 'tool', contexts: ['cc', 'cx']}
-};
+// ── 分组归属（唯一真理源 = COMPONENT_META）──────────────────────────────────
+assert.equal(COMPONENT_META.ClaudeCode.group, 'agent', 'ClaudeCode 属 agent 组');
+assert.equal(COMPONENT_META.CodexCli.group, 'agent', 'CodexCli 属 agent 组');
+assert.equal(COMPONENT_META.AntigravityCli.group, 'agent', 'AntigravityCli 属 agent 组');
+assert.equal(COMPONENT_META.Ccline.group, 'companion', 'Ccline 属 companion 组');
+assert.equal(COMPONENT_META.OpenSpec.group, 'tool', 'OpenSpec 属 tool 组');
+assert.equal(COMPONENT_META.CcgWorkflow.group, 'tool', 'CcgWorkflow 属 tool 组');
+assert.equal(COMPONENT_META.CodeGraph.group, 'tool', 'CodeGraph 属 tool 组');
 
-function visibleIn(ctx) {
-	return Object.entries(TOOL_MATRIX)
-		.filter(([, meta]) => meta.contexts.includes(ctx))
-		.map(([id]) => id);
-}
+// 分组展示顺序：agent → companion → tool
+assert.deepEqual(TOOL_GROUP_ORDER, ['agent', 'companion', 'tool'], '分组展示顺序固定');
 
-// ClaudeCode/CodexCli 在两种上下文都常显
-for (const ctx of ['cc', 'cx']) {
-	const visible = visibleIn(ctx);
-	assert.ok(visible.includes('ClaudeCode'), `${ctx}: ClaudeCode 应常显`);
-	assert.ok(visible.includes('CodexCli'), `${ctx}: CodexCli 应常显`);
+// ── isComponentVisible / visibleComponentDefinitions ────────────────────────
+// ClaudeCode/CodexCli/AntigravityCli 两种上下文都常显
+for (const id of ['ClaudeCode', 'CodexCli', 'AntigravityCli']) {
+	assert.equal(isComponentVisible(id, 'cc'), true, `${id} 在 Claude Code 上下文常显`);
+	assert.equal(isComponentVisible(id, 'cx'), true, `${id} 在 Codex 上下文常显`);
 }
 
 // Ccline 仅 Claude Code
-assert.ok(visibleIn('cc').includes('Ccline'), 'Ccline 在 Claude Code 上下文显示');
-assert.equal(visibleIn('cx').includes('Ccline'), false, 'Ccline 不在 Codex 上下文显示');
+assert.equal(isComponentVisible('Ccline', 'cc'), true, 'Ccline 在 Claude Code 上下文显示');
+assert.equal(isComponentVisible('Ccline', 'cx'), false, 'Ccline 不在 Codex 上下文显示');
 
-// CodeGraph/CcgWorkflow 两上下文都在（生命周期按上下文分支，但可见性不受限）
-for (const ctx of ['cc', 'cx']) {
-	assert.ok(visibleIn(ctx).includes('CodeGraph'), `${ctx}: CodeGraph 可见`);
-	assert.ok(visibleIn(ctx).includes('CcgWorkflow'), `${ctx}: CcgWorkflow 可见`);
+// CodeGraph/CcgWorkflow/OpenSpec 两上下文都显示（生命周期按上下文分支，可见性不受限）
+for (const id of ['OpenSpec', 'CcgWorkflow', 'CodeGraph']) {
+	assert.equal(isComponentVisible(id, 'cc'), true, `${id} 在 Claude Code 上下文可见`);
+	assert.equal(isComponentVisible(id, 'cx'), true, `${id} 在 Codex 上下文可见`);
 }
 
-// 分组归属
-assert.equal(TOOL_MATRIX.ClaudeCode.group, 'agent', 'ClaudeCode 属 agent 组');
-assert.equal(TOOL_MATRIX.CodexCli.group, 'agent', 'CodexCli 属 agent 组');
-assert.equal(TOOL_MATRIX.AntigravityCli.group, 'agent', 'AntigravityCli 属 agent 组');
-assert.equal(TOOL_MATRIX.Ccline.group, 'companion', 'Ccline 属 companion 组');
-assert.equal(TOOL_MATRIX.OpenSpec.group, 'tool', 'OpenSpec 属 tool 组');
-assert.equal(TOOL_MATRIX.CodeGraph.group, 'tool', 'CodeGraph 属 tool 组');
+// ── visibleComponentDefinitions 数量与顺序 ─────────────────────────────────
+const ccVisible = visibleComponentDefinitions('cc').map(d => d.id);
+const cxVisible = visibleComponentDefinitions('cx').map(d => d.id);
 
-console.log('[PASS] 1.5 工具管理骨架：ClaudeCode/CodexCli 常显 + Ccline 仅 Claude Code + 分组矩阵冻结');
+// Claude Code：7 项（含 Ccline）
+assert.equal(ccVisible.length, 7, 'Claude Code 上下文可见 7 项');
+assert.ok(ccVisible.includes('Ccline'), 'Claude Code 上下文含 Ccline');
+// Codex：6 项（不含 Ccline）
+assert.equal(cxVisible.length, 6, 'Codex 上下文可见 6 项');
+assert.equal(cxVisible.includes('Ccline'), false, 'Codex 上下文不含 Ccline');
+// 两种上下文都含 ClaudeCode/CodexCli/AntigravityCli/OpenSpec/CcgWorkflow/CodeGraph
+for (const id of ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'OpenSpec', 'CcgWorkflow', 'CodeGraph']) {
+	assert.ok(ccVisible.includes(id), `Claude Code 含 ${id}`);
+	assert.ok(cxVisible.includes(id), `Codex 含 ${id}`);
+}
+// 保留 COMPONENT_DEFINITIONS 原始顺序（cc 上下文即全量顺序）
+assert.deepEqual(ccVisible, COMPONENT_DEFINITIONS.map(d => d.id), '可见列表保持 COMPONENT_DEFINITIONS 原始顺序');
+
+// ── filterVisibleComponents（运行时组件过滤，供 ToolsView 消费）──────────────
+const stub = (id, installed) => ({id, installed, currentVersion: '', latestVersion: '', hasUpdate: null});
+const runtime = [
+	stub('ClaudeCode', true),
+	stub('Ccline', false),
+	stub('CcgWorkflow', true),
+	stub('CodexCli', false)
+];
+const ccFiltered = filterVisibleComponents(runtime, 'cc').map(c => c.id);
+const cxFilted = filterVisibleComponents(runtime, 'cx').map(c => c.id);
+assert.deepEqual(ccFiltered, ['ClaudeCode', 'Ccline', 'CcgWorkflow', 'CodexCli'], 'Claude Code 过滤保留 Ccline');
+assert.deepEqual(cxFilted, ['ClaudeCode', 'CcgWorkflow', 'CodexCli'], 'Codex 过滤掉 Ccline');
+
+console.log('[PASS] 1.5/3.1/3.2/3.3 工具分组与可见性 resolver：ClaudeCode/CodexCli 常显 + Ccline 仅 Claude Code + 顺序保持');

@@ -23,6 +23,8 @@ import {
 	type ToolsViewAction,
 	type ToolsViewState
 } from '../state/tools-view-state.js';
+import {filterVisibleComponents, uninstallImpactNotice} from '../core/tools-manage.js';
+import type {AgentContext} from '../state/manage-state.js';
 
 type Dispatch = React.Dispatch<ToolsViewAction>;
 
@@ -34,10 +36,10 @@ type Dispatch = React.Dispatch<ToolsViewAction>;
 
 export type ToolsViewServices = {
 	readonly detectComponents: () => Promise<readonly ManagedComponent[]>;
-	readonly installComponent: (id: ComponentId, onProgress?: ProgressCallback) => Promise<ComponentInstallOutcome>;
-	readonly installMultiple: (ids: readonly ComponentId[], onProgress?: ProgressCallback) => Promise<readonly ComponentInstallOutcome[]>;
+	readonly installComponent: (id: ComponentId, onProgress?: ProgressCallback, agentContext?: AgentContext) => Promise<ComponentInstallOutcome>;
+	readonly installMultiple: (ids: readonly ComponentId[], onProgress?: ProgressCallback, agentContext?: AgentContext) => Promise<readonly ComponentInstallOutcome[]>;
 	readonly updateComponents: (components: readonly ManagedComponent[], onProgress?: ProgressCallback) => Promise<ApplyUpdatesResult>;
-	readonly uninstallComponent: (id: ComponentId, onProgress?: ProgressCallback) => Promise<ComponentUninstallOutcome>;
+	readonly uninstallComponent: (id: ComponentId, onProgress?: ProgressCallback, agentContext?: AgentContext) => Promise<ComponentUninstallOutcome>;
 	readonly createDetectionRunner: (onChange: DetectionStateSink<ManagedComponent[]>) => DetectionRunner<ManagedComponent[]>;
 	readonly runDetection: (runner: DetectionRunner<ManagedComponent[]>) => Promise<unknown>;
 };
@@ -45,6 +47,7 @@ export type ToolsViewServices = {
 export type ToolsViewProps = {
 	readonly services: ToolsViewServices;
 	readonly cache: DetectionCache<ManagedComponent[]>;
+	readonly agentContext: AgentContext;
 	readonly active?: boolean;
 	readonly viewportHeight?: number;
 	readonly viewportWidth?: number;
@@ -53,22 +56,33 @@ export type ToolsViewProps = {
 	readonly onExitToNav?: () => void;
 };
 
-export function ToolsView({ services, cache, active = true, viewportHeight = 16, viewportWidth = 52, contentWidth, onSubModeChange, onExitToNav }: ToolsViewProps) {
+export function ToolsView({ services: rawServices, cache, agentContext, active = true, viewportHeight = 16, viewportWidth = 52, contentWidth, onSubModeChange, onExitToNav }: ToolsViewProps) {
 	const [view, dispatch] = useReducer(reduceToolsViewState, undefined, createInitialToolsViewState);
 	const detection = cache.state;
+
+	// 绑定 agentContext 到生命周期动作（install/uninstall/installMultiple）：CodeGraph 接入目标、
+	// CcgWorkflow Codex 引导/卸载分支均随当前上下文（design D3/D4/D5）。下游辅助函数无需感知 agentContext。
+	const services = useMemo<ToolsViewServices>(() => ({
+		...rawServices,
+		installComponent: (id, onProgress) => rawServices.installComponent(id, onProgress, agentContext),
+		installMultiple: (ids, onProgress) => rawServices.installMultiple(ids, onProgress, agentContext),
+		uninstallComponent: (id, onProgress) => rawServices.uninstallComponent(id, onProgress, agentContext)
+	}), [rawServices, agentContext]);
 
 	// 网格列数随终端内容区宽度自适应（卡宽固定），导航上下键 delta 跟随列数，避免视觉/语义错位。
 	const columns = useMemo(() => computeColumns(contentWidth ?? 52), [contentWidth]);
 
+	// 按 agentContext 过滤检测结果：ClaudeCode/CodexCli 两上下文常显，Ccline 仅 Claude Code（design D3）。
+	// 过滤在下发给状态机前完成，光标/导航/一键更新均只作用于可见组件。
 	useEffect(() => {
 		if (detection.status === 'success') {
-			dispatch({ type: 'components-loaded', components: detection.result ?? [] });
+			dispatch({ type: 'components-loaded', components: filterVisibleComponents(detection.result ?? [], agentContext) });
 		}
 
 		if (detection.status === 'error') {
 			dispatch({ type: 'detection-error', error: detection.error ?? '检测失败' });
 		}
-	}, [detection.status, detection.result, detection.error]);
+	}, [detection.status, detection.result, detection.error, agentContext]);
 
 	// 检测失败时弹 toast（长停留，保留「按 r 重试」指引；仅在 status 变 error 时触发一次）。
 	useEffect(() => {
@@ -123,7 +137,7 @@ export function ToolsView({ services, cache, active = true, viewportHeight = 16,
 			{detection.status !== 'loading' && detection.status !== 'idle' ? renderGrid(view) : null}
 			{activeProgressTasks(view).length > 0 ? <ActiveProgressTasks tasks={activeProgressTasks(view)} /> : null}
 			{view.errorText ? <ErrorPanel message={view.errorText} /> : null}
-			{view.mode === 'confirm-uninstall' ? <UninstallConfirm view={view} dispatch={dispatch} services={services} cache={cache} active={active} viewportWidth={viewportWidth} viewportHeight={viewportHeight} /> : null}
+			{view.mode === 'confirm-uninstall' ? <UninstallConfirm view={view} dispatch={dispatch} services={services} cache={cache} active={active} agentContext={agentContext} viewportWidth={viewportWidth} viewportHeight={viewportHeight} /> : null}
 		</box>
 	);
 }
@@ -302,6 +316,7 @@ function UninstallConfirm({
 	services,
 	cache,
 	active,
+	agentContext,
 	viewportWidth,
 	viewportHeight
 }: {
@@ -310,6 +325,7 @@ function UninstallConfirm({
 	readonly services: ToolsViewServices;
 	readonly cache: DetectionCache<ManagedComponent[]>;
 	readonly active: boolean;
+	readonly agentContext: AgentContext;
 	readonly viewportWidth: number;
 	readonly viewportHeight: number;
 }) {
@@ -341,7 +357,7 @@ function UninstallConfirm({
 			tone="danger"
 			viewportWidth={viewportWidth}
 			viewportHeight={viewportHeight}
-			height={target.isBase ? 9 : 7}
+			height={target.isBase ? 10 : 8}
 		>
 			<box flexDirection="column">
 				{target.isBase ? (
@@ -349,7 +365,8 @@ function UninstallConfirm({
 						危险：这是基础组件，卸载将破坏整个 Claude Code 环境！
 					</text>
 				) : null}
-				<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{target.isBase ? '基础组件卸载风险极高，确认继续？' : '确认卸载此组件？此操作不可撤销。'}</text>
+				{/* 真实影响范围文案（3.11）：按组件 + agentContext 解析，提示 CodeGraph 默认只解除集成、CcgWorkflow Codex 不删 config.toml 等 */}
+				<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{uninstallImpactNotice(target.id, agentContext)}</text>
 			</box>
 		</Modal>
 	);

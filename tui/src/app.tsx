@@ -692,9 +692,8 @@ function ModuleContent({
 	readonly onExitToNav: () => void;
 	readonly syntaxStyle: SyntaxStyle | null;
 }) {
-	// agentContext 管道已就绪：Phase 3-8 各视图（Tools/Provider/Config/Prompts/MCP/Skills）
-	// 落地 agent-aware service 时按需消费，Phase 2 仅 Header 切换 + state 下发。
-	void agentContext;
+	// agentContext 管道已就绪：Tools 视图已消费（Phase 3）；Provider/Config/Prompts/MCP/Skills
+	// 视图在 Phase 5-8 逐步落地 agent-aware service 时接入。
 	// 根据 moduleId 渲染对应的视图组件
 	switch (moduleId) {
 		case 'provider':
@@ -708,7 +707,7 @@ function ModuleContent({
 		case 'config':
 			return <ConfigView active={active} viewportHeight={viewportHeight} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} syntaxStyle={syntaxStyle} />;
 		case 'tools':
-			return <ToolsView services={toolsViewServices} cache={toolsCache} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} contentWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
+			return <ToolsView services={toolsViewServices} cache={toolsCache} agentContext={agentContext} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} contentWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
 		default:
 			// 兜底：显示模块信息
 			const item = menuItems.find(menuItem => menuItem.id === moduleId);

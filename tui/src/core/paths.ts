@@ -46,3 +46,26 @@ export function rulesDir(): string {
 export function skillsDir(): string {
 	return join(claudeDir(), 'skills');
 }
+
+/**
+ * Codex 主目录：CODEX_HOME 优先（官方约定），否则 `~/.codex`。
+ * 与 resolveHome 一致支持测试注入（CCQ_HOME 影响默认 `~/.codex` 的 home 基点）。
+ */
+export function codexDir(): string {
+	const override = process.env.CODEX_HOME;
+	if (override && override.trim() !== '') {
+		return override;
+	}
+
+	return join(resolveHome(), '.codex');
+}
+
+/** Codex 基础用户配置 `$CODEX_HOME/config.toml`（Codex 卸载绝不删除此文件）。 */
+export function codexConfigPath(): string {
+	return join(codexDir(), 'config.toml');
+}
+
+/** Codex 全局规则文件 `$CODEX_HOME/AGENTS.md`。 */
+export function codexAgentsPath(): string {
+	return join(codexDir(), 'AGENTS.md');
+}

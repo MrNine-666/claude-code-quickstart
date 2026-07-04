@@ -12,7 +12,13 @@ import {
 } from './update.js';
 import {installTool, TOOL_DEFINITIONS, type ToolId} from './tools-install.js';
 import {atomicWrite} from './fs-utils.js';
-import {claudeDir, resolveHome, rulesDir, settingsPath} from './paths.js';
+import {claudeDir, codexDir, resolveHome, rulesDir, settingsPath} from './paths.js';
+import type {AgentContext} from '../state/manage-state.js';
+import {
+	codeGraphUninstallCommands,
+	codexCcgManagedPaths,
+	type LifecycleCommand
+} from './tools-lifecycle.js';
 
 // tools-manage core：工具管理单一真理源（design TDR-11）。
 // 融合 tools-install.ts（6 工具安装定义）与 update.ts（CLI 组件检测/快照/应用），
@@ -56,6 +62,8 @@ export type ComponentInstallOutcome = {
 /** 安装依赖注入（仅 ClaudeCode 分支生效，供测试 mock exec；6 工具经 installTool 不支持注入）。 */
 export type InstallComponentDeps = {
 	readonly exec?: typeof execCommand;
+	// 当前 Agent 上下文（design D4/D5）：CodeGraph 接入目标与 CcgWorkflow Codex 引导按此分支，默认 Claude Code。
+	readonly agentContext?: AgentContext;
 };
 
 const INSTALL_TIMEOUT_MS = 300000;
@@ -82,6 +90,75 @@ export const COMPONENT_DEFINITIONS: readonly ComponentDefinition[] = [
 	CLAUDE_CODE_DEFINITION,
 	...TOOL_DEFINITIONS.map(tool => ({...tool, isBase: false}))
 ];
+
+// ── 分组与可见性（Phase 3，design D3 / spec codex-tool-lifecycle）─────────────────
+// group: agent = 主 Agent（Claude Code / Codex 两上下文常显）；
+//        companion = 仅 Claude Code（Ccline）；tool = 两上下文通用（OpenSpec/CcgWorkflow/CodeGraph）。
+// 可见性矩阵冻结于 verify-tools-context.mjs（PBT-3），此处为唯一真理源。
+
+export type ToolGroup = 'agent' | 'companion' | 'tool';
+
+/** 组件分组 + 可见上下文元数据（可见性 resolver 单一真理源）。 */
+export type ComponentMeta = {
+	readonly group: ToolGroup;
+	readonly contexts: readonly AgentContext[];
+};
+
+const BOTH_CONTEXTS: readonly AgentContext[] = ['cc', 'cx'];
+
+export const COMPONENT_META: Readonly<Record<ComponentId, ComponentMeta>> = {
+	ClaudeCode: {group: 'agent', contexts: BOTH_CONTEXTS},
+	CodexCli: {group: 'agent', contexts: BOTH_CONTEXTS},
+	AntigravityCli: {group: 'agent', contexts: BOTH_CONTEXTS},
+	Ccline: {group: 'companion', contexts: ['cc']},
+	OpenSpec: {group: 'tool', contexts: BOTH_CONTEXTS},
+	CcgWorkflow: {group: 'tool', contexts: BOTH_CONTEXTS},
+	CodeGraph: {group: 'tool', contexts: BOTH_CONTEXTS}
+};
+
+/** 分组展示顺序（agent → companion → tool）。 */
+export const TOOL_GROUP_ORDER: readonly ToolGroup[] = ['agent', 'companion', 'tool'];
+
+/** 某组件是否在给定 agentContext 下可见。 */
+export function isComponentVisible(id: ComponentId, context: AgentContext): boolean {
+	return COMPONENT_META[id].contexts.includes(context);
+}
+
+/** 按 agentContext 过滤可见组件定义（保持 COMPONENT_DEFINITIONS 原始顺序）。 */
+export function visibleComponentDefinitions(context: AgentContext): readonly ComponentDefinition[] {
+	return COMPONENT_DEFINITIONS.filter(def => isComponentVisible(def.id, context));
+}
+
+/** 按 agentContext 过滤可见运行时组件（供 ToolsView 消费）。 */
+export function filterVisibleComponents(
+	components: readonly ManagedComponent[],
+	context: AgentContext
+): readonly ManagedComponent[] {
+	return components.filter(component => isComponentVisible(component.id, context));
+}
+
+/**
+ * 卸载影响说明（3.11）：按组件 + agentContext 返回真实影响范围文案，供确认弹窗展示。
+ * CodeGraph 默认卸载只解除当前 Agent 集成（不卸 npm、不删 .codegraph/）；
+ * CcgWorkflow Codex 只删 CCG-managed 文件（不删 config.toml）；CodexCli 卸载后 `ccq cx` 不可用。
+ */
+export function uninstallImpactNotice(id: ComponentId, context: AgentContext): string {
+	const agentLabel = context === 'cx' ? 'Codex' : 'Claude Code';
+	switch (id) {
+		case 'ClaudeCode':
+			return '将 npm 全局卸载 Claude Code，破坏整个 Claude Code 环境。';
+		case 'CodexCli':
+			return '将 npm 全局卸载 Codex CLI；卸载后 `ccq cx` 在重新安装前不可用。';
+		case 'CodeGraph':
+			return `仅解除 ${agentLabel} 的 CodeGraph 集成（codegraph uninstall），不卸载 npm CLI、不删除项目 .codegraph/ 索引。`;
+		case 'CcgWorkflow':
+			return context === 'cx'
+				? '仅删除 Codex 的 CCG-managed 文件（agents/ccg-*.toml、hooks/ccg-workflow.py），绝不删除 CODEX_HOME/config.toml。'
+				: '将删除 ~/.claude 下 CCG-managed 文件并注销 ccg hooks，保留用户自定义配置。';
+		default:
+			return '确认卸载此组件？此操作不可撤销。';
+	}
+}
 
 function friendlyError(text: string, fallback: string): string {
 	if (/ETIMEDOUT|ECONNREFUSED|ENOTFOUND|network|fetch failed/i.test(text)) {
@@ -162,7 +239,8 @@ export async function installComponent(
 		}
 
 		// 6 工具复用 tools-install.installTool（11.8，不重写 Phase 6 已实现逻辑）
-		return installTool(id, onProgress);
+		// agentContext 决定 CodeGraph 接入目标（claude|codex）与 CcgWorkflow Codex 引导分支。
+		return installTool(id, onProgress, deps.agentContext ?? 'cc');
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		onProgress?.({level: 'danger', message: `${definition.name} 安装失败: ${message}`, componentId: id});
@@ -245,6 +323,9 @@ export type ComponentUninstallOutcome = {
 export type UninstallComponentDeps = {
 	readonly exec?: typeof execCommand;
 	readonly createSnapshotFn?: () => string;
+	// 当前 Agent 上下文（design D4/D5）：CodeGraph 默认卸载只解除当前 Agent 集成；
+	// CcgWorkflow Codex 卸载只删 CCG-managed 文件、绝不删 config.toml。默认 Claude Code。
+	readonly agentContext?: AgentContext;
 };
 
 /**
@@ -274,11 +355,14 @@ export async function uninstallComponent(
 	}
 
 	const exec = deps.exec ?? execCommand;
+	const context: AgentContext = deps.agentContext ?? 'cc';
 	try {
 		switch (definition.kind) {
 			case 'npm':
 				if (definition.id === 'CodeGraph') {
-					await uninstallCodeGraphIntegration(exec, onProgress);
+					// design D4：默认卸载只解除当前 Agent 集成，不 npm uninstall、不删 .codegraph/。
+					await runLifecycleCommands(codeGraphUninstallCommands(context), exec, 'CodeGraph', onProgress);
+					break;
 				}
 
 				await uninstallNpmPackage(definition, exec, onProgress);
@@ -288,7 +372,13 @@ export async function uninstallComponent(
 
 				break;
 			case 'ccg-init':
-				await uninstallCcgWorkflow(exec, onProgress);
+				if (context === 'cx') {
+					// design D5：Codex 卸载只删 CCG-managed 文件/marker，绝不删 CODEX_HOME/config.toml。
+					await uninstallCcgWorkflowCodex(onProgress);
+				} else {
+					await uninstallCcgWorkflow(exec, onProgress);
+				}
+
 				break;
 			case 'shell-script':
 				await uninstallAntigravity(onProgress);
@@ -321,15 +411,19 @@ async function uninstallNpmPackage(
 	}
 }
 
-/** CodeGraph 卸载前先非交互解除 Claude Code MCP 集成，避免 npm 包移除后残留配置。 */
-async function uninstallCodeGraphIntegration(
+/** 顺序执行 lifecycle 解析器产出的命令（CodeGraph 等），任一失败即抛错中止。 */
+async function runLifecycleCommands(
+	commands: readonly LifecycleCommand[],
 	exec: typeof execCommand,
+	componentId: ComponentId,
 	onProgress?: ProgressCallback
 ): Promise<void> {
-	onProgress?.({level: 'info', message: 'codegraph uninstall --target=claude --location=global --yes', componentId: 'CodeGraph'});
-	const result = await exec('codegraph', ['uninstall', '--target=claude', '--location=global', '--yes'], {timeout: INSTALL_TIMEOUT_MS});
-	if (result.code !== 0) {
-		throw new Error(friendlyError(result.stderr || result.stdout, `CodeGraph Claude Code 集成解除失败 (exit ${result.code})`));
+	for (const command of commands) {
+		onProgress?.({level: 'info', message: `${command.cmd} ${command.args.join(' ')}`, componentId});
+		const result = await exec(command.cmd, [...command.args], {timeout: INSTALL_TIMEOUT_MS});
+		if (result.code !== 0) {
+			throw new Error(friendlyError(result.stderr || result.stdout, `${componentId} 命令失败 (exit ${result.code})`));
+		}
 	}
 }
 
@@ -522,6 +616,53 @@ async function uninstallCcgWorkflow(exec: typeof execCommand, onProgress?: Progr
 	} catch {
 		/* 探测失败不阻塞（ccg-workflow 通常为 npx init 非全局包） */
 	}
+}
+
+/**
+ * CcgWorkflow Codex Mode 卸载（design D5，PBT-5）：只删 CCG-managed 文件/marker，
+ * 绝不删 CODEX_HOME/config.toml（受保护）。AGENTS.md 只处理 CCG marker 内容，不整文件删除。
+ * 受管清单来自 tools-lifecycle.codexCcgManagedPaths（单一真理源，verify 对其断言）。
+ */
+async function uninstallCcgWorkflowCodex(onProgress?: ProgressCallback): Promise<void> {
+	const home = codexDir();
+
+	// 1. 删除 CCG-managed 文件（agents/ccg-*.toml + hooks/ccg-workflow.py）
+	for (const target of codexCcgManagedPaths()) {
+		if (!existsSync(target)) {
+			continue;
+		}
+
+		try {
+			rmSync(target, {recursive: true, force: true});
+			onProgress?.({level: 'success', message: `已删除 ${target}`, componentId: 'CcgWorkflow'});
+		} catch (error) {
+			onProgress?.({
+				level: 'warning',
+				message: `删除 ${target} 失败: ${error instanceof Error ? error.message : String(error)}`,
+				componentId: 'CcgWorkflow'
+			});
+		}
+	}
+
+	// 2. 清理空 agents/ 与 hooks/ 目录（仅当 CCG-managed 文件已删后）
+	for (const dir of [join(home, 'agents'), join(home, 'hooks')]) {
+		if (!existsSync(dir)) {
+			continue;
+		}
+
+		try {
+			const remaining = readdirSync(dir);
+			if (remaining.length === 0) {
+				rmSync(dir, {recursive: true, force: true});
+				onProgress?.({level: 'success', message: `已删除空目录 ${dir}`, componentId: 'CcgWorkflow'});
+			}
+		} catch {
+			/* 目录读取/删除失败不阻塞 */
+		}
+	}
+
+	// 3. config.toml 受保护：绝不删除（CODEX_PROTECTED_FILES 由 verify 断言不在受管清单内）。
+	//    AGENTS.md 只处理 CCG marker 内容（首期保守：不整文件删除，留给后续 marker-aware 实现）。
 }
 
 /**

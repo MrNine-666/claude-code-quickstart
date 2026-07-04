@@ -47,14 +47,19 @@ for (const tool of TOOL_DEFINITIONS) {
 }
 console.log('[PASS] 工具定义完整性（6 工具齐备）');
 
-// ── CodeGraph 安装后接入 Claude Code MCP（非交互）──────────────────────────────
-const toolsInstallSource = readFileSync(new URL('../src/core/tools-install.ts', import.meta.url), 'utf8');
-assert.match(
-	toolsInstallSource,
-	/codegraph', \['install', '--target=claude', '--location=global', '--yes'\]/,
-	'CodeGraph 安装后应非交互接入 Claude Code MCP'
+// ── CodeGraph 安装后按 agentContext 接入当前 Agent（非交互，命令来自 lifecycle resolver）────
+const {codeGraphInstallCommands} = await import('../src/core/tools-lifecycle.ts');
+assert.deepEqual(
+	codeGraphInstallCommands('cc'),
+	[{cmd: 'codegraph', args: ['install', '--target=claude', '--location=global', '--yes']}],
+	'Claude Code 上下文安装后接入 --target=claude'
 );
-console.log('[PASS] CodeGraph 安装后接入 Claude Code MCP（非交互）');
+assert.deepEqual(
+	codeGraphInstallCommands('cx'),
+	[{cmd: 'codegraph', args: ['install', '--target=codex', '--location=global', '--yes']}],
+	'Codex 上下文安装后接入 --target=codex'
+);
+console.log('[PASS] CodeGraph 安装后按 agentContext 接入当前 Agent（非交互）');
 
 // ── 6.11 CcgWorkflow mcpServers 快照保护（CCQ_HOME 隔离）──────────────────────
 const home = mkdtempSync(join(tmpdir(), 'ccq-tools-test-'));

@@ -2,6 +2,8 @@ import {readFileSync, existsSync} from 'node:fs';
 import {execCommand, type ProgressCallback} from './exec.js';
 import {atomicWrite} from './fs-utils.js';
 import {claudeDir, claudeJsonPath, settingsPath} from './paths.js';
+import type {AgentContext} from '../state/manage-state.js';
+import {codeGraphInstallCommands, codexCcgInstallGuidance} from './tools-lifecycle.js';
 
 // 工具安装 core：检测 + 安装 6 个进阶工具（Ccline / CcgWorkflow / OpenSpec / CodeGraph / CodexCli / AntigravityCli）。
 // 全部经 core/exec.ts 的 execCommand spawn 外部命令（HC-TUI-NODE-ONLY），不调 PS/zsh 步骤函数。
@@ -164,12 +166,18 @@ async function installNpmPackage(definition: ToolDefinition, onProgress?: Progre
 	}
 }
 
-/** CodeGraph 后置：非交互接入 Claude Code MCP（只配置 Claude，避免误改其它 agent）。 */
-async function postInstallCodeGraph(onProgress?: ProgressCallback): Promise<void> {
-	onProgress?.({level: 'info', message: 'codegraph install --target=claude --location=global --yes', componentId: 'CodeGraph'});
-	const result = await execCommand('codegraph', ['install', '--target=claude', '--location=global', '--yes'], {timeout: INSTALL_TIMEOUT_MS});
+/** CodeGraph 后置：CLI 就绪后非交互接入当前 Agent（agentContext → --target=claude|codex）。 */
+async function postInstallCodeGraph(context: AgentContext, onProgress?: ProgressCallback): Promise<void> {
+	const [command] = codeGraphInstallCommands(context);
+	if (!command) {
+		return;
+	}
+
+	onProgress?.({level: 'info', message: `${command.cmd} ${command.args.join(' ')}`, componentId: 'CodeGraph'});
+	const result = await execCommand(command.cmd, [...command.args], {timeout: INSTALL_TIMEOUT_MS});
 	if (result.code !== 0) {
-		throw new Error(friendlyError(result.stderr || result.stdout, `CodeGraph Claude Code 接入失败 (exit ${result.code})`));
+		const label = context === 'cx' ? 'Codex' : 'Claude Code';
+		throw new Error(friendlyError(result.stderr || result.stdout, `CodeGraph ${label} 接入失败 (exit ${result.code})`));
 	}
 }
 
@@ -219,8 +227,14 @@ export function readMcpSnapshot(): string | null {
 }
 
 /** CcgWorkflow 安装：npx init（--skip-mcp）+ mcpServers 快照保护。
- *  env 推荐项已迁移至 ClaudeConfig 推荐配置（contracts/claude-config.json），此处不再写 env。 */
-async function installCcgWorkflow(onProgress?: ProgressCallback): Promise<void> {
+ *  env 推荐项已迁移至 ClaudeConfig 推荐配置（contracts/claude-config.json），此处不再写 env。
+ *  Codex 上下文无官方非交互安装入口（design D5），只给引导文案，不驱动交互菜单、不改任何文件。 */
+async function installCcgWorkflow(context: AgentContext, onProgress?: ProgressCallback): Promise<void> {
+	if (context === 'cx') {
+		onProgress?.({level: 'warning', message: codexCcgInstallGuidance(), componentId: 'CcgWorkflow'});
+		return;
+	}
+
 	// mcpServers 快照（安装前）
 	const mcpBefore = readMcpSnapshot();
 
@@ -279,8 +293,9 @@ async function installAntigravity(onProgress?: ProgressCallback): Promise<void> 
 	}
 }
 
-/** 安装单个工具（按 kind 分发 + 后置处理 + 检测确认）。 */
-export async function installTool(id: ToolId, onProgress?: ProgressCallback): Promise<ToolInstallOutcome> {
+/** 安装单个工具（按 kind 分发 + 后置处理 + 检测确认）。
+ *  context 默认 'cc'（Claude Code）保持向后兼容；CodeGraph 接入目标与 CcgWorkflow Codex 引导按 context 分支。 */
+export async function installTool(id: ToolId, onProgress?: ProgressCallback, context: AgentContext = 'cc'): Promise<ToolInstallOutcome> {
 	const definition = TOOL_DEFINITIONS.find(item => item.id === id);
 	if (!definition) {
 		return {id, success: false, error: '未知工具'};
@@ -295,12 +310,12 @@ export async function installTool(id: ToolId, onProgress?: ProgressCallback): Pr
 				}
 
 				if (definition.id === 'CodeGraph') {
-					await postInstallCodeGraph(onProgress);
+					await postInstallCodeGraph(context, onProgress);
 				}
 
 				break;
 			case 'ccg-init':
-				await installCcgWorkflow(onProgress);
+				await installCcgWorkflow(context, onProgress);
 				break;
 			case 'shell-script':
 				await installAntigravity(onProgress);
