@@ -223,6 +223,12 @@ zsh -n installer/macos/Install.zsh
 
 ---
 
+## 工作区约束
+
+- 后续开发直接在 `main` checkout 进行；除非用户明确重新授权，不再为常规实现创建或进入 git worktree。若历史遗留 worktree 已存在，先合并/清理后继续。
+
+---
+
 ## .context 项目上下文
 
 > 项目使用 `.context/` 管理开发决策上下文。
