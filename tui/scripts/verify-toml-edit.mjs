@@ -1,38 +1,122 @@
 import assert from 'node:assert/strict';
+import {existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync} from 'node:fs';
+import {join, relative} from 'node:path';
+import {tmpdir} from 'node:os';
+import {
+	atomicWrite,
+	deletePath,
+	formatTomlError,
+	getPath,
+	parse,
+	redactTomlSecrets,
+	setPath,
+	stringify,
+	TomlEditError
+} from '../src/core/toml-edit.ts';
 
-// Task 1.8 骨架：TOML 结构化编辑不变量冻结（design D9/PBT-7,PBT-10,PBT-11）。
-// 冻结「禁止默认 managed block、按 path set/delete、保留无关字段」契约；
-// 阶段 4 落地 tui/src/core/toml-edit.ts 后改为 import 真实工具层断言。
+const sample = `
+model = "gpt-5"
+model_provider = "openai"
 
-// 结构化编辑器期望能力（阶段 4 实现验证清单）。
-const REQUIRED_OPS = ['parse', 'stringify', 'getPath', 'setPath', 'deletePath', 'atomicWrite'];
+[model_providers.openai]
+name = "openai"
+base_url = "https://api.openai.com/v1"
+experimental_bearer_token = "sk-existing-secret"
 
-// 禁止出现的 managed marker block 策略标识。
-const FORBIDDEN_STRATEGIES = ['managed-block', 'marker-block', '>>> ccq >>>'];
+[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]
 
-for (const op of REQUIRED_OPS) {
-	assert.ok(typeof op === 'string' && op.length > 0, `TOML 工具层必须提供 ${op}`);
+[hooks]
+enabled = true
+`;
+
+const parsed = parse(sample);
+assert.equal(getPath(parsed, ['model']), 'gpt-5');
+assert.equal(getPath(parsed, ['model_providers', 'openai', 'base_url']), 'https://api.openai.com/v1');
+assert.equal(getPath(parsed, ['missing', 'path']), undefined);
+
+const withProvider = setPath(parsed, ['model_provider'], 'deepseek');
+assert.equal(getPath(withProvider, ['model_provider']), 'deepseek');
+assert.equal(getPath(parsed, ['model_provider']), 'openai', 'setPath 不应原地修改输入对象');
+assert.equal(getPath(withProvider, ['mcp_servers', 'context7', 'command']), 'npx', '无关 MCP table 应保留');
+assert.equal(getPath(withProvider, ['hooks', 'enabled']), true, '无关 hooks table 应保留');
+
+const repeated = setPath(withProvider, ['model_provider'], 'deepseek');
+assert.deepEqual(repeated, withProvider, '相同 path/value 重复 set 应保持结构幂等');
+
+const added = setPath(parsed, ['model_providers', 'deepseek', 'experimental_bearer_token'], 'sk-new-secret');
+assert.equal(getPath(added, ['model_providers', 'deepseek', 'experimental_bearer_token']), 'sk-new-secret');
+assert.equal(getPath(added, ['model_providers', 'openai', 'name']), 'openai', '新增 provider 不应破坏既有 provider table');
+
+const removed = deletePath(added, ['model_providers', 'deepseek', 'experimental_bearer_token']);
+assert.equal(getPath(removed, ['model_providers', 'deepseek', 'experimental_bearer_token']), undefined);
+assert.equal(getPath(removed, ['model_providers', 'openai', 'base_url']), 'https://api.openai.com/v1');
+assert.deepEqual(deletePath(removed, ['not', 'there']), removed, '删除不存在 path 应幂等');
+
+const roundTrip = parse(stringify(added));
+assert.equal(getPath(roundTrip, ['model_providers', 'deepseek', 'experimental_bearer_token']), 'sk-new-secret');
+assert.equal(getPath(roundTrip, ['mcp_servers', 'context7', 'args', '0']), undefined, '数组不应被误当作 path table');
+assert.deepEqual(getPath(roundTrip, ['mcp_servers', 'context7', 'args']), ['-y', '@upstash/context7-mcp']);
+
+assert.throws(
+	() => parse('model = "ok"\nmodel = "duplicate"\n'),
+	(error) => error instanceof TomlEditError && !String(error.message).includes('sk-'),
+	'无效 TOML 必须拒绝解析且错误文本不应泄漏敏感值'
+);
+assert.throws(
+	() => setPath({model: 'gpt-5'}, ['model', 'nested'], true),
+	/非 table 节点/,
+	'禁止在非 table 节点下写入嵌套 path'
+);
+
+const redactedToml = redactTomlSecrets('experimental_bearer_token = "sk-sensitive-123456"\nbase_url = "https://safe.example"');
+assert.ok(!redactedToml.includes('sk-sensitive-123456'));
+assert.ok(redactedToml.includes('[REDACTED]'));
+assert.ok(redactedToml.includes('https://safe.example'));
+
+const formattedError = formatTomlError(new Error('failed with experimental_bearer_token = "sk-sensitive-abcdef123456"'));
+assert.ok(!formattedError.includes('sk-sensitive-abcdef123456'));
+assert.ok(formattedError.includes('[REDACTED]'));
+
+const tempDir = mkdtempSync(join(tmpdir(), 'ccq-toml-edit-'));
+try {
+	const target = join(tempDir, 'config.toml');
+	atomicWrite(target, added);
+	assert.equal(existsSync(target), true);
+	const written = parse(readFileSync(target, 'utf8'));
+	assert.equal(getPath(written, ['model_providers', 'deepseek', 'experimental_bearer_token']), 'sk-new-secret');
+
+	assert.throws(() => atomicWrite(target, {bad: () => null}), /序列化失败/, '不可序列化值不得写入目标文件');
+	const afterFailedWrite = parse(readFileSync(target, 'utf8'));
+	assert.equal(getPath(afterFailedWrite, ['model_providers', 'deepseek', 'experimental_bearer_token']), 'sk-new-secret');
+} finally {
+	rmSync(tempDir, {recursive: true, force: true});
 }
 
-// 默认策略必须是结构化 path 编辑，而非 managed block。
-const DEFAULT_STRATEGY = 'structured-path';
-assert.equal(DEFAULT_STRATEGY, 'structured-path', '默认策略必须是结构化 path 编辑');
-for (const forbidden of FORBIDDEN_STRATEGIES) {
-	assert.notEqual(DEFAULT_STRATEGY, forbidden, `默认策略不得为 ${forbidden}`);
+const tuiRoot = new URL('..', import.meta.url).pathname;
+const packageJson = readFileSync(join(tuiRoot, 'package.json'), 'utf8');
+assert.ok(packageJson.includes('scripts/verify-toml-edit.mjs'), 'verify 聚合必须包含 TOML 工具层门禁');
+
+function listSourceFiles(dir) {
+	const results = [];
+	for (const entry of readdirSync(dir)) {
+		const fullPath = join(dir, entry);
+		const stat = statSync(fullPath);
+		if (stat.isDirectory()) {
+			results.push(...listSourceFiles(fullPath));
+		} else if (/\.(ts|tsx)$/.test(entry)) {
+			results.push(fullPath);
+		}
+	}
+
+	return results;
 }
 
-// path set/delete 幂等 + 保留无关字段（语义冻结，阶段 4 用真实 round-trip 验证）。
-const idempotentSetContract = true;
-const preserveUnrelatedContract = true;
-assert.equal(idempotentSetContract, true, 'setPath 相同值重复写应幂等');
-assert.equal(preserveUnrelatedContract, true, '无关 table/key 应在 set/delete 后保留');
+const directSmolTomlImports = listSourceFiles(join(tuiRoot, 'src'))
+	.filter((filePath) => !filePath.endsWith('src/core/toml-edit.ts'))
+	.filter((filePath) => readFileSync(filePath, 'utf8').includes('smol-toml'))
+	.map((filePath) => relative(tuiRoot, filePath));
+assert.deepEqual(directSmolTomlImports, [], '生产代码必须通过 core/toml-edit.ts 统一读写 TOML');
 
-// 无效 TOML 拒绝写入（parse error 不得落盘）。
-const rejectInvalidOnParseError = true;
-assert.equal(rejectInvalidOnParseError, true, '无效 TOML 必须拒绝写入');
-
-// 敏感值不得进入错误文本（脱敏契约，阶段 4/5 用真实 error formatter 验证）。
-const redactSecretsInErrors = true;
-assert.equal(redactSecretsInErrors, true, '错误文本必须脱敏敏感值');
-
-console.log('[PASS] 1.8 TOML 结构化编辑骨架：禁 managed block + path set/delete 幂等 + 保留无关字段 + 拒绝无效 TOML');
+console.log('[PASS] TOML 结构化编辑：parse/stringify + path get/set/delete + 原子写 + 错误脱敏 + 统一入口');

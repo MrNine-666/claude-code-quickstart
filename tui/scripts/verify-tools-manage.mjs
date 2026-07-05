@@ -159,59 +159,45 @@ console.log('[PASS] P-13 snapshot 失败 → exec 零调用 (11.15)');
 }
 console.log('[PASS] P-13 更新路径 snapshot 失败 → exec 零调用 (applyUpdates)');
 
-// P-12：CcgWorkflow 深度卸载只删受管路径，用户自定义 hooks/statusLine/commands/rules 保留
+// P-12：CcgWorkflow 卸载走官方非交互命令（Claude Code → `ccg-workflow uninstall`），
+//       ccq 不再 fs 删除用户目录（文件边界交给官方命令负责）。
 {
 	const home2 = mkdtempSync(join(tmpdir(), 'ccq-uninstall-ccg-'));
 	process.env.CCQ_HOME = home2;
 	const dotClaude = join(home2, '.claude');
+	// 预置用户内容：验证 ccq 卸载路径不再触碰这些文件（不删、不改）。
 	mkdirSync(join(dotClaude, 'commands', 'ccg'), {recursive: true});
-	mkdirSync(join(dotClaude, 'commands', 'user'), {recursive: true});
 	writeFileSync(join(dotClaude, 'commands', 'ccg', 'a.md'), 'ccg', 'utf8');
-	writeFileSync(join(dotClaude, 'commands', 'user', 'b.md'), 'user', 'utf8');
-	mkdirSync(join(dotClaude, 'rules'), {recursive: true});
-	writeFileSync(join(dotClaude, 'rules', 'ccq-ccgworkflow.md'), 'ccg rule', 'utf8');
-	writeFileSync(join(dotClaude, 'rules', 'user-rule.md'), 'user rule', 'utf8');
-	writeFileSync(
-		join(dotClaude, 'settings.json'),
-		JSON.stringify({
-			statusLine: {type: 'command', command: 'my-statusline', padding: 0},
-			hooks: {
-				PreToolUse: [
-					{matcher: 'Bash', hooks: [{type: 'command', command: '~/.claude/bin/codeagent-wrapper pre'}]},
-					{matcher: 'Edit', hooks: [{type: 'command', command: '/usr/bin/my-user-hook'}]}
-				]
-			}
-		}),
-		'utf8'
-	);
 	writeFileSync(join(home2, '.claude.json'), JSON.stringify({}), 'utf8');
 
-	// mock exec：npm ls 返回非 0（无全局 ccg-workflow），不触发 npm uninstall
+	const execCalls = [];
 	const mockExec = async (cmd, args) => {
-		if (cmd === 'npm' && args.includes('ls')) {
-			return {code: 1, stdout: '(empty)', stderr: ''};
-		}
-
+		execCalls.push({cmd, args});
 		return {code: 0, stdout: '', stderr: ''};
 	};
 	const outcome = await uninstallComponent('CcgWorkflow', undefined, {exec: mockExec});
 	assert.equal(outcome.success, true, 'CcgWorkflow 卸载成功');
 
-	assert.equal(existsSync(join(dotClaude, 'commands', 'ccg')), false, 'ccg 受管 commands/ccg 已删');
-	assert.equal(existsSync(join(dotClaude, 'rules', 'ccq-ccgworkflow.md')), false, 'ccg 受管 rules 已删');
-	assert.equal(existsSync(join(dotClaude, 'commands', 'user', 'b.md')), true, '用户 commands 保留');
-	assert.equal(existsSync(join(dotClaude, 'rules', 'user-rule.md')), true, '用户 rules 保留');
+	// 断言执行了官方 Claude Code 卸载命令，未走 npm uninstall / fs 删除。
+	const officialCall = execCalls.find(c => c.args.includes('ccg-workflow') && c.args.includes('uninstall'));
+	assert.ok(officialCall, 'CcgWorkflow 卸载执行官方 ccg-workflow uninstall 命令');
+	assert.equal(
+		officialCall.args.some(a => a === 'codex-mode'),
+		false,
+		'Claude Code 卸载不带 codex-mode 子命令'
+	);
+	assert.equal(
+		execCalls.some(c => c.cmd === 'npm' && c.args.includes('uninstall')),
+		false,
+		'CcgWorkflow 卸载不执行 npm uninstall'
+	);
 
-	const after = JSON.parse(readFileSync(join(dotClaude, 'settings.json'), 'utf8'));
-	assert.deepEqual(after.statusLine, {type: 'command', command: 'my-statusline', padding: 0}, '用户自定义 statusLine 保留');
-	const userHookKept = after.hooks.PreToolUse.some(g => (g.hooks || []).some(h => h.command === '/usr/bin/my-user-hook'));
-	assert.equal(userHookKept, true, '用户自定义 hook 保留');
-	const ccgHookGone = !after.hooks.PreToolUse.some(g => (g.hooks || []).some(h => /codeagent-wrapper/.test(h.command)));
-	assert.equal(ccgHookGone, true, 'ccg 受管 hook 已移除');
+	// ccq 不再 fs 删除用户目录（官方命令负责文件边界）。
+	assert.equal(existsSync(join(dotClaude, 'commands', 'ccg', 'a.md')), true, 'ccq 卸载路径不 fs 删除用户目录');
 
 	rmSync(home2, {recursive: true, force: true});
 }
-console.log('[PASS] P-12 CcgWorkflow 深度卸载只删受管路径，用户内容保留 (11.12/11.13)');
+console.log('[PASS] P-12 CcgWorkflow 卸载走官方 ccg-workflow uninstall，ccq 不 fs 删除');
 
 // 11.10/11.11：npm 卸载命令正确 + Ccline 受管 statusLine 还原
 {

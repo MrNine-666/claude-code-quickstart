@@ -1,17 +1,14 @@
-import {join} from 'node:path';
 import type {AgentContext} from '../state/manage-state.js';
-import {codexDir} from './paths.js';
 
-// 工具生命周期命令解析层（design D3/D4/D5）：把「组件 + agentContext」解析为具体命令/文件边界。
-// 纯函数、无副作用、无 IO —— 便于 verify 脚本对不变量做断言（PBT-4/PBT-5），执行由 tools-manage 负责。
+// 工具生命周期命令解析层（design D3/D4/D5）：把「组件 + agentContext」解析为具体命令。
+// 纯函数、无副作用、无 IO —— 便于 verify 脚本对不变量做断言（PBT-4/PBT-5），执行由 tools-manage/tools-install 负责。
 //
 // 覆盖范围：
 //   - CodeGraph：CLI 安装与 per-Agent 集成分离（install 接入当前 Agent；默认 uninstall 只解除集成，
 //     不 npm uninstall、不删 .codegraph/ 项目索引；移除 CLI 为独立高级动作）。
-//   - CcgWorkflow：Codex Mode 无官方非交互入口，install 只给引导；Codex uninstall 只删 CCG-managed
-//     文件/marker，绝不删 CODEX_HOME/config.toml。
+//   - CcgWorkflow：Claude Code 与 Codex Mode 均走官方非交互命令；ccq 不自行猜测删除 config.toml。
 
-/** 单条待执行命令（cmd + args），供 tools-manage 交给 execCommand 执行。 */
+/** 单条待执行命令（cmd + args），供 tools-manage/tools-install 交给 execCommand 执行。 */
 export type LifecycleCommand = {
 	readonly cmd: string;
 	readonly args: readonly string[];
@@ -42,30 +39,27 @@ export function codeGraphRemoveCliCommands(): readonly LifecycleCommand[] {
 	return [{cmd: 'npm', args: ['uninstall', '-g', '@colbymchenry/codegraph']}];
 }
 
-// ── CcgWorkflow Codex Mode 文件边界（design D5，PBT-5）─────────────────────────
+// ── CcgWorkflow 生命周期（design D5，PBT-5）────────────────────────────────────
 
-/**
- * CcgWorkflow Codex Mode 受管文件清单（相对 CODEX_HOME）。
- * 对齐 DeepWiki Codex Mode 事实：agents/ccg-*.toml + hooks/ccg-workflow.py。
- * config.toml 绝不在内（受保护）；AGENTS.md 只处理 CCG marker 内容，不整文件删除。
- */
-export const CODEX_CCG_MANAGED_FILES: readonly string[] = [
-	'agents/ccg-implement.toml',
-	'agents/ccg-review.toml',
-	'agents/ccg-research.toml',
-	'hooks/ccg-workflow.py'
-];
+/** CcgWorkflow 官方非交互安装/接入命令。 */
+export function ccgWorkflowInstallCommands(context: AgentContext, claudeInstallDir: string): readonly LifecycleCommand[] {
+	if (context === 'cx') {
+		return [{cmd: 'npx', args: ['--yes', 'ccg-workflow', 'codex-mode', 'install']}];
+	}
 
-/** Codex 用户配置：绝不由 CcgWorkflow 卸载删除。 */
-export const CODEX_PROTECTED_FILES: readonly string[] = ['config.toml'];
-
-/** CcgWorkflow Codex 受管文件绝对路径（CODEX_HOME 优先，默认 ~/.codex）。 */
-export function codexCcgManagedPaths(): readonly string[] {
-	const home = codexDir();
-	return CODEX_CCG_MANAGED_FILES.map(rel => join(home, rel));
+	return [
+		{
+			cmd: 'npx',
+			args: ['--yes', 'ccg-workflow@latest', 'init', '--skip-prompt', '--skip-mcp', '--lang', 'zh-CN', '--install-dir', claudeInstallDir]
+		}
+	];
 }
 
-/** CcgWorkflow Codex install 引导文案（无官方非交互入口，只提示手动菜单）。 */
-export function codexCcgInstallGuidance(): string {
-	return 'Codex Mode 暂无官方非交互安装入口，请手动运行 `npx ccg-workflow` 并选择菜单 `X. Codex Mode` 完成安装。';
+/** CcgWorkflow 官方非交互卸载命令。 */
+export function ccgWorkflowUninstallCommands(context: AgentContext): readonly LifecycleCommand[] {
+	if (context === 'cx') {
+		return [{cmd: 'npx', args: ['--yes', 'ccg-workflow', 'codex-mode', 'uninstall']}];
+	}
+
+	return [{cmd: 'npx', args: ['--yes', 'ccg-workflow', 'uninstall']}];
 }

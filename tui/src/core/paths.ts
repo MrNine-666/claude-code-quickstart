@@ -65,6 +65,11 @@ export function codexConfigPath(): string {
 	return join(codexDir(), 'config.toml');
 }
 
+/** Codex 官方 profile 文件 `$CODEX_HOME/<key>.config.toml`。调用前由 codex core 校验 key。 */
+export function codexProfilePath(key: string): string {
+	return join(codexDir(), `${key}.config.toml`);
+}
+
 /** Codex 全局规则文件 `$CODEX_HOME/AGENTS.md`。 */
 export function codexAgentsPath(): string {
 	return join(codexDir(), 'AGENTS.md');

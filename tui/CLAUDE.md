@@ -152,7 +152,7 @@ TUI 不新增第 7 个 Codex 菜单；改由右侧 content 顶部的全局 **Hea
 - **Tools 组**（OpenSpec / CcgWorkflow / CodeGraph）：两种上下文都显示。
 - install/update/uninstall 经 lifecycle command resolver 按 `agentContext` 返回不同指令：
   - **CodeGraph**：install 确保 `@colbymchenry/codegraph` CLI 后执行 `codegraph install --target=<claude|codex> --location=global --yes`；**默认 uninstall** 只执行 `codegraph uninstall --target=<claude|codex> --yes`，**不 `npm uninstall`、不删 `.codegraph/` 项目索引**；「移除 CLI」是需强确认的独立高级动作（骨架 `scripts/verify-codegraph-lifecycle.mjs`）。
-  - **CcgWorkflow**：Claude 走 `npx ccg-workflow@latest init ... --install-dir ~/.claude`（保留 mcpServers 快照保护）；Codex Mode 无官方非交互入口，首期 install 只提示走官方菜单 `X. Codex Mode`，Codex uninstall 只删 CCG-managed 文件/marker（`agents/ccg-*.toml`、`hooks/ccg-workflow.py`、CCG-managed `hooks.json` 条目、CCG-marked `AGENTS.md` 内容），**绝不删 `CODEX_HOME/config.toml`**（骨架 `scripts/verify-ccgworkflow-codex.mjs`）。
+  - **CcgWorkflow**：Claude 走 `npx ccg-workflow@latest init ... --install-dir ~/.claude`（保留 mcpServers 快照保护）+ `npx ccg-workflow uninstall`；Codex Mode 走官方非交互 `npx ccg-workflow codex-mode install/uninstall`。文件边界（`config.toml`/`AGENTS.md`/hooks/rules）一律交给官方命令负责，**ccq 不手写 fs 删除 `CODEX_HOME/config.toml`**（骨架 `scripts/verify-ccgworkflow-codex.mjs`）。
 
 ### HC-CONFIG-RULES-REUSE
 Config / Global Rules 视图按 `agentContext` 切换目标文件但复用同一 UI（预览页 / `e` 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入 / 损坏文件拒绝覆盖 / 脏编辑保护），骨架 `scripts/verify-config-rules-reuse.mjs`：

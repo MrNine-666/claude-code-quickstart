@@ -3,7 +3,7 @@ import {execCommand, type ProgressCallback} from './exec.js';
 import {atomicWrite} from './fs-utils.js';
 import {claudeDir, claudeJsonPath, settingsPath} from './paths.js';
 import type {AgentContext} from '../state/manage-state.js';
-import {codeGraphInstallCommands, codexCcgInstallGuidance} from './tools-lifecycle.js';
+import {codeGraphInstallCommands, ccgWorkflowInstallCommands} from './tools-lifecycle.js';
 
 // 工具安装 core：检测 + 安装 6 个进阶工具（Ccline / CcgWorkflow / OpenSpec / CodeGraph / CodexCli / AntigravityCli）。
 // 全部经 core/exec.ts 的 execCommand spawn 外部命令（HC-TUI-NODE-ONLY），不调 PS/zsh 步骤函数。
@@ -226,32 +226,28 @@ export function readMcpSnapshot(): string | null {
 	return null;
 }
 
-/** CcgWorkflow 安装：npx init（--skip-mcp）+ mcpServers 快照保护。
- *  env 推荐项已迁移至 ClaudeConfig 推荐配置（contracts/claude-config.json），此处不再写 env。
- *  Codex 上下文无官方非交互安装入口（design D5），只给引导文案，不驱动交互菜单、不改任何文件。 */
+/** CcgWorkflow 安装：Claude Code init + mcpServers 快照保护；Codex Mode 走官方非交互命令。 */
 async function installCcgWorkflow(context: AgentContext, onProgress?: ProgressCallback): Promise<void> {
-	if (context === 'cx') {
-		onProgress?.({level: 'warning', message: codexCcgInstallGuidance(), componentId: 'CcgWorkflow'});
+	// mcpServers 快照仅适用于 Claude Code init 路径；Codex Mode 不应触碰 ~/.claude.json。
+	const mcpBefore = context === 'cc' ? readMcpSnapshot() : null;
+	const [command] = ccgWorkflowInstallCommands(context, claudeDir());
+	if (!command) {
 		return;
 	}
 
-	// mcpServers 快照（安装前）
-	const mcpBefore = readMcpSnapshot();
-
-	onProgress?.({level: 'info', message: 'npx ccg-workflow@latest init（远程下载，请稍候）', componentId: 'CcgWorkflow'});
-	const result = await execCommand(
-		'npx',
-		['--yes', 'ccg-workflow@latest', 'init', '--skip-prompt', '--skip-mcp', '--lang', 'zh-CN', '--install-dir', claudeDir()],
-		{timeout: INSTALL_TIMEOUT_MS}
-	);
+	onProgress?.({level: 'info', message: `${command.cmd} ${command.args.join(' ')}（远程下载，请稍候）`, componentId: 'CcgWorkflow'});
+	const result = await execCommand(command.cmd, [...command.args], {timeout: INSTALL_TIMEOUT_MS});
 	if (result.code !== 0) {
-		throw new Error(friendlyError(result.stderr || result.stdout, `CCG Workflow 初始化失败 (exit ${result.code})`));
+		const label = context === 'cx' ? 'Codex Mode 安装失败' : 'CCG Workflow 初始化失败';
+		throw new Error(friendlyError(result.stderr || result.stdout, `${label} (exit ${result.code})`));
 	}
 
 	// mcpServers 快照比对（安装后）：被覆盖则恢复
-	const mcpAfter = readMcpSnapshot();
-	if (mcpBefore !== null && mcpBefore !== mcpAfter) {
-		restoreMcpSnapshot(mcpBefore, onProgress);
+	if (context === 'cc') {
+		const mcpAfter = readMcpSnapshot();
+		if (mcpBefore !== null && mcpBefore !== mcpAfter) {
+			restoreMcpSnapshot(mcpBefore, onProgress);
+		}
 	}
 }
 

@@ -1,4 +1,4 @@
-import {existsSync, readdirSync, readFileSync, rmSync, unlinkSync} from 'node:fs';
+import {existsSync, readFileSync, rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {execCommand, type ProgressCallback} from './exec.js';
 import {
@@ -12,11 +12,11 @@ import {
 } from './update.js';
 import {installTool, TOOL_DEFINITIONS, type ToolId} from './tools-install.js';
 import {atomicWrite} from './fs-utils.js';
-import {claudeDir, codexDir, resolveHome, rulesDir, settingsPath} from './paths.js';
+import {resolveHome, settingsPath} from './paths.js';
 import type {AgentContext} from '../state/manage-state.js';
 import {
 	codeGraphUninstallCommands,
-	codexCcgManagedPaths,
+	ccgWorkflowUninstallCommands,
 	type LifecycleCommand
 } from './tools-lifecycle.js';
 
@@ -153,8 +153,8 @@ export function uninstallImpactNotice(id: ComponentId, context: AgentContext): s
 			return `仅解除 ${agentLabel} 的 CodeGraph 集成（codegraph uninstall），不卸载 npm CLI、不删除项目 .codegraph/ 索引。`;
 		case 'CcgWorkflow':
 			return context === 'cx'
-				? '仅删除 Codex 的 CCG-managed 文件（agents/ccg-*.toml、hooks/ccg-workflow.py），绝不删除 CODEX_HOME/config.toml。'
-				: '将删除 ~/.claude 下 CCG-managed 文件并注销 ccg hooks，保留用户自定义配置。';
+				? '将通过官方命令 `npx ccg-workflow codex-mode uninstall` 卸载 Codex Mode；CODEX_HOME/config.toml 由官方命令处理，ccq 不直接删除。'
+				: '将通过官方命令 `npx ccg-workflow uninstall` 卸载 CCG Workflow；CCG-managed 文件/hooks 由官方命令清理。';
 		default:
 			return '确认卸载此组件？此操作不可撤销。';
 	}
@@ -282,35 +282,6 @@ export async function updateComponents(
 // 全部卸载经统一入口 uninstallComponent，破坏性写前 snapshot-before-write（11.15，P-13）。
 // 深度卸载只动 ccg 受管路径，保留用户自定义 hooks/statusLine（HC-UNINSTALL-DEEP，P-12）。
 
-/**
- * CcgWorkflow 受管删除清单（相对 ~/.claude）。
- * 对齐 contracts/ccg-workflow.json 的 verifyItems（commands/ccg、agents/ccg、.ccg、bin/codeagent-wrapper）
- * + 官方 uninstallWorkflows 补充（skills/ccg、hooks/ccg）。
- * 注：ccg-workflow.json 当前处于 9B contracts 拆分迁移中（磁盘暂缺），故内联为常量保持鲁棒与单一真理源；
- * 9B 落地后可改为读取契约。
- */
-const CCG_MANAGED_PATHS: readonly string[] = [
-	'commands/ccg',
-	'agents/ccg',
-	'skills/ccg',
-	'hooks/ccg',
-	'.ccg',
-	'bin/codeagent-wrapper'
-];
-
-/**
- * CcgWorkflow 受管 rules 文件清单（~/.claude/rules/ 下）。
- * 对齐 contracts/ccg-workflow.json 的 managedRuleFiles（ccq- 前缀，ccg-workflow 安装时写入）。
- * 注：ccq- 前缀中仅这 4 个属 CcgWorkflow 受管，其余 ccq-*（如 install 写入的 ccq-mcp-*.md）
- * 为本项目 rules，不删——故用显式清单而非前缀通配。
- */
-const CCG_MANAGED_RULE_FILES: readonly string[] = [
-	'ccq-ccgworkflow.md',
-	'ccq-multimodel.md',
-	'ccq-tools.md',
-	'ccq-workflow.md'
-];
-
 /** 单组件卸载结果（manualHint 保留字段；Antigravity 已改为 fs 直删，当前不再产出 manualHint）。 */
 export type ComponentUninstallOutcome = {
 	readonly id: ComponentId;
@@ -372,13 +343,10 @@ export async function uninstallComponent(
 
 				break;
 			case 'ccg-init':
-				if (context === 'cx') {
-					// design D5：Codex 卸载只删 CCG-managed 文件/marker，绝不删 CODEX_HOME/config.toml。
-					await uninstallCcgWorkflowCodex(onProgress);
-				} else {
-					await uninstallCcgWorkflow(exec, onProgress);
-				}
-
+				// design D5：CcgWorkflow 安装/卸载统一走官方非交互命令。
+				// Claude Code → `npx ccg-workflow uninstall`；Codex → `npx ccg-workflow codex-mode uninstall`。
+				// config.toml/AGENTS.md 等文件边界由官方命令负责，ccq 不再手写 fs 删除。
+				await runLifecycleCommands(ccgWorkflowUninstallCommands(context), exec, 'CcgWorkflow', onProgress);
 				break;
 			case 'shell-script':
 				await uninstallAntigravity(onProgress);
@@ -468,201 +436,6 @@ function restoreCclineStatusLine(onProgress?: ProgressCallback): void {
 	} catch (error) {
 		onProgress?.({level: 'warning', message: `statusLine 还原失败: ${error instanceof Error ? error.message : String(error)}`, componentId: 'Ccline'});
 	}
-}
-
-/** hook 条目的 command 字段（非对象返回 undefined）。 */
-function hookCommandOf(entry: unknown): unknown {
-	if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
-		return (entry as Record<string, unknown>)['command'];
-	}
-
-	return undefined;
-}
-
-/** command 是否为 ccg 受管 hook（codeagent-wrapper 或 .ccg/ccg 路径）。 */
-function isCcgHookCommand(command: unknown): boolean {
-	return typeof command === 'string' && /codeagent-wrapper|[\\/]\.?ccg[\\/]/i.test(command);
-}
-
-/**
- * 从 settings.hooks 注销 ccg 受管 hook（保留用户自定义）。返回是否有改动。
- * 结构：hooks[event] = [{matcher, hooks:[{type,command}]}]；仅移除 command 命中 ccg 的内层条目，
- * 组内全为 ccg 则丢弃该组，事件下无组则删事件键。
- */
-function pruneCcgHooks(settings: Record<string, unknown>): boolean {
-	const hooks = settings['hooks'];
-	if (typeof hooks !== 'object' || hooks === null || Array.isArray(hooks)) {
-		return false;
-	}
-
-	const hooksObj = hooks as Record<string, unknown>;
-	let changed = false;
-
-	for (const event of Object.keys(hooksObj)) {
-		const groups = hooksObj[event];
-		if (!Array.isArray(groups)) {
-			continue;
-		}
-
-		const keptGroups: unknown[] = [];
-		for (const group of groups) {
-			if (typeof group !== 'object' || group === null || Array.isArray(group)) {
-				keptGroups.push(group);
-				continue;
-			}
-
-			const groupObj = group as Record<string, unknown>;
-			const inner = groupObj['hooks'];
-			if (Array.isArray(inner)) {
-				const keptInner = inner.filter(entry => !isCcgHookCommand(hookCommandOf(entry)));
-				if (keptInner.length !== inner.length) {
-					changed = true;
-				}
-
-				if (inner.length > 0 && keptInner.length === 0) {
-					continue; // 组内 hooks 全为 ccg → 丢弃整组
-				}
-
-				groupObj['hooks'] = keptInner;
-			}
-
-			keptGroups.push(groupObj);
-		}
-
-		if (keptGroups.length === 0) {
-			delete hooksObj[event];
-		} else {
-			hooksObj[event] = keptGroups;
-		}
-	}
-
-	return changed;
-}
-
-/**
- * 11.12 CcgWorkflow 深度卸载（Node fs 复刻官方清单，不调起 npx 交互菜单，HC-TUI-NODE-ONLY）。
- * 删受管目录/二进制 + 受管 rules + 注销 ccg hooks（保留用户自定义）；
- * 11.13 探测全局 npm 包 ccg-workflow，存在则一并 npm uninstall -g。
- */
-async function uninstallCcgWorkflow(exec: typeof execCommand, onProgress?: ProgressCallback): Promise<void> {
-	const base = claudeDir();
-
-	// 1. 删除受管目录/文件（仅 ccg 受管路径）
-	for (const rel of CCG_MANAGED_PATHS) {
-		const target = join(base, rel);
-		if (!existsSync(target)) {
-			continue;
-		}
-
-		try {
-			rmSync(target, {recursive: true, force: true});
-			onProgress?.({level: 'success', message: `已删除 ${rel}`, componentId: 'CcgWorkflow'});
-		} catch (error) {
-			onProgress?.({level: 'warning', message: `删除 ${rel} 失败: ${error instanceof Error ? error.message : String(error)}`, componentId: 'CcgWorkflow'});
-		}
-	}
-
-	// 2. 清理 CcgWorkflow 受管 rules 文件（对齐 contracts/ccg-workflow.json managedRuleFiles）。
-	//    删清单内 ccq- 文件（CcgWorkflow 安装写入）+ 兼容旧版官方 ccg-*.md；
-	//    保留其余 ccq-*（本项目 install rules）与用户自定义。
-	const rules = rulesDir();
-	const ruleFiles = new Set<string>();
-	try {
-		for (const file of readdirSync(rules)) {
-			ruleFiles.add(file);
-		}
-	} catch {
-		/* rules 目录不存在或读取失败，跳过 */
-	}
-
-	const legacyCcgRules = [...ruleFiles].filter(file => file.startsWith('ccg-') && file.endsWith('.md'));
-	for (const file of [...CCG_MANAGED_RULE_FILES, ...legacyCcgRules]) {
-		if (!ruleFiles.has(file)) {
-			continue;
-		}
-
-		try {
-			unlinkSync(join(rules, file));
-			onProgress?.({level: 'success', message: `已删除 rules/${file}`, componentId: 'CcgWorkflow'});
-		} catch {
-			/* 单个 rules 删除失败不阻塞 */
-		}
-	}
-
-	// 3. 从 settings.json 注销 ccg hooks（保留用户自定义）
-	const sPath = settingsPath();
-	if (existsSync(sPath)) {
-		try {
-			const parsed = JSON.parse(readFileSync(sPath, 'utf8')) as unknown;
-			if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-				const settings = parsed as Record<string, unknown>;
-				if (pruneCcgHooks(settings)) {
-					atomicWrite(sPath, JSON.stringify(settings, null, 2));
-					onProgress?.({level: 'success', message: '已从 settings.json 注销 ccg hooks', componentId: 'CcgWorkflow'});
-				}
-			}
-		} catch {
-			onProgress?.({level: 'warning', message: 'settings.json 解析失败，跳过 hooks 注销', componentId: 'CcgWorkflow'});
-		}
-	}
-
-	// 4. 全局 npm 包探测（11.13）：ccg-workflow 若装为全局包则一并卸载
-	try {
-		const ls = await exec('npm', ['ls', '-g', 'ccg-workflow', '--depth=0'], {timeout: 30000});
-		if (ls.code === 0 && /ccg-workflow@/.test(ls.stdout)) {
-			onProgress?.({level: 'info', message: 'npm uninstall -g ccg-workflow', componentId: 'CcgWorkflow'});
-			await exec('npm', ['uninstall', '-g', 'ccg-workflow'], {timeout: INSTALL_TIMEOUT_MS});
-		}
-	} catch {
-		/* 探测失败不阻塞（ccg-workflow 通常为 npx init 非全局包） */
-	}
-}
-
-/**
- * CcgWorkflow Codex Mode 卸载（design D5，PBT-5）：只删 CCG-managed 文件/marker，
- * 绝不删 CODEX_HOME/config.toml（受保护）。AGENTS.md 只处理 CCG marker 内容，不整文件删除。
- * 受管清单来自 tools-lifecycle.codexCcgManagedPaths（单一真理源，verify 对其断言）。
- */
-async function uninstallCcgWorkflowCodex(onProgress?: ProgressCallback): Promise<void> {
-	const home = codexDir();
-
-	// 1. 删除 CCG-managed 文件（agents/ccg-*.toml + hooks/ccg-workflow.py）
-	for (const target of codexCcgManagedPaths()) {
-		if (!existsSync(target)) {
-			continue;
-		}
-
-		try {
-			rmSync(target, {recursive: true, force: true});
-			onProgress?.({level: 'success', message: `已删除 ${target}`, componentId: 'CcgWorkflow'});
-		} catch (error) {
-			onProgress?.({
-				level: 'warning',
-				message: `删除 ${target} 失败: ${error instanceof Error ? error.message : String(error)}`,
-				componentId: 'CcgWorkflow'
-			});
-		}
-	}
-
-	// 2. 清理空 agents/ 与 hooks/ 目录（仅当 CCG-managed 文件已删后）
-	for (const dir of [join(home, 'agents'), join(home, 'hooks')]) {
-		if (!existsSync(dir)) {
-			continue;
-		}
-
-		try {
-			const remaining = readdirSync(dir);
-			if (remaining.length === 0) {
-				rmSync(dir, {recursive: true, force: true});
-				onProgress?.({level: 'success', message: `已删除空目录 ${dir}`, componentId: 'CcgWorkflow'});
-			}
-		} catch {
-			/* 目录读取/删除失败不阻塞 */
-		}
-	}
-
-	// 3. config.toml 受保护：绝不删除（CODEX_PROTECTED_FILES 由 verify 断言不在受管清单内）。
-	//    AGENTS.md 只处理 CCG marker 内容（首期保守：不整文件删除，留给后续 marker-aware 实现）。
 }
 
 /**

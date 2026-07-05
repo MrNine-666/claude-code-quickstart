@@ -33,6 +33,7 @@
     "@opentui/keymap": "^0.4.2",
     "@opentui/react": "0.4.2",
     "opentui-spinner": "^0.0.7",
-    "react": "19.2.6"
+    "react": "19.2.6",
+    "smol-toml": "^1.7.0"
   }
 }
