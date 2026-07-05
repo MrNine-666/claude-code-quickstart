@@ -1628,17 +1628,18 @@ function Test-CcqExecutableInstalled {
     }
 
     $ccqPath = Get-CcqExecutablePath
+    $result.Path = $ccqPath
     if (Test-Path $ccqPath) {
-        $result.IsInstalled = $true
-        $result.Path = $ccqPath
-        # 尝试获取版本（通过 ccq --version，若可执行文件支持）
+        # 只信任可快速响应 --version 的 ccq；旧/损坏可执行文件可能卡住，必须允许后续重新下载覆盖。
         try {
-            $versionOutput = & $ccqPath --version 2>&1
-            if ($LASTEXITCODE -eq 0 -and $versionOutput) {
-                $result.Version = $versionOutput -replace '^ccq\s+', '' -replace '\s+$', ''
+            $versionResult = Invoke-ExternalCommand -Command $ccqPath -Arguments @("--version") -TimeoutSeconds 3 -RetryCount 0 -SuppressOutput
+            if ($versionResult.Success -and -not [string]::IsNullOrWhiteSpace($versionResult.Output)) {
+                $result.IsInstalled = $true
+                $result.Version = $versionResult.Output -replace '^ccq\s+', '' -replace '\s+$', ''
             }
         } catch {
-            # 版本获取失败不影响安装检测
+            $result.IsInstalled = $false
+            $result.Version = ""
         }
     }
 
@@ -1664,6 +1665,7 @@ function Install-CcqExecutable {
         ErrorMessage = ""
         Path         = ""
     }
+    $tempPath = $null
 
     try {
         $ccqPath = Get-CcqExecutablePath
@@ -1675,17 +1677,24 @@ function Install-CcqExecutable {
             Write-UiInfo "创建 ccq 目录: $ccqBinDir"
         }
 
-        # 2. 下载可执行文件（复用 Invoke-FileDownload：自绘进度条 + CTRL+C 可中断，规避 Invoke-WebRequest 原生进度条噪音）
-        $downloadResult = Invoke-FileDownload -Url $DownloadUrl -OutputPath $ccqPath -Description "ccq 可执行文件"
+        # 2. 下载可执行文件到临时文件，再原子替换，避免失败时删除已有 ccq。
+        $tempPath = "$ccqPath.download.$PID"
+        if (Test-Path $tempPath) {
+            Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+        }
+
+        $downloadResult = Invoke-FileDownload -Url $DownloadUrl -OutputPath $tempPath -Description "ccq 可执行文件"
         if (-not $downloadResult.Success) {
             throw "ccq 下载失败: $($downloadResult.ErrorMessage)"
         }
 
         # 3. 验证文件非空（Invoke-FileDownload 已校验存在性与完整性，此处双重确认）
-        $fileInfo = Get-Item $ccqPath
+        $fileInfo = Get-Item $tempPath
         if ($fileInfo.Length -eq 0) {
             throw "下载的文件为空"
         }
+
+        Move-Item -Path $tempPath -Destination $ccqPath -Force
 
         Write-UiSuccess "✓ ccq 可执行文件已下载到: $ccqPath"
         Write-UiDim "  文件大小: $([math]::Round($fileInfo.Length / 1MB, 2)) MB"
@@ -1708,6 +1717,9 @@ function Install-CcqExecutable {
         $result.Path = $ccqPath
 
     } catch {
+        if ($tempPath -and (Test-Path $tempPath)) {
+            Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+        }
         $result.ErrorMessage = $_.Exception.Message
         Write-UiDanger "ccq 可执行文件安装失败: $($result.ErrorMessage)"
     }

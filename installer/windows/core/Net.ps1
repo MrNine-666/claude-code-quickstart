@@ -133,8 +133,14 @@ function Invoke-FileDownload {
         }
         Write-UiDim "  下载地址: $Url"
 
-        # 仅允许 TLS 1.2+，禁用不安全的旧协议
-        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls13
+        # 仅允许 TLS 1.2+，禁用不安全的旧协议；TLS 1.3 在部分 PS 5.1/.NET Framework 环境不存在，需兼容探测。
+        $securityProtocol = [System.Net.SecurityProtocolType]::Tls12
+        try {
+            $securityProtocol = $securityProtocol -bor [System.Enum]::Parse([System.Net.SecurityProtocolType], "Tls13")
+        } catch {
+            # 当前运行时不支持 TLS 1.3 时仅使用 TLS 1.2。
+        }
+        [System.Net.ServicePointManager]::SecurityProtocol = $securityProtocol
 
         # 使用 HttpWebRequest + 异步轮询（CTRL+C 可中断）
         $request = [System.Net.HttpWebRequest]::Create($Url)
@@ -156,19 +162,33 @@ function Invoke-FileDownload {
             Write-UiDim "  正在连接..." -NoNewline
             $asyncConnect = $request.BeginGetResponse($null, $null)
             $connectDeadline = (Get-Date).AddSeconds($TimeoutSeconds)
+            $lastConnectProgressTime = [DateTime]::MinValue
 
             while (-not $asyncConnect.IsCompleted) {
-                if ((Get-Date) -gt $connectDeadline) {
+                $now = Get-Date
+                if ($now -gt $connectDeadline) {
                     $request.Abort()
                     throw "连接超时 ($TimeoutSeconds 秒)"
                 }
+
+                if (($now - $lastConnectProgressTime).TotalSeconds -ge 2) {
+                    $lastConnectProgressTime = $now
+                    $elapsedSeconds = [math]::Floor(($now - ($connectDeadline.AddSeconds(-$TimeoutSeconds))).TotalSeconds)
+                    Write-UiPrimary "`r  正在连接... ${elapsedSeconds}s    " -NoNewline
+                }
+
                 Start-Sleep -Milliseconds 300
             }
 
             $response = $request.EndGetResponse($asyncConnect)
-            Write-UiSuccess " 已连接"
+            Write-UiSuccess "`r  已连接，开始下载...          "
 
             $totalBytes = $response.ContentLength  # -1 if unknown
+            if ($totalBytes -gt 0) {
+                Write-UiDim "  文件大小: $([math]::Round($totalBytes / 1MB, 2)) MB"
+            } else {
+                Write-UiDim "  文件大小: 未知（将显示已接收大小与速度）"
+            }
             $responseStream = $response.GetResponseStream()
             $fileStream = [System.IO.File]::Create($OutputPath)
 
@@ -176,6 +196,7 @@ function Invoke-FileDownload {
             $totalRead = [long]0
             $lastPercent = -1
             $lastProgressTime = [DateTime]::MinValue
+            $lastReadActivity = Get-Date
             $startTime = Get-Date
 
             # ── 阶段 2：异步读取 + 进度显示（CTRL+C 可中断） ──
@@ -183,11 +204,27 @@ function Invoke-FileDownload {
                 $asyncRead = $responseStream.BeginRead($buffer, 0, $buffer.Length, $null, $null)
 
                 while (-not $asyncRead.IsCompleted) {
+                    $now = Get-Date
+                    if (($now - $lastReadActivity).TotalSeconds -ge $TimeoutSeconds) {
+                        $request.Abort()
+                        throw "下载读取超时 ($TimeoutSeconds 秒未收到数据)"
+                    }
+
+                    if (($now - $lastProgressTime).TotalMilliseconds -ge 500) {
+                        $lastProgressTime = $now
+                        $elapsed = $now - $startTime
+                        $speed = if ($elapsed.TotalSeconds -gt 0) { $totalRead / $elapsed.TotalSeconds } else { 0 }
+                        $speedMB = [math]::Round($speed / 1MB, 2)
+                        $receivedMB = [math]::Round($totalRead / 1MB, 2)
+                        Write-UiPrimary "`r  等待数据... $receivedMB MB | $speedMB MB/s    " -NoNewline
+                    }
+
                     Start-Sleep -Milliseconds 50
                 }
 
                 $bytesRead = $responseStream.EndRead($asyncRead)
                 if ($bytesRead -le 0) { break }
+                $lastReadActivity = Get-Date
 
                 $fileStream.Write($buffer, 0, $bytesRead)
                 $totalRead += $bytesRead
