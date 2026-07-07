@@ -8,6 +8,8 @@ import type {DetectionState} from '../services/async-detection.js';
 import type {DetectionCache} from '../hooks/use-detection-cache.js';
 import type {InstalledSkill, SearchSkillResult} from '../core/skills.js';
 import type {ProgressCallback} from '../core/exec.js';
+import {AGENT_CONTEXT_LABELS, type AgentContext} from '../state/manage-state.js';
+import {hasShortcutModifier} from '../utils/keyboard.js';
 import {
 	createInitialSkillsViewState,
 	displaySkillName,
@@ -34,33 +36,37 @@ export type SkillsViewServices = {
 	readonly searchSkills: (
 		query: string
 	) => Promise<{ok: true; results: readonly SearchSkillResult[]} | {ok: false; error: string; rawSummary?: string}>;
-	readonly installResult: (result: SearchSkillResult, onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string}>;
-	readonly updateAll: (onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string; noChange?: boolean}>;
-	readonly uninstall: (names: readonly string[], onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string}>;
+	readonly installResult: (result: SearchSkillResult, onProgress?: ProgressCallback, exec?: import('../core/skills-actions.js').SkillsExecFn) => Promise<{success: boolean; error?: string}>;
+	readonly updateAll: (onProgress?: ProgressCallback, exec?: import('../core/skills-actions.js').SkillsExecFn) => Promise<{success: boolean; error?: string; noChange?: boolean}>;
+	readonly uninstall: (names: readonly string[], onProgress?: ProgressCallback, exec?: import('../core/skills-actions.js').SkillsExecFn) => Promise<{success: boolean; error?: string}>;
 	readonly createDetectionRunner: (
 		onChange: import('../services/detection-runner.js').DetectionStateSink<InstalledSkill[]>
 	) => import('../services/detection-runner.js').DetectionRunner<InstalledSkill[]>;
-	readonly runDetection: (runner: import('../services/detection-runner.js').DetectionRunner<InstalledSkill[]>) => Promise<unknown>;
+	readonly runDetection: (runner: import('../services/detection-runner.js').DetectionRunner<InstalledSkill[]>, options?: import('../services/detection-runner.js').DetectionRunOptions) => Promise<unknown>;
 };
 
 export type SkillsViewProps = {
 	readonly services: SkillsViewServices;
 	readonly cache: DetectionCache<InstalledSkill[]>;
+	readonly agentContext?: AgentContext;
 	readonly active?: boolean;
 	readonly viewportHeight?: number;
 	readonly viewportWidth?: number;
 	readonly onSubModeChange?: (subMode: string) => void;
 	readonly onExitToNav?: () => void;
+	readonly onExitToHeader?: () => void;
 };
 
 export function SkillsView({
 	services,
 	cache,
+	agentContext = 'cc',
 	active = true,
 	viewportHeight = 16,
 	viewportWidth = 52,
 	onSubModeChange,
-	onExitToNav
+	onExitToNav,
+	onExitToHeader
 }: SkillsViewProps) {
 	const [view, dispatch] = useReducer(reduceSkillsViewState, createInitialSkillsViewState());
 	const detection = cache.state;
@@ -85,7 +91,7 @@ export function SkillsView({
 			return;
 		}
 
-		handleKey(keyEvent, view, dispatch, services, cache, onExitToNav);
+		handleKey(keyEvent, view, dispatch, services, cache, onExitToNav, onExitToHeader);
 	});
 
 	// 确认态使用绝对定位 Modal，不再为确认框预留列表行数。
@@ -95,7 +101,7 @@ export function SkillsView({
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title="Skills 技能管理" subtitle="搜索、安装、更新和卸载 Claude Code Skills" />
+			<ViewHeader title="Skills 技能管理" subtitle={`搜索、安装、更新和卸载 ${AGENT_CONTEXT_LABELS[agentContext]} Skills`} />
 			{renderDetectionNotice(detection.status)}
 			{renderPage(view, detection, viewportHeight, confirmRows, stretchLists)}
 			{view.busyAction ? <ProgressLog title="执行进度" messages={view.progress} /> : null}
@@ -117,7 +123,8 @@ function handleKey(
 	dispatch: Dispatch,
 	services: SkillsViewServices,
 	cache: DetectionCache<InstalledSkill[]>,
-	onExitToNav?: () => void
+	onExitToNav?: () => void,
+	onExitToHeader?: () => void
 ): void {
 	// busy 进行中：忽略一切输入
 	if (view.mode === 'busy') {
@@ -138,12 +145,12 @@ function handleKey(
 	}
 
 	if (view.mode === 'install') {
-		handleInstallKey(keyEvent, view, dispatch, services);
+		handleInstallKey(keyEvent, view, dispatch, services, onExitToHeader);
 		return;
 	}
 
 	// mode === 'list'
-	handleListKey(keyEvent, view, dispatch, services, cache, onExitToNav);
+	handleListKey(keyEvent, view, dispatch, services, cache, onExitToNav, onExitToHeader);
 }
 
 /** 列表页按键：过滤框聚焦态 vs 浏览态。 */
@@ -153,7 +160,8 @@ function handleListKey(
 	dispatch: Dispatch,
 	services: SkillsViewServices,
 	cache: DetectionCache<InstalledSkill[]>,
-	onExitToNav?: () => void
+	onExitToNav?: () => void,
+	onExitToHeader?: () => void
 ): void {
 	const name = keyEvent.name;
 
@@ -181,9 +189,9 @@ function handleListKey(
 			return;
 		}
 
-		// 可打印字符追加：空格取实际字符，其余取单字符 name（排除带修饰键与 tab）
+		// 可打印字符追加：空格取实际字符，其余取单字符 name（排除任意修饰键与 tab）
 		const char = name === 'space' ? ' ' : name;
-		if (char.length === 1 && !keyEvent.ctrl && !keyEvent.meta && !keyEvent.option && name !== 'tab') {
+		if (char.length === 1 && !hasShortcutModifier(keyEvent) && name !== 'tab') {
 			dispatch({type: 'filter-input', value: view.filterText + char});
 		}
 
@@ -199,7 +207,11 @@ function handleListKey(
 	const mapped = mapActionKey(name);
 	switch (mapped) {
 		case 'up':
-			dispatch({type: 'nav-up'});
+			if (view.installedIndex === 0 && onExitToHeader) {
+				onExitToHeader();
+			} else {
+				dispatch({type: 'nav-up'});
+			}
 			return;
 		case 'down':
 			dispatch({type: 'nav-down'});
@@ -224,7 +236,7 @@ function handleListKey(
 }
 
 /** 安装页按键：搜索框聚焦态 vs skill 浏览态。 */
-function handleInstallKey(keyEvent: KeyEvent, view: SkillsViewState, dispatch: Dispatch, services: SkillsViewServices): void {
+function handleInstallKey(keyEvent: KeyEvent, view: SkillsViewState, dispatch: Dispatch, services: SkillsViewServices, onExitToHeader?: () => void): void {
 	const name = keyEvent.name;
 
 	// 搜索框聚焦：字符输入 / Enter 提交搜索 / Tab 失焦 / Esc 回列表页
@@ -260,7 +272,7 @@ function handleInstallKey(keyEvent: KeyEvent, view: SkillsViewState, dispatch: D
 		}
 
 		const char = name === 'space' ? ' ' : name;
-		if (char.length === 1 && !keyEvent.ctrl && !keyEvent.meta && !keyEvent.option && name !== 'tab') {
+		if (char.length === 1 && !hasShortcutModifier(keyEvent) && name !== 'tab') {
 			dispatch({type: 'query-input', value: view.query + char});
 		}
 
@@ -271,7 +283,11 @@ function handleInstallKey(keyEvent: KeyEvent, view: SkillsViewState, dispatch: D
 	const mapped = mapActionKey(name);
 	switch (mapped) {
 		case 'up':
-			dispatch({type: 'nav-up'});
+			if (view.resultIndex === 0 && onExitToHeader) {
+				onExitToHeader();
+			} else {
+				dispatch({type: 'nav-up'});
+			}
 			return;
 		case 'down':
 			dispatch({type: 'nav-down'});

@@ -7,6 +7,7 @@ import type {FormField} from '../../components/form/field-types.js';
 import {getDefinition, saveMcpServer} from '../../services/mcp-service.js';
 import {getMcpTemplateJson, listBuiltinMcpOptions, parseMcpJsonFormat} from '../../core/mcp-form.js';
 import {borderColors, colors} from '../../theme/index.js';
+import type {AgentContext} from '../../state/manage-state.js';
 
 // McpFormView：MCP 表单屏（JSON 即真源范式，复用 FormPanel 与供应商表单同构）
 // - add：模板（radio，←/→ 或 Tab 切换；选内置即带出 JSON + Server ID + 凭据提示）+ Server ID（可填）+ JSON 编辑区
@@ -25,13 +26,14 @@ export type McpFormViewProps = {
 	readonly serverId: string;
 	// 初始 JSON：edit=现有 config，add=空白。
 	readonly initialJson: string;
+	readonly agentContext?: AgentContext;
 	readonly active: boolean;
 	readonly contentHeight?: number;
 	readonly onSaved: (message: string) => void;
 	readonly onCancel: () => void;
 };
 
-export function McpFormView({mode, serverId, initialJson, active, contentHeight = 16, onSaved, onCancel}: McpFormViewProps) {
+export function McpFormView({mode, serverId, initialJson, agentContext = 'cc', active, contentHeight = 16, onSaved, onCancel}: McpFormViewProps) {
 	// 模板选项：自定义（空白）+ 内置 MCP 列表。useRef 固定一次构造，避免重渲染重建。
 	const templateOptions = useRef([{value: CUSTOM_TEMPLATE, label: '自定义'}, ...listBuiltinMcpOptions()]).current;
 
@@ -197,7 +199,7 @@ export function McpFormView({mode, serverId, initialJson, active, contentHeight 
 
 	function handleSubmit(): void {
 		const id = (isAdd ? serverIdText : serverId).trim();
-		const result = saveMcpServer(id, jsonText);
+		const result = saveMcpServer(id, jsonText, agentContext);
 		if (!result.ok) {
 			setErrors([result.error]);
 			return;

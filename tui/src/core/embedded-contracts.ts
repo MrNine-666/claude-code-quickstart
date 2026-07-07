@@ -9,6 +9,7 @@
 import providersJson from "../../contracts/providers.json" with { type: "text" };
 import mcpServersJson from "../../contracts/mcp-servers.json" with { type: "text" };
 import claudeConfigJson from "../../contracts/claude-config.json" with { type: "text" };
+import codexConfigToml from "../../contracts/codex-config.toml" with { type: "text" };
 
 // Markdown 模板
 import claudeMdBase from "../../contracts/templates/claude-md.base.md" with { type: "text" };
@@ -25,6 +26,7 @@ export const EMBEDDED_CONTRACTS = new Map<string, string>([
 	["providers.json", fileAsset(providersJson)],
 	["mcp-servers.json", fileAsset(mcpServersJson)],
 	["claude-config.json", fileAsset(claudeConfigJson)],
+	["codex-config.toml", fileAsset(codexConfigToml)],
 	["templates/claude-md.base.md", fileAsset(claudeMdBase)],
 	["templates/claude-md.platform-windows.md", fileAsset(claudeMdWindows)],
 ]);

@@ -1,3 +1,4 @@
+import type {AgentContext} from '../state/manage-state.js';
 import {
 	computeStatus,
 	disableServer,
@@ -20,12 +21,12 @@ import {loadMcpContract, type McpServerDefinition} from '../core/mcp-contract.js
 
 export type McpServiceResult = {readonly ok: true; readonly status: string} | {readonly ok: false; readonly error: string};
 
-export function loadMcpStatus(): McpStatusRow[] {
-	return computeStatus();
+export function loadMcpStatus(agentContext: AgentContext = 'cc'): McpStatusRow[] {
+	return computeStatus(agentContext);
 }
 
-export function loadMcpDetail(serverId: string): McpServerDetail {
-	return getServerDetail(serverId);
+export function loadMcpDetail(serverId: string, agentContext: AgentContext = 'cc'): McpServerDetail {
+	return getServerDetail(serverId, agentContext);
 }
 
 export function getDefinition(serverId: string): McpServerDefinition | null {
@@ -44,25 +45,25 @@ function settle(result: McpActionResult): McpServiceResult {
 	return {ok: true, status: result.Status};
 }
 
-export function enableMcpServer(serverId: string): McpServiceResult {
+export function enableMcpServer(serverId: string, agentContext: AgentContext = 'cc'): McpServiceResult {
 	try {
-		return settle(enableServer(serverId));
+		return settle(enableServer(serverId, agentContext));
 	} catch (error) {
 		return {ok: false, error: error instanceof Error ? error.message : String(error)};
 	}
 }
 
-export function disableMcpServer(serverId: string): McpServiceResult {
+export function disableMcpServer(serverId: string, agentContext: AgentContext = 'cc'): McpServiceResult {
 	try {
-		return settle(disableServer(serverId));
+		return settle(disableServer(serverId, agentContext));
 	} catch (error) {
 		return {ok: false, error: error instanceof Error ? error.message : String(error)};
 	}
 }
 
-export function removeMcpServer(serverId: string, confirmed: boolean): McpServiceResult {
+export function removeMcpServer(serverId: string, confirmed: boolean, agentContext: AgentContext = 'cc'): McpServiceResult {
 	try {
-		const result = removeServer(serverId, confirmed);
+		const result = removeServer(serverId, confirmed, agentContext);
 		if (!result.Success && result.Status === 'NeedConfirmation') {
 			return {ok: false, error: '需要确认删除'};
 		}
@@ -76,7 +77,7 @@ export function removeMcpServer(serverId: string, confirmed: boolean): McpServic
 // ── 保存（JSON 即真源，统一落盘） ──────────────────────────────────────────────
 
 /** 从表单 JSON 解析配置并落盘。credentials 取自 config.env（vault 备份用）。 */
-export function saveMcpServer(serverId: string, json: string): McpServiceResult {
+export function saveMcpServer(serverId: string, json: string, agentContext: AgentContext = 'cc'): McpServiceResult {
 	const parsed = parseMcpFormInput(serverId, json);
 	if (!parsed.ok) {
 		return {ok: false, error: parsed.error};
@@ -87,7 +88,7 @@ export function saveMcpServer(serverId: string, json: string): McpServiceResult 
 	const definitionHashValue = getBuiltinDefinitionHash(id);
 
 	try {
-		return settle(persistMcpServer(id, config, credentials, definitionHashValue));
+		return settle(persistMcpServer(id, config, credentials, definitionHashValue, agentContext));
 	} catch (error) {
 		return {ok: false, error: error instanceof Error ? error.message : String(error)};
 	}

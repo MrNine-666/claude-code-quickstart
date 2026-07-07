@@ -14,17 +14,18 @@ import {
 } from '../components/index.js';
 import { assembleRecommendation } from '../core/prompts.js';
 import {
-	getClaudeMdPath,
-	readCurrentClaudeMd,
-	saveClaudeMd
+	getRulesPath,
+	readCurrentRules,
+	saveRules,
+	type PromptsTarget
 } from '../services/prompts-service.js';
+import type {AgentContext} from '../state/manage-state.js';
 
 // 全局规则页（view-first）：
-// 进入先渲染只读本地 CLAUDE.md（<markdown>）；无内容则空状态提示按 a 新建。
-// e（编辑现有；空 md 时 a 新建）进入编辑器；Ctrl+T 开推荐边栏（未渲染纯文本源码，只读对照）；
-// Ctrl+O 推荐灌缓冲（Ctrl+I 在终端等同 Tab，故用 Ctrl+O）；保存按编辑语义（macOS Cmd+S，其他平台 Ctrl+S）后回只读展示；
-// Esc 取消编辑直接回 view（放弃未保存改动，toast 提示）。
-// HC-SHORTCUT-SINGLE-SOURCE：键位处理用 keyEvent.name，footer 文案由 shortcuts.ts 按 subMode 解析。
+// 进入先渲染只读本地规则文件；无内容则展示创建动作说明。
+// 编辑、推荐边栏、导入推荐与保存等键位只在 keybindings/shortcuts 单一数据源维护。
+// 取消编辑直接回 view（放弃未保存改动，toast 提示）。
+// HC-SHORTCUT-SINGLE-SOURCE：键位处理用 command 映射，footer 文案由 shortcuts.ts 按 subMode 解析。
 
 type Mode = 'view' | 'edit';
 type Panel = 'editor' | 'split';
@@ -32,20 +33,24 @@ type Focus = 'editor' | 'recommend';
 type Confirm = 'none';
 
 export type PromptsViewProps = {
+	readonly agentContext: AgentContext;
 	readonly active: boolean;
 	readonly viewportHeight?: number;
 	readonly onSubModeChange?: (subMode: string) => void;
 	readonly onExitToNav: () => void;
+	readonly onExitToHeader?: () => void;
 	readonly syntaxStyle?: import('@opentui/core').SyntaxStyle | null;
 };
 
-export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onExitToNav, syntaxStyle = null }: PromptsViewProps) {
+export function PromptsView({ agentContext, active, viewportHeight = 16, onSubModeChange, onExitToNav, onExitToHeader, syntaxStyle = null }: PromptsViewProps) {
+	const target: PromptsTarget = agentContext;
+	const isCodex = target === 'cx';
 	const recommendationContent = useMemo(() => assembleRecommendation() ?? '', []);
 	const recommendationAvailable = recommendationContent !== '';
-	const claudeMdPath = useMemo(() => getClaudeMdPath(), []);
+	const rulesPath = useMemo(() => getRulesPath(target), [target]);
 
 	// view 态展示内容（保存 / 取消后重新读盘刷新，保证展示最新）
-	const [viewContent, setViewContent] = useState<string>(() => readCurrentClaudeMd() ?? '');
+	const [viewContent, setViewContent] = useState<string>(() => readCurrentRules(target) ?? '');
 	const hasContent = viewContent.trim().length > 0;
 
 	// edit 态
@@ -85,7 +90,7 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 
 	// ── 操作 ──
 	const refreshView = (): void => {
-		setViewContent(readCurrentClaudeMd() ?? '');
+		setViewContent(readCurrentRules(target) ?? '');
 	};
 
 	// 进入编辑器：initial = '' (a 新建·仅空状态) | 现有磁盘内容 (e 编辑)
@@ -134,11 +139,11 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 	};
 
 	const handleSave = (content: string): { ok: boolean; error?: string } => {
-		const result = saveClaudeMd(content);
+		const result = saveRules(content, target);
 		if (result.ok) {
 			setDirty(false);
 			refreshView();
-			toast.success(`已保存到 ${claudeMdPath}`);
+			toast.success(`已保存到 ${rulesPath}`);
 			// 保存后回只读展示（编辑器作为临时态，无需停留）
 			setMode('view');
 			setPanel('editor');
@@ -174,15 +179,20 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 		const appMod = isAppModifier(keyEvent);
 		const editingMod = isEditingModifier(keyEvent);
 
-		// Ctrl+O 直接导入推荐，不再弹确认浮层：导入只写入编辑缓冲，不落盘，可 Ctrl+Z 撤销。
+		// 导入推荐不再弹确认浮层：导入只写入编辑缓冲，不落盘，可用编辑器撤销。
 		// ── view 态 ──
 		if (mode === 'view') {
 			// Esc/← 返回左侧导航（对齐 ProviderView/McpView/SkillsView 列表态返回键）
 			if (name === 'escape' || name === 'left' || name === 'arrowleft') { onExitToNav(); return; }
-			if (name === 'e' && hasContent) { enterEdit(readCurrentClaudeMd() ?? ''); return; }
+			if (name === 'e' && hasContent) { enterEdit(readCurrentRules(target) ?? ''); return; }
 			if (name === 'a' && !hasContent) { enterEdit(''); return; }
 			// ↑/↓ 滚动展示区（scrollbox 需主动驱动，否则默认不响应键盘）
-			if (name === 'up') { viewScrollRef.current?.scrollBy(-1); return; }
+			if (name === 'up') {
+				const atTop = (viewScrollRef.current?.scrollTop ?? 0) <= 0;
+				if (atTop && onExitToHeader) { onExitToHeader(); return; }
+				viewScrollRef.current?.scrollBy(-1);
+				return;
+			}
 			if (name === 'down') { viewScrollRef.current?.scrollBy(1); return; }
 			return;
 		}
@@ -197,7 +207,7 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 			return;
 		}
 		if (appMod && name === 't') { togglePanel(); return; }
-		// Ctrl+I 在终端等同 Tab（ASCII 0x09），改用 Ctrl+O 触发导入
+		// 导入快捷键避开终端 Tab 冲突，用于触发导入
 		if (appMod && name === 'o') { requestImport(); return; }
 
 		// 边栏焦点：↑/↓ 滚动推荐；Tab 切回编辑器
@@ -212,7 +222,7 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 	if (mode === 'view') {
 		return (
 			<box flexDirection="column" flexGrow={1}>
-				<ViewHeader title="全局规则管理" subtitle="查看、导入、复制与编辑全局 CLAUDE.md" />
+				<ViewHeader title={isCodex ? 'Codex 全局规则管理' : '全局规则管理'} subtitle={isCodex ? '查看、导入与编辑 CODEX_HOME/AGENTS.md' : '查看、导入、复制与编辑全局 CLAUDE.md'} />
 				{hasContent ? (
 					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
 						<ThemedScrollbox ref={viewScrollRef} style={{flexGrow: 1}}>
@@ -221,8 +231,8 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 					</box>
 				) : (
 					<ListEmptyState
-						message="尚无全局规则文件"
-						hint={{label: `按 a 新建 ~/.claude/CLAUDE.md`, enabled: true}}
+						message={isCodex ? '尚无 Codex 全局规则文件' : '尚无全局规则文件'}
+						hint={{label: `新建 ${rulesPath}`, enabled: true}}
 					/>
 				)}
 			</box>
@@ -252,7 +262,7 @@ export function PromptsView({ active, viewportHeight = 16, onSubModeChange, onEx
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title="全局规则管理" subtitle="查看、导入、复制与编辑全局 CLAUDE.md" />
+			<ViewHeader title={isCodex ? 'Codex 全局规则管理' : '全局规则管理'} subtitle={isCodex ? '查看、导入与编辑 CODEX_HOME/AGENTS.md' : '查看、导入、复制与编辑全局 CLAUDE.md'} />
 			{panel === 'split' && recommendationAvailable ? (
 				<box flexDirection="row" flexGrow={1} height={bodyViewportHeight}>
 					<box flexDirection="column" width="50%" height={editorViewportHeight}>

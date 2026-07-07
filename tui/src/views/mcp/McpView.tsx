@@ -11,6 +11,7 @@ import {
 	type StatusDotKind
 } from '../../components/index.js';
 import {colors} from '../../theme/index.js';
+import {AGENT_CONTEXT_LABELS, type AgentContext} from '../../state/manage-state.js';
 import {clampMove} from '../../core/list-utils.js';
 import {
 	disableMcpServer,
@@ -30,6 +31,8 @@ import {McpFormView} from './McpFormView.js';
 // - 操作结果统一走 banner，不离开列表（除表单屏）
 
 export type McpViewProps = {
+	// 当前 Agent 上下文；Phase 7 会据此切换 MCP 文件事实源。
+	readonly agentContext?: AgentContext;
 	// 本视图是否获得右侧内容区焦点（focus === 'view'）。
 	readonly active: boolean;
 	// content 区可视行数（焦点驱动滚动）。
@@ -39,6 +42,8 @@ export type McpViewProps = {
 	readonly onSubModeChange?: (subMode: string) => void;
 	// 在列表屏按 Esc/← 时请求退回左侧导航。
 	readonly onExitToNav: () => void;
+	// 在列表顶部按 ↑ 时请求进入 Agent Header。
+	readonly onExitToHeader?: () => void;
 };
 
 type McpScreen =
@@ -59,8 +64,8 @@ function statusKind(status: McpServerStatus): StatusDotKind {
 	}
 }
 
-export default function McpView({active, viewportHeight = 16, viewportWidth = 52, onSubModeChange, onExitToNav}: McpViewProps) {
-	const [rows, setRows] = useState<McpStatusRow[]>(() => loadMcpStatus());
+export default function McpView({agentContext = 'cc', active, viewportHeight = 16, viewportWidth = 52, onSubModeChange, onExitToNav, onExitToHeader}: McpViewProps) {
+	const [rows, setRows] = useState<McpStatusRow[]>(() => loadMcpStatus(agentContext));
 	const [selected, setSelected] = useState(0);
 	const [screen, setScreen] = useState<McpScreen>({kind: 'list'});
 
@@ -72,11 +77,11 @@ export default function McpView({active, viewportHeight = 16, viewportWidth = 52
 	// 进入视图时刷新状态表并复位到列表。
 	useEffect(() => {
 		if (active) {
-			setRows(loadMcpStatus());
+			setRows(loadMcpStatus(agentContext));
 			setSelected(0);
 			setScreen({kind: 'list'});
 		}
-	}, [active]);
+	}, [active, agentContext]);
 
 	// 上报当前子模式给 App footer：表单屏统一 'form'，空列表 'empty'，否则用 screen.kind。
 	useEffect(() => {
@@ -94,7 +99,7 @@ export default function McpView({active, viewportHeight = 16, viewportWidth = 52
 	}, [active, screen.kind, visibleRows.length, onSubModeChange]);
 
 	function refresh(): void {
-		const next = loadMcpStatus();
+		const next = loadMcpStatus(agentContext);
 		const visibleCount = next.filter((row) => row.Status !== 'Missing').length;
 		setRows(next);
 		setSelected((prev) => Math.min(prev, Math.max(0, visibleCount - 1)));
@@ -106,7 +111,7 @@ export default function McpView({active, viewportHeight = 16, viewportWidth = 52
 		}
 
 		const willDisable = current.Status !== 'Disabled';
-		const result = willDisable ? disableMcpServer(current.Id) : enableMcpServer(current.Id);
+		const result = willDisable ? disableMcpServer(current.Id, agentContext) : enableMcpServer(current.Id, agentContext);
 		refresh();
 		if (result.ok) {
 			toast.success(`已${willDisable ? '禁用' : '启用'} ${current.Id}`);
@@ -122,6 +127,7 @@ export default function McpView({active, viewportHeight = 16, viewportWidth = 52
 				mode="add"
 				serverId=""
 				initialJson={configToJson(null)}
+				agentContext={agentContext}
 				active={active}
 				contentHeight={viewportHeight - 2}
 				onCancel={() => setScreen({kind: 'list'})}
@@ -140,6 +146,7 @@ export default function McpView({active, viewportHeight = 16, viewportWidth = 52
 				mode="edit"
 				serverId={screen.serverId}
 				initialJson={screen.initialJson}
+				agentContext={agentContext}
 				active={active}
 				contentHeight={viewportHeight - 2}
 				onCancel={() => setScreen({kind: 'list'})}
@@ -161,7 +168,7 @@ export default function McpView({active, viewportHeight = 16, viewportWidth = 52
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title="MCP Server 管理" subtitle="维护 Claude Code 可用的 MCP Server 连接" />
+			<ViewHeader title="MCP Server 管理" subtitle={`维护 ${AGENT_CONTEXT_LABELS[agentContext]} 可用的 MCP Server 连接`} />
 
 			{visibleRows.length === 0 ? (
 				<ListEmptyState message="暂无 MCP Server" />
@@ -185,6 +192,7 @@ export default function McpView({active, viewportHeight = 16, viewportWidth = 52
 			<ListInput
 				active={active && screen.kind === 'list'}
 				hasCurrent={current !== null}
+				atTop={safeSelected === 0}
 				onMove={(delta) => setSelected((prev) => clampMove(prev, delta, visibleRows.length))}
 				onToggle={toggleCurrent}
 				onAdd={() => {
@@ -195,7 +203,7 @@ export default function McpView({active, viewportHeight = 16, viewportWidth = 52
 						return;
 					}
 
-					const detail = loadMcpDetail(current.Id);
+					const detail = loadMcpDetail(current.Id, agentContext);
 					setScreen({kind: 'edit', serverId: current.Id, initialJson: configToJson(detail.config)});
 				}}
 				onDelete={() => {
@@ -204,6 +212,7 @@ export default function McpView({active, viewportHeight = 16, viewportWidth = 52
 					}
 				}}
 				onExit={onExitToNav}
+				onExitToHeader={onExitToHeader}
 			/>
 
 			<ConfirmInput
@@ -215,7 +224,7 @@ export default function McpView({active, viewportHeight = 16, viewportWidth = 52
 						return;
 					}
 
-					const result = removeMcpServer(current.Id, true);
+					const result = removeMcpServer(current.Id, true, agentContext);
 					refresh();
 					if (result.ok) {
 						toast.success(`已删除 MCP Server ${current.Id}`);
@@ -234,21 +243,25 @@ export default function McpView({active, viewportHeight = 16, viewportWidth = 52
 function ListInput({
 	active,
 	hasCurrent,
+	atTop,
 	onMove,
 	onToggle,
 	onAdd,
 	onEdit,
 	onDelete,
-	onExit
+	onExit,
+	onExitToHeader
 }: {
 	readonly active: boolean;
 	readonly hasCurrent: boolean;
+	readonly atTop: boolean;
 	readonly onMove: (delta: number) => void;
 	readonly onToggle: () => void;
 	readonly onAdd: () => void;
 	readonly onEdit: () => void;
 	readonly onDelete: () => void;
 	readonly onExit: () => void;
+	readonly onExitToHeader?: () => void;
 }) {
 	useKeyboard((keyEvent) => {
 		if (!active) {
@@ -258,7 +271,11 @@ function ListInput({
 		switch (keyEvent.name.toLowerCase()) {
 			case 'up':
 			case 'arrowup':
-				onMove(-1);
+				if (atTop && onExitToHeader) {
+					onExitToHeader();
+				} else {
+					onMove(-1);
+				}
 				break;
 			case 'down':
 			case 'arrowdown':

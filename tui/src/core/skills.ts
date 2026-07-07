@@ -1,3 +1,4 @@
+import type {AgentContext} from '../state/manage-state.js';
 import {execCommand, removeAnsiSequences, type ExecResult} from './exec.js';
 
 // 外部命令执行缝：默认走 execCommand，测试可注入桩以避免真实 spawn（design D11/D13）。
@@ -6,7 +7,23 @@ export type ExecFn = (command: string, args: readonly string[], options?: {timeo
 // Skills core：已安装检测 + skills find 搜索 + parser（design D11）。
 // 搜索数据源固定为 `npx --yes skills find <query>`，命令不可用/不可解析时报错，不回退 catalogue。
 
-const SKILLS_CLI_AGENT = 'claude-code';
+export type SkillsCliAgent = 'claude-code' | 'codex';
+
+export function skillsAgentOf(agentContext: AgentContext): SkillsCliAgent {
+	switch (agentContext) {
+		case 'cc':
+			return 'claude-code';
+		case 'cx':
+			return 'codex';
+	}
+}
+
+function normalizeAgentAndExec(agentOrExec: AgentContext | ExecFn | undefined, exec: ExecFn | undefined): {agentContext: AgentContext; exec: ExecFn} {
+	return typeof agentOrExec === 'function'
+		? {agentContext: 'cc', exec: agentOrExec}
+		: {agentContext: agentOrExec ?? 'cc', exec: exec ?? execCommand};
+}
+
 const LIST_TIMEOUT_MS = 120000;
 const SEARCH_TIMEOUT_MS = 120000;
 
@@ -35,8 +52,9 @@ export type SkillsSearchOutcome =
  * `--agent` 才能正确限定到 claude-code（实测结论）。
  * 返回 Promise，支持后台并发执行（design D13）。
  */
-export async function getInstalledSkills(exec: ExecFn = execCommand): Promise<InstalledSkill[]> {
-	const args = ['--yes', 'skills', 'list', '-g', '--agent', SKILLS_CLI_AGENT, '--json'];
+export async function getInstalledSkills(agentOrExec?: AgentContext | ExecFn, execArg?: ExecFn): Promise<InstalledSkill[]> {
+	const {agentContext, exec} = normalizeAgentAndExec(agentOrExec, execArg);
+	const args = ['--yes', 'skills', 'list', '-g', '--agent', skillsAgentOf(agentContext), '--json'];
 
 	try {
 		const {code, stdout} = await exec('npx', args, {timeout: LIST_TIMEOUT_MS});
@@ -397,14 +415,15 @@ export function parseSkillsListOutput(rawStdout: string, rawStderr = ''): RepoSk
  * 需求③：选中父 repo 后调用，拉取该 repo 全部子 skill（--list 只列不装）。
  * 输出无法解析 / 命令不可用时返回 ok:false。
  */
-export async function listRepoSkills(repo: string, exec: ExecFn = execCommand): Promise<RepoSkillsOutcome> {
+export async function listRepoSkills(repo: string, agentOrExec?: AgentContext | ExecFn, execArg?: ExecFn): Promise<RepoSkillsOutcome> {
 	const trimmed = (repo || '').trim();
 	if (!trimmed) {
 		return {ok: false, error: '无效的 repo'};
 	}
 
+	const {agentContext, exec} = normalizeAgentAndExec(agentOrExec, execArg);
 	try {
-		const {code, stdout, stderr} = await exec('npx', ['--yes', 'skills', 'add', trimmed, '--list', '--agent', SKILLS_CLI_AGENT], {
+		const {code, stdout, stderr} = await exec('npx', ['--yes', 'skills', 'add', trimmed, '--list', '--agent', skillsAgentOf(agentContext)], {
 			timeout: LIST_REPO_TIMEOUT_MS
 		});
 

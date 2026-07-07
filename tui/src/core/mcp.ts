@@ -1,12 +1,12 @@
-import {existsSync} from 'node:fs';
-import {join} from 'node:path';
+import {existsSync, readFileSync} from 'node:fs';
+import type {AgentContext} from '../state/manage-state.js';
 import {readJsonFile, writeJsonAtomic} from './fs-utils.js';
-import {claudeJsonPath, settingsPath, rulesDir} from './paths.js';
-import {loadMcpContract, type McpContract, type McpServerDefinition} from './mcp-contract.js';
+import {claudeJsonPath, codexConfigPath, settingsPath} from './paths.js';
+import {atomicWrite as writeTomlAtomic, deletePath, getPath, parse as parseToml, setPath, type TomlDocument} from './toml-edit.js';
+import {loadMcpContract, type McpServerDefinition} from './mcp-contract.js';
 import {
 	definitionHash,
 	loadVault,
-	newEmptyVault,
 	saveVault,
 	withVaultLock,
 	type McpVault,
@@ -47,6 +47,86 @@ function readSettings(): Record<string, unknown> {
 	return readJsonFile<Record<string, unknown>>(settingsPath(), {});
 }
 
+function readCodexConfigToml(): TomlDocument {
+	const path = codexConfigPath();
+	if (!existsSync(path)) {
+		return {};
+	}
+
+	return parseToml(readFileSync(path, 'utf8'));
+}
+
+function readCodexMcpServers(): Record<string, Record<string, unknown>> {
+	const servers = getPath(readCodexConfigToml(), ['mcp_servers']);
+	return servers && typeof servers === 'object' && !Array.isArray(servers)
+		? (servers as Record<string, Record<string, unknown>>)
+		: {};
+}
+
+function writeCodexMcpServer(serverId: string, config: Record<string, unknown>): void {
+	writeTomlAtomic(codexConfigPath(), setPath(readCodexConfigToml(), ['mcp_servers', serverId], config));
+}
+
+function deleteCodexMcpServer(serverId: string): void {
+	writeTomlAtomic(codexConfigPath(), deletePath(readCodexConfigToml(), ['mcp_servers', serverId]));
+}
+
+function isCodexServerDisabled(config: Record<string, unknown> | undefined): boolean {
+	return config?.enabled === false;
+}
+
+function credentialsFromConfig(config: Record<string, unknown>): Record<string, string> {
+	const env = config.env;
+	return env && typeof env === 'object' && !Array.isArray(env) ? {...(env as Record<string, string>)} : {};
+}
+
+function definitionHashFor(serverId: string, contractServers: Record<string, McpServerDefinition>): string {
+	const definition = contractServers[serverId];
+	return definition ? definitionHash(definition) : '';
+}
+
+function backupRuntimeMcpToVault(
+	meta: McpVault,
+	serverId: string,
+	config: Record<string, unknown>,
+	contractServers: Record<string, McpServerDefinition>,
+	permissions: string[] = []
+): void {
+	backupMcpToVault(meta, serverId, config, credentialsFromConfig(config), permissions, definitionHashFor(serverId, contractServers));
+}
+
+function syncRuntimeMcpToVault(agentContext: AgentContext): void {
+	withVaultLock(() => {
+		const runtimeServers = agentContext === 'cx' ? readCodexMcpServers() : (readClaudeJson().mcpServers ?? {});
+		const contractServers = loadMcpContract().servers;
+		const meta = loadVault();
+		let vaultChanged = false;
+
+		for (const [serverId, config] of Object.entries(runtimeServers)) {
+			if (!config || typeof config !== 'object' || Array.isArray(config)) {
+				continue;
+			}
+
+			backupRuntimeMcpToVault(meta, serverId, config, contractServers);
+			vaultChanged = true;
+		}
+
+		if (agentContext === 'cx') {
+			for (const [serverId, entry] of Object.entries(meta.servers ?? {})) {
+				if (Object.prototype.hasOwnProperty.call(runtimeServers, serverId) || !entry?.config) {
+					continue;
+				}
+
+				writeCodexMcpServer(serverId, {...entry.config, enabled: false});
+			}
+		}
+
+		if (vaultChanged) {
+			saveVault(meta);
+		}
+	});
+}
+
 function normalizeCredentials(entry: McpVaultServerEntry | undefined): Record<string, string> {
 	if (!entry?.credentials) {
 		return {};
@@ -66,36 +146,33 @@ function normalizeCredentials(entry: McpVaultServerEntry | undefined): Record<st
 }
 
 /** 计算所有 MCP Server 状态（Custom/Active/Disabled/Missing/Unknown，按优先级排序）。 */
-export function computeStatus(): McpStatusRow[] {
-	const claudeJson = readClaudeJson();
-	const claudeServers = claudeJson.mcpServers ?? {};
+export function computeStatus(agentContext: AgentContext = 'cc'): McpStatusRow[] {
+	syncRuntimeMcpToVault(agentContext);
+	const runtimeServers = agentContext === 'cx' ? readCodexMcpServers() : (readClaudeJson().mcpServers ?? {});
 	const vault = loadVault();
 	const metaServers = vault.servers ?? {};
 	const contract = loadMcpContract();
 	const contractServers = contract.servers;
 
 	const allIds = new Set<string>([
-		...Object.keys(claudeServers),
-		...Object.keys(contractServers),
+		...Object.keys(runtimeServers),
 		...Object.keys(metaServers)
 	]);
 
 	const results: McpStatusRow[] = [];
 	for (const id of allIds) {
-		const inClaudeJson = Object.prototype.hasOwnProperty.call(claudeServers, id);
-		const inContract = Object.prototype.hasOwnProperty.call(contractServers, id);
+		const runtimeConfig = runtimeServers[id];
+		const inRuntimeConfig = Object.prototype.hasOwnProperty.call(runtimeServers, id);
 		const metaEntry = metaServers[id];
-		const isDisabled = metaEntry?.disabled === true;
+		const isDisabled = agentContext === 'cx' && isCodexServerDisabled(runtimeConfig);
 
 		let status: McpServerStatus;
-		if (inClaudeJson && !inContract) {
-			status = 'Custom';
-		} else if (isDisabled) {
+		if (isDisabled) {
 			status = 'Disabled';
-		} else if (inClaudeJson && inContract) {
+		} else if (inRuntimeConfig) {
 			status = 'Active';
-		} else if (inContract && !inClaudeJson && !isDisabled) {
-			status = 'Missing';
+		} else if (agentContext === 'cc' && metaEntry?.config) {
+			status = 'Disabled';
 		} else {
 			status = 'Unknown';
 		}
@@ -144,23 +221,21 @@ export type McpServerDetail = {
 };
 
 /** 收集单个 MCP Server 的详情（契约定义 + 当前 config + vault + permission）。 */
-export function getServerDetail(serverId: string): McpServerDetail {
+export function getServerDetail(serverId: string, agentContext: AgentContext = 'cc'): McpServerDetail {
 	const contract = loadMcpContract();
 	const definition = contract.servers[serverId] ?? null;
-	const claudeJson = readClaudeJson();
+	const runtimeServers = agentContext === 'cx' ? readCodexMcpServers() : (readClaudeJson().mcpServers ?? {});
 	const vault = loadVault();
 	const vaultEntry = vault.servers?.[serverId] ?? null;
-	// config 优先取 .claude.json（Active/Custom 在此）；Disabled 时 .claude.json 条目已被
-	// disableServer 清除并备份进 vault（mcp-meta.json），fallback 到 vaultEntry.config，
-	// 否则编辑态会展示空 {}（HC：编辑须回显真实 config）。
-	const config = claudeJson.mcpServers?.[serverId] ?? vaultEntry?.config ?? null;
+	// config 优先取当前 Agent 运行时配置；若已禁用/删除且 vault 有备份，则用于编辑回显。
+	const config = runtimeServers[serverId] ?? vaultEntry?.config ?? null;
 
 	const settings = readSettings();
-	const allow = (settings.permissions as {allow?: string[]} | undefined)?.allow ?? [];
+	const allow = agentContext === 'cc' ? ((settings.permissions as {allow?: string[]} | undefined)?.allow ?? []) : [];
 	const mcpPerm = `mcp__${serverId}`;
 	const permissions = allow.filter(p => p === mcpPerm);
 
-	const statusRow = computeStatus().find(row => row.Id === serverId);
+	const statusRow = computeStatus(agentContext).find(row => row.Id === serverId);
 
 	return {
 		id: serverId,
@@ -250,6 +325,16 @@ export function syncCredentials(): SyncCredentialsResult {
 
 // ── 变更层（disable / enable / remove） ─────────────────────────────────────
 
+function backupMcpToVault(meta: McpVault, serverId: string, config: Record<string, unknown>, credentials: Record<string, string>, permissions: string[], definitionHashValue: string): void {
+	meta.servers[serverId] = {
+		credentials: Object.keys(credentials).length > 0 ? {values: credentials} : undefined,
+		config,
+		permissions,
+		definitionHash: definitionHashValue,
+		updatedAt: new Date().toISOString()
+	};
+}
+
 function readSettingsForWrite(): {settings: Record<string, unknown>; allow: string[]} {
 	const settings = readSettings();
 	if (!settings.permissions) {
@@ -264,8 +349,31 @@ function readSettingsForWrite(): {settings: Record<string, unknown>; allow: stri
 	return {settings, allow: perms.allow};
 }
 
-/** 禁用 MCP Server（备份到 vault → 移除 .claude.json + permission）。 */
-export function disableServer(serverId: string): McpActionResult {
+/** 禁用 MCP Server（Claude：备份到 vault → 移除 .claude.json + permission；Codex：写 enabled=false）。 */
+export function disableServer(serverId: string, agentContext: AgentContext = 'cc'): McpActionResult {
+	syncRuntimeMcpToVault(agentContext);
+	return agentContext === 'cx' ? disableCodexServer(serverId) : disableClaudeServer(serverId);
+}
+
+function disableCodexServer(serverId: string): McpActionResult {
+	return withVaultLock(() => {
+		const servers = readCodexMcpServers();
+		const existingConfig = servers[serverId];
+		if (!existingConfig) {
+			return {Success: false, ServerId: serverId, Status: 'NotFound'};
+		}
+
+		const disabledConfig = {...existingConfig, enabled: false};
+		const meta = loadVault();
+		backupRuntimeMcpToVault(meta, serverId, disabledConfig, loadMcpContract().servers);
+		saveVault(meta);
+
+		writeCodexMcpServer(serverId, disabledConfig);
+		return {Success: true, ServerId: serverId, Status: 'Disabled'};
+	});
+}
+
+function disableClaudeServer(serverId: string): McpActionResult {
 	return withVaultLock(() => {
 		const claudeJson = readClaudeJson();
 		if (!claudeJson.mcpServers) {
@@ -273,11 +381,6 @@ export function disableServer(serverId: string): McpActionResult {
 		}
 
 		if (!claudeJson.mcpServers[serverId]) {
-			const meta = loadVault();
-			if (meta.servers[serverId]?.disabled) {
-				return {Success: true, ServerId: serverId, Status: 'Disabled'};
-			}
-
 			return {Success: false, ServerId: serverId, Status: 'NotFound'};
 		}
 
@@ -302,15 +405,8 @@ export function disableServer(serverId: string): McpActionResult {
 			writeJsonAtomic(settingsPath(), settings);
 		}
 
-		// 先写 vault 再删 .claude.json，确保数据不丢失
-		meta.servers[serverId] = {
-			disabled: true,
-			credentials: {values: credentials},
-			config: existingConfig,
-			permissions: removedPermissions,
-			definitionHash: defHash,
-			updatedAt: new Date().toISOString()
-		};
+		// 先写 vault 再删 .claude.json，确保数据不丢失。vault 只作备份，不记录 active/disabled 状态。
+		backupMcpToVault(meta, serverId, existingConfig, credentials, removedPermissions, defHash);
 		saveVault(meta);
 
 		delete claudeJson.mcpServers[serverId];
@@ -320,13 +416,51 @@ export function disableServer(serverId: string): McpActionResult {
 	});
 }
 
-/** 启用 MCP Server（从 vault 恢复 config + permission）。 */
-export function enableServer(serverId: string): McpActionResult {
+/** 启用 MCP Server（Claude：从 vault 恢复 config + permission；Codex：写/恢复 [mcp_servers.<id>]）。 */
+export function enableServer(serverId: string, agentContext: AgentContext = 'cc'): McpActionResult {
+	syncRuntimeMcpToVault(agentContext);
+	return agentContext === 'cx' ? enableCodexServer(serverId) : enableClaudeServer(serverId);
+}
+
+function enableCodexServer(serverId: string): McpActionResult {
+	return withVaultLock(() => {
+		const existingConfig = readCodexMcpServers()[serverId];
+		const meta = loadVault();
+		const contractServers = loadMcpContract().servers;
+		if (existingConfig) {
+			const {enabled: _enabled, ...nextConfig} = existingConfig;
+			void _enabled;
+			backupRuntimeMcpToVault(meta, serverId, nextConfig, contractServers);
+			saveVault(meta);
+			writeCodexMcpServer(serverId, nextConfig);
+			return {Success: true, ServerId: serverId, Status: 'Active'};
+		}
+
+		const vaultEntry = meta.servers[serverId];
+		const serverConfig = vaultEntry?.config ?? null;
+		if (!serverConfig) {
+			return {Success: false, ServerId: serverId, Status: 'Error'};
+		}
+
+		const {enabled: _enabled, ...nextConfig} = serverConfig;
+		void _enabled;
+		backupRuntimeMcpToVault(meta, serverId, nextConfig, contractServers);
+		saveVault(meta);
+		writeCodexMcpServer(serverId, nextConfig);
+		return {Success: true, ServerId: serverId, Status: 'Active'};
+	});
+}
+
+function enableClaudeServer(serverId: string): McpActionResult {
 	return withVaultLock(() => {
 		const meta = loadVault();
 		const vaultEntry = meta.servers[serverId];
-		if (!vaultEntry?.disabled) {
+		if (readClaudeJson().mcpServers?.[serverId]) {
 			return {Success: true, ServerId: serverId, Status: 'Active'};
+		}
+
+		if (!vaultEntry?.config) {
+			return {Success: false, ServerId: serverId, Status: 'Error'};
 		}
 
 		const credentials = normalizeCredentials(vaultEntry);
@@ -374,8 +508,8 @@ export function enableServer(serverId: string): McpActionResult {
 			writeJsonAtomic(settingsPath(), settings);
 		}
 
-		// 更新 vault
-		meta.servers[serverId]!.disabled = false;
+		// 更新 vault 备份元数据；清理历史 disabled 字段，vault 不再作为状态源。
+		delete meta.servers[serverId]!.disabled;
 		const contract = loadMcpContract();
 		if (contract.servers[serverId]) {
 			meta.servers[serverId]!.definitionHash = definitionHash(contract.servers[serverId]!);
@@ -389,11 +523,30 @@ export function enableServer(serverId: string): McpActionResult {
 }
 
 /** 删除 MCP Server（confirmed=false 返回 NeedConfirmation，由调用方确认）。 */
-export function removeServer(serverId: string, confirmed = false): McpActionResult {
+export function removeServer(serverId: string, confirmed = false, agentContext: AgentContext = 'cc'): McpActionResult {
 	if (!confirmed) {
 		return {Success: false, ServerId: serverId, Status: 'NeedConfirmation'};
 	}
 
+	syncRuntimeMcpToVault(agentContext);
+	return agentContext === 'cx' ? removeCodexServer(serverId) : removeClaudeServer(serverId);
+}
+
+function removeCodexServer(serverId: string): McpActionResult {
+	return withVaultLock(() => {
+		deleteCodexMcpServer(serverId);
+
+		const meta = loadVault();
+		if (meta.servers[serverId]) {
+			delete meta.servers[serverId];
+		}
+
+		saveVault(meta);
+		return {Success: true, ServerId: serverId, Status: 'Removed'};
+	});
+}
+
+function removeClaudeServer(serverId: string): McpActionResult {
 	return withVaultLock(() => {
 		const claudeJson = readClaudeJson();
 		if (claudeJson.mcpServers?.[serverId]) {
@@ -425,12 +578,43 @@ export function removeServer(serverId: string, confirmed = false): McpActionResu
 
 /**
  * 持久化一个 MCP Server 的最终配置（对齐 Windows Install-McpServer 的 5b–5d 写入）：
- * 1. `.claude.json.mcpServers[serverId]` 合并写入；
- * 2. `settings.json.permissions.allow` 补 `mcp__<id>`（已存在则不重复写）；
- * 3. vault 记录 disabled:false + credentials.values + definitionHash + updatedAt。
- * 锁内串行执行，确保 vault 与 .claude.json / settings.json 一致。
+ * 1. Claude Code 写 `.claude.json.mcpServers[serverId]`，Codex 写 `config.toml` `[mcp_servers.<id>]`；
+ * 2. Claude Code 补 `settings.json.permissions.allow` 的 `mcp__<id>`，Codex 不写 Claude permissions；
+ * 3. vault 只备份 credentials/config/definitionHash，不记录 active/disabled 状态。
+ * 锁内串行执行，确保 vault 与运行时配置一致。
  */
 export function persistMcpServer(
+	serverId: string,
+	config: Record<string, unknown>,
+	credentials: Record<string, string>,
+	definitionHashValue: string,
+	agentContext: AgentContext = 'cc'
+): McpActionResult {
+	return agentContext === 'cx'
+		? persistCodexMcpServer(serverId, config, credentials, definitionHashValue)
+		: persistClaudeMcpServer(serverId, config, credentials, definitionHashValue);
+}
+
+function persistCodexMcpServer(
+	serverId: string,
+	config: Record<string, unknown>,
+	credentials: Record<string, string>,
+	definitionHashValue: string
+): McpActionResult {
+	return withVaultLock(() => {
+		const {enabled: _enabled, ...nextConfig} = config;
+		void _enabled;
+		writeCodexMcpServer(serverId, nextConfig);
+
+		const meta = loadVault();
+		backupMcpToVault(meta, serverId, nextConfig, credentials, [], definitionHashValue);
+		saveVault(meta);
+
+		return {Success: true, ServerId: serverId, Status: 'Active'};
+	});
+}
+
+function persistClaudeMcpServer(
 	serverId: string,
 	config: Record<string, unknown>,
 	credentials: Record<string, string>,
@@ -453,16 +637,7 @@ export function persistMcpServer(
 		}
 
 		const meta = loadVault();
-		const entry: McpVaultServerEntry = {
-			disabled: false,
-			definitionHash: definitionHashValue,
-			updatedAt: new Date().toISOString()
-		};
-		if (Object.keys(credentials).length > 0) {
-			entry.credentials = {values: credentials};
-		}
-
-		meta.servers[serverId] = entry;
+		backupMcpToVault(meta, serverId, config, credentials, [], definitionHashValue);
 		saveVault(meta);
 
 		return {Success: true, ServerId: serverId, Status: 'Active'};

@@ -138,6 +138,10 @@ export function saveVault(meta: McpVault): void {
 	meta.updatedAt = new Date().toISOString();
 	for (const serverId of Object.keys(meta.servers ?? {})) {
 		const server = meta.servers[serverId];
+		if (server) {
+			delete server.disabled;
+		}
+
 		if (server?.updatedAt && server.updatedAt > meta.updatedAt) {
 			meta.updatedAt = server.updatedAt;
 		}

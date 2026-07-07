@@ -1,3 +1,5 @@
+import type {AgentContext} from '../state/manage-state.js';
+import {skillsAgentOf} from './skills.js';
 import {execCommand, removeAnsiSequences, type ProgressCallback, type ExecResult} from './exec.js';
 
 // Skills 操作服务：install / update / uninstall，进度通过 onProgress(event) 上报，
@@ -5,7 +7,6 @@ import {execCommand, removeAnsiSequences, type ProgressCallback, type ExecResult
 // exec 缝允许测试注入桩，避免真实 spawn；默认走 execCommand（向后兼容）。
 export type SkillsExecFn = (command: string, args: readonly string[], options?: {timeout?: number}) => Promise<ExecResult>;
 
-const SKILLS_CLI_AGENT = 'claude-code';
 const INSTALL_TIMEOUT_MS = 600000;
 const UPDATE_TIMEOUT_MS = 600000;
 const UNINSTALL_TIMEOUT_MS = 300000;
@@ -45,8 +46,20 @@ export function getFriendlyError(exitCode: number, errorText: string, actionName
 }
 
 /** 安装单个 Skill（`skills add`）。 */
-export async function installSkill(input: InstallSkillInput, onProgress?: ProgressCallback, exec: SkillsExecFn = execCommand): Promise<SkillsActionResult> {
-	const args = ['--yes', 'skills', 'add', input.source, '--yes', '--agent', SKILLS_CLI_AGENT, '-g'];
+function normalizeAgentAndExec(agentOrExec: AgentContext | SkillsExecFn | undefined, exec: SkillsExecFn | undefined): {agentContext: AgentContext; exec: SkillsExecFn} {
+	return typeof agentOrExec === 'function'
+		? {agentContext: 'cc', exec: agentOrExec}
+		: {agentContext: agentOrExec ?? 'cc', exec: exec ?? execCommand};
+}
+
+export async function installSkill(
+	input: InstallSkillInput,
+	onProgress?: ProgressCallback,
+	agentOrExec?: AgentContext | SkillsExecFn,
+	execArg?: SkillsExecFn
+): Promise<SkillsActionResult> {
+	const {agentContext, exec} = normalizeAgentAndExec(agentOrExec, execArg);
+	const args = ['--yes', 'skills', 'add', input.source, '--yes', '--agent', skillsAgentOf(agentContext), '-g'];
 	if (input.skillName) {
 		args.push('--skill', input.skillName);
 	}
@@ -76,8 +89,14 @@ export async function installSkill(input: InstallSkillInput, onProgress?: Progre
 }
 
 /** 更新 Skills（`skills update`，空名单更新全部）。 */
-export async function updateSkills(skillNames: readonly string[] = [], onProgress?: ProgressCallback, exec: SkillsExecFn = execCommand): Promise<SkillsActionResult> {
-	const args = ['--yes', 'skills', 'update', ...skillNames, '-g', '-y'];
+export async function updateSkills(
+	skillNames: readonly string[] = [],
+	onProgress?: ProgressCallback,
+	agentOrExec?: AgentContext | SkillsExecFn,
+	execArg?: SkillsExecFn
+): Promise<SkillsActionResult> {
+	const {agentContext, exec} = normalizeAgentAndExec(agentOrExec, execArg);
+	const args = ['--yes', 'skills', 'update', ...skillNames, '-g', '-y', '--agent', skillsAgentOf(agentContext)];
 	emit(onProgress, {level: 'info', message: '正在更新 Skills...'});
 
 	try {
@@ -106,12 +125,18 @@ export async function updateSkills(skillNames: readonly string[] = [], onProgres
 }
 
 /** 卸载 Skills（`skills remove`）。 */
-export async function uninstallSkills(skillNames: readonly string[], onProgress?: ProgressCallback, exec: SkillsExecFn = execCommand): Promise<SkillsActionResult> {
+export async function uninstallSkills(
+	skillNames: readonly string[],
+	onProgress?: ProgressCallback,
+	agentOrExec?: AgentContext | SkillsExecFn,
+	execArg?: SkillsExecFn
+): Promise<SkillsActionResult> {
 	if (skillNames.length === 0) {
 		return {success: false, error: '未选择要卸载的 Skill'};
 	}
 
-	const args = ['--yes', 'skills', 'remove', ...skillNames, '-g', '-a', SKILLS_CLI_AGENT, '--yes'];
+	const {agentContext, exec} = normalizeAgentAndExec(agentOrExec, execArg);
+	const args = ['--yes', 'skills', 'remove', ...skillNames, '-g', '--agent', skillsAgentOf(agentContext), '--yes'];
 	emit(onProgress, {level: 'info', message: `正在卸载: ${skillNames.join(', ')}`});
 
 	try {
@@ -138,13 +163,15 @@ export async function uninstallSkills(skillNames: readonly string[], onProgress?
 export async function installMultipleSkills(
 	input: {readonly source: string; readonly skillNames: readonly string[]; readonly displayName?: string},
 	onProgress?: ProgressCallback,
-	exec: SkillsExecFn = execCommand
+	agentOrExec?: AgentContext | SkillsExecFn,
+	execArg?: SkillsExecFn
 ): Promise<SkillsActionResult> {
 	if (input.skillNames.length === 0) {
 		return {success: false, error: '未选择要安装的 Skill'};
 	}
 
-	const args = ['--yes', 'skills', 'add', input.source, '--yes', '--agent', SKILLS_CLI_AGENT, '-g'];
+	const {agentContext, exec} = normalizeAgentAndExec(agentOrExec, execArg);
+	const args = ['--yes', 'skills', 'add', input.source, '--yes', '--agent', skillsAgentOf(agentContext), '-g'];
 	for (const name of input.skillNames) {
 		args.push('--skill', name);
 	}
