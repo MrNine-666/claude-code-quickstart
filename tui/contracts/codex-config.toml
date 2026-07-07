@@ -1,0 +1,5 @@
+# Codex 推荐配置（ccq fill-missing 仅补缺失，不管理 provider/MCP/hooks/Skills/AGENTS.md）
+model = "gpt-5"
+model_reasoning_effort = "medium"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"

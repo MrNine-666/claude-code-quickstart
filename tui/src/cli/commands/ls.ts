@@ -1,8 +1,10 @@
-// `ccq ls` — 列出所有 provider 并标记当前默认。
-// 非 TTY 友好纯文本输出。复用 getProviderList + getActiveProvider，零业务改写。
+// `ccq ls` — 列出 Claude provider 或 Codex profile，并标记当前默认。
+// 非 TTY 友好纯文本输出。Claude 路径复用 getProviderList + getActiveProvider。
 
 import { getProviderList, getActiveProvider } from '../../core/provider.js';
+import { listCodexProfiles, type CodexProfileListItem } from '../../core/codex.js';
 import type { ProviderListItem } from '../../core/provider.js';
+import type { ToolTarget } from '../argv.js';
 
 /** 列出 provider 展示行（含活跃标记）。供 ls 命令与 cc 未找到时复用。 */
 export function listProvidersForDisplay(list: ProviderListItem[], activeKey?: string): string[] {
@@ -12,8 +14,15 @@ export function listProvidersForDisplay(list: ProviderListItem[], activeKey?: st
 	});
 }
 
-/** 执行 ls 子命令。返回退出码。 */
-export function runLs(): number {
+export function listCodexProfilesForDisplay(list: readonly CodexProfileListItem[]): string[] {
+	return list.map(p => {
+		const marker = p.isDefault ? '*' : ' ';
+		const auth = p.providerType === 'officialLogin' ? 'official login' : (p.hasApiKey ? 'api key' : 'custom');
+		return `${marker} ${p.key.padEnd(12)} ${p.baseUrl || '(official/default)'} ${auth}`;
+	});
+}
+
+function runClaudeLs(): number {
 	const list = getProviderList();
 	const active = getActiveProvider();
 	const activeKey = active?.key;
@@ -30,4 +39,25 @@ export function runLs(): number {
 	}
 
 	return 0;
+}
+
+function runCodexLs(): number {
+	const list = listCodexProfiles();
+	if (list.length === 0) {
+		console.log('当前没有任何 Codex profile。');
+		console.log('运行 `ccq` 进入 TUI，在 Codex 上下文的供应商页中新建。');
+		return 0;
+	}
+
+	console.log('Codex profiles（* = 当前默认）:');
+	for (const line of listCodexProfilesForDisplay(list)) {
+		console.log(`  ${line}`);
+	}
+
+	return 0;
+}
+
+/** 执行 ls 子命令。返回退出码。 */
+export function runLs(tool: ToolTarget = 'claude'): number {
+	return tool === 'codex' ? runCodexLs() : runClaudeLs();
 }

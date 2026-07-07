@@ -1,26 +1,30 @@
 // ccq CLI 子命令骨架的 argv 三段式解析（动词路由 + 对象解析 + `--` 透传）。
-// 长远命名空间：cc | ls | use | rm | add | config | mcp | skills | tools | update
-// 本次实现路由：tui(无参) / --version / --help / help / cc / ls / use / update / tools / uninstall；未知动词 → 提示 help。
+// 长远命名空间：cc | cx | ls | use | rm | add | config | mcp | skills | tools | update
+// 本次实现路由：tui(无参) / --version / --help / help / cc / cx / ls / use / update / tools / uninstall；未知动词 → 提示 help。
 //
 // 设计要点：
 // - process.argv 前两项是 bun 路径与脚本路径，调用方传入 argv.slice(2)。
-// - `cc` 后第一个非 flag token 为 provider name；遇到 `--` 则其后全数透传，否则 name 之后全部透传。
+// - `cc`/`cx` 是启动类：对象名之后全部透传给底层 claude/codex，遇到 `--` 则丢弃分隔符。
+// - `ls`/`use` 是管理类：`--tool claude|codex` 是 ccq 自有 flag，不透传。
 // - 管理类命令（update/tools/uninstall）不使用 `--` 透传；卸载类使用 --yes / -y 跳过 y/n 确认。
 // - 无参 → kind:'tui'，由入口落现有 TUI 路径（零破坏）。
+
+export type ToolTarget = 'claude' | 'codex';
 
 export type CliIntent =
 	| { kind: 'tui' }
 	| { kind: 'version' }
 	| { kind: 'help'; verb?: string }
 	| { kind: 'cc'; name: string; passthrough: string[] }
-	| { kind: 'ls' }
-	| { kind: 'use'; name: string }
+	| { kind: 'cx'; name?: string; passthrough: string[] }
+	| { kind: 'ls'; tool: ToolTarget }
+	| { kind: 'use'; name: string; tool: ToolTarget }
 	| { kind: 'update'; checkOnly: boolean }
 	| { kind: 'tools'; action: 'update' | 'uninstall'; name?: string; assumedYes: boolean }
 	| { kind: 'uninstall'; assumedYes: boolean }
 	| { kind: 'unknown'; verb: string; args: string[] };
 
-const VERBS = new Set(['cc', 'ls', 'use', 'update', 'tools', 'uninstall', 'help']);
+const VERBS = new Set(['cc', 'cx', 'ls', 'use', 'update', 'tools', 'uninstall', 'help']);
 
 /** 将 argv（已 slice(2)）解析为 CliIntent。纯函数，无副作用。 */
 export function parseCli(argv: string[]): CliIntent {
@@ -55,18 +59,16 @@ export function parseCli(argv: string[]): CliIntent {
 		return parseCc(argv.slice(1));
 	}
 
+	if (first === 'cx') {
+		return parseCx(argv.slice(1));
+	}
+
 	if (first === 'ls') {
-		return { kind: 'ls' };
+		return parseLs(argv.slice(1));
 	}
 
 	if (first === 'use') {
-		const name = argv[1];
-		if (!name) {
-			// use 缺 name：当作 unknown 处理，让分发层报用法错误
-			return { kind: 'unknown', verb: 'use', args: argv.slice(1) };
-		}
-
-		return { kind: 'use', name };
+		return parseUse(argv.slice(1));
 	}
 
 	if (first === 'update') {
@@ -92,17 +94,77 @@ function parseCc(rest: string[]): CliIntent {
 		return { kind: 'unknown', verb: 'cc', args: rest };
 	}
 
-	const afterName = rest.slice(1);
-	const ddIndex = afterName.indexOf('--');
-	let passthrough: string[];
-	if (ddIndex >= 0) {
-		// `--` 之后原样透传，`--` 自身丢弃
-		passthrough = afterName.slice(ddIndex + 1);
-	} else {
-		passthrough = afterName;
+	return { kind: 'cc', name, passthrough: parsePassthrough(rest.slice(1)) };
+}
+
+/** 解析 `cx [name] [-- ...透传]` 或 `cx [name] ...透传`；无 name 时启动 plain codex。 */
+function parseCx(rest: string[]): CliIntent {
+	const first = rest[0];
+	if (!first) {
+		return { kind: 'cx', passthrough: [] };
 	}
 
-	return { kind: 'cc', name, passthrough };
+	if (first === '--') {
+		return { kind: 'cx', passthrough: rest.slice(1) };
+	}
+
+	if (first.startsWith('-')) {
+		return { kind: 'cx', passthrough: rest };
+	}
+
+	return { kind: 'cx', name: first, passthrough: parsePassthrough(rest.slice(1)) };
+}
+
+function parsePassthrough(rest: string[]): string[] {
+	const ddIndex = rest.indexOf('--');
+	return ddIndex >= 0 ? rest.slice(ddIndex + 1) : rest;
+}
+
+function parseToolTarget(value: string | undefined): ToolTarget | null {
+	if (value === undefined || value === 'claude') {
+		return 'claude';
+	}
+
+	if (value === 'codex') {
+		return 'codex';
+	}
+
+	return null;
+}
+
+function parseToolFlag(rest: string[], verb: string): ToolTarget | null {
+	if (rest.length === 0) {
+		return 'claude';
+	}
+
+	if (rest.length === 2 && rest[0] === '--tool') {
+		return parseToolTarget(rest[1]);
+	}
+
+	return verb === 'ls' || verb === 'use' ? null : 'claude';
+}
+
+function parseLs(rest: string[]): CliIntent {
+	const tool = parseToolFlag(rest, 'ls');
+	if (!tool) {
+		return { kind: 'unknown', verb: 'ls', args: rest };
+	}
+
+	return { kind: 'ls', tool };
+}
+
+function parseUse(rest: string[]): CliIntent {
+	const name = rest[0];
+	if (!name || name === '--' || name.startsWith('-')) {
+		return { kind: 'unknown', verb: 'use', args: rest };
+	}
+
+	const tool = parseToolFlag(rest.slice(1), 'use');
+	if (!tool) {
+		return { kind: 'unknown', verb: 'use', args: rest };
+	}
+
+	return { kind: 'use', name, tool };
 }
 
 /** 解析 `update [--check]`。 */

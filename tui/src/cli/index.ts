@@ -5,6 +5,7 @@
 import type { CliIntent } from './argv.js';
 import { helpFor, HELP_GENERAL } from './help.js';
 import { runCc } from './commands/cc.js';
+import { runCx } from './commands/cx.js';
 import { runLs } from './commands/ls.js';
 import { runTools } from './commands/tools.js';
 import { runUninstall } from './commands/uninstall.js';
@@ -41,11 +42,14 @@ export async function runCli(intent: CliIntent): Promise<number> {
 		case 'cc':
 			return runCc(intent.name, intent.passthrough);
 
+		case 'cx':
+			return runCx(intent.name, intent.passthrough);
+
 		case 'ls':
-			return runLs();
+			return runLs(intent.tool);
 
 		case 'use':
-			return runUse(intent.name);
+			return runUse(intent.name, intent.tool);
 
 		case 'update':
 			return runUpdate(intent.checkOnly);
@@ -64,9 +68,15 @@ export async function runCli(intent: CliIntent): Promise<number> {
 				return 1;
 			}
 
+			if (intent.verb === 'ls') {
+				console.error('ls 参数无效。');
+				console.error('用法: ccq ls [--tool claude|codex]');
+				return 1;
+			}
+
 			if (intent.verb === 'use') {
-				console.error('use 缺少 provider 名称。');
-				console.error('用法: ccq use <name>');
+				console.error('use 缺少 provider/profile 名称，或 --tool 参数无效。');
+				console.error('用法: ccq use <name> [--tool claude|codex]');
 				return 1;
 			}
 

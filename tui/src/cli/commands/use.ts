@@ -1,13 +1,15 @@
-// `ccq use <name>` — 设默认 provider。
-// 这是持久操作：复用 core/provider.ts 的 switchProvider，写入 ~/.claude/settings.json。
-// 与 `ccq cc <name>` 明确区分：use 写盘；cc 不写盘，仅 session 级覆盖。
+// `ccq use <name>` — 设默认 provider/profile。
+// Claude: 复用 core/provider.ts 的 switchProvider，写入 ~/.claude/settings.json。
+// Codex: 复用 core/codex.ts 的 setDefaultCodexProfile，结构化写 CODEX_HOME/config.toml。
+// 与 `ccq cc` / `ccq cx` 明确区分：use 写盘；启动类不写盘。
 
 import { getProviderList, switchProvider } from '../../core/provider.js';
+import { codexProfileExists, safeCodexProfileKey, setDefaultCodexProfile } from '../../core/codex.js';
 import { testProviderKey } from '../../core/text-utils.js';
 import { listProvidersForDisplay } from './ls.js';
+import type { ToolTarget } from '../argv.js';
 
-/** 执行 use 子命令。返回退出码。 */
-export function runUse(name: string): number {
+function runClaudeUse(name: string): number {
 	if (!testProviderKey(name)) {
 		console.error(`无效 provider 名称: ${name}`);
 		console.error('名称只能包含英文字母、数字、点号、下划线和短横线。');
@@ -39,4 +41,37 @@ export function runUse(name: string): number {
 		console.error(`设置默认 provider 失败: ${msg}`);
 		return 1;
 	}
+}
+
+function runCodexUse(name: string): number {
+	let safe: string;
+	try {
+		safe = safeCodexProfileKey(name);
+	} catch {
+		console.error(`无效 Codex profile 名称: ${name}`);
+		console.error('名称只能包含英文字母、数字、点号、下划线和短横线，且不能为 . / .. 或以 - 开头。');
+		return 1;
+	}
+
+	if (!codexProfileExists(safe)) {
+		console.error(`未找到 Codex profile: ${safe}`);
+		console.error('请运行 `ccq` 进入 TUI，在 Codex 上下文的供应商页中新建。');
+		return 1;
+	}
+
+	try {
+		setDefaultCodexProfile(safe);
+		console.log(`已设置默认 Codex profile: ${safe}`);
+		console.log('后续 codex 调用将读取 CODEX_HOME/config.toml 或 ~/.codex/config.toml。');
+		return 0;
+	} catch (error) {
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`设置默认 Codex profile 失败: ${msg}`);
+		return 1;
+	}
+}
+
+/** 执行 use 子命令。返回退出码。 */
+export function runUse(name: string, tool: ToolTarget = 'claude'): number {
+	return tool === 'codex' ? runCodexUse(name) : runClaudeUse(name);
 }
