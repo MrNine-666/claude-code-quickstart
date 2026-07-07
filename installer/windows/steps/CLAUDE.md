@@ -56,8 +56,8 @@ function Update-<StepId> {
 }
 ```
 
-> install 仅装 Basic 三步（NodeJS / Git / ClaudeCode）。原 Advanced 步骤（Ccline / ClaudeConfig / ClaudeMd / OpenSpec / CodexCli / AntigravityCli）已迁移 Manage TUI 并从 install 链删除（步骤文件、注册表条目、契约条目全部移除），其安装/更新/卸载由 `tui/` 工具管理与配置/提示词菜单承载。
-> Windows Basic 步骤中 ClaudeCode 注册 Update 函数；NodeJS、Git 不参与统一更新（UpdateFunction 为空）。
+> install 仅装 bootstrap Basic 两步（NodeJS / Git）；Claude Code / Codex 均由 `ccq` 的「工具管理」按需安装、更新与卸载。
+> `ClaudeCode.ps1` 为历史步骤文件/待删参考，不再被 `installer/contracts/steps.json`、Registry fallback 或 install 入口消费；Claude Code 生命周期以 `tui/src/core/tools-install.ts` / `tools-manage.ts` 为单一真理源。
 > CcgWorkflow / Mcp / CcSwitch / ApiKey 步骤已删除，相关能力统一由 Manage TUI 接管（详见根 [CLAUDE.md](../../../CLAUDE.md) 的 Manage TUI 架构）。
 > macOS 通过 `installer/contracts/steps.json` 复用 StepId。
 
@@ -73,7 +73,7 @@ Windows 与 macOS 保持相同 StepId、分组、依赖和用户可见能力边�
 |--------|------|------|:----:|:---------------:|:------:|---------|------|
 | NodeJS | Node.js (runtime-first, nvm/direct fallback) | `NodeJS.ps1` | — | ✓ | — | 无 | 基础 |
 | Git | Git | `Git.ps1` | — | ✓ | — | 无 | 基础 |
-| ClaudeCode | Claude Code | `ClaudeCode.ps1` | — | ✓ | ✓ | NodeJS | 基础 |
+| ClaudeCode | Claude Code | `ClaudeCode.ps1` | 历史保留 | ✓ | ✓ | NodeJS | 不再由 install 消费 |
 
 ---
 
@@ -103,12 +103,14 @@ Windows 与 macOS 保持相同 StepId、分组、依赖和用户可见能力边�
 
 ---
 
-## ClaudeCode — Claude Code
+## ClaudeCode — Claude Code（历史保留 / 不再由 install 消费）
 
 **文件**：`ClaudeCode.ps1`
 **依赖核心模块**：`Process.ps1`, `Ui.ps1`
 
-**安装流程**：`npm install -g @anthropic-ai/claude-code` → 验证 `claude --version`
+**状态**：该步骤文件仅作为历史兼容/待删参考保留，不再出现在 `installer/contracts/steps.json` 或 Registry fallback 的 Basic 分组中。Claude Code 安装、更新、卸载由 `ccq` →「工具管理」调用 TUI tools lifecycle 承担。
+
+**历史安装流程**：`npm install -g @anthropic-ai/claude-code` → 验证 `claude --version`
 
 ---
 

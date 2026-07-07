@@ -9,12 +9,12 @@
 
 | 路径/文件 | 平台/运行时 | 职责 |
 |------|---------|------|
-| `windows/Install.ps1` | Windows / PS 5.1+ | Windows 安装入口：**PS5.1 单运行时**，前置检测内联（Windows 版本 / winget 自动安装 / PS7 非阻塞推荐 / Windows Terminal）+ Basic 三步直装（NodeJS / Git / ClaudeCode），无 re-exec；**末尾确认下载 ccq.exe 到 %USERPROFILE%/.local/bin/（与 Claude Code native installer 同目录）并加入用户 PATH** |
+| `windows/Install.ps1` | Windows / PS 5.1+ | Windows 安装入口：**PS5.1 单运行时**，前置检测内联（Windows 版本 / winget 自动安装 / PS7 非阻塞推荐 / Windows Terminal）+ bootstrap Basic 两步直装（NodeJS / Git），无 re-exec；**末尾确认下载 ccq.exe 到 %USERPROFILE%/.local/bin/ 并加入用户 PATH**，Claude Code / Codex 由 ccq「工具管理」按需安装 |
 | `windows/core/` | Windows / PowerShell | Windows runtime core：Ui、Process、Profile、Json、Registry、Update、Admin、Net、**ccq 可执行文件管理函数**（架构检测 / 下载 / PATH） |
-| `windows/steps/` | Windows / PowerShell | Windows 9 个安装步骤模块（NodeJS 含 5 子模块 / Git / ClaudeCode / Ccline / ClaudeConfig / ClaudeMd / OpenSpec / CodexCli / AntigravityCli）；**CcSwitch / CcgWorkflow / Mcp 已删除**（迁 TUI 或废弃） |
+| `windows/steps/` | Windows / PowerShell | Windows install 消费的步骤模块仅为 NodeJS（含子模块）/ Git；ClaudeCode 步骤文件为历史保留/待删参考，Claude Code / Codex / Ccline / OpenSpec / CodeGraph / CcgWorkflow / Antigravity 等工具生命周期由 TUI 工具管理承载 |
 | `contracts/`（installer 内） | JSON 契约 + 测试 | install 链契约：`steps.json`（StepId / 分组 / 依赖）、`build.json`、`cleanup-policy.json` + `Test-Contracts.ps1`（Windows/macOS 共享） |
 | `tui/`（根级） | Bun / OpenTUI | **Manage TUI 子项目**：`src/` TypeScript 实现 **6 菜单**（供应商 / MCP / Skills / 提示词 / 配置文件 / 工具管理），经 `bun build --compile` 交叉编译为 4 平台单文件可执行产物；contracts 在 `tui/contracts/`（内嵌进可执行文件） |
-| `macos/Install.zsh` | macOS / bash→zsh | macOS 安装入口：前置检测内联 + Basic 直装 + **末尾确认下载 ccq 到 ~/.local/bin/（与 Claude Code native installer 同目录）并确保该目录在 PATH**，支持 `curl ... | bash` 后自动切换 `/bin/zsh` |
+| `macos/Install.zsh` | macOS / bash→zsh | macOS 安装入口：前置检测内联 + bootstrap Basic 两步直装（NodeJS / Git）+ **末尾确认下载 ccq 到 ~/.local/bin/ 并确保该目录在 PATH**；Claude Code / Codex 由 ccq「工具管理」按需安装，支持 `curl ... | bash` 后自动切换 `/bin/zsh` |
 | `build.ps1` | PowerShell 5.1+ | Windows / GitHub Actions 构建入口，输出 `install.ps1`；并从 `tui/dist/` 拷贝 2 个 Windows ccq 可执行文件到 `dist/` |
 | `build.sh` | POSIX sh | macOS / Unix 本机构建入口，输出 `install.sh`；并从 `tui/dist/` 拷贝 2 个 macOS ccq 可执行文件到 `dist/` |
 
@@ -26,12 +26,12 @@
 
 ```text
 Windows（3 件）
-├── install.ps1               # PS 5.1+ 安装入口（前置检测 + Basic 直装 + 末尾下载 ccq.exe）
+├── install.ps1               # PS 5.1+ 安装入口（前置检测 + bootstrap Basic 两步直装 + 末尾下载 ccq.exe）
 ├── ccq-windows-x64.exe       # ccq Windows x64 单文件可执行
 └── ccq-windows-arm64.exe     # ccq Windows ARM64 单文件可执行
 
 macOS（3 件）
-├── install.sh                # bash→zsh 安装入口（前置检测 + Basic 直装 + 末尾下载 ccq）
+├── install.sh                # bash→zsh 安装入口（前置检测 + bootstrap Basic 两步直装 + 末尾下载 ccq）
 ├── ccq-macos-x64             # ccq macOS x64 单文件可执行
 └── ccq-macos-arm64           # ccq macOS ARM64 单文件可执行（Apple Silicon）
 ```

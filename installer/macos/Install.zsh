@@ -423,7 +423,8 @@ ccq_confirm_basic_install_plan() {
   ccq_ui_info "  1. Homebrew（缺失时执行官方安装脚本）"
   ccq_ui_info "  2. nvm / Node.js（Basic 必需）"
   ccq_ui_info "  3. Git（Basic 必需）"
-  ccq_ui_info "  4. Claude Code（Basic 必需）"
+  ccq_ui_info "  4. ccq 管理控制台（安装器末尾确认下载）"
+  ccq_ui_dim "     Claude Code / Codex 将在 ccq「工具管理」中按需安装"
   printf '\n'
 
   local choice
@@ -442,7 +443,7 @@ ccq_main() {
   fi
 
   ccq_show_banner "Claude Code Quickstart"
-  ccq_ui_info "一键搭建 Claude Code 基础开发环境（Node.js / Git / Claude Code）" "developer"
+  ccq_ui_info "一键搭建 ccq 运行基础环境（Node.js / Git），Claude Code / Codex 由工具管理按需安装" "developer"
 
   if ! ccq_confirm_basic_install_plan; then
     ccq_ui_info "安装已取消"
@@ -455,7 +456,7 @@ ccq_main() {
   # 旧 Profile 标记块迁移清理（幂等，无残留则 no-op）
   ccq_cleanup_legacy_profile_blocks
 
-  # 基础环境直装（NodeJS / Git / ClaudeCode），无顶层菜单
+  # 基础环境直装（NodeJS / Git），Claude Code / Codex 交由 ccq 工具管理安装
   ccq_ui_primary "开始安装基础环境" "developer"
   ccq_invoke_grouped_install --skip-confirmation $(ccq_get_group_step_ids Basic)
 
@@ -497,7 +498,7 @@ ccq_confirm_executable_download() {
   ccq_ui_info "  • Skills 管理"
   ccq_ui_info "  • 提示词配置"
   ccq_ui_info "  • 配置文件管理"
-  ccq_ui_info "  • 工具管理（ClaudeCode / Ccline / OpenSpec 等）"
+  ccq_ui_info "  • 工具管理（安装/更新 Claude Code、Codex、CodeGraph、OpenSpec 等）"
   printf '\n'
 
   # 确认选择
@@ -508,10 +509,9 @@ ccq_confirm_executable_download() {
     ccq_ui_info "已跳过 ccq 可执行文件下载"
     ccq_ui_dim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
     printf '\n'
-    ccq_ui_primary "手动配置供应商（使用 Claude Code 必需）："
-    ccq_ui_info "  在 ~/.claude/settings.json 中添加 API Key，示例："
-    ccq_ui_dim '    { "env": { "ANTHROPIC_AUTH_TOKEN": "sk-ant-..." } }'
-    ccq_ui_info "  或稍后安装 ccq 后通过「供应商」菜单可视化配置"
+    ccq_ui_primary "后续安装 Claude Code / Codex："
+    ccq_ui_info "  稍后安装 ccq 后运行 ccq，进入「工具管理」安装 Claude Code 或 Codex"
+    ccq_ui_info "  API Key 与 profile 可在「供应商」菜单中可视化配置"
     return 0
   fi
 
@@ -555,7 +555,7 @@ ccq_confirm_executable_download() {
     ccq_ui_primary "下一步："
     ccq_ui_info "  1. 打开一个新的终端窗口"
     ccq_ui_info "  2. 输入 ccq 进入管理控制台"
-    ccq_ui_info "  3. 选择「供应商」菜单配置 API Key，即可开始使用 Claude Code"
+    ccq_ui_info "  3. 进入「工具管理」安装 Claude Code 或 Codex，再到「供应商」配置 API Key/profile"
     printf '\n'
     ccq_ui_dim "（当前会话 PATH 尚未刷新，必须开启新终端 ccq 命令才生效）"
   else
@@ -566,10 +566,9 @@ ccq_confirm_executable_download() {
     ccq_ui_info "  2. 下载对应平台的可执行文件（${exe_name}）"
     ccq_ui_info "  3. 放置到 ~/.local/bin 并设置可执行权限（chmod +x）"
     printf '\n'
-    ccq_ui_primary "手动配置供应商（使用 Claude Code 必需）："
-    ccq_ui_info "  在 ~/.claude/settings.json 中添加 API Key，示例："
-    ccq_ui_dim '    { "env": { "ANTHROPIC_AUTH_TOKEN": "sk-ant-..." } }'
-    ccq_ui_info "  或等待 ccq 安装后通过「供应商」菜单可视化配置"
+    ccq_ui_primary "后续安装 Claude Code / Codex："
+    ccq_ui_info "  等待 ccq 安装完成后运行 ccq，进入「工具管理」安装 Claude Code 或 Codex"
+    ccq_ui_info "  API Key 与 profile 可在「供应商」菜单中可视化配置"
   fi
 }
 

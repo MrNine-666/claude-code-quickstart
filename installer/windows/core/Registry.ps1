@@ -337,21 +337,6 @@ function Get-InlineStepRegistry {
             Order           = 20
             Dependencies    = @()
             Group           = "Basic"
-        },
-        @{
-            StepId          = "ClaudeCode"
-            StepName        = "Claude Code"
-            Description     = "通过 npm 全局安装 Claude Code CLI"
-            StepFile        = "windows/steps/ClaudeCode.ps1"
-            TestFunction    = "Test-ClaudeCodeInstalled"
-            InstallFunction = "Install-ClaudeCode"
-            VerifyFunction  = "Verify-ClaudeCode"
-            UpdateFunction  = "Update-ClaudeCode"
-            SkipIfInstalled = $true
-            IsOptional      = $false
-            Order           = 30
-            Dependencies    = @("NodeJS")
-            Group           = "Basic"
         }
     )
 }
@@ -428,7 +413,7 @@ function Get-StepGroups {
     return @{
         Basic = @{
             Label       = "基础环境"
-            Description = "Claude Code 最小可用环境"
+            Description = "ccq 运行所需基础环境"
             InstallMode = "OneClickOnly"
             StepIds     = $basicIds
         }

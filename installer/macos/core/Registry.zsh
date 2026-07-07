@@ -29,16 +29,14 @@ typeset -ga CCQ_BOOTSTRAP_GROUP_BASIC
 ccq_registry_init_bootstrap_snapshot() {
   [ "${#CCQ_BOOTSTRAP_STEP_IDS[@]}" -gt 0 ] && return 0
 
-  CCQ_BOOTSTRAP_GROUP_BASIC=(NodeJS Git ClaudeCode)
-  CCQ_BOOTSTRAP_STEP_IDS=(NodeJS Git ClaudeCode)
+  CCQ_BOOTSTRAP_GROUP_BASIC=(NodeJS Git)
+  CCQ_BOOTSTRAP_STEP_IDS=(NodeJS Git)
 
   CCQ_BOOTSTRAP_STEP_NAME[NodeJS]="Node.js"
   CCQ_BOOTSTRAP_STEP_NAME[Git]="Git"
-  CCQ_BOOTSTRAP_STEP_NAME[ClaudeCode]="Claude Code"
 
   CCQ_BOOTSTRAP_STEP_DESCRIPTION[NodeJS]="现有 node/npm 版本达标则跳过，否则优先通过当前 fnm/nvm 安装 LTS，无法原地修复时通过 nvm 官方脚本兜底"
   CCQ_BOOTSTRAP_STEP_DESCRIPTION[Git]="通过 Homebrew 安装 Git 并应用推荐配置"
-  CCQ_BOOTSTRAP_STEP_DESCRIPTION[ClaudeCode]="通过 npm 全局安装 Claude Code CLI"
 
   local step_id order=10
   for step_id in "${CCQ_BOOTSTRAP_STEP_IDS[@]}"; do
@@ -53,9 +51,6 @@ ccq_registry_init_bootstrap_snapshot() {
     CCQ_BOOTSTRAP_STEP_DEPS[${step_id}]=""
     order=$((order + 10))
   done
-
-  CCQ_BOOTSTRAP_STEP_DEPS[ClaudeCode]="NodeJS"
-  CCQ_BOOTSTRAP_STEP_UPDATE[ClaudeCode]="Update-ClaudeCode"
 }
 
 ccq_registry_node() {
@@ -146,7 +141,7 @@ ccq_get_bootstrap_step_field() {
       ;;
     Group)
       case "${step_id}" in
-        NodeJS|Git|ClaudeCode) printf 'Basic' ;;
+        NodeJS|Git) printf 'Basic' ;;
         *) return 1 ;;
       esac
       ;;
@@ -224,7 +219,7 @@ else process.stdout.write(String(value));
     Basic)
       case "${field}" in
         Label) printf '基础环境' ;;
-        Description) printf 'Claude Code 最小可用环境' ;;
+        Description) printf 'ccq 运行所需基础环境' ;;
         InstallMode) printf 'OneClickOnly' ;;
         *) return 1 ;;
       esac

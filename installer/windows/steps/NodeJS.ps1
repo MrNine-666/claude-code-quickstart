@@ -9,7 +9,6 @@ Set-StrictMode -Version Latest
 # 导入依赖模块
 $scriptRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 . "$scriptRoot\core\Process.ps1"
-. "$scriptRoot\core\Profile.ps1"
 . "$scriptRoot\core\Ui.ps1"
 . "$scriptRoot\core\Net.ps1"
 

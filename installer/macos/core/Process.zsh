@@ -709,11 +709,28 @@ ccq_test_executable_installed() {
   ccq_path="$(ccq_get_executable_path)"
 
   if [ -f "${ccq_path}" ] && [ -x "${ccq_path}" ]; then
-    is_installed=1
-    # 尝试获取版本
-    if version="$("${ccq_path}" --version 2>/dev/null | head -1)"; then
-      version="${version#ccq }"
+    # 只信任可快速响应 --version 的 ccq；旧/损坏可执行文件可能卡住，必须允许后续重新下载覆盖。
+    local version_file version_pid waited=0
+    version_file="$(mktemp -t ccq_version.XXXXXX 2>/dev/null || printf '%s/.ccq-version-%s' "${TMPDIR:-/tmp}" "$$")"
+    "${ccq_path}" --version >"${version_file}" 2>/dev/null &
+    version_pid="$!"
+    while kill -0 "${version_pid}" >/dev/null 2>&1; do
+      if [ "${waited}" -ge 3 ]; then
+        kill "${version_pid}" >/dev/null 2>&1 || true
+        wait "${version_pid}" 2>/dev/null || true
+        break
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+    if wait "${version_pid}" 2>/dev/null; then
+      version="$(head -n 1 "${version_file}" 2>/dev/null || true)"
+      if [ -n "${version}" ]; then
+        is_installed=1
+        version="${version#ccq }"
+      fi
     fi
+    rm -f "${version_file}" 2>/dev/null || true
   fi
 
   printf '{"isInstalled":%s,"version":"%s","path":"%s"}\n' "${is_installed}" "${version}" "${ccq_path}"
@@ -726,9 +743,10 @@ ccq_install_executable() {
   local download_url="$1"
   [ -z "${download_url}" ] && { printf 'Error: download_url required\n' >&2; return 1; }
 
-  local ccq_path ccq_bin_dir
+  local ccq_path ccq_bin_dir tmp_path
   ccq_path="$(ccq_get_executable_path)"
   ccq_bin_dir="$(dirname "${ccq_path}")"
+  tmp_path="${ccq_path}.download.$$"
 
   # 1. 创建目标目录
   if [ ! -d "${ccq_bin_dir}" ]; then
@@ -736,34 +754,37 @@ ccq_install_executable() {
     command -v ccq_ui_info >/dev/null 2>&1 && ccq_ui_info "创建 ccq 目录: ${ccq_bin_dir}"
   fi
 
-  # 2. 下载可执行文件
+  # 2. 下载可执行文件到临时文件，避免半成品覆盖已有 ccq
   command -v ccq_ui_info >/dev/null 2>&1 && ccq_ui_info "正在下载 ccq 可执行文件..."
   command -v ccq_ui_dim >/dev/null 2>&1 && ccq_ui_dim "  URL: ${download_url}"
 
+  rm -f "${tmp_path}" 2>/dev/null || true
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL -o "${ccq_path}" "${download_url}" || { printf 'Error: curl 下载失败\n' >&2; return 1; }
+    curl -fL --progress-bar --connect-timeout 20 --max-time 600 -o "${tmp_path}" "${download_url}" || { rm -f "${tmp_path}" 2>/dev/null || true; printf 'Error: curl 下载失败\n' >&2; return 1; }
   elif command -v wget >/dev/null 2>&1; then
-    wget -q -O "${ccq_path}" "${download_url}" || { printf 'Error: wget 下载失败\n' >&2; return 1; }
+    wget --show-progress --progress=bar:force --timeout=20 --tries=3 -O "${tmp_path}" "${download_url}" || { rm -f "${tmp_path}" 2>/dev/null || true; printf 'Error: wget 下载失败\n' >&2; return 1; }
   else
     printf 'Error: curl 和 wget 均不可用\n' >&2
     return 1
   fi
 
   # 3. 验证文件存在且非空
-  if [ ! -f "${ccq_path}" ]; then
-    printf 'Error: 下载后文件不存在: %s\n' "${ccq_path}" >&2
+  if [ ! -f "${tmp_path}" ]; then
+    printf 'Error: 下载后文件不存在: %s\n' "${tmp_path}" >&2
     return 1
   fi
 
   local file_size
-  file_size="$(stat -f%z "${ccq_path}" 2>/dev/null || stat -c%s "${ccq_path}" 2>/dev/null || echo 0)"
+  file_size="$(stat -f%z "${tmp_path}" 2>/dev/null || stat -c%s "${tmp_path}" 2>/dev/null || echo 0)"
   if [ "${file_size}" -eq 0 ]; then
+    rm -f "${tmp_path}" 2>/dev/null || true
     printf 'Error: 下载的文件为空\n' >&2
     return 1
   fi
 
-  # 4. 设置可执行权限
-  chmod +x "${ccq_path}" || { printf 'Error: 无法设置可执行权限\n' >&2; return 1; }
+  # 4. 设置可执行权限并原子替换
+  chmod +x "${tmp_path}" || { rm -f "${tmp_path}" 2>/dev/null || true; printf 'Error: 无法设置可执行权限\n' >&2; return 1; }
+  mv -f "${tmp_path}" "${ccq_path}" || { rm -f "${tmp_path}" 2>/dev/null || true; printf 'Error: 无法安装 ccq 可执行文件\n' >&2; return 1; }
 
   command -v ccq_ui_success >/dev/null 2>&1 && ccq_ui_success "✓ ccq 可执行文件已下载到: ${ccq_path}"
   command -v ccq_ui_dim >/dev/null 2>&1 && ccq_ui_dim "  文件大小: $(awk "BEGIN {printf \"%.2f\", ${file_size}/1024/1024}") MB"

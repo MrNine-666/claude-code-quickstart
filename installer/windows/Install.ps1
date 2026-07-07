@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 # Install.ps1 - CCQ（安装入口）
 # 功能: 首次安装入口（Onboarding），PS5.1 单运行时直跑——前置检测 + 基础环境直装
-#       （NodeJS / Git / ClaudeCode），无顶层菜单；进阶/管理功能由 Manage TUI 承载
+#       （NodeJS / Git）+ ccq 下载引导；Claude Code / Codex 由 ccq 工具管理安装
 
 param(
     [switch]$ListSteps,
@@ -379,7 +379,7 @@ function Confirm-CcqExecutableDownload {
     Write-UiInfo "  • Skills 管理"
     Write-UiInfo "  • 提示词配置"
     Write-UiInfo "  • 配置文件管理"
-    Write-UiInfo "  • 工具管理（ClaudeCode / Ccline / OpenSpec 等）"
+    Write-UiInfo "  • 工具管理（安装/更新 Claude Code、Codex、CodeGraph、OpenSpec 等）"
     Write-Host ""
 
     $decision = Show-SingleSelectMenu `
@@ -392,10 +392,9 @@ function Confirm-CcqExecutableDownload {
         Write-UiInfo "已跳过 ccq 可执行文件下载"
         Write-UiDim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
         Write-Host ""
-        Write-UiPrimary "手动配置供应商（使用 Claude Code 必需）："
-        Write-UiInfo "  在 ~/.claude/settings.json 中添加 API Key，示例："
-        Write-UiDim "    { `"env`": { `"ANTHROPIC_AUTH_TOKEN`": `"sk-ant-...`" } }"
-        Write-UiInfo "  或稍后安装 ccq 后通过「供应商」菜单可视化配置"
+        Write-UiPrimary "后续安装 Claude Code / Codex："
+        Write-UiInfo "  稍后安装 ccq 后运行 ccq，进入「工具管理」安装 Claude Code 或 Codex"
+        Write-UiInfo "  API Key 与 profile 可在「供应商」菜单中可视化配置"
         return
     }
 
@@ -435,7 +434,7 @@ function Confirm-CcqExecutableDownload {
         Write-UiInfo "  1. 打开 Windows Terminal，新建一个 PowerShell 7 标签页"
         Write-UiDim "     （Windows Terminal 中点击标签栏的 ∨ 下拉菜单选择 PowerShell）"
         Write-UiInfo "  2. 输入 ccq 进入管理控制台"
-        Write-UiInfo "  3. 选择「供应商」菜单配置 API Key，即可开始使用 Claude Code"
+        Write-UiInfo "  3. 进入「工具管理」安装 Claude Code 或 Codex，再到「供应商」配置 API Key/profile"
         Write-Host ""
         Write-UiDim "（当前会话 PATH 尚未刷新，必须开启新终端 ccq 命令才生效）"
     } else {
@@ -447,10 +446,9 @@ function Confirm-CcqExecutableDownload {
         Write-UiInfo "  2. 下载对应平台的可执行文件（$exeName）"
         Write-UiInfo "  3. 放置到任意 PATH 目录"
         Write-Host ""
-        Write-UiPrimary "手动配置供应商（使用 Claude Code 必需）："
-        Write-UiInfo "  在 ~/.claude/settings.json 中添加 API Key，示例："
-        Write-UiDim "    { `"env`": { `"ANTHROPIC_AUTH_TOKEN`": `"sk-ant-...`" } }"
-        Write-UiInfo "  或等待 ccq 安装后通过「供应商」菜单可视化配置"
+        Write-UiPrimary "后续安装 Claude Code / Codex："
+        Write-UiInfo "  等待 ccq 安装完成后运行 ccq，进入「工具管理」安装 Claude Code 或 Codex"
+        Write-UiInfo "  API Key 与 profile 可在「供应商」菜单中可视化配置"
     }
 }
 
@@ -553,13 +551,11 @@ function Show-FinalSummary {
 
     if ($Results.Failed -eq 0) {
         Write-Host ""
-        Write-UiPrimary "快速开始：" -Level Detail
-        Write-UiInfo "  claude          - 启动 Claude Code" -Level Detail
-        Write-UiInfo "  claude --help   - 查看帮助信息" -Level Detail
-        Write-Host ""
-        Write-UiPrimary "管理面板（可选）：" -Level Detail
-        Write-UiInfo "  方式 1: 安装完成后打开新终端运行: ccq" -Level Detail
-        Write-UiInfo "  方式 2: 从 Release 手动下载 ccq-windows-{x64|arm64}.exe 到 PATH 目录" -Level Detail
+        Write-UiPrimary "下一步：" -Level Detail
+        Write-UiInfo "  1. 安装完成后打开新终端运行: ccq" -Level Detail
+        Write-UiInfo "  2. 在右侧 Header 选择 Claude Code 或 Codex" -Level Detail
+        Write-UiInfo "  3. 进入「工具管理」安装 Claude Code / Codex" -Level Detail
+        Write-UiInfo "  4. 从 Release 手动下载 ccq-windows-{x64|arm64}.exe 到 PATH 目录也可补装 ccq" -Level Detail
     } else {
         Write-UiWarning "安装完成，但有 $($Results.Failed) 个步骤失败"
         Write-Host ""
@@ -595,9 +591,10 @@ function Confirm-BasicInstallPlan {
     Write-UiInfo "  1. winget（缺失时尝试自动安装，用于后续组件安装）"
     Write-UiInfo "  2. PowerShell 7（推荐组件，非阻塞）"
     Write-UiInfo "  3. Windows Terminal（推荐组件，非阻塞）"
-    Write-UiInfo "  4. Node.js（Basic 必需）"
-    Write-UiInfo "  5. Git（Basic 必需）"
-    Write-UiInfo "  6. Claude Code（Basic 必需）"
+    Write-UiInfo "  4. Node.js（运行 ccq 工具管理所需）"
+    Write-UiInfo "  5. Git（基础开发环境）"
+    Write-UiInfo "  6. ccq 管理控制台（安装器末尾确认下载）"
+    Write-UiDim "     Claude Code / Codex 将在 ccq「工具管理」中按需安装"
     Write-Host ""
 
     $choice = Show-SingleSelectMenu `
@@ -836,7 +833,7 @@ function Main {
         # 欢迎横幅
         Show-CcqLogo -Subtitle "Claude Code Quickstart"
 
-        Write-UiInfo "一键搭建 Claude Code 基础开发环境（Node.js / Git / Claude Code）" -Level Detail
+        Write-UiInfo "一键搭建 ccq 运行基础环境（Node.js / Git），Claude Code / Codex 由工具管理按需安装" -Level Detail
         Write-Host ""
 
         if (-not (Confirm-BasicInstallPlan)) {
@@ -853,7 +850,7 @@ function Main {
         # ── 旧 Profile 标记块迁移清理（幂等，无残留则 no-op）
         Invoke-ProfileLegacyCleanup
 
-        # ── 基础环境直装（NodeJS / Git / ClaudeCode），无顶层菜单
+        # ── 基础环境直装（NodeJS / Git），Claude Code / Codex 交由 ccq 工具管理安装
         $state = [InstallState]::new()
         $state.Mode = "Install-Basic"
 

@@ -234,6 +234,16 @@ function Test-StepsContract {
     Assert-Equal 'groups.Basic.Description' $groups['Basic']['Description'] $Contract['Groups']['Basic']['Description']
     Assert-Equal 'groups.Basic.InstallMode' $groups['Basic']['InstallMode'] $Contract['Groups']['Basic']['InstallMode']
     Assert-Equal 'groups.Basic.StepIds' @($groups['Basic']['StepIds']) @($Contract['Groups']['Basic']['StepIds'])
+    Assert-Equal 'bootstrap-only.Basic.StepIds' @('NodeJS', 'Git') @($Contract['Groups']['Basic']['StepIds'])
+
+    foreach ($removedToolStep in @('ClaudeCode', 'CodexCli')) {
+        if (@($Contract['Groups']['Basic']['StepIds']) -contains $removedToolStep) {
+            Add-Issue "bootstrap-only.Basic.StepIds 不得包含 $removedToolStep"
+        }
+        if (@($Contract['Steps'] | ForEach-Object { [string]$_['StepId'] }) -contains $removedToolStep) {
+            Add-Issue "bootstrap-only.Steps 不得注册 $removedToolStep；该工具应由 ccq 工具管理安装"
+        }
+    }
 
     Assert-Equal 'directory.installer-root' 'installer' $Contract['DirectoryPolicy']['InstallerRoot']
     Assert-Equal 'directory.must-not-rename' 'src' $Contract['DirectoryPolicy']['MustNotRenameTo']
