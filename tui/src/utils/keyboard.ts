@@ -4,6 +4,8 @@ export type ShortcutPlatform = 'darwin' | 'default';
 
 type KeyEventLike = Pick<KeyEvent, 'name'> & {
 	readonly ctrl?: boolean;
+	readonly meta?: boolean;
+	readonly option?: boolean;
 	readonly super?: boolean;
 };
 
@@ -25,6 +27,10 @@ export function isEditingModifier(keyEvent: KeyEventLike, platform: ShortcutPlat
 
 export function isAppModifier(keyEvent: KeyEventLike): boolean {
 	return keyEvent.ctrl === true;
+}
+
+export function hasShortcutModifier(keyEvent: KeyEventLike): boolean {
+	return keyEvent.ctrl === true || keyEvent.meta === true || keyEvent.option === true || keyEvent.super === true;
 }
 
 const KEY_NAME_ALIASES: Record<string, string> = {
@@ -51,8 +57,8 @@ const MAC_MODIFIER_SYMBOLS: Record<string, string> = {
 const TEXT_MODIFIER_ALIASES: Record<string, string> = {
 	ctrl: 'Ctrl',
 	shift: 'Shift',
-	meta: 'Meta',
-	option: 'Opt',
+	meta: 'Alt',
+	option: 'Alt',
 	super: 'Super',
 	hyper: 'Hyper'
 };
@@ -70,9 +76,17 @@ function formatShortcutVariant(variant: string, platform: ShortcutPlatform): str
 		return '';
 	}
 
-	const tokens = variant.split('+').map(token => token.trim()).filter(Boolean);
+	return variant
+		.split(/\s+/)
+		.map(stroke => formatShortcutStroke(stroke, platform))
+		.filter(Boolean)
+		.join(' ');
+}
+
+function formatShortcutStroke(stroke: string, platform: ShortcutPlatform): string {
+	const tokens = stroke.split('+').map(token => token.trim()).filter(Boolean);
 	if (tokens.length === 0) {
-		return variant;
+		return stroke;
 	}
 
 	const keyName = tokens[tokens.length - 1]!;

@@ -28,6 +28,28 @@ function deriveValues(fields: readonly FormField[]): Record<string, string> {
 	return result;
 }
 
+type FormModelBase<TValues> = {
+	readonly mode: string;
+	readonly fields: readonly FormField[];
+	readonly values: TValues;
+};
+
+export type ProviderFormTextResult<TValues> =
+	| {readonly ok: true; readonly values: TValues}
+	| {readonly ok: false; readonly error: string};
+
+export type ProviderFormAdapter<TInput, TValues, TModel extends FormModelBase<TValues>> = {
+	readonly textLabel: string;
+	readonly title: (model: TModel) => string;
+	readonly savedMessage: (model: TModel, values: TValues) => string;
+	readonly valuesToRecord: (values: TValues) => Record<string, string>;
+	readonly recordToValues: (record: Record<string, string>, fallback: TValues) => TValues;
+	readonly buildText: (values: TValues) => string;
+	readonly parseText: (baseValues: TValues, raw: string) => ProviderFormTextResult<TValues>;
+	readonly makeProviderTypeInput: (providerType: string) => TInput;
+	readonly makeSubmitInput: (model: TModel, record: Record<string, string>) => TInput;
+};
+
 function valuesToRecord(values: ProviderFormValues): Record<string, string> {
 	return {
 		profileKey: values.profileKey,
@@ -58,42 +80,79 @@ function recordToValues(record: Record<string, string>, fallback: ProviderFormVa
 	};
 }
 
-const JSON_FIELD_ID = 'provider-form-json';
+const JSON_FIELD_ID = 'provider-form-textarea';
 
-export type ProviderFormProps = {
-	readonly model: ProviderFormModel;
+const claudeProviderFormAdapter: ProviderFormAdapter<ProviderFormInput, ProviderFormValues, FormModelBase<ProviderFormValues> & ProviderFormModel> = {
+	textLabel: '最终 JSON（可编辑 env）',
+	title: (model) => model.mode === 'edit' ? '编辑供应商' : '添加供应商',
+	savedMessage: (model, values) =>
+		model.mode === 'edit'
+			? `供应商 ${values.profileKey} 已更新`
+			: `供应商 ${values.profileKey} 已添加${values.activateAfterSave ? '并激活' : ''}`,
+	valuesToRecord,
+	recordToValues,
+	buildText: buildProviderProfileJson,
+	parseText: valuesFromProviderProfileJson,
+	makeProviderTypeInput: (providerType) => ({
+		mode: providerType === 'custom' ? 'add-custom' : 'add-builtin',
+		builtinKey: providerType === 'custom' ? undefined : providerType,
+		profileKey: undefined,
+		profile: null
+	}),
+	makeSubmitInput: (model, record) => ({
+		mode: model.mode,
+		builtinKey: model.mode === 'add-builtin' ? record.providerType : undefined,
+		profileKey: model.mode === 'edit' ? record.profileKey : undefined,
+		profile: null
+	})
+};
+
+export type ProviderFormProps<TInput = ProviderFormInput, TValues = ProviderFormValues, TModel extends FormModelBase<TValues> = FormModelBase<TValues>> = {
+	readonly model: TModel;
 	readonly active: boolean;
 	readonly contentHeight?: number;
 	readonly onCancel: () => void;
 	readonly onSaved: (message: string) => void;
-	readonly buildForm: (input: ProviderFormInput) => ProviderFormModel;
-	readonly save: (input: ProviderFormInput, values: ProviderFormValues) => ProviderServiceResult<unknown>;
-	readonly validate: (values: ProviderFormValues) => string[];
+	readonly buildForm: (input: TInput) => TModel;
+	readonly save: (input: TInput, values: TValues) => ProviderServiceResult<unknown>;
+	readonly validate: (values: TValues) => string[];
+	readonly adapter?: ProviderFormAdapter<TInput, TValues, TModel>;
 };
 
 /**
  * ProviderForm：供应商表单屏（add/edit 统一复用）
  * - 字段区用 ↑/↓ 移动焦点，radio/select 用 ←/→ 或 Tab 切选项
- * - JSON textarea：中间行 ↑/↓ 换行，第一行 ↑ / 最后行 ↓ 切字段，Tab 缩进（2 空格）
- * - 保存以 JSON 解析后的值为真源
+ * - textarea：中间行 ↑/↓ 换行，第一行 ↑ / 最后行 ↓ 切字段，Tab 缩进（2 空格）
+ * - Claude 使用 settings-compatible JSON；Codex 通过 adapter 使用真实 profile TOML
  */
-export function ProviderForm({ model, active, contentHeight = 16, onCancel, onSaved, buildForm, save, validate }: ProviderFormProps) {
+export function ProviderForm<TInput = ProviderFormInput, TValues = ProviderFormValues, TModel extends FormModelBase<TValues> = FormModelBase<TValues>>({
+	model,
+	active,
+	contentHeight = 16,
+	onCancel,
+	onSaved,
+	buildForm,
+	save,
+	validate,
+	adapter
+}: ProviderFormProps<TInput, TValues, TModel>) {
+	const formAdapter = adapter ?? (claudeProviderFormAdapter as unknown as ProviderFormAdapter<TInput, TValues, TModel>);
 	const [fields, setFields] = useState(model.fields);
 	const [values, setValues] = useState<Record<string, string>>(() => deriveValues(model.fields));
 	const [focusedIndex, setFocusedIndex] = useState(() => firstEditableIndex(model.fields));
 	const [errors, setErrors] = useState<string[]>([]);
-	const [baseValues, setBaseValues] = useState<ProviderFormValues>(model.values);
-	const [jsonText, setJsonText] = useState(() => buildProviderProfileJson(model.values));
+	const [baseValues, setBaseValues] = useState<TValues>(model.values);
+	const [text, setText] = useState(() => formAdapter.buildText(model.values));
 	const textareaRef = useRef<TextareaRenderable>(null);
 	const renderer = useRenderer();
 	const scrollRef = useRef<ScrollBoxRenderable>(null);
-	const lastProviderType = useRef<string | undefined>(model.values.providerType);
+	const lastProviderType = useRef<string | undefined>((model.values as {providerType?: string}).providerType);
 	// 记录程序化 setText 的目标文本，避免 onContentChange 回声反向同步。
 	const pendingTextareaSync = useRef<string | null>(null);
 
-	const jsonFocused = focusedIndex === fields.length;
-	const fieldFocused = !jsonFocused;
-	const focusedFieldId = jsonFocused ? JSON_FIELD_ID : `form-field-${focusedIndex}-${fields[focusedIndex]?.id ?? 'unknown'}`;
+	const textFocused = focusedIndex === fields.length;
+	const fieldFocused = !textFocused;
+	const focusedFieldId = textFocused ? JSON_FIELD_ID : `form-field-${focusedIndex}-${fields[focusedIndex]?.id ?? 'unknown'}`;
 
 	useEffect(() => {
 		if (!scrollRef.current) {
@@ -109,16 +168,16 @@ export function ProviderForm({ model, active, contentHeight = 16, onCancel, onSa
 		}
 
 		const currentText = textareaRef.current.plainText;
-		if (currentText === jsonText) {
+		if (currentText === text) {
 			pendingTextareaSync.current = null;
 			return;
 		}
 
-		// 字段变化推送新 JSON 到 textarea：setText 会重置 buffer，适合程序化覆盖。
+		// 字段变化推送新文本到 textarea：setText 会重置 buffer，适合程序化覆盖。
 		// OpenTUI textarea 的 initialValue 只适合首次初始化，后续赋值不会替换已有编辑内容。
-		pendingTextareaSync.current = jsonText;
-		textareaRef.current.setText(jsonText);
-	}, [jsonText]);
+		pendingTextareaSync.current = text;
+		textareaRef.current.setText(text);
+	}, [text]);
 
 	useEffect(() => {
 		if (model.mode === 'edit') {
@@ -132,13 +191,7 @@ export function ProviderForm({ model, active, contentHeight = 16, onCancel, onSa
 
 		lastProviderType.current = providerTypeValue;
 
-		const nextInput: ProviderFormInput = {
-			mode: providerTypeValue === 'custom' ? 'add-custom' : 'add-builtin',
-			builtinKey: providerTypeValue === 'custom' ? undefined : providerTypeValue,
-			profileKey: undefined,
-			profile: null
-		};
-		const nextModel = buildForm(nextInput);
+		const nextModel = buildForm(formAdapter.makeProviderTypeInput(providerTypeValue));
 		const nextRecord = deriveValues(nextModel.fields);
 		nextRecord.providerType = providerTypeValue;
 
@@ -146,20 +199,19 @@ export function ProviderForm({ model, active, contentHeight = 16, onCancel, onSa
 			nextRecord.apiKey = values.apiKey;
 		}
 
-		const nextBase = recordToValues(nextRecord, nextModel.values);
+		const nextBase = formAdapter.recordToValues(nextRecord, nextModel.values);
 		setFields(nextModel.fields);
 		setValues(nextRecord);
 		setBaseValues(nextBase);
-		setJsonText(buildProviderProfileJson(nextBase));
+		setText(formAdapter.buildText(nextBase));
 		setFocusedIndex(firstEditableIndex(nextModel.fields));
 		setErrors([]);
-	}, [values.providerType, model.mode, buildForm]);
+	}, [values.providerType, model.mode, buildForm, formAdapter]);
 
 	const handleMoveFocus = (direction: 1 | -1) => {
 		setFocusedIndex((current) => {
 			if (current === fields.length) {
-				// textarea（虚拟 fields.length）按 ↑ 应切到紧邻的上一真实字段（末位可编辑）：
-				// 从 fields.length 起算（越界 → nextEditableIndex 返回末位）；用 fields.length-1 会再往回跳过末字段。
+				// textarea（虚拟 fields.length）按 ↑ 应切到紧邻的上一真实字段（末位可编辑）。
 				return direction > 0 ? firstEditableIndex(fields) : nextEditableIndex(fields, fields.length, -1);
 			}
 
@@ -194,20 +246,20 @@ export function ProviderForm({ model, active, contentHeight = 16, onCancel, onSa
 	const handleFieldChange = (id: string, value: string) => {
 		const nextRecord = {...values, [id]: value};
 		setValues(nextRecord);
-		const nextFormValues = recordToValues(nextRecord, baseValues);
+		const nextFormValues = formAdapter.recordToValues(nextRecord, baseValues);
 		setBaseValues(nextFormValues);
-		setJsonText(buildProviderProfileJson(nextFormValues));
+		setText(formAdapter.buildText(nextFormValues));
 		setErrors([]);
 	};
 
-	const handleJsonChange = (content: string) => {
+	const handleTextChange = (content: string) => {
 		if (pendingTextareaSync.current === content) {
 			pendingTextareaSync.current = null;
 			return;
 		}
 
-		setJsonText(content);
-		const parsed = valuesFromProviderProfileJson(baseValues, content);
+		setText(content);
+		const parsed = formAdapter.parseText(baseValues, content);
 		if (!parsed.ok) {
 			setErrors([parsed.error]);
 			return;
@@ -215,18 +267,16 @@ export function ProviderForm({ model, active, contentHeight = 16, onCancel, onSa
 
 		setErrors([]);
 		setBaseValues(parsed.values);
-		setValues((prev) => ({...prev, ...valuesToRecord(parsed.values)}));
+		setValues((prev) => ({...prev, ...formAdapter.valuesToRecord(parsed.values)}));
 	};
 
-	// JSON textarea 键位（onKeyDown，handleKeyPress 之前）：Tab 缩进 + 边界 ↑/↓ 切字段。
-	// onKeyDown 仅在 textarea focused（active && jsonFocused）时触发，无需再判 active/jsonFocused。
+	// textarea 键位（onKeyDown，handleKeyPress 之前）：Tab 缩进 + 边界 ↑/↓ 切字段。
+	// onKeyDown 仅在 textarea focused（active && textFocused）时触发，无需再判 active/textFocused。
 	const handleTextareaKey = (keyEvent: KeyEvent) => {
-		// Tab = 2 空格缩进 / Shift+Tab = 反向缩进（preventDefault 阻止 textarea 默认）。
 		if (handleTextareaIndentKey(keyEvent, textareaRef.current)) {
 			return;
 		}
 
-		// 边界导航：第一行按 ↑ 切上一字段，最后行按 ↓ 切下一字段；中间行放行让 textarea 换行。
 		const ta = textareaRef.current;
 		if (!ta) {
 			return;
@@ -247,18 +297,18 @@ export function ProviderForm({ model, active, contentHeight = 16, onCancel, onSa
 	};
 
 	useKeyboard((keyEvent) => {
-		if (!active || !jsonFocused) {
+		if (!active || !textFocused) {
 			return;
 		}
 
 		// 保存按编辑语义触发 · Ctrl+Z 撤销 · Ctrl+Shift+Z/Y 重做 · 复制按编辑语义触发选中（OSC52）。
-		// undo/redo 后主动重新解析 JSON 刷新错误（OpenTUI undo 走 FFI 不触发 onContentChange）。
+		// undo/redo 后主动重新解析文本刷新错误（OpenTUI undo 走 FFI 不触发 onContentChange）。
 		if (handleTextareaEditKeys(
 			keyEvent,
 			textareaRef.current,
 			renderer,
 			handleSubmit,
-			() => handleJsonChange(textareaRef.current?.plainText ?? jsonText)
+			() => handleTextChange(textareaRef.current?.plainText ?? text)
 		)) {
 			return;
 		}
@@ -270,7 +320,7 @@ export function ProviderForm({ model, active, contentHeight = 16, onCancel, onSa
 	});
 
 	const handleSubmit = () => {
-		const parsed = valuesFromProviderProfileJson(baseValues, jsonText);
+		const parsed = formAdapter.parseText(baseValues, text);
 		if (!parsed.ok) {
 			setErrors([parsed.error]);
 			return;
@@ -283,29 +333,19 @@ export function ProviderForm({ model, active, contentHeight = 16, onCancel, onSa
 			return;
 		}
 
-		const input: ProviderFormInput = {
-			mode: model.mode,
-			builtinKey: model.mode === 'add-builtin' ? values.providerType : undefined,
-			profileKey: model.mode === 'edit' ? values.profileKey : undefined,
-			profile: null
-		};
-
+		const input = formAdapter.makeSubmitInput(model, values);
 		const result = save(input, formValues);
 		if (!result.ok) {
 			setErrors([result.error]);
 			return;
 		}
 
-		const message =
-			model.mode === 'edit'
-				? `供应商 ${formValues.profileKey} 已更新`
-				: `供应商 ${formValues.profileKey} 已添加${formValues.activateAfterSave ? '并激活' : ''}`;
-		onSaved(message);
+		onSaved(formAdapter.savedMessage(model, formValues));
 	};
 
-	const title = model.mode === 'edit' ? '编辑供应商' : '添加供应商';
+	const title = formAdapter.title(model);
 	const scrollHeight = Math.max(8, contentHeight - (errors.length > 0 ? 2 : 0));
-	const jsonHeight = Math.max(8, Math.floor(contentHeight * 0.45));
+	const textHeight = Math.max(8, Math.floor(contentHeight * 0.45));
 
 	return (
 		<box flexDirection="column">
@@ -333,14 +373,14 @@ export function ProviderForm({ model, active, contentHeight = 16, onCancel, onSa
 				/>
 
 				<box id={JSON_FIELD_ID} marginTop={1} flexDirection="column" flexShrink={0}>
-					<text fg={jsonFocused ? colors.primary : colors.text} attributes={jsonFocused ? TextAttributes.BOLD : 0}>
-						{jsonFocused ? '› ' : '  '}最终 JSON（可编辑 env）
+					<text fg={textFocused ? colors.primary : colors.text} attributes={textFocused ? TextAttributes.BOLD : 0}>
+						{textFocused ? '› ' : '  '}{formAdapter.textLabel}
 					</text>
-					<box height={jsonHeight} borderStyle="rounded" borderColor={jsonFocused ? borderColors.active : borderColors.inactive}>
+					<box height={textHeight} borderStyle="rounded" borderColor={textFocused ? borderColors.active : borderColors.inactive}>
 						<textarea
 							ref={textareaRef}
-							initialValue={jsonText}
-							focused={active && jsonFocused}
+							initialValue={text}
+							focused={active && textFocused}
 							wrapMode="word"
 							style={{flexGrow: 1}}
 							textColor={colors.inputText}
@@ -349,7 +389,7 @@ export function ProviderForm({ model, active, contentHeight = 16, onCancel, onSa
 							selectionBg={colors.selectionBg}
 							selectionFg={colors.selectionFg}
 							onKeyDown={handleTextareaKey}
-							onContentChange={() => handleJsonChange(textareaRef.current?.plainText ?? jsonText)}
+							onContentChange={() => handleTextChange(textareaRef.current?.plainText ?? text)}
 						/>
 					</box>
 				</box>

@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState} from 'react';
 import type {DetectionState} from '../services/async-detection.js';
-import type {DetectionRunner, DetectionStateSink} from '../services/detection-runner.js';
+import type {DetectionRunner, DetectionRunOptions, DetectionStateSink} from '../services/detection-runner.js';
 
 // App 层检测缓存（Phase 2）：把 Update / Skills 的检测状态从视图内部提升到 App。
 // 视图切走再切回（unmount/remount）时缓存不丢失，不重跑慢命令；仅在首次或
@@ -9,12 +9,13 @@ import type {DetectionRunner, DetectionStateSink} from '../services/detection-ru
 export type DetectionCache<Result> = {
 	readonly state: DetectionState<Result>;
 	// 手动刷新：重置后重新检测（对应视图内的 r 键）。
-	readonly refresh: () => void;
+	readonly refresh: (options?: DetectionRunOptions) => void;
 };
 
 export type DetectionCacheServices<Result> = {
 	readonly createDetectionRunner: (onChange: DetectionStateSink<Result>) => DetectionRunner<Result>;
 	readonly runDetection: (runner: DetectionRunner<Result>) => Promise<unknown>;
+	readonly refreshDetection?: (runner: DetectionRunner<Result>, options?: DetectionRunOptions) => Promise<unknown>;
 };
 
 export function useDetectionCache<Result>(services: DetectionCacheServices<Result>): DetectionCache<Result> {
@@ -28,13 +29,18 @@ export function useDetectionCache<Result>(services: DetectionCacheServices<Resul
 		void services.runDetection(runner);
 	}, [services]);
 
-	const refresh = (): void => {
+	const refresh = (options?: DetectionRunOptions): void => {
 		const runner = runnerRef.current;
 		if (!runner) {
 			return;
 		}
 
 		runner.reset();
+		if (services.refreshDetection) {
+			void services.refreshDetection(runner, options);
+			return;
+		}
+
 		void services.runDetection(runner);
 	};
 

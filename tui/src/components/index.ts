@@ -2,7 +2,7 @@
 
 export { StatusDot, type StatusDotProps, type StatusDotKind } from './status-dot.js';
 export { Checkbox, type CheckboxProps } from './checkbox.js';
-export { ShortcutBar, type ShortcutBarProps, type Shortcut } from './shortcut-bar.js';
+export { ShortcutBar, shortcutBarRows, type ShortcutBarProps, type Shortcut } from './shortcut-bar.js';
 export { Modal, type ModalProps, type ModalTone } from './modal.js';
 export { Spinner, type SpinnerProps } from './spinner.js';
 export { toast, ToastViewport, type ToastType, type ToastOptions } from './toast.js';

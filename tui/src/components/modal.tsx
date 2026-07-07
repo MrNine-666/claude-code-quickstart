@@ -50,8 +50,9 @@ export function Modal({
 			borderColor={accent}
 			backgroundColor={colors.modalBackground}
 			paddingX={1}
+			title={title}
+			titleColor={accent}
 		>
-			<text fg={accent} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{title}</text>
 			<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{'─'.repeat(Math.max(1, width - 4))}</text>
 			{children}
 			<box flexGrow={1} />

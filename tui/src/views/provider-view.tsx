@@ -23,8 +23,22 @@ import {
 	saveProviderForm,
 	switchActiveProvider
 } from '../services/provider-service.js';
+import {
+	buildCodexForm,
+	codexModelSummary,
+	codexProviderFormAdapter,
+	loadCodexProviderDisplay,
+	loadCodexProviderProfile,
+	readCodexProfileToml,
+	removeCodexProvider,
+	saveCodexProviderForm,
+	switchActiveCodexProvider,
+	type CodexProviderFormInput
+} from '../services/codex-service.js';
 import { validateProviderForm } from '../core/provider-form.js';
+import { validateCodexProviderForm, type CodexProviderFormModel, type CodexProviderFormValues } from '../core/codex-provider-form.js';
 import type { ProviderDisplayData, ProviderDisplayProfile } from '../core/provider.js';
+import type { AgentContext } from '../state/manage-state.js';
 import { colors } from '../theme/index.js';
 
 // Provider TUI 视图（OpenTUI 适配）：
@@ -45,6 +59,8 @@ type ProviderScreen =
 const CARD_BODY_WIDTH = 64;
 
 export type ProviderViewProps = {
+	// 当前 Agent 上下文：cc 读写 Claude provider，cx 读写 Codex profile。
+	readonly agentContext: AgentContext;
 	// 本视图是否获得右侧内容区焦点（focus === 'view'）。
 	readonly active: boolean;
 	// content 区可视行数（焦点驱动滚动）。
@@ -54,23 +70,35 @@ export type ProviderViewProps = {
 	readonly onSubModeChange?: (subMode: string) => void;
 	// 在列表屏按 Esc/← 时请求退回左侧导航。
 	readonly onExitToNav: () => void;
+	// 在列表顶部按 ↑ 时请求进入 Agent Header。
+	readonly onExitToHeader?: () => void;
 };
 
 export function ProviderView({
+	agentContext,
 	active,
 	viewportHeight = 16,
 	viewportWidth = 52,
 	onSubModeChange,
-	onExitToNav
+	onExitToNav,
+	onExitToHeader
 }: ProviderViewProps) {
-	const [display, setDisplay] = useState<ProviderDisplayData>(() => loadProviderDisplay());
-	const migrationFailed = useMemo(() => getMigrationResult()?.failed ?? [], []);
+	const isCodex = agentContext === 'cx';
+	const [display, setDisplay] = useState<ProviderDisplayData>(() => isCodex ? loadCodexProviderDisplay() : loadProviderDisplay());
+	const migrationFailed = useMemo(() => isCodex ? [] : (getMigrationResult()?.failed ?? []), [isCodex]);
 	const [selected, setSelected] = useState(0);
 	const [screen, setScreen] = useState<ProviderScreen>({ kind: 'list' });
 
 	const profiles = display.profiles;
 	const safeSelected = profiles.length === 0 ? 0 : Math.min(selected, profiles.length - 1);
 	const current = profiles[safeSelected] ?? null;
+
+	useEffect(() => {
+		const next = isCodex ? loadCodexProviderDisplay() : loadProviderDisplay();
+		setDisplay(next);
+		setSelected(0);
+		setScreen({kind: 'list'});
+	}, [isCodex]);
 
 	// 上报子模式给 App footer：表单屏统一上报 'form'，空列表上报 'empty'，否则用 screen.kind。
 	useEffect(() => {
@@ -89,14 +117,35 @@ export function ProviderView({
 	}, [active, screen.kind, profiles.length, onSubModeChange]);
 
 	const refresh = (): ProviderDisplayData => {
-		const next = loadProviderDisplay();
+		const next = isCodex ? loadCodexProviderDisplay() : loadProviderDisplay();
 		setDisplay(next);
 		setSelected((prev) => (next.profiles.length === 0 ? 0 : Math.min(prev, next.profiles.length - 1)));
 		return next;
 	};
 
-	// 表单屏（add/edit 统一走 ProviderForm）：表单内编辑字段，保存按编辑语义触发、Esc 返回列表。
+	// 表单屏（add/edit 统一走 ProviderForm）：Claude 使用 JSON，Codex 使用真实 TOML adapter。
 	if (screen.kind === 'add') {
+		if (isCodex) {
+			const model = buildCodexForm({mode: 'add'});
+			return (
+				<ProviderForm<CodexProviderFormInput, CodexProviderFormValues, CodexProviderFormModel>
+					model={model}
+					active={active}
+					contentHeight={viewportHeight - 2}
+					buildForm={buildCodexForm}
+					save={saveCodexProviderForm}
+					validate={(values) => validateCodexProviderForm(model.mode, values)}
+					adapter={codexProviderFormAdapter}
+					onCancel={() => setScreen({ kind: 'list' })}
+					onSaved={(message) => {
+						refresh();
+						toast.success(message);
+						setScreen({ kind: 'list' });
+					}}
+				/>
+			);
+		}
+
 		const model = buildForm({ mode: 'add-builtin' });
 		return (
 			<ProviderForm
@@ -117,6 +166,29 @@ export function ProviderView({
 	}
 
 	if (screen.kind === 'edit' && current) {
+		if (isCodex) {
+			const profile = loadCodexProviderProfile(current.profilePath);
+			const rawToml = readCodexProfileToml(current.profilePath);
+				const model = buildCodexForm({ mode: 'edit', profileKey: current.key, profile, rawToml });
+			return (
+				<ProviderForm<CodexProviderFormInput, CodexProviderFormValues, CodexProviderFormModel>
+					model={model}
+					active={active}
+					contentHeight={viewportHeight - 2}
+					buildForm={buildCodexForm}
+					save={(input, values) => saveCodexProviderForm({ ...input, profileKey: current.key, profile, rawToml }, values)}
+					validate={(values) => validateCodexProviderForm('edit', values)}
+					adapter={codexProviderFormAdapter}
+					onCancel={() => setScreen({ kind: 'list' })}
+					onSaved={(message) => {
+						refresh();
+						toast.success(message);
+						setScreen({ kind: 'list' });
+					}}
+				/>
+			);
+		}
+
 		const profile = loadProviderProfile(current.profilePath);
 		const model = buildForm({ mode: 'edit', profileKey: current.key, profile });
 		return (
@@ -140,7 +212,10 @@ export function ProviderView({
 	// 列表屏（Phase 4 实现）
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title="供应商管理" subtitle="管理 API 供应商、密钥与模型环境变量" />
+			<ViewHeader
+				title={isCodex ? 'Codex profile 管理' : '供应商管理'}
+				subtitle={isCodex ? '管理 CODEX_HOME 下的 Codex profile TOML' : '管理 API 供应商、密钥与模型环境变量'}
+			/>
 
 			{migrationFailed.length > 0 ? (
 				<box marginBottom={1}>
@@ -154,8 +229,8 @@ export function ProviderView({
 
 			{profiles.length === 0 ? (
 				<ListEmptyState
-					message="暂无供应商配置"
-					hint={{label: '添加第一个供应商（可在表单内选择类型，含自定义）', enabled: true}}
+					message={isCodex ? '暂无 Codex profile' : '暂无供应商配置'}
+					hint={{label: isCodex ? '添加第一个 Codex profile（支持 official login / 自定义）' : '添加第一个供应商（可在表单内选择类型，含自定义）', enabled: true}}
 				/>
 			) : (
 				<ProviderTable
@@ -163,13 +238,14 @@ export function ProviderView({
 					selectedIndex={safeSelected}
 					viewportHeight={viewportHeight}
 					reservedRows={migrationFailed.length > 0 ? 6 : 3}
+					summaryForProfile={(profile) => isCodex ? codexModelSummary(loadCodexProviderProfile(profile.profilePath)) : modelSummary(loadProviderProfile(profile.profilePath))}
 				/>
 			)}
 
 			{screen.kind === 'confirm-delete' && current ? (
 				<Modal
 					active
-					title={current.isActive ? '禁止删除活跃供应商' : '确认删除供应商'}
+					title={current.isActive ? (isCodex ? '禁止删除默认 Codex profile' : '禁止删除活跃供应商') : (isCodex ? '确认删除 Codex profile' : '确认删除供应商')}
 					hint="Enter 确认  Esc 取消"
 					tone="danger"
 					viewportWidth={viewportWidth}
@@ -177,8 +253,8 @@ export function ProviderView({
 				>
 					<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 						{current.isActive
-							? `${current.key} 是当前活跃供应商，删除前请先切换到其他供应商。`
-							: `即将删除供应商 ${current.key}，此操作不可撤销。`}
+							? `${current.key} 是当前${isCodex ? '默认 Codex profile' : '活跃供应商'}，删除前请先切换到其他${isCodex ? ' profile' : '供应商'}。`
+							: `即将删除${isCodex ? ' Codex profile' : '供应商'} ${current.key}，此操作不可撤销。`}
 					</text>
 				</Modal>
 			) : null}
@@ -186,16 +262,17 @@ export function ProviderView({
 			<ListInput
 				active={active && screen.kind === 'list'}
 				hasCurrent={current !== null}
+				atTop={safeSelected === 0}
 				onMove={(delta) => setSelected((prev) => clampMove(prev, delta, profiles.length))}
 				onSwitch={() => {
 					if (!current) {
 						return;
 					}
 
-					const result = switchActiveProvider(current.key);
+					const result = isCodex ? switchActiveCodexProvider(current.key) : switchActiveProvider(current.key);
 					if (result.ok) {
 						refresh();
-						toast.success(`已切换为活跃供应商：${result.data.providerName}`);
+						toast.success(isCodex ? `已设置默认 Codex profile：${result.data.providerName}` : `已切换为活跃供应商：${result.data.providerName}`);
 					} else {
 						toast.error(result.error);
 					}
@@ -214,6 +291,7 @@ export function ProviderView({
 					}
 				}}
 				onExit={onExitToNav}
+				onExitToHeader={onExitToHeader}
 			/>
 
 			<DeleteInput
@@ -226,15 +304,15 @@ export function ProviderView({
 					}
 
 					if (current.isActive) {
-						toast.error(`无法删除当前活跃供应商 ${current.key}，请先切换到其他供应商。`);
+						toast.error(`无法删除当前${isCodex ? '默认 Codex profile' : '活跃供应商'} ${current.key}，请先切换到其他${isCodex ? ' profile' : '供应商'}。`);
 						setScreen({ kind: 'list' });
 						return;
 					}
 
-					const result = removeProvider(current.key);
+					const result = isCodex ? removeCodexProvider(current.key) : removeProvider(current.key);
 					refresh();
 					if (result.ok) {
-						toast.success(`已删除供应商：${current.key}`);
+						toast.success(`已删除${isCodex ? ' Codex profile' : '供应商'}：${current.key}`);
 					} else {
 						toast.error(result.error);
 					}
@@ -251,12 +329,14 @@ function ProviderTable({
 	profiles,
 	selectedIndex,
 	viewportHeight,
-	reservedRows
+	reservedRows,
+	summaryForProfile
 }: {
 	readonly profiles: readonly ProviderDisplayProfile[];
 	readonly selectedIndex: number;
 	readonly viewportHeight: number;
 	readonly reservedRows: number;
+	readonly summaryForProfile: (profile: ProviderDisplayProfile) => string;
 }) {
 	const items: ScrollListItem[] = profiles.map((profile) => ({
 		key: profile.key,
@@ -265,7 +345,7 @@ function ProviderTable({
 		body: (
 			<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 				{truncateToWidth(
-					`${profile.baseUrl} · ${profile.maskedApiKey} · ${modelSummary(loadProviderProfile(profile.profilePath))}`,
+					`${profile.baseUrl || '未配置 Base URL'} · ${profile.maskedApiKey} · ${summaryForProfile(profile)}`,
 					CARD_BODY_WIDTH
 				)}
 			</text>
@@ -286,12 +366,14 @@ function cardStatusDot(profile: ProviderDisplayProfile): React.ReactNode {
 type ListInputProps = {
 	readonly active: boolean;
 	readonly hasCurrent: boolean;
+	readonly atTop: boolean;
 	readonly onMove: (delta: number) => void;
 	readonly onSwitch: () => void;
 	readonly onAdd: () => void;
 	readonly onEdit: () => void;
 	readonly onDelete: () => void;
 	readonly onExit: () => void;
+	readonly onExitToHeader?: () => void;
 };
 
 function ListInput(props: ListInputProps) {
@@ -301,7 +383,11 @@ function ListInput(props: ListInputProps) {
 		switch (keyEvent.name.toLowerCase()) {
 			case 'up':
 			case 'arrowup':
-				props.onMove(-1);
+				if (props.atTop && props.onExitToHeader) {
+					props.onExitToHeader();
+				} else {
+					props.onMove(-1);
+				}
 				break;
 			case 'down':
 			case 'arrowdown':

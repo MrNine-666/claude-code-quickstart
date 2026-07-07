@@ -15,13 +15,12 @@ import {
 	type ManageModuleId,
 	type ManageState
 } from './state/manage-state.js';
-import { navShortcuts, viewShortcuts, updateButtonShortcuts, agentToggleShortcut } from './state/shortcuts.js';
-import { Modal, ShortcutBar, Spinner, ToastViewport, toast, type Shortcut, type StatusDotKind } from './components/index.js';
+import { navShortcuts, viewShortcuts, updateButtonShortcuts, headerShortcuts } from './state/shortcuts.js';
+import { Modal, ShortcutBar, Spinner, ToastViewport, toast, shortcutBarRows, type Shortcut, type StatusDotKind } from './components/index.js';
 import { colors, borderColors, borderStyles, PRIMARY, getTheme, setActiveTheme, type AppThemeMode, type ThemePalette } from './theme/index.js';
 import { CCQ_LOGO } from './theme/logo.js';
 import { CCQ_VERSION } from './version.js';
-import { applyUpdate, checkLatestVersion, downloadUpdate, restartExecutable } from './core/update.js';
-import { displayWidth } from './core/text-utils.js';
+import { applyUpdate, checkLatestVersion, downloadUpdate, formatSelfUpdateError, restartExecutable } from './core/update.js';
 // 导入 6 个视图组件
 import { ProviderView } from './views/provider-view.js';
 import McpView from './views/mcp/McpView.js';
@@ -36,6 +35,10 @@ import { createToolsViewServices } from './views/tools-view-services.js';
 
 // logo 每行 13 列宽（块面风格），侧边栏内宽 = SIDEBAR_WIDTH - 2(边框) - 2(paddingX) = 20，菜单标签充裕。
 const SIDEBAR_WIDTH = 24;
+// 右侧内容区内部滚动高度估算：实际布局由 flex column 自动分配，估算值仅传给子视图。
+const RIGHT_CARD_FRAME_ROWS = 2;
+const AGENT_HEADER_ROWS = 3;
+const CONTENT_DIVIDER_ROWS = 1;
 
 // 是否运行在 Bun --compile 单文件可执行产物中。
 // 源码模式下 import.meta.dirname 是真实磁盘目录（existsSync=true）；
@@ -50,6 +53,7 @@ type UpdateScreen =
 	| { readonly kind: 'latest' }
 	| { readonly kind: 'available'; readonly version: string; readonly downloadUrl: string }
 	| { readonly kind: 'updating'; readonly version: string; readonly downloadUrl: string; readonly stage: 'downloading' | 'applying' | 'cancelling' }
+	| { readonly kind: 'readyToRestart'; readonly version: string }
 	| { readonly kind: 'updated'; readonly version: string }
 	| { readonly kind: 'error'; readonly message: string };
 
@@ -145,8 +149,9 @@ export default function App({ initialThemeMode }: AppProps) {
 		};
 	}, [theme]);
 
-	// Skills 视图：services + cache（检测已安装 skills）
-	const skillsViewServices = useMemo(() => createSkillsViewServices(), []);
+	// Skills 视图：services + cache（检测已安装 skills）。agentContext 参与 service key，
+	// Header 切换后重建检测 runner，确保 list/install/update/uninstall 指向当前 Agent。
+	const skillsViewServices = useMemo(() => createSkillsViewServices(state.agentContext), [state.agentContext]);
 	const skillsCache = useDetectionCache(skillsViewServices);
 
 	// Tools 视图：services + cache（检测已安装工具）
@@ -168,12 +173,28 @@ export default function App({ initialThemeMode }: AppProps) {
 	const runUpdateCheck = async (): Promise<void> => {
 		setUpdateScreen({ kind: 'checking' });
 		const info = await checkLatestVersion();
-		setUpdateScreen(info ? { kind: 'available', version: info.version, downloadUrl: info.downloadUrl } : { kind: 'latest' });
+		if (!info.ok) {
+			setUpdateScreen({ kind: 'error', message: formatSelfUpdateError(info.error) });
+			return;
+		}
+
+		setUpdateScreen(info.hasUpdate
+			? { kind: 'available', version: info.version, downloadUrl: info.downloadUrl }
+			: { kind: 'latest' }
+		);
 	};
 
 	const restartUpdatedApp = (): void => {
+		const restarted = restartExecutable();
+		if (!restarted.ok) {
+			const message = formatSelfUpdateError(restarted.error);
+			toast.error(message);
+			setUpdateScreen({ kind: 'error', message });
+			return;
+		}
+
 		renderer?.destroy();
-		restartExecutable();
+		process.exit(0);
 	};
 
 	const cancelUpdate = (): void => {
@@ -193,26 +214,35 @@ export default function App({ initialThemeMode }: AppProps) {
 		setUpdateScreen({ kind: 'updating', version, downloadUrl, stage: 'downloading' });
 
 		const downloaded = await downloadUpdate(downloadUrl, abortController.signal);
+		updateAbortRef.current = null;
 		if (abortController.signal.aborted) {
-			updateAbortRef.current = null;
 			setUpdateScreen({ kind: 'available', version, downloadUrl });
 			return;
 		}
 
-		if (!downloaded) {
-			updateAbortRef.current = null;
-			toast.error('下载更新失败，请检查网络后重试');
-			setUpdateScreen({ kind: 'error', message: '下载失败' });
+		if (!downloaded.ok) {
+			const message = formatSelfUpdateError(downloaded.error);
+			toast.error(message);
+			setUpdateScreen({ kind: 'error', message });
 			return;
 		}
 
-		setUpdateScreen({ kind: 'updating', version, downloadUrl, stage: 'applying' });
+		setUpdateScreen({ kind: 'readyToRestart', version });
+	};
+
+	const applyDownloadedUpdate = async (version: string): Promise<void> => {
+		setUpdateScreen({ kind: 'updating', version, downloadUrl: '', stage: 'applying' });
 		const applied = await applyUpdate();
-		updateAbortRef.current = null;
-		if (!applied) {
-			toast.error('应用更新失败');
-			setUpdateScreen({ kind: 'error', message: '应用更新失败' });
+		if (!applied.ok) {
+			const message = formatSelfUpdateError(applied.error);
+			toast.error(message);
+			setUpdateScreen({ kind: 'error', message });
 			return;
+		}
+
+		if (applied.restartStarted) {
+			renderer?.destroy();
+			process.exit(0);
 		}
 
 		setUpdateScreen({ kind: 'updated', version });
@@ -250,8 +280,8 @@ export default function App({ initialThemeMode }: AppProps) {
 				return;
 			}
 
-			// 'updated' / 'error' 状态：打开浮窗确认下一步
-			if (currentStatus === 'updated' || currentStatus === 'error') {
+			// 'readyToRestart' / 'updated' / 'error' 状态：打开浮窗确认下一步
+			if (currentStatus === 'readyToRestart' || currentStatus === 'updated' || currentStatus === 'error') {
 				setUpdateDialogOpen(true);
 				return;
 			}
@@ -263,10 +293,14 @@ export default function App({ initialThemeMode }: AppProps) {
 	}, !ownsViewInput);
 
 	const navActive = state.focus === 'nav';
+	const headerActive = state.focus === 'header';
 
-	// 内容区可视高度：总高 - 外层无边框 - 两个 card 边框/padding - footer 行 - 分隔线
 	const sidebarInnerWidth = SIDEBAR_WIDTH - 4;
-	const contentViewportHeight = Math.max(4, terminalHeight - 6);
+	const activeFooterShortcuts = footerShortcuts(state.focus, state.selectedIndex === menuItems.length, displayMenuId, viewSubMode);
+	const footerRows = shortcutBarRows(activeFooterShortcuts, contentWidth);
+	// 外层布局由 flex 自动分配高度；这里仅给各视图内部 scrollbox/textarea 一个同步的高度估算。
+	const rightReservedRows = RIGHT_CARD_FRAME_ROWS + AGENT_HEADER_ROWS + CONTENT_DIVIDER_ROWS + footerRows;
+	const contentViewportHeight = Math.max(1, terminalHeight - rightReservedRows);
 
 	// 双卡片双层布局：
 	// 左卡片 = Logo（纯色） + 下划线分隔 + menu
@@ -360,11 +394,11 @@ export default function App({ initialThemeMode }: AppProps) {
 					borderColor={!navActive ? borderColors.active : borderColors.inactive}
 					paddingX={1}
 				>
-					{/* Agent 上下文 Header（全称切换 Claude Code / Codex，shift+tab 切换；不展示 cc/cx 缩写） */}
-					<AgentHeader agentContext={state.agentContext} />
+					{/* Agent 上下文 Header（全称切换 Claude Code / Codex，不展示 cc/cx 缩写） */}
+					<AgentHeader agentContext={state.agentContext} width={contentWidth} active={headerActive} />
 
 					{/* 内容视图区域 */}
-					<box flexDirection="column" flexGrow={1} height={contentViewportHeight} overflow="hidden">
+					<box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={1} overflow="hidden">
 						<ModuleContent
 							moduleId={displayMenuId}
 							agentContext={state.agentContext}
@@ -381,13 +415,16 @@ export default function App({ initialThemeMode }: AppProps) {
 								setViewSubMode('');
 								setState(current => reduceManageState(current, 'escape'));
 							}}
+							onExitToHeader={() => {
+								setState(current => reduceManageState(current, 'up'));
+							}}
 						/>
 					</box>
 
 					<Divider width={terminalWidth - SIDEBAR_WIDTH - 4} />
 
 					{/* Footer 快捷键提示 */}
-					<ShortcutBar shortcuts={footerShortcuts(navActive, state.selectedIndex === menuItems.length, displayMenuId, viewSubMode)} />
+					<ShortcutBar shortcuts={activeFooterShortcuts} width={contentWidth} />
 				</box>
 			</box>
 
@@ -399,6 +436,7 @@ export default function App({ initialThemeMode }: AppProps) {
 				viewportHeight={terminalHeight}
 				onClose={() => setUpdateDialogOpen(false)}
 				onUpdate={(version, downloadUrl) => void runUpdate(version, downloadUrl)}
+				onApplyUpdate={(version) => void applyDownloadedUpdate(version)}
 				onCancelUpdate={cancelUpdate}
 				onRestart={restartUpdatedApp}
 			/>
@@ -408,30 +446,37 @@ export default function App({ initialThemeMode }: AppProps) {
 
 // 卡片内分区下划线（替代独立 card 边框，Logo/menu 与 content/footer 各自一卡内分隔）
 function Divider({ width }: { readonly width: number }) {
-	return <text fg={colors.muted}>{'─'.repeat(Math.max(1, width))}</text>;
+	return <text fg={colors.muted} flexShrink={0}>{'─'.repeat(Math.max(1, width))}</text>;
 }
 
 // Agent 上下文 Header：右侧 content 顶部，全称标签 Claude Code / Codex 切换。
 // spec manage-tui-shell：可见标签必须为全称，禁止 cc/cx 缩写；切换不改左侧 6 菜单顺序/选中。
-// 切换键 shift+tab 由 reduceManageState 处理；Header 只反映 state.agentContext。
-function AgentHeader({ agentContext }: { readonly agentContext: AgentContext }) {
+// Header 获焦后用 ←/→ 切换 Agent，并用主题色边框提示焦点。
+function AgentHeader({ agentContext, width, active }: { readonly agentContext: AgentContext; readonly width: number; readonly active: boolean }) {
 	return (
-		<box flexDirection="row" marginBottom={0}>
+		<box
+			flexDirection="row"
+			width={width}
+			flexShrink={0}
+			borderStyle={active ? borderStyles.active : borderStyles.inactive}
+			borderColor={active ? borderColors.active : borderColors.inactive}
+			paddingX={1}
+		>
 			{AGENT_CONTEXT_ORDER.map(ctx => {
-				const active = ctx === agentContext;
+				const selected = ctx === agentContext;
 				const label = AGENT_CONTEXT_LABELS[ctx];
 				return (
-					<box key={ctx} flexDirection="row" marginRight={2}>
-						<text fg={active ? PRIMARY : colors.muted} attributes={active ? TextAttributes.BOLD : 0}>
-							{active ? '▶ ' : '  '}
-						</text>
-						<text fg={active ? PRIMARY : colors.muted} attributes={active ? TextAttributes.BOLD : 0}>
-							{label}
+					<box key={ctx} flexDirection="row" marginRight={1}>
+						<text
+							fg={selected ? colors.navSelectedForeground : colors.muted}
+							bg={selected ? PRIMARY : undefined}
+							attributes={selected ? TextAttributes.BOLD : 0}
+						>
+							{` ${label} `}
 						</text>
 					</box>
 				);
 			})}
-			<text fg={colors.muted} attributes={TextAttributes.DIM}>{`  ${agentToggleShortcut().key} 切换`}</text>
 		</box>
 	);
 }
@@ -495,6 +540,7 @@ function updateStatusKind(status: UpdateStatus): StatusDotKind {
 		case 'available':
 			return 'updatable';
 		case 'latest':
+		case 'readyToRestart':
 		case 'updated':
 			return 'latest';
 		case 'error':
@@ -512,8 +558,10 @@ function updateButtonLabel(status: UpdateStatus): string {
 			return '发现新版本';
 		case 'latest':
 			return '已是最新';
-		case 'updated':
+		case 'readyToRestart':
 			return '等待重启';
+		case 'updated':
+			return '更新完成';
 		case 'error':
 			return '更新失败';
 	}
@@ -526,6 +574,7 @@ function UpdateDialog({
 	viewportHeight,
 	onClose,
 	onUpdate,
+	onApplyUpdate,
 	onCancelUpdate,
 	onRestart
 }: {
@@ -535,6 +584,7 @@ function UpdateDialog({
 	readonly viewportHeight: number;
 	readonly onClose: () => void;
 	readonly onUpdate: (version: string, downloadUrl: string) => void;
+	readonly onApplyUpdate: (version: string) => void;
 	readonly onCancelUpdate: () => void;
 	readonly onRestart: () => void;
 }) {
@@ -550,6 +600,12 @@ function UpdateDialog({
 
 		if (screen.kind === 'updating') {
 			if (isEsc) onCancelUpdate();
+			return;
+		}
+
+		if (screen.kind === 'readyToRestart') {
+			if (isEnter) onApplyUpdate(screen.version);
+			else if (isEsc) onClose();
 			return;
 		}
 
@@ -602,12 +658,23 @@ function updateDialogContent(screen: UpdateScreen): { readonly title: string; re
 				),
 				hint: screen.stage === 'cancelling' ? '正在停止更新...' : 'Enter 已禁用  Esc 停止更新'
 			};
+		case 'readyToRestart':
+			return {
+				title: '下载完成',
+				body: (
+					<box flexDirection="column">
+						<text fg={colors.success} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>更新已下载完成</text>
+						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  新版本 v${screen.version} 将在重启后生效`}</text>
+					</box>
+				),
+				hint: 'Enter 应用并重启  Esc 稍后处理'
+			};
 		case 'updated':
 			return {
 				title: '更新完成',
 				body: (
 					<box flexDirection="column">
-						<text fg={colors.success} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>更新已准备就绪</text>
+						<text fg={colors.success} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>更新已应用</text>
 						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  新版本 v${screen.version} 将在重启后生效`}</text>
 					</box>
 				),
@@ -649,19 +716,22 @@ function statusDotColor(kind: StatusDotKind): string {
 	}
 }
 
-// Footer 快捷键组装：nav 焦点用 nav/更新按钮键位；view 焦点用视图键位 + 追加「切换 Agent」。
-// Header 切换（shift+tab）在 nav 与 view 顶层焦点均可用，故两者 footer 都含切换项（单一数据源）。
+// Footer 快捷键组装：只展示当前焦点/视图内操作；Agent 切换键仅在 Header 提示，避免 footer 溢出。
 function footerShortcuts(
-	navActive: boolean,
+	focus: ManageState['focus'],
 	onUpdateButton: boolean,
 	displayMenuId: ManageModuleId,
 	viewSubMode: string
 ): readonly Shortcut[] {
-	if (navActive) {
+	if (focus === 'nav') {
 		return onUpdateButton ? updateButtonShortcuts() : navShortcuts();
 	}
 
-	return [...viewShortcuts(displayMenuId, viewSubMode), agentToggleShortcut()];
+	if (focus === 'header') {
+		return headerShortcuts();
+	}
+
+	return viewShortcuts(displayMenuId, viewSubMode);
 }
 
 // 右侧内容区路由：六个模块视图
@@ -677,6 +747,7 @@ function ModuleContent({
 	toolsCache,
 	onSubModeChange,
 	onExitToNav,
+	onExitToHeader,
 	syntaxStyle
 }: {
 	readonly moduleId: string;
@@ -690,6 +761,7 @@ function ModuleContent({
 	readonly toolsCache: DetectionCache<any>;
 	readonly onSubModeChange: (subMode: string) => void;
 	readonly onExitToNav: () => void;
+	readonly onExitToHeader: () => void;
 	readonly syntaxStyle: SyntaxStyle | null;
 }) {
 	// agentContext 管道已就绪：Tools 视图已消费（Phase 3）；Provider/Config/Prompts/MCP/Skills
@@ -697,17 +769,17 @@ function ModuleContent({
 	// 根据 moduleId 渲染对应的视图组件
 	switch (moduleId) {
 		case 'provider':
-			return <ProviderView active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
+			return <ProviderView agentContext={agentContext} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} />;
 		case 'mcp':
-			return <McpView active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
+			return <McpView agentContext={agentContext} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} />;
 		case 'skills':
-			return <SkillsView services={skillsViewServices} cache={skillsCache} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
+			return <SkillsView services={skillsViewServices} cache={skillsCache} agentContext={agentContext} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} />;
 		case 'prompts':
-			return <PromptsView active={active} viewportHeight={viewportHeight} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} syntaxStyle={syntaxStyle} />;
+			return <PromptsView agentContext={agentContext} active={active} viewportHeight={viewportHeight} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} syntaxStyle={syntaxStyle} />;
 		case 'config':
-			return <ConfigView active={active} viewportHeight={viewportHeight} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} syntaxStyle={syntaxStyle} />;
+			return <ConfigView agentContext={agentContext} active={active} viewportHeight={viewportHeight} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} syntaxStyle={syntaxStyle} />;
 		case 'tools':
-			return <ToolsView services={toolsViewServices} cache={toolsCache} agentContext={agentContext} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} contentWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
+			return <ToolsView services={toolsViewServices} cache={toolsCache} agentContext={agentContext} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} contentWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} />;
 		default:
 			// 兜底：显示模块信息
 			const item = menuItems.find(menuItem => menuItem.id === moduleId);

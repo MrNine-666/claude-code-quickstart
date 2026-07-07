@@ -29,15 +29,20 @@ export const navBindings: Binding[] = commandBindings({
 });
 
 // ------------------------------------------------------------
-// 全局 Agent 上下文切换 command（nav / view 焦点均可用）
-// Header 提示与 footer 快捷键共用此单一数据源（HC-SHORTCUT-SINGLE-SOURCE）。
+// Header commands（header 焦点时生效）
 // ------------------------------------------------------------
-export const AGENT_COMMANDS = {
-	TOGGLE: 'agent:toggle'
+export const HEADER_COMMANDS = {
+	AGENT_PREV: 'header:agent-prev',
+	AGENT_NEXT: 'header:agent-next',
+	RETURN_TO_VIEW: 'header:return-to-view',
+	RETURN_TO_VIEW_ESC: 'header:return-to-view-esc'
 } as const;
 
-export const agentBindings: Binding[] = commandBindings({
-	[AGENT_COMMANDS.TOGGLE]: 'shift+tab'
+export const headerBindings: Binding[] = commandBindings({
+	[HEADER_COMMANDS.AGENT_PREV]: 'left',
+	[HEADER_COMMANDS.AGENT_NEXT]: 'right',
+	[HEADER_COMMANDS.RETURN_TO_VIEW]: 'down',
+	[HEADER_COMMANDS.RETURN_TO_VIEW_ESC]: 'escape'
 });
 
 // ------------------------------------------------------------
@@ -226,7 +231,7 @@ export const toolsBindings: Binding[] = commandBindings({
 // ------------------------------------------------------------
 export const allBindings: Binding[] = [
 	...navBindings,
-	...agentBindings,
+	...headerBindings,
 	...viewCommonBindings,
 	...providerBindings,
 	...mcpBindings,

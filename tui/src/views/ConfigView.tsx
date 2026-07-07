@@ -14,40 +14,45 @@ import {
 } from '../components/index.js';
 import {
 	fillMissingIntoText,
-	getSettingsPath,
+	getConfigPath,
 	loadRecommendationAnnotated,
-	readCurrentSettingsTextStripped,
-	saveSettingsMerged
+	readCurrentConfigText,
+	saveConfigText,
+	type ConfigTarget
 } from '../services/config-service.js';
+import type {AgentContext} from '../state/manage-state.js';
 
 // 配置文件页（view-first，对齐 PromptsView）+ 字段级（settings.json 多页共享）：
-// view 态只读渲染当前 settings.json（手动 JSON 着色：key/string/数字/布尔/标点分色；opentui 未内置 json grammar）。
+// view 态只读渲染当前配置文件（手动 JSON/TOML 着色；opentui 未内置 json grammar）。
 // 字段所有权（HC-12）：供应商 env（token/base_url/model 等，DoNotManageEnvKeys）从展示中剥离，归供应商页管；
 // 保存时自动从原文件恢复供应商 env，绝不丢失。标题标注「已排除供应商配置」。
-// e（编辑现有；空时 a 新建 {}）进入编辑器；Ctrl+T 开推荐边栏（带注释 JSONC 只读对照，注释行分色）；
-// Ctrl+O fill-missing 灌缓冲（仅补缺失，保留已有配置，可撤销）；保存按编辑语义（macOS Cmd+S，其他平台 Ctrl+S）后回只读展示；
-// Esc 取消编辑直接回 view（放弃未保存改动，toast 提示）。
-// HC-SHORTCUT-SINGLE-SOURCE：键位处理用 keyEvent.name，footer 文案由 shortcuts.ts 按 subMode 解析。
+// 编辑、推荐边栏、fill-missing 与保存等键位只在 keybindings/shortcuts 单一数据源维护。
+// 取消编辑直接回 view（放弃未保存改动，toast 提示）。
+// HC-SHORTCUT-SINGLE-SOURCE：键位处理用 command 映射，footer 文案由 shortcuts.ts 按 subMode 解析。
 
 type Mode = 'view' | 'edit';
 type Panel = 'editor' | 'split';
 type Focus = 'editor' | 'recommend';
 
 export type ConfigViewProps = {
+	readonly agentContext: AgentContext;
 	readonly active: boolean;
 	readonly viewportHeight?: number;
 	readonly onSubModeChange?: (subMode: string) => void;
 	readonly onExitToNav: () => void;
+	readonly onExitToHeader?: () => void;
 	readonly syntaxStyle?: import('@opentui/core').SyntaxStyle | null;
 };
 
-export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExitToNav, syntaxStyle = null }: ConfigViewProps) {
-	const recommendationContent = useMemo(() => loadRecommendationAnnotated() ?? '', []);
+export function ConfigView({ agentContext, active, viewportHeight = 16, onSubModeChange, onExitToNav, onExitToHeader, syntaxStyle = null }: ConfigViewProps) {
+	const target: ConfigTarget = agentContext;
+	const isCodex = target === 'cx';
+	const recommendationContent = useMemo(() => loadRecommendationAnnotated(target) ?? '', [target]);
 	const recommendationAvailable = recommendationContent !== '';
-	const settingsPath = useMemo(() => getSettingsPath(), []);
+	const configPath = useMemo(() => getConfigPath(target), [target]);
 
-	// view 态展示内容（已剥离供应商 env；保存 / 取消后重新读盘刷新，保证展示最新）
-	const [viewContent, setViewContent] = useState<string>(() => readCurrentSettingsTextStripped());
+	// view 态展示内容（Claude 剥离供应商 env；Codex 展示 config.toml 原文）
+	const [viewContent, setViewContent] = useState<string>(() => readCurrentConfigText(target));
 	const hasContent = viewContent.trim().length > 0;
 
 	// edit 态
@@ -84,7 +89,7 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 
 	// ── 操作 ──
 	const refreshView = (): void => {
-		setViewContent(readCurrentSettingsTextStripped());
+		setViewContent(readCurrentConfigText(target));
 	};
 
 	// 进入编辑器：initial = '{}' (a 新建·仅空状态) | 现有磁盘内容（已剥离供应商 env）(e 编辑)
@@ -114,14 +119,14 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 		setFocus(f => (f === 'editor' ? 'recommend' : 'editor'));
 	};
 
-	// fill-missing 灌缓冲：对当前编辑缓冲执行合并（仅补缺失，保留用户已有配置），结果写回编辑器，可 Ctrl+Z 撤销。
+	// fill-missing 灌缓冲：对当前编辑缓冲执行合并（仅补缺失，保留用户已有配置），结果写回编辑器，可用编辑器撤销。
 	// 与全局规则页 replaceText(全文) 的差异：配置文件必须保留供应商/model/权限等已有项（HC-12 fill-missing-only）。
 	const doImport = (): void => {
 		if (!recommendationAvailable) {
 			toast.error('推荐配置契约不可用');
 			return;
 		}
-		const result = fillMissingIntoText(editorRef.current?.getText() ?? '');
+		const result = fillMissingIntoText(editorRef.current?.getText() ?? '', target);
 		if (!result.ok) {
 			toast.error(result.error);
 			return;
@@ -133,12 +138,15 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 			: `已补全 ${result.changed} 项缺失配置到编辑器（可撤销，保存后生效）`);
 	};
 
-	const handleSave = (content: string): { ok: boolean; error?: string } => {
-		const result = saveSettingsMerged(content);
+	const handleSave = (content: string): { ok: boolean; error?: string; warning?: string } => {
+		const result = saveConfigText(content, target);
 		if (result.ok) {
 			setDirty(false);
 			refreshView();
-			toast.success(`已保存到 ${settingsPath}（供应商配置已原样保留）`);
+			toast.success(isCodex ? `已保存到 ${configPath}` : `已保存到 ${configPath}（供应商配置已原样保留）`);
+			if (result.warning) {
+				toast.info(result.warning);
+			}
 			// 保存后回只读展示（编辑器作为临时态，无需停留）
 			setMode('view');
 			setPanel('editor');
@@ -177,10 +185,15 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 		if (mode === 'view') {
 			// Esc/← 返回左侧导航（对齐 ProviderView/McpView/SkillsView 列表态返回键）
 			if (name === 'escape' || name === 'left' || name === 'arrowleft') { onExitToNav(); return; }
-			if (name === 'e' && hasContent) { enterEdit(readCurrentSettingsTextStripped() || '{}'); return; }
-			if (name === 'a' && !hasContent) { enterEdit('{}'); return; }
+			if (name === 'e' && hasContent) { enterEdit(readCurrentConfigText(target) || (isCodex ? '' : '{}')); return; }
+			if (name === 'a' && !hasContent) { enterEdit(isCodex ? '' : '{}'); return; }
 			// ↑/↓ 滚动展示区（scrollbox 需主动驱动，否则默认不响应键盘）
-			if (name === 'up') { viewScrollRef.current?.scrollBy(-1); return; }
+			if (name === 'up') {
+				const atTop = (viewScrollRef.current?.scrollTop ?? 0) <= 0;
+				if (atTop && onExitToHeader) { onExitToHeader(); return; }
+				viewScrollRef.current?.scrollBy(-1);
+				return;
+			}
 			if (name === 'down') { viewScrollRef.current?.scrollBy(1); return; }
 			return;
 		}
@@ -195,7 +208,7 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 			return;
 		}
 		if (appMod && name === 't') { togglePanel(); return; }
-		// Ctrl+I 在终端等同 Tab（ASCII 0x09），改用 Ctrl+O 触发 fill-missing 灌缓冲
+		// 导入快捷键避开终端 Tab 冲突，触发 fill-missing 灌缓冲
 		if (appMod && name === 'o') { doImport(); return; }
 
 		// 边栏焦点：↑/↓ 滚动推荐；Tab 切回编辑器
@@ -211,20 +224,20 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 		return (
 			<box flexDirection="column" flexGrow={1}>
 				<ViewHeader
-					title="配置文件管理"
-					subtitle="查看、补全与编辑 Claude Code settings.json"
-					right={<text fg={colors.warning} attributes={TextAttributes.DIM}>已排除供应商配置</text>}
+					title={isCodex ? 'Codex 配置文件管理' : '配置文件管理'}
+					subtitle={isCodex ? '查看、补全与编辑 CODEX_HOME/config.toml' : '查看、补全与编辑 Claude Code settings.json'}
+					right={<text fg={colors.warning} attributes={TextAttributes.DIM}>{isCodex ? '不管理 Provider/MCP/Hooks/Rules' : '已排除供应商配置'}</text>}
 				/>
 				{hasContent ? (
 					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
 						<ThemedScrollbox ref={viewScrollRef} style={{flexGrow: 1}}>
-							<CodePreview content={viewContent} filetype="json" />
+							<CodePreview content={viewContent} filetype={isCodex ? 'text' : 'json'} />
 						</ThemedScrollbox>
 					</box>
 				) : (
 					<ListEmptyState
-						message="尚无配置文件"
-						hint={{label: `按 a 新建 ~/.claude/settings.json`, enabled: true}}
+						message={isCodex ? '尚无 Codex 配置文件' : '尚无配置文件'}
+						hint={{label: isCodex ? `新建 ${configPath}` : '新建 ~/.claude/settings.json', enabled: true}}
 					/>
 				)}
 			</box>
@@ -235,11 +248,11 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 	const editorEl = (
 		<TextareaEditor
 			ref={editorRef}
-			title="当前配置（已排除供应商）"
+			title={isCodex ? '当前 Codex config.toml' : '当前配置（已排除供应商）'}
 			initialContent={editInitial}
 			active={editorActive}
-			isJson
-			filetype="json"
+			isJson={!isCodex}
+			filetype={isCodex ? 'text' : 'json'}
 			syntaxStyle={syntaxStyle}
 			tabMode={tabMode}
 			textareaFocused={textareaFocused}
@@ -256,9 +269,9 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 	return (
 		<box flexDirection="column" flexGrow={1}>
 			<ViewHeader
-				title="配置文件管理"
-				subtitle="查看、补全与编辑 Claude Code settings.json"
-				right={<text fg={colors.warning} attributes={TextAttributes.DIM}>已排除供应商配置</text>}
+				title={isCodex ? 'Codex 配置文件管理' : '配置文件管理'}
+				subtitle={isCodex ? '查看、补全与编辑 CODEX_HOME/config.toml' : '查看、补全与编辑 Claude Code settings.json'}
+				right={<text fg={colors.warning} attributes={TextAttributes.DIM}>{isCodex ? '不管理 Provider/MCP/Hooks/Rules' : '已排除供应商配置'}</text>}
 			/>
 			{panel === 'split' && recommendationAvailable ? (
 				<box flexDirection="row" flexGrow={1} height={bodyViewportHeight}>
@@ -273,7 +286,7 @@ export function ConfigView({ active, viewportHeight = 16, onSubModeChange, onExi
 							paddingX={1}
 						>
 							<ThemedScrollbox ref={recommendScrollRef} style={{flexGrow: 1}}>
-								<CodePreview content={recommendationContent} filetype="jsonc" />
+								<CodePreview content={recommendationContent} filetype={isCodex ? 'text' : 'jsonc'} />
 							</ThemedScrollbox>
 						</box>
 					</box>

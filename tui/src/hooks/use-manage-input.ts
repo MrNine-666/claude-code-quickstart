@@ -11,7 +11,6 @@ const manageInputBindings: readonly { readonly key: string; readonly keyName: Ma
 	{ key: 'enter', keyName: 'enter' },
 	{ key: 'escape', keyName: 'escape' },
 	{ key: 'tab', keyName: 'tab' },
-	{ key: 'shift+tab', keyName: 'shift-tab' },
 	{ key: 'q', keyName: 'q' }
 ];
 

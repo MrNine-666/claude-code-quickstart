@@ -2,8 +2,8 @@ import type {Binding} from '@opentui/keymap';
 import type {Shortcut} from '../components/index.js';
 import {editingShortcutKey, formatShortcutKey} from '../utils/keyboard.js';
 import {
-	AGENT_COMMANDS,
 	CONFIG_COMMANDS,
+	HEADER_COMMANDS,
 	MCP_COMMANDS,
 	NAV_COMMANDS,
 	PROMPTS_COMMANDS,
@@ -11,8 +11,8 @@ import {
 	SKILLS_COMMANDS,
 	TOOLS_COMMANDS,
 	VIEW_COMMON_COMMANDS,
-	agentBindings,
 	configBindings,
+	headerBindings,
 	mcpBindings,
 	navBindings,
 	promptsBindings,
@@ -38,7 +38,7 @@ type ShortcutSpec = {
 const bindingLookup = new Map<string, readonly Binding[]>();
 for (const binding of [
 	...navBindings,
-	...agentBindings,
+	...headerBindings,
 	...viewCommonBindings,
 	...providerBindings,
 	...mcpBindings,
@@ -52,10 +52,21 @@ for (const binding of [
 	bindingLookup.set(binding.cmd, [...bindings, binding]);
 }
 
-// Header 切换 Agent 上下文（Claude Code ↔ Codex）快捷键项。
-// 单一数据源：键位来自 agentBindings，nav 与 view footer 共用，AgentHeader 提示亦复用。
-export function agentToggleShortcut(): Shortcut {
-	return buildShortcuts([{command: AGENT_COMMANDS.TOGGLE, label: '切换 Agent'}])[0]!;
+// Header 切换 Agent 上下文（Claude Code ↔ Codex）：Header 获焦后用 ←/→ 切换。
+export function agentCycleShortcuts(): readonly Shortcut[] {
+	return buildShortcuts([
+		{command: HEADER_COMMANDS.AGENT_PREV, label: '上个 Agent'},
+		{command: HEADER_COMMANDS.AGENT_NEXT, label: '下个 Agent'}
+	]);
+}
+
+export function headerShortcuts(): readonly Shortcut[] {
+	return buildShortcuts([
+		{command: HEADER_COMMANDS.AGENT_PREV, label: '上个 Agent'},
+		{command: HEADER_COMMANDS.AGENT_NEXT, label: '下个 Agent'},
+		{command: HEADER_COMMANDS.RETURN_TO_VIEW, label: '返回视图'},
+		{command: HEADER_COMMANDS.RETURN_TO_VIEW_ESC, label: '返回视图'}
+	]);
 }
 
 // 左侧导航（菜单焦点）。
@@ -65,7 +76,6 @@ export function navShortcuts(): readonly Shortcut[] {
 		{command: NAV_COMMANDS.NAV_DOWN, label: '菜单'},
 		{command: NAV_COMMANDS.NAV_ENTER, label: '进入'},
 		{command: NAV_COMMANDS.NAV_RIGHT, label: '进入'},
-		{command: AGENT_COMMANDS.TOGGLE, label: '切换 Agent'},
 		{command: NAV_COMMANDS.QUIT, label: '退出'}
 	]);
 }

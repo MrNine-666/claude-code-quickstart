@@ -1,4 +1,4 @@
-export type FocusMode = 'nav' | 'view' | 'form' | 'modal';
+export type FocusMode = 'nav' | 'header' | 'view' | 'form' | 'modal';
 
 export type ManageModuleId = 'provider' | 'mcp' | 'skills' | 'prompts' | 'config' | 'tools' | 'update';
 
@@ -62,6 +62,12 @@ export const AGENT_CONTEXT_LABELS: Readonly<Record<AgentContext, string>> = {
 // Header 切换顺序（左→右），toggle 在其间循环。
 export const AGENT_CONTEXT_ORDER: readonly AgentContext[] = ['cc', 'cx'];
 
+/** 切换到上一个 Agent 上下文（cc ↔ cx 循环）。 */
+export function previousAgentContext(current: AgentContext): AgentContext {
+	const index = AGENT_CONTEXT_ORDER.indexOf(current);
+	return AGENT_CONTEXT_ORDER[(index - 1 + AGENT_CONTEXT_ORDER.length) % AGENT_CONTEXT_ORDER.length]!;
+}
+
 /** 切换到下一个 Agent 上下文（cc ↔ cx 循环）。 */
 export function nextAgentContext(current: AgentContext): AgentContext {
 	const index = AGENT_CONTEXT_ORDER.indexOf(current);
@@ -91,20 +97,15 @@ export function reduceManageState(state: ManageState, keyName: ManageKeyName): M
 		return state;
 	}
 
-	if (keyName === 'q' && (state.focus === 'nav' || state.focus === 'view')) {
+	if (keyName === 'q' && (state.focus === 'nav' || state.focus === 'header' || state.focus === 'view')) {
 		return appendLog({...state, shouldExit: true}, 'q 退出');
-	}
-
-	// Header 切换（全局，nav/view 焦点均可用）：shift+tab 循环 Claude Code ↔ Codex。
-	// 只改 agentContext，左侧菜单选中项与焦点不变（design D2 / spec：切换不改变菜单顺序与选中）。
-	if (keyName === 'shift-tab' && (state.focus === 'nav' || state.focus === 'view')) {
-		const next = nextAgentContext(state.agentContext);
-		return appendLog({...state, agentContext: next}, `切换 Agent 上下文 → ${AGENT_CONTEXT_LABELS[next]}`);
 	}
 
 	switch (state.focus) {
 		case 'nav':
 			return reduceNavState(state, keyName);
+		case 'header':
+			return reduceHeaderState(state, keyName);
 		case 'view':
 			return reduceViewState(state, keyName);
 		case 'form':
@@ -152,6 +153,22 @@ function reduceNavState(state: ManageState, keyName: ManageKeyName): ManageState
 	return state;
 }
 
+function reduceHeaderState(state: ManageState, keyName: ManageKeyName): ManageState {
+	if (keyName === 'left') {
+		return switchAgentContext(state, previousAgentContext(state.agentContext));
+	}
+
+	if (keyName === 'right') {
+		return switchAgentContext(state, nextAgentContext(state.agentContext));
+	}
+
+	if (keyName === 'down' || keyName === 'escape') {
+		return appendLog({...state, focus: 'view'}, '返回右侧视图');
+	}
+
+	return state;
+}
+
 function reduceViewState(state: ManageState, keyName: ManageKeyName): ManageState {
 	if (keyName === 'escape' || keyName === 'left') {
 		return appendLog({...state, focus: 'nav'}, '返回左侧菜单');
@@ -166,7 +183,7 @@ function reduceViewState(state: ManageState, keyName: ManageKeyName): ManageStat
 	}
 
 	if (keyName === 'up') {
-		return appendLog({...state, selectedIndex: wrapIndex(state.selectedIndex - 1)}, '视图快捷选择上一项');
+		return appendLog({...state, focus: 'header'}, '进入 Agent Header');
 	}
 
 	if (keyName === 'down') {
@@ -198,6 +215,14 @@ function reduceModalState(state: ManageState, keyName: ManageKeyName): ManageSta
 	}
 
 	return state;
+}
+
+function switchAgentContext(state: ManageState, agentContext: AgentContext): ManageState {
+	if (state.agentContext === agentContext) {
+		return appendLog(state, `保持 Agent 上下文 → ${AGENT_CONTEXT_LABELS[agentContext]}`);
+	}
+
+	return appendLog({...state, agentContext}, `切换 Agent 上下文 → ${AGENT_CONTEXT_LABELS[agentContext]}`);
 }
 
 function appendLog(state: ManageState, message: string): ManageState {
