@@ -3,7 +3,6 @@ import { createRoot } from "@opentui/react";
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui";
 import { KeymapProvider } from "@opentui/keymap/react";
 import App from "./app.js";
-import { applyPendingUpdateOnStartup, startBackgroundUpdateCheck } from "./core/update.js";
 import { setActiveTheme, type AppThemeMode } from "./theme/index.js";
 import { parseCli } from "./cli/argv.js";
 import { runCli } from "./cli/index.js";
@@ -31,16 +30,6 @@ if (!process.stdin.isTTY) {
 	console.log('请在交互式终端中直接运行 ccq 命令。');
 	process.exit(0);
 }
-
-// Windows 启动时检查并应用待替换的更新（Phase 7.5）
-const appliedUpdate = await applyPendingUpdateOnStartup();
-if (appliedUpdate) {
-	console.log('✓ ccq 已更新到最新版本');
-}
-
-// 启动后台自动检查更新（Phase 7.5，不阻塞主流程）
-startBackgroundUpdateCheck();
-
 
 const renderer = await createCliRenderer({
 	autoFocus: true,  // 启用自动聚焦，确保键盘事件能被捕获

@@ -1,13 +1,17 @@
-import {existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, copyFileSync, rmSync} from 'node:fs';
-import {join, dirname, relative} from 'node:path';
+import {existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, copyFileSync, rmSync, renameSync} from 'node:fs';
+import {basename, join, dirname, relative} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash, randomBytes} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {atomicWrite, readJsonFile} from './fs-utils.js';
 import {claudeDir, claudeJsonPath, ccqDir, resolveHome, settingsPath, skillsDir} from './paths.js';
 import {execCommand, type ProgressCallback} from './exec.js';
+import {refreshNpmGlobalBinPath} from './npm-path.js';
 import {hasUpdate} from './semver.js';
 import {installTool} from './tools-install.js';
+import {codeGraphInstallCommands} from './tools-lifecycle.js';
+import {hasCodeGraphIntegration, installedCodeGraphContexts, hasClaudeCcgWorkflowMode, hasCodexCcgWorkflowMode} from './tools-integrations.js';
+import type {AgentContext} from '../state/manage-state.js';
 
 // Update core：版本检测、快照、应用、汇总。检测返回 Promise 支持后台并发（design D12/D13）。
 // 进度通过 onProgress(event) 上报，不直接 console.log。
@@ -119,9 +123,25 @@ export async function getNpmOutdatedGlobal(forceRefresh = false): Promise<NpmOut
 	return outdated;
 }
 
+function isTimeoutError(error: unknown): boolean {
+	return error instanceof Error && /命令超时|timed out|timeout/i.test(error.message);
+}
+
+async function execVersionCommand(command: string, args: readonly string[]): Promise<{readonly code: number; readonly stdout: string; readonly stderr: string}> {
+	try {
+		return await execCommand(command, args, {timeout: 5000});
+	} catch (error) {
+		if (isTimeoutError(error)) {
+			return execCommand(command, args, {timeout: 5000});
+		}
+
+		throw error;
+	}
+}
+
 async function getCommandVersion(command: string, args: string[]): Promise<{installed: boolean; version: string}> {
 	try {
-		const result = await execCommand(command, args, {timeout: 5000});
+		const result = await execVersionCommand(command, args);
 		if (result.code !== 0) {
 			return {installed: false, version: ''};
 		}
@@ -200,40 +220,52 @@ function writeNpmViewCache(cache: NpmViewCache): void {
 	atomicWrite(npmViewCachePath(), JSON.stringify(cache || {}, null, 2));
 }
 
-/**
- * 查询 npm 包最新版本（`npm view <pkg> version`），带 1h 缓存。
- * 缓存命中（文件存在且未过期）时不发网络请求，返回缓存值（无该包则空串），
- * 对齐 getNpmOutdatedGlobal 的整文件 TTL 语义，便于测试预置空缓存规避网络。
- */
-async function getNpmViewLatest(packageName: string, forceRefresh = false): Promise<string> {
-	if (!forceRefresh) {
-		const cached = readNpmViewCache();
-		if (cached !== null) {
-			return cached[packageName] || '';
-		}
-	}
-
-	let latest = '';
+/** 纯查询单包最新版本（`npm view <pkg> version`，不读写缓存）。 */
+async function npmViewLatestUncached(packageName: string): Promise<string> {
 	try {
 		const result = await execCommand('npm', ['view', packageName, 'version'], {timeout: 30000});
 		if (result.code === 0) {
-			latest = result.stdout.trim().split(/\r?\n/)[0]?.trim() ?? '';
+			return result.stdout.trim().split(/\r?\n/)[0]?.trim() ?? '';
 		}
 	} catch {
-		// 查询失败不阻塞，latest 保持空串
+		// 查询失败不阻塞，返回空串
 	}
 
-	writeNpmViewCache(latest ? {[packageName]: latest} : {});
-	return latest;
+	return '';
+}
+
+/**
+ * 批量解析多个 npm 包的最新版本，带整文件 TTL 缓存（对齐 getNpmOutdatedGlobal 语义）。
+ * 缓存完整命中时直接返回；缓存缺包（兼容旧单包缓存）时只补查缺失包并一次性写回，
+ * 避免逐包写入相互覆盖导致后续组件读到不完整缓存。
+ */
+async function resolveNpmViewLatest(packageNames: readonly string[], forceRefresh = false): Promise<NpmViewCache> {
+	const cached = forceRefresh ? null : readNpmViewCache();
+	if (cached && packageNames.every(packageName => Object.prototype.hasOwnProperty.call(cached, packageName))) {
+		return cached;
+	}
+
+	const resolved: NpmViewCache = {...(cached ?? {})};
+	for (const packageName of packageNames) {
+		if (!forceRefresh && Object.prototype.hasOwnProperty.call(resolved, packageName)) {
+			continue;
+		}
+
+		// eslint-disable-next-line no-await-in-loop -- 串行查询，包数量少（≤6），避免并发 npm view 抖动
+		resolved[packageName] = await npmViewLatestUncached(packageName);
+	}
+
+	writeNpmViewCache(resolved);
+	return resolved;
 }
 
 /**
  * 构建 CcgWorkflow 更新状态（config.toml 本地版本 vs npm view 远程版本）。
  * 对齐 buildNpmComponentStatus 的字段语义：installed/current/latest/hasUpdate。
  */
-async function buildCcgWorkflowStatus(): Promise<UpdateComponent> {
+async function buildCcgWorkflowStatus(latestByPackage: NpmViewCache): Promise<UpdateComponent> {
 	const local = readCcgLocalVersion();
-	const latest = await getNpmViewLatest(CCG_NPM_PACKAGE);
+	const latest = latestByPackage[CCG_NPM_PACKAGE] || '';
 	const currentVersion = local.version;
 
 	return {
@@ -248,12 +280,18 @@ async function buildCcgWorkflowStatus(): Promise<UpdateComponent> {
 	};
 }
 
-async function buildNpmComponentStatus(id: string, packageName: string, outdated: NpmOutdated): Promise<UpdateComponent> {
+async function buildNpmComponentStatus(
+	id: string,
+	packageName: string,
+	outdated: NpmOutdated,
+	latestByPackage: NpmViewCache
+): Promise<UpdateComponent> {
 	const commandInfo = COMMAND_COMPONENTS[id];
 	const versionInfo = commandInfo
 		? await getCommandVersion(commandInfo.command, commandInfo.versionArgs)
 		: {installed: false, version: ''};
 	const remote = outdated[packageName];
+	const latestVersion = remote?.latest || latestByPackage[packageName] || versionInfo.version;
 
 	return {
 		id,
@@ -262,8 +300,8 @@ async function buildNpmComponentStatus(id: string, packageName: string, outdated
 		package: packageName,
 		installed: versionInfo.installed,
 		currentVersion: versionInfo.version,
-		latestVersion: remote?.latest || versionInfo.version,
-		hasUpdate: versionInfo.installed ? (remote ? hasUpdate(versionInfo.version, remote.latest || '') : false) : null
+		latestVersion,
+		hasUpdate: versionInfo.installed ? (latestVersion ? hasUpdate(versionInfo.version, latestVersion) : false) : null
 	};
 }
 
@@ -283,14 +321,16 @@ async function buildAntigravityStatus(): Promise<UpdateComponent> {
 
 // export 供 tools-manage.ts 的 detectComponents 复用：返回 7 个 CLI 组件
 // （ClaudeCode/Ccline/CcgWorkflow/CodexCli/OpenSpec/CodeGraph + AntigravityCli），不含 Skills/MCP。
-export async function checkCliToolUpdates(outdated: NpmOutdated): Promise<UpdateComponent[]> {
+export async function checkCliToolUpdates(outdated: NpmOutdated, forceRefresh = false): Promise<UpdateComponent[]> {
+	await refreshNpmGlobalBinPath();
+	const latestByPackage = await resolveNpmViewLatest(Object.values(NPM_COMPONENT_MAP), forceRefresh);
 	const components: UpdateComponent[] = [];
 	for (const [id, packageName] of Object.entries(NPM_COMPONENT_MAP)) {
 		if (id === 'CcgWorkflow') {
 			// 非全局包：config.toml 本地版本 + npm view 远程版本（不依赖 outdated 全局列表）
-			components.push(await buildCcgWorkflowStatus());
+			components.push(await buildCcgWorkflowStatus(latestByPackage));
 		} else {
-			components.push(await buildNpmComponentStatus(id, packageName, outdated));
+			components.push(await buildNpmComponentStatus(id, packageName, outdated, latestByPackage));
 		}
 	}
 
@@ -516,7 +556,41 @@ export type ApplyUpdatesResult = {
 export type ApplyUpdatesDeps = {
 	readonly createSnapshotFn?: () => string;
 	readonly exec?: typeof execCommand;
+	readonly agentContext?: AgentContext;
 };
+
+function ccgWorkflowUpdateContexts(activeContext: AgentContext = 'cc'): AgentContext[] {
+	const contexts: AgentContext[] = [];
+	if (hasClaudeCcgWorkflowMode()) {
+		contexts.push('cc');
+	}
+
+	if (hasCodexCcgWorkflowMode()) {
+		contexts.push('cx');
+	}
+
+	return contexts.length > 0 ? contexts : [activeContext];
+}
+
+async function reinstallCodeGraphIntegrations(exec: typeof execCommand, onProgress?: ProgressCallback): Promise<void> {
+	for (const context of installedCodeGraphContexts()) {
+		const [command] = codeGraphInstallCommands(context);
+		if (!command) {
+			continue;
+		}
+
+		onProgress?.({level: 'info', message: `${command.cmd} ${command.args.join(' ')}`, componentId: 'CodeGraph'});
+		const result = await exec(command.cmd, [...command.args], {timeout: 300000});
+		if (result.code !== 0) {
+			throw new Error(`CodeGraph 接入刷新失败 (exit ${result.code})`);
+		}
+
+		if (!hasCodeGraphIntegration(context)) {
+			const label = context === 'cx' ? 'Codex' : 'Claude Code';
+			throw new Error(`CodeGraph ${label} MCP 写入失败`);
+		}
+	}
+}
 
 /**
  * 应用选中组件更新。先 createSnapshot 再执行更新命令（snapshot-before-write，design D12）。
@@ -539,10 +613,10 @@ export async function applyUpdates(
 
 		try {
 			if (component.id === 'CcgWorkflow') {
-				// CcgWorkflow 是 npx init 装入 ~/.claude 的非全局包，不能用 npm install -g：
-				// 复用 tools-install.installTool 走 npx ccg-workflow@latest init
-				// （含 mcpServers 快照保护 + env 补缺失），与安装路径完全一致。
-				await installTool('CcgWorkflow', onProgress);
+				const contexts = ccgWorkflowUpdateContexts(deps.agentContext);
+				for (const context of contexts) {
+					await installTool('CcgWorkflow', onProgress, context);
+				}
 				onProgress?.({level: 'success', message: `${component.name} 已更新`, componentId: component.id});
 				updatedItems.push(`updated::${component.id}::${component.currentVersion || 'none'}->${component.latestVersion || 'latest'}`);
 			} else if (component.type === 'npm' || component.type === 'skill') {
@@ -553,6 +627,10 @@ export async function applyUpdates(
 				const result = await exec('npm', ['install', '-g', packageSpec], {timeout: 120000});
 				if (result.code !== 0) {
 					throw new Error(`npm install 失败 (exit ${result.code})`);
+				}
+
+				if (component.id === 'CodeGraph') {
+					await reinstallCodeGraphIntegrations(exec, onProgress);
 				}
 
 				onProgress?.({level: 'success', message: `${component.name} 已更新`, componentId: component.id});
@@ -589,14 +667,82 @@ export function generateUpdateSummary(updatedItems: readonly string[]): string {
 }
 
 // ============================================================================
-// 整可执行文件热更新（Phase 7.5-7.8）
+// 整可执行文件热更新（确认式下载 + 结构化错误）
 // ============================================================================
 
 import { CCQ_VERSION } from '../version.js';
 
-// GitHub Release API 端点
-const GITHUB_REPO = "MrNine-666/claude-code-quickstart";
+const GITHUB_REPO = 'MrNine-666/claude-code-quickstart';
 const RELEASE_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
+
+type ReleaseAsset = { readonly name: string; readonly browser_download_url: string };
+type LatestReleaseResponse = { readonly tag_name?: string; readonly assets?: readonly ReleaseAsset[] };
+
+export type SelfUpdateStage = 'check' | 'download' | 'apply';
+
+export type SelfUpdateError = {
+	readonly stage: SelfUpdateStage;
+	readonly message: string;
+	readonly cause?: string;
+	readonly status?: number;
+	readonly targetPath?: string;
+	readonly tempPath?: string;
+};
+
+export type CheckLatestVersionResult =
+	| { readonly ok: true; readonly hasUpdate: false; readonly currentVersion: string; readonly latestVersion: string }
+	| { readonly ok: true; readonly hasUpdate: true; readonly currentVersion: string; readonly latestVersion: string; readonly version: string; readonly downloadUrl: string; readonly assetName: string }
+	| { readonly ok: false; readonly error: SelfUpdateError };
+
+export type DownloadUpdateResult =
+	| { readonly ok: true; readonly tempPath: string; readonly targetPath: string }
+	| { readonly ok: false; readonly error: SelfUpdateError };
+
+export type ApplySelfUpdateResult =
+	| { readonly ok: true; readonly targetPath: string; readonly restartStarted: boolean; readonly helperPath?: string }
+	| { readonly ok: false; readonly error: SelfUpdateError };
+
+function errorCause(error: unknown): string | undefined {
+	if (error instanceof Error && error.message) {
+		return error.message;
+	}
+
+	const text = String(error ?? '').trim();
+	return text || undefined;
+}
+
+function makeSelfUpdateError(
+	stage: SelfUpdateStage,
+	message: string,
+	options: Omit<SelfUpdateError, 'stage' | 'message'> = {}
+): SelfUpdateError {
+	return {stage, message, ...options};
+}
+
+export function formatSelfUpdateError(error: SelfUpdateError): string {
+	const stageLabel: Record<SelfUpdateStage, string> = {
+		check: '检查更新',
+		download: '下载更新',
+		apply: '应用更新'
+	};
+	const details: string[] = [];
+	if (error.status !== undefined) {
+		details.push(`HTTP ${error.status}`);
+	}
+	if (error.targetPath) {
+		details.push(`目标: ${error.targetPath}`);
+	}
+	if (error.tempPath) {
+		details.push(`临时文件: ${error.tempPath}`);
+	}
+	if (error.cause && error.cause !== error.message) {
+		details.push(error.cause);
+	}
+
+	return details.length > 0
+		? `${stageLabel[error.stage]}失败：${error.message}（${details.join('；')}）`
+		: `${stageLabel[error.stage]}失败：${error.message}`;
+}
 
 // 平台检测
 function getPlatform(): string {
@@ -605,11 +751,12 @@ function getPlatform(): string {
 
 	if (platform === 'win32') {
 		return arch === 'arm64' ? 'windows-arm64' : 'windows-x64';
-	} else if (platform === 'darwin') {
-		return arch === 'arm64' ? 'macos-arm64' : 'macos-x64';
-	} else {
-		throw new Error(`Unsupported platform: ${platform}-${arch}`);
 	}
+	if (platform === 'darwin') {
+		return arch === 'arm64' ? 'macos-arm64' : 'macos-x64';
+	}
+
+	throw new Error(`Unsupported platform: ${platform}-${arch}`);
 }
 
 // 获取 ccq 可执行文件路径（安装目标路径，供热更新与 CLI 自卸载共用）。
@@ -619,217 +766,207 @@ export function getCcqExecutablePath(): string {
 
 	if (platform === 'win32') {
 		return join(homeDir, '.local', 'bin', 'ccq.exe');
-	} else {
-		return join(homeDir, '.local', 'bin', 'ccq');
 	}
+	return join(homeDir, '.local', 'bin', 'ccq');
 }
 
-function getExecutablePath(): string {
-	return getCcqExecutablePath();
+function isLikelyCcqExecutablePath(filePath: string): boolean {
+	const name = basename(filePath).toLowerCase();
+	return name === 'ccq' || name === 'ccq.exe' || /^ccq-.+(?:\.exe)?$/.test(name);
 }
 
-// 获取临时更新文件路径
-function getTempUpdatePath(): string {
-	const execPath = getExecutablePath();
-	const dir = dirname(execPath);
-	return join(dir, '.ccq-update.tmp');
+export function getSelfUpdateTargetPath(): string {
+	const currentExecutable = process.execPath;
+	return isLikelyCcqExecutablePath(currentExecutable) ? currentExecutable : getCcqExecutablePath();
 }
 
-// 检查最新版本
-export async function checkLatestVersion(): Promise<{ version: string; downloadUrl: string } | null> {
+function getTempUpdatePath(targetPath = getSelfUpdateTargetPath()): string {
+	return join(dirname(targetPath), '.ccq-update.tmp');
+}
+
+// 检查最新版本：只查询 Release，不下载任何文件。
+export async function checkLatestVersion(): Promise<CheckLatestVersionResult> {
 	try {
 		const response = await fetch(RELEASE_API_URL, {
-			headers: {
-				'User-Agent': 'ccq-update-checker',
-			},
+			headers: {'User-Agent': 'ccq-update-checker'}
 		});
-
 		if (!response.ok) {
-			throw new Error(`GitHub API error: ${response.status}`);
+			return {ok: false, error: makeSelfUpdateError('check', 'GitHub Release API 请求失败', {status: response.status})};
 		}
 
-		const data = await response.json() as { tag_name: string; assets: Array<{ name: string; browser_download_url: string }> };
-		const latestVersion = data.tag_name.replace(/^v/, ''); // 移除 'v' 前缀
+		const data = await response.json() as LatestReleaseResponse;
+		const latestVersion = data.tag_name?.replace(/^v/, '').trim();
+		if (!latestVersion) {
+			return {ok: false, error: makeSelfUpdateError('check', 'GitHub Release 响应缺少 tag_name')};
+		}
 
-		// 版本相同则跳过（P-6 零网络写）
 		if (latestVersion === CCQ_VERSION) {
-			return null;
+			return {ok: true, hasUpdate: false, currentVersion: CCQ_VERSION, latestVersion};
 		}
 
-		// 查找对应平台的可执行文件
 		const platform = getPlatform();
 		const assetName = `ccq-${platform}${platform.startsWith('windows') ? '.exe' : ''}`;
-		const asset = data.assets.find(a => a.name === assetName);
-
-		if (!asset) {
-			throw new Error(`No asset found for platform: ${platform}`);
+		const asset = (data.assets ?? []).find(item => item.name === assetName);
+		if (!asset?.browser_download_url) {
+			return {ok: false, error: makeSelfUpdateError('check', `Release 缺少当前平台产物 ${assetName}`)};
 		}
 
 		return {
+			ok: true,
+			hasUpdate: true,
+			currentVersion: CCQ_VERSION,
+			latestVersion,
 			version: latestVersion,
 			downloadUrl: asset.browser_download_url,
+			assetName
 		};
-	} catch {
-		return null;
+	} catch (error) {
+		return {ok: false, error: makeSelfUpdateError('check', '无法连接 GitHub Release', {cause: errorCause(error)})};
 	}
 }
 
-// 下载更新到临时文件
-export async function downloadUpdate(downloadUrl: string, signal?: AbortSignal): Promise<boolean> {
+// 下载更新到临时文件；调用方必须在用户确认后才调用。
+export async function downloadUpdate(downloadUrl: string, signal?: AbortSignal): Promise<DownloadUpdateResult> {
+	const targetPath = getSelfUpdateTargetPath();
+	const tempPath = getTempUpdatePath(targetPath);
 	try {
-		const tempPath = getTempUpdatePath();
-
-		// 确保目录存在
 		const dir = dirname(tempPath);
 		if (!existsSync(dir)) {
-			mkdirSync(dir, { recursive: true });
+			mkdirSync(dir, {recursive: true});
 		}
 
-		// 下载文件
-		const response = await fetch(downloadUrl, { signal });
+		const response = await fetch(downloadUrl, {signal});
 		if (!response.ok) {
-			throw new Error(`Download failed: ${response.status}`);
+			return {ok: false, error: makeSelfUpdateError('download', '下载 Release asset 失败', {status: response.status, targetPath, tempPath})};
 		}
 
 		const buffer = await response.arrayBuffer();
 		writeFileSync(tempPath, Buffer.from(buffer));
 
-		// 设置可执行权限（macOS/Linux）
 		if (process.platform !== 'win32') {
-			try {
-				await execCommand('chmod', ['755', tempPath]);
-			} catch {
-				// 忽略 chmod 失败
+			const chmod = await execCommand('chmod', ['755', tempPath]);
+			if (chmod.code !== 0) {
+				return {ok: false, error: makeSelfUpdateError('download', '设置临时文件可执行权限失败', {cause: chmod.stderr || chmod.stdout, targetPath, tempPath})};
 			}
 		}
 
-		return true;
-	} catch {
-		return false;
+		return {ok: true, tempPath, targetPath};
+	} catch (error) {
+		const isAbort = error instanceof Error && error.name === 'AbortError';
+		return {
+			ok: false,
+			error: makeSelfUpdateError('download', isAbort ? '下载已取消' : '下载或写入更新文件失败', {
+				cause: errorCause(error),
+				targetPath,
+				tempPath
+			})
+		};
 	}
 }
 
-// 原子替换可执行文件
-export async function applyUpdate(): Promise<boolean> {
+function windowsUpdateHelperPath(targetPath: string): string {
+	return join(dirname(targetPath), `.ccq-update-${process.pid}.ps1`);
+}
+
+function startWindowsUpdateHelper(targetPath: string, tempPath: string): ApplySelfUpdateResult {
+	const helperPath = windowsUpdateHelperPath(targetPath);
 	try {
-		const execPath = getExecutablePath();
-		const tempPath = getTempUpdatePath();
+		const script = [
+			'param(',
+			'  [int]$ParentPid,',
+			'  [string]$TempPath,',
+			'  [string]$TargetPath,',
+			'  [string]$WorkingDirectory',
+			')',
+			'$ErrorActionPreference = "Stop"',
+			'Wait-Process -Id $ParentPid -ErrorAction SilentlyContinue',
+			'$targetDir = Split-Path -Parent $TargetPath',
+			'if (-not (Test-Path -LiteralPath $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir | Out-Null }',
+			'Copy-Item -LiteralPath $TempPath -Destination $TargetPath -Force',
+			'Remove-Item -LiteralPath $TempPath -Force -ErrorAction SilentlyContinue',
+			'if ($WorkingDirectory -and (Test-Path -LiteralPath $WorkingDirectory)) {',
+			'  Start-Process -FilePath $TargetPath -WorkingDirectory $WorkingDirectory',
+			'} else {',
+			'  Start-Process -FilePath $TargetPath',
+			'}',
+			'Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue',
+			''
+		].join('\r\n');
+		writeFileSync(helperPath, script, 'utf8');
 
-		// 检查临时文件是否存在
-		if (!existsSync(tempPath)) {
-			throw new Error('Update file not found');
+		const child = spawn('powershell.exe', [
+			'-NoProfile',
+			'-ExecutionPolicy',
+			'Bypass',
+			'-File',
+			helperPath,
+			'-ParentPid',
+			String(process.pid),
+			'-TempPath',
+			tempPath,
+			'-TargetPath',
+			targetPath,
+			'-WorkingDirectory',
+			process.cwd()
+		], {
+			detached: true,
+			stdio: 'ignore',
+			windowsHide: true
+		});
+		child.unref();
+		return {ok: true, targetPath, restartStarted: true, helperPath};
+	} catch (error) {
+		return {ok: false, error: makeSelfUpdateError('apply', '启动 Windows 更新 helper 失败', {cause: errorCause(error), targetPath, tempPath})};
+	}
+}
+
+// 应用已下载的更新。Windows 启动 helper，当前进程退出后由 helper 替换并重启。
+export async function applyUpdate(): Promise<ApplySelfUpdateResult> {
+	const targetPath = getSelfUpdateTargetPath();
+	const tempPath = getTempUpdatePath(targetPath);
+	if (!existsSync(tempPath)) {
+		return {ok: false, error: makeSelfUpdateError('apply', '更新临时文件不存在，请重新下载', {targetPath, tempPath})};
+	}
+
+	if (process.platform === 'win32') {
+		return startWindowsUpdateHelper(targetPath, tempPath);
+	}
+
+	try {
+		renameSync(tempPath, targetPath);
+		const chmod = await execCommand('chmod', ['755', targetPath]);
+		if (chmod.code !== 0) {
+			return {ok: false, error: makeSelfUpdateError('apply', '设置新可执行文件权限失败', {cause: chmod.stderr || chmod.stdout, targetPath, tempPath})};
 		}
 
-		// Windows: 无法直接替换运行中的 exe，需要退出后下次启动替换
-		if (process.platform === 'win32') {
-			// 只检查临时文件存在即可，实际替换留给下次启动
-			return true;
-		}
-
-		// macOS/Linux: 直接 rename 原子替换
-		rmSync(execPath, { force: true });
-		copyFileSync(tempPath, execPath);
-		rmSync(tempPath, { force: true });
-
-		// 设置可执行权限
-		try {
-			await execCommand('chmod', ['755', execPath]);
-		} catch {
-			// 忽略 chmod 失败
-		}
-
-		return true;
-	} catch {
-		return false;
+		return {ok: true, targetPath, restartStarted: false};
+	} catch (error) {
+		return {ok: false, error: makeSelfUpdateError('apply', '替换 ccq 可执行文件失败', {cause: errorCause(error), targetPath, tempPath})};
 	}
 }
 
 // 清理临时更新文件
 export async function cleanupTempUpdate(): Promise<void> {
+	const tempPath = getTempUpdatePath();
 	try {
-		const tempPath = getTempUpdatePath();
-		rmSync(tempPath, { force: true });
+		rmSync(tempPath, {force: true});
 	} catch {
-		// 忽略清理失败
+		// 清理仅作 best-effort；下载/应用路径会返回结构化错误。
 	}
 }
 
-// Windows 启动时检查并应用待替换的更新
-export async function applyPendingUpdateOnStartup(): Promise<boolean> {
-	if (process.platform !== 'win32') {
-		return false;
-	}
-
+// 重启 ccq 可执行文件：调用方应先 renderer.destroy() 恢复终端 raw mode。
+export function restartExecutable(): ApplySelfUpdateResult {
+	const targetPath = getSelfUpdateTargetPath();
 	try {
-		const execPath = getExecutablePath();
-		const tempPath = getTempUpdatePath();
-
-		// 检查临时文件是否存在
-		if (!existsSync(tempPath)) {
-			return false; // 没有待替换的更新
-		}
-
-		// 备份当前可执行文件
-		const backupPath = `${execPath}.bak`;
-		try {
-			copyFileSync(execPath, backupPath);
-		} catch {
-			// 备份失败则跳过
-		}
-
-		// 替换可执行文件
-		rmSync(execPath, { force: true });
-		copyFileSync(tempPath, execPath);
-		rmSync(tempPath, { force: true });
-
-		// 删除备份
-		try {
-			rmSync(backupPath, { force: true });
-		} catch {
-			// 忽略备份删除失败
-		}
-
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-// 后台自动检查更新（启动时触发但不阻塞，P-5 失败不阻断）
-export function startBackgroundUpdateCheck(): void {
-	// 延迟 5 秒启动，避免阻塞主流程
-	setTimeout(async () => {
-		try {
-			const updateInfo = await checkLatestVersion();
-			if (updateInfo) {
-				// 静默下载，不弹窗打断用户
-				await downloadUpdate(updateInfo.downloadUrl);
-				// 下载完成后不提示，等待下次启动或用户手动检查
-			}
-		} catch {
-			// P-5: 失败不阻断当前运行，静默忽略
-		}
-	}, 5000);
-}
-
-// 重启 ccq 可执行文件：spawn 一个 detached 新进程（继承终端 stdio），再退出当前进程。
-// 供热更新完成后「立即重启」调用。新进程启动时：
-//   - macOS/Linux：applyUpdate 已原子替换磁盘文件，直接加载新版
-//   - Windows：走 applyPendingUpdateOnStartup 收尾待替换的 .ccq-update.tmp
-// spawn 失败则不退出，保持当前进程运行，由用户手动重启。
-// 注意：调用方应先 renderer.destroy() 恢复终端 raw mode，再调本函数。
-export function restartExecutable(): void {
-	try {
-		const child = spawn(process.execPath, [], {
+		const child = spawn(targetPath, [], {
 			detached: true,
 			stdio: 'inherit',
 			cwd: process.cwd()
 		});
 		child.unref();
-	} catch {
-		// spawn 失败则保持当前进程运行，让用户手动重启
-		return;
+		return {ok: true, targetPath, restartStarted: true};
+	} catch (error) {
+		return {ok: false, error: makeSelfUpdateError('apply', '重启 ccq 失败，请手动重新运行 ccq', {cause: errorCause(error), targetPath})};
 	}
-
-	process.exit(0);
 }
