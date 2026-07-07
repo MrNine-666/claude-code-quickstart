@@ -11,14 +11,18 @@ import {
 	type ApplyUpdatesResult
 } from './update.js';
 import {installTool, TOOL_DEFINITIONS, type ToolId} from './tools-install.js';
+import {refreshNpmGlobalBinPath} from './npm-path.js';
 import {atomicWrite} from './fs-utils.js';
 import {resolveHome, settingsPath} from './paths.js';
 import type {AgentContext} from '../state/manage-state.js';
 import {
+	codeGraphRemoveCliCommands,
 	codeGraphUninstallCommands,
 	ccgWorkflowUninstallCommands,
 	type LifecycleCommand
 } from './tools-lifecycle.js';
+import {hasUpdate} from './semver.js';
+import {hasCodeGraphIntegration, hasCodexCcgWorkflowMode, readCodexCcgWorkflowVersion} from './tools-integrations.js';
 
 // tools-manage core：工具管理单一真理源（design TDR-11）。
 // 融合 tools-install.ts（6 工具安装定义）与 update.ts（CLI 组件检测/快照/应用），
@@ -56,6 +60,7 @@ export type ManagedComponent = ComponentDefinition & {
 export type ComponentInstallOutcome = {
 	readonly id: ComponentId;
 	readonly success: boolean;
+	readonly version?: string;
 	readonly error?: string;
 };
 
@@ -134,7 +139,56 @@ export function filterVisibleComponents(
 	components: readonly ManagedComponent[],
 	context: AgentContext
 ): readonly ManagedComponent[] {
-	return components.filter(component => isComponentVisible(component.id, context));
+	return components
+		.filter(component => isComponentVisible(component.id, context))
+		.map(component => withContextInstallState(component, context));
+}
+
+/**
+ * Tools 组在两个 Header 下都可见，但 CcgWorkflow / CodeGraph 的“已安装”语义是 per-Agent 集成。
+ * Codex 下必须看 CODEX_HOME 的真实落盘信号，不能把 Claude Code 或全局 CLI 状态直接复用过来。
+ */
+function withContextInstallState(component: ManagedComponent, context: AgentContext): ManagedComponent {
+	if (component.id === 'CodeGraph') {
+		const label = context === 'cx' ? 'Codex 未接入 CodeGraph' : 'Claude Code 未接入 CodeGraph';
+		return withAgentIntegration(component, hasCodeGraphIntegration(context), label);
+	}
+
+	if (context === 'cx' && component.id === 'CcgWorkflow') {
+		return withCodexCcgWorkflowState(component);
+	}
+
+	return component;
+}
+
+function withCodexCcgWorkflowState(component: ManagedComponent): ManagedComponent {
+	if (!hasCodexCcgWorkflowMode()) {
+		return withAgentIntegration(component, false, 'Codex Mode 未安装');
+	}
+
+	const currentVersion = readCodexCcgWorkflowVersion();
+	const latestVersion = component.latestVersion || currentVersion;
+	return {
+		...component,
+		installed: true,
+		currentVersion,
+		latestVersion,
+		hasUpdate: latestVersion ? hasUpdate(currentVersion, latestVersion) : false,
+		statusHint: currentVersion ? component.statusHint : 'Codex Mode 已安装，版本文件不可读'
+	};
+}
+
+function withAgentIntegration(component: ManagedComponent, integrated: boolean, missingHint: string): ManagedComponent {
+	if (integrated) {
+		return component;
+	}
+
+	return {
+		...component,
+		installed: false,
+		hasUpdate: null,
+		statusHint: component.installed ? missingHint : component.statusHint
+	};
 }
 
 /**
@@ -181,10 +235,10 @@ function parseVersion(text: string): string {
  * 复用 update.checkCliToolUpdates（返回正好 7 个 CLI 组件：ClaudeCode/Ccline/CcgWorkflow/CodexCli/OpenSpec/CodeGraph + AntigravityCli），
  * join COMPONENT_DEFINITIONS 静态字段（description/kind/command/isBase 等）。
  */
-export async function detectComponents(onProgress?: ProgressCallback): Promise<ManagedComponent[]> {
+export async function detectComponents(onProgress?: ProgressCallback, forceRefresh = false): Promise<ManagedComponent[]> {
 	onProgress?.({level: 'info', message: '正在检测组件状态与远程版本...'});
-	const outdated = await getNpmOutdatedGlobal(false);
-	const detected = await checkCliToolUpdates(outdated);
+	const outdated = await getNpmOutdatedGlobal(forceRefresh);
+	const detected = await checkCliToolUpdates(outdated, forceRefresh);
 
 	return COMPONENT_DEFINITIONS.map(def => {
 		const match = detected.find((component: UpdateComponent) => component.id === def.id);
@@ -227,11 +281,12 @@ export async function installComponent(
 				throw new Error(friendlyError(result.stderr || result.stdout, `npm install 失败 (exit ${result.code})`));
 			}
 
+			await refreshNpmGlobalBinPath(onProgress, 'ClaudeCode', exec);
 			const check = await exec('claude', ['--version'], {timeout: DETECT_TIMEOUT_MS});
 			if (check.code === 0) {
 				const version = parseVersion(check.stdout || check.stderr || '');
 				onProgress?.({level: 'success', message: `Claude Code 安装成功${version ? ` (${version})` : ''}`, componentId: 'ClaudeCode'});
-				return {id: 'ClaudeCode', success: true};
+				return {id: 'ClaudeCode', success: true, version};
 			}
 
 			onProgress?.({level: 'warning', message: 'Claude Code 安装完成但命令暂不可用（可能需重启终端）', componentId: 'ClaudeCode'});
@@ -331,8 +386,7 @@ export async function uninstallComponent(
 		switch (definition.kind) {
 			case 'npm':
 				if (definition.id === 'CodeGraph') {
-					// design D4：默认卸载只解除当前 Agent 集成，不 npm uninstall、不删 .codegraph/。
-					await runLifecycleCommands(codeGraphUninstallCommands(context), exec, 'CodeGraph', onProgress);
+					await uninstallCodeGraph(context, exec, onProgress);
 					break;
 				}
 
@@ -360,6 +414,20 @@ export async function uninstallComponent(
 		onProgress?.({level: 'danger', message: `${definition.name} 卸载失败: ${message}`, componentId: id});
 		return {id, success: false, error: message};
 	}
+}
+
+async function uninstallCodeGraph(
+	context: AgentContext,
+	exec: typeof execCommand,
+	onProgress?: ProgressCallback
+): Promise<void> {
+	await runLifecycleCommands(codeGraphUninstallCommands(context), exec, 'CodeGraph', onProgress);
+	if (hasCodeGraphIntegration('cc') || hasCodeGraphIntegration('cx')) {
+		onProgress?.({level: 'info', message: '仍有 Agent 接入 CodeGraph，保留共享 CLI', componentId: 'CodeGraph'});
+		return;
+	}
+
+	await runLifecycleCommands(codeGraphRemoveCliCommands(), exec, 'CodeGraph', onProgress);
 }
 
 /** 11.10 npm 全局卸载（ClaudeCode / OpenSpec / CodexCli / Ccline）。 */

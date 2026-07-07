@@ -4,6 +4,8 @@ import {atomicWrite} from './fs-utils.js';
 import {claudeDir, claudeJsonPath, settingsPath} from './paths.js';
 import type {AgentContext} from '../state/manage-state.js';
 import {codeGraphInstallCommands, ccgWorkflowInstallCommands} from './tools-lifecycle.js';
+import {hasCodeGraphIntegration, hasCodexCcgWorkflowMode, readCodexCcgWorkflowVersion} from './tools-integrations.js';
+import {refreshNpmGlobalBinPath} from './npm-path.js';
 
 // 工具安装 core：检测 + 安装 6 个进阶工具（Ccline / CcgWorkflow / OpenSpec / CodeGraph / CodexCli / AntigravityCli）。
 // 全部经 core/exec.ts 的 execCommand spawn 外部命令（HC-TUI-NODE-ONLY），不调 PS/zsh 步骤函数。
@@ -44,6 +46,7 @@ export type ToolStatus = {
 export type ToolInstallOutcome = {
 	readonly id: ToolId;
 	readonly success: boolean;
+	readonly version?: string;
 	readonly error?: string;
 };
 
@@ -121,10 +124,26 @@ function parseVersion(text: string): string {
 	return match ? match[0] : text.trim();
 }
 
+function isTimeoutError(error: unknown): boolean {
+	return error instanceof Error && /命令超时|timed out|timeout/i.test(error.message);
+}
+
+async function execVersionCommand(command: string, args: readonly string[]): Promise<{readonly code: number; readonly stdout: string; readonly stderr: string}> {
+	try {
+		return await execCommand(command, args, {timeout: DETECT_TIMEOUT_MS});
+	} catch (error) {
+		if (isTimeoutError(error)) {
+			return execCommand(command, args, {timeout: DETECT_TIMEOUT_MS});
+		}
+
+		throw error;
+	}
+}
+
 /** 检测单个工具（命令可用性 + 版本）。 */
 export async function detectTool(definition: ToolDefinition): Promise<ToolStatus> {
 	try {
-		const result = await execCommand(definition.command, definition.versionArgs, {timeout: DETECT_TIMEOUT_MS});
+		const result = await execVersionCommand(definition.command, definition.versionArgs);
 		if (result.code !== 0) {
 			return {id: definition.id, installed: false, version: ''};
 		}
@@ -164,6 +183,8 @@ async function installNpmPackage(definition: ToolDefinition, onProgress?: Progre
 	if (result.code !== 0) {
 		throw new Error(friendlyError(result.stderr || result.stdout, `npm install 失败 (exit ${result.code})`));
 	}
+
+	await refreshNpmGlobalBinPath(onProgress, definition.id);
 }
 
 /** CodeGraph 后置：CLI 就绪后非交互接入当前 Agent（agentContext → --target=claude|codex）。 */
@@ -178,6 +199,11 @@ async function postInstallCodeGraph(context: AgentContext, onProgress?: Progress
 	if (result.code !== 0) {
 		const label = context === 'cx' ? 'Codex' : 'Claude Code';
 		throw new Error(friendlyError(result.stderr || result.stdout, `CodeGraph ${label} 接入失败 (exit ${result.code})`));
+	}
+
+	if (!hasCodeGraphIntegration(context)) {
+		const label = context === 'cx' ? 'Codex' : 'Claude Code';
+		throw new Error(`CodeGraph ${label} MCP 写入失败`);
 	}
 }
 
@@ -227,7 +253,7 @@ export function readMcpSnapshot(): string | null {
 }
 
 /** CcgWorkflow 安装：Claude Code init + mcpServers 快照保护；Codex Mode 走官方非交互命令。 */
-async function installCcgWorkflow(context: AgentContext, onProgress?: ProgressCallback): Promise<void> {
+async function installCcgWorkflow(context: AgentContext, onProgress?: ProgressCallback): Promise<string | undefined> {
 	// mcpServers 快照仅适用于 Claude Code init 路径；Codex Mode 不应触碰 ~/.claude.json。
 	const mcpBefore = context === 'cc' ? readMcpSnapshot() : null;
 	const [command] = ccgWorkflowInstallCommands(context, claudeDir());
@@ -242,12 +268,20 @@ async function installCcgWorkflow(context: AgentContext, onProgress?: ProgressCa
 		throw new Error(friendlyError(result.stderr || result.stdout, `${label} (exit ${result.code})`));
 	}
 
-	// mcpServers 快照比对（安装后）：被覆盖则恢复
-	if (context === 'cc') {
-		const mcpAfter = readMcpSnapshot();
-		if (mcpBefore !== null && mcpBefore !== mcpAfter) {
-			restoreMcpSnapshot(mcpBefore, onProgress);
+	if (context === 'cx') {
+		const version = readCodexCcgWorkflowVersion();
+		if (!version || !hasCodexCcgWorkflowMode()) {
+			throw new Error('Codex Mode 安装后未写入 .ccg-version');
 		}
+
+		onProgress?.({level: 'success', message: `Codex Mode 已安装 (${version})`, componentId: 'CcgWorkflow'});
+		return version;
+	}
+
+	// mcpServers 快照比对（安装后）：被覆盖则恢复
+	const mcpAfter = readMcpSnapshot();
+	if (mcpBefore !== null && mcpBefore !== mcpAfter) {
+		restoreMcpSnapshot(mcpBefore, onProgress);
 	}
 }
 
@@ -298,6 +332,7 @@ export async function installTool(id: ToolId, onProgress?: ProgressCallback, con
 	}
 
 	try {
+		let installedVersion: string | undefined;
 		switch (definition.kind) {
 			case 'npm':
 				await installNpmPackage(definition, onProgress);
@@ -311,7 +346,7 @@ export async function installTool(id: ToolId, onProgress?: ProgressCallback, con
 
 				break;
 			case 'ccg-init':
-				await installCcgWorkflow(context, onProgress);
+				installedVersion = await installCcgWorkflow(context, onProgress);
 				break;
 			case 'shell-script':
 				await installAntigravity(onProgress);
@@ -322,13 +357,13 @@ export async function installTool(id: ToolId, onProgress?: ProgressCallback, con
 		// 信任安装命令的 exit code，成功后直接返回 success（下次刷新检测时自然会识别到）
 		if (definition.kind === 'ccg-init' || definition.kind === 'shell-script') {
 			onProgress?.({level: 'success', message: `${definition.name} 安装成功（重启终端后生效）`, componentId: id});
-			return {id, success: true};
+			return {id, success: true, version: installedVersion};
 		}
 
 		const status = await detectTool(definition);
 		if (status.installed) {
 			onProgress?.({level: 'success', message: `${definition.name} 安装成功${status.version ? ` (${status.version})` : ''}`, componentId: id});
-			return {id, success: true};
+			return {id, success: true, version: status.version};
 		}
 
 		onProgress?.({level: 'warning', message: `${definition.name} 安装完成但命令暂不可用（可能需重启终端）`, componentId: id});

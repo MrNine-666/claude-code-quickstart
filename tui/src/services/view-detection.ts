@@ -1,4 +1,5 @@
-import {createDetectionRunner, type DetectionRunner, type DetectionStateSink} from './detection-runner.js';
+import type {AgentContext} from '../state/manage-state.js';
+import {createDetectionRunner, type DetectionRunner, type DetectionRunOptions, type DetectionStateSink} from './detection-runner.js';
 import {createInitialDetectionState} from './async-detection.js';
 import {checkComponentUpdates, type UpdateComponent} from '../core/update.js';
 import {getInstalledSkills, type InstalledSkill} from '../core/skills.js';
@@ -20,8 +21,8 @@ export function createSkillsDetectionRunner(onChange: DetectionStateSink<Install
 	return createDetectionRunner(createInitialDetectionState<InstalledSkill[]>(), onChange);
 }
 
-export function runSkillsDetection(runner: DetectionRunner<InstalledSkill[]>): Promise<unknown> {
-	return runner.run(() => getInstalledSkills());
+export function runSkillsDetection(runner: DetectionRunner<InstalledSkill[]>, agentContext: AgentContext = 'cc', exec?: Parameters<typeof getInstalledSkills>[1]): Promise<unknown> {
+	return runner.run(() => getInstalledSkills(agentContext, exec));
 }
 
 // 工具管理检测 runner（Phase 11D）：检测 7 受管组件（ClaudeCode + 6 工具），不聚合 Skills/MCP。
@@ -29,6 +30,6 @@ export function createToolsDetectionRunner(onChange: DetectionStateSink<ManagedC
 	return createDetectionRunner(createInitialDetectionState<ManagedComponent[]>(), onChange);
 }
 
-export function runToolsDetection(runner: DetectionRunner<ManagedComponent[]>): Promise<unknown> {
-	return runner.run(() => detectComponents());
+export function runToolsDetection(runner: DetectionRunner<ManagedComponent[]>, options: DetectionRunOptions = {}): Promise<unknown> {
+	return runner.run(() => detectComponents(undefined, options.forceRefresh === true));
 }

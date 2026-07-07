@@ -1,12 +1,12 @@
-import React, { useEffect, useMemo, useReducer } from 'react';
-import { TextAttributes } from '@opentui/core';
+import React, { useEffect, useMemo, useReducer, useRef } from 'react';
+import { TextAttributes, type ScrollBoxRenderable } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
-import { Card, ErrorPanel, ListEmptyState, ListLoadingState, Modal, Spinner, StatusDot, ViewHeader, toast, type StatusDotKind } from '../components/index.js';
+import { Card, ErrorPanel, ListEmptyState, ListLoadingState, Modal, Spinner, StatusDot, ThemedScrollbox, ViewHeader, toast, type StatusDotKind } from '../components/index.js';
 import { colors } from '../theme/index.js';
 import type {ProgressCallback, ProgressLevel} from '../core/exec.js';
 import type { DetectionState } from '../services/async-detection.js';
 import type { DetectionCache } from '../hooks/use-detection-cache.js';
-import type { DetectionRunner, DetectionStateSink } from '../services/detection-runner.js';
+import type { DetectionRunner, DetectionRunOptions, DetectionStateSink } from '../services/detection-runner.js';
 import type { ComponentId, ComponentInstallOutcome, ComponentUninstallOutcome, ManagedComponent } from '../core/tools-manage.js';
 import type { ApplyUpdatesResult } from '../core/update.js';
 import {
@@ -38,10 +38,11 @@ export type ToolsViewServices = {
 	readonly detectComponents: () => Promise<readonly ManagedComponent[]>;
 	readonly installComponent: (id: ComponentId, onProgress?: ProgressCallback, agentContext?: AgentContext) => Promise<ComponentInstallOutcome>;
 	readonly installMultiple: (ids: readonly ComponentId[], onProgress?: ProgressCallback, agentContext?: AgentContext) => Promise<readonly ComponentInstallOutcome[]>;
-	readonly updateComponents: (components: readonly ManagedComponent[], onProgress?: ProgressCallback) => Promise<ApplyUpdatesResult>;
+	readonly updateComponents: (components: readonly ManagedComponent[], onProgress?: ProgressCallback, agentContext?: AgentContext) => Promise<ApplyUpdatesResult>;
 	readonly uninstallComponent: (id: ComponentId, onProgress?: ProgressCallback, agentContext?: AgentContext) => Promise<ComponentUninstallOutcome>;
 	readonly createDetectionRunner: (onChange: DetectionStateSink<ManagedComponent[]>) => DetectionRunner<ManagedComponent[]>;
 	readonly runDetection: (runner: DetectionRunner<ManagedComponent[]>) => Promise<unknown>;
+	readonly refreshDetection?: (runner: DetectionRunner<ManagedComponent[]>, options?: DetectionRunOptions) => Promise<unknown>;
 };
 
 export type ToolsViewProps = {
@@ -54,9 +55,10 @@ export type ToolsViewProps = {
 	readonly contentWidth?: number;
 	readonly onSubModeChange?: (subMode: string) => void;
 	readonly onExitToNav?: () => void;
+	readonly onExitToHeader?: () => void;
 };
 
-export function ToolsView({ services: rawServices, cache, agentContext, active = true, viewportHeight = 16, viewportWidth = 52, contentWidth, onSubModeChange, onExitToNav }: ToolsViewProps) {
+export function ToolsView({ services: rawServices, cache, agentContext, active = true, viewportHeight = 16, viewportWidth = 52, contentWidth, onSubModeChange, onExitToNav, onExitToHeader }: ToolsViewProps) {
 	const [view, dispatch] = useReducer(reduceToolsViewState, undefined, createInitialToolsViewState);
 	const detection = cache.state;
 
@@ -66,6 +68,7 @@ export function ToolsView({ services: rawServices, cache, agentContext, active =
 		...rawServices,
 		installComponent: (id, onProgress) => rawServices.installComponent(id, onProgress, agentContext),
 		installMultiple: (ids, onProgress) => rawServices.installMultiple(ids, onProgress, agentContext),
+		updateComponents: (components, onProgress) => rawServices.updateComponents(components, onProgress, agentContext),
 		uninstallComponent: (id, onProgress) => rawServices.uninstallComponent(id, onProgress, agentContext)
 	}), [rawServices, agentContext]);
 
@@ -91,12 +94,24 @@ export function ToolsView({ services: rawServices, cache, agentContext, active =
 		}
 	}, [detection.status]);
 
+	const scrollRef = useRef<ScrollBoxRenderable>(null);
+	const cursorCard = view.components[view.cursor];
+	const activeCardId = cursorCard ? toolCardId(cursorCard, view.cursor) : null;
+
 	// 上报当前子模式给 App footer。
 	useEffect(() => {
 		if (active) {
 			onSubModeChange?.(view.mode === 'busy' ? 'busy' : view.mode === 'confirm-uninstall' ? 'confirm-uninstall' : 'grid');
 		}
 	}, [active, view.mode, onSubModeChange]);
+
+	useEffect(() => {
+		if (!scrollRef.current || !activeCardId) {
+			return;
+		}
+
+		scrollRef.current.scrollChildIntoView(activeCardId);
+	}, [activeCardId]);
 
 	// 键盘输入处理
 	useKeyboard((keyEvent) => {
@@ -126,7 +141,7 @@ export function ToolsView({ services: rawServices, cache, agentContext, active =
 			return; // 执行中禁用操作
 		}
 
-		handleGridKey(key, view, services, dispatch, cache, columns);
+		handleGridKey(key, view, services, dispatch, cache, columns, onExitToHeader);
 	});
 
 	return (
@@ -134,7 +149,7 @@ export function ToolsView({ services: rawServices, cache, agentContext, active =
 			<ViewHeader title="工具管理" subtitle="管理常用 CLI 工具的安装、更新与卸载" />
 			{renderDetectionNotice(detection.status)}
 			{/* 检测中时隐藏网格，仅显示 Spinner；检测完成后才显示网格或空状态 */}
-			{detection.status !== 'loading' && detection.status !== 'idle' ? renderGrid(view) : null}
+			{detection.status !== 'loading' && detection.status !== 'idle' ? renderGrid(view, scrollRef) : null}
 			{activeProgressTasks(view).length > 0 ? <ActiveProgressTasks tasks={activeProgressTasks(view)} /> : null}
 			{view.errorText ? <ErrorPanel message={view.errorText} /> : null}
 			{view.mode === 'confirm-uninstall' ? <UninstallConfirm view={view} dispatch={dispatch} services={services} cache={cache} active={active} agentContext={agentContext} viewportWidth={viewportWidth} viewportHeight={viewportHeight} /> : null}
@@ -150,12 +165,17 @@ function handleGridKey(
 	services: ToolsViewServices,
 	dispatch: Dispatch,
 	cache: DetectionCache<ManagedComponent[]>,
-	columns: number
+	columns: number,
+	onExitToHeader?: () => void
 ): void {
 	const k = key.toLowerCase();
 
 	if (k === 'up' || k === 'arrowup') {
-		dispatch({ type: 'nav', delta: -columns });
+		if (view.cursor < columns && onExitToHeader) {
+			onExitToHeader();
+		} else {
+			dispatch({ type: 'nav', delta: -columns });
+		}
 		return;
 	}
 
@@ -190,7 +210,7 @@ function handleGridKey(
 	}
 
 	if (k === 'r' && !isAnyBusy(view)) {
-		cache.refresh();
+		cache.refresh({forceRefresh: true});
 	}
 }
 
@@ -233,8 +253,10 @@ function installOne(component: ManagedComponent, services: ToolsViewServices, di
 		.then((outcome) => {
 			if (outcome.success) {
 				toast.success(`${component.name} 安装成功`);
-				// 就地 patch 单 item：装好后置为已安装、无更新；版本留空（下次检测/刷新对齐），不整页强刷。
-				dispatch({type: 'item-patched', id: component.id, patch: {installed: true, hasUpdate: false, currentVersion: '', statusHint: undefined}});
+				// 就地 patch 单 item：装好后置为已安装、无更新；版本使用安装后检测结果，避免卡片短暂显示版本为空。
+				dispatch({type: 'item-patched', id: component.id, patch: {installed: true, hasUpdate: false, currentVersion: outcome.version ?? component.currentVersion, statusHint: undefined}});
+				// 同步 App 层检测缓存，避免切换 Agent 后旧 detection.result 覆盖局部 patch。
+				cache.refresh();
 			} else {
 				dispatch({type: 'item-failed', id: component.id, error: outcome.error ?? `${component.name} 安装失败`});
 			}
@@ -269,6 +291,8 @@ function updateOne(component: ManagedComponent, services: ToolsViewServices, dis
 					statusHint: undefined
 				}
 			});
+			// 同步 App 层检测缓存，避免切换 Agent 后旧 detection.result 覆盖局部 patch。
+			cache.refresh();
 		})
 		.catch((error: unknown) => {
 			dispatch({type: 'item-failed', id: component.id, error: errorMessage(error)});
@@ -381,6 +405,8 @@ function runUninstall(component: ManagedComponent, services: ToolsViewServices, 
 				toast.success(`${component.name} 已卸载`);
 				// 就地 patch：卸载后置为未安装，不整页强刷。
 				dispatch({type: 'item-patched', id: component.id, patch: {installed: false, hasUpdate: null, currentVersion: '', latestVersion: '', statusHint: undefined}});
+				// 同步 App 层检测缓存，避免切换 Agent 后旧 detection.result 覆盖局部 patch。
+				cache.refresh();
 			} else {
 				const message = outcome.manualHint
 					? `${outcome.error ?? '卸载失败'}\n${outcome.manualHint}`
@@ -403,26 +429,32 @@ function renderDetectionNotice(status: DetectionState<ManagedComponent[]>['statu
 	return null;
 }
 
-function renderGrid(view: ToolsViewState): React.ReactNode {
+function toolCardId(component: ManagedComponent, index: number): string {
+	return `tools-grid-item-${index}-${component.id}`;
+}
+
+function renderGrid(view: ToolsViewState, scrollRef: React.RefObject<ScrollBoxRenderable | null>): React.ReactNode {
 	// 加载态由 renderDetectionNotice 独占（Spinner「检测中...」），此处只处理「已加载但无组件」空状态，避免双重「检测中」。
 	if (view.components.length === 0) {
 		return view.loaded ? <ListEmptyState message="未检测到可管理的组件" /> : null;
 	}
 
 	// flex 自由换行：每卡固定宽度，按终端宽度自动排布（对齐原 UpdateView 范式）。
-	// 卡片间留 1 字符水平间距（marginRight）提升视觉呼吸感。
+	// 外层用 ThemedScrollbox 承载溢出区域，键盘导航时 scrollChildIntoView 保证焦点卡片可见。
 	return (
-		<box flexDirection="row" flexWrap="wrap">
-			{view.components.map((component, index) => (
-				<box key={component.id} marginRight={1} marginBottom={0}>
-					<ToolCard
-						component={component}
-						focused={index === view.cursor}
-						status={itemStatusOf(view, component.id)}
-					/>
-				</box>
-			))}
-		</box>
+		<ThemedScrollbox ref={scrollRef} style={{flexGrow: 1}} viewportCulling scrollY scrollX={false}>
+			<box flexDirection="row" flexWrap="wrap">
+				{view.components.map((component, index) => (
+					<box key={component.id} id={toolCardId(component, index)} marginRight={1} marginBottom={0} flexShrink={0}>
+						<ToolCard
+							component={component}
+							focused={index === view.cursor}
+							status={itemStatusOf(view, component.id)}
+						/>
+					</box>
+				))}
+			</box>
+		</ThemedScrollbox>
 	);
 }
 

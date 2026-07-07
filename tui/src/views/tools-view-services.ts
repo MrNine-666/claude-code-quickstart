@@ -19,10 +19,11 @@ export function createToolsViewServices(): ToolsViewServices {
 		// agentContext 透传给 core：CodeGraph 接入目标 / CcgWorkflow Codex 分支按当前上下文解析（design D3-D5）。
 		installComponent: (id, onProgress, agentContext) => installComponent(id, onProgress, {agentContext}),
 		installMultiple: (ids, onProgress, agentContext) => installMultipleComponents(ids, onProgress, agentContext),
-		updateComponents: (components, onProgress) => updateComponents(components, onProgress),
+		updateComponents: (components, onProgress, agentContext) => updateComponents(components, onProgress, {agentContext}),
 		uninstallComponent: (id, onProgress, agentContext) => uninstallComponent(id, onProgress, {agentContext}),
 		createDetectionRunner: onChange => createToolsDetectionRunner(onChange),
-		runDetection: runner => runToolsDetection(runner)
+		runDetection: runner => runToolsDetection(runner),
+		refreshDetection: (runner, options) => runToolsDetection(runner, options)
 	};
 }
 

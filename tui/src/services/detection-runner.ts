@@ -6,6 +6,9 @@ import {
 
 export type DetectionStateSink<Result> = (state: DetectionState<Result>) => void;
 export type DetectionClock = () => number;
+export type DetectionRunOptions = {
+	readonly forceRefresh?: boolean;
+};
 
 export type DetectionRunner<Result> = {
 	readonly getState: () => DetectionState<Result>;
