@@ -7,7 +7,7 @@
 
 ## 项目概述
 
-**OpenTUI + Bun 单文件可执行 TUI + CLI 子命令入口**，实现 Claude Code Quickstart 的 6 菜单管理控制台（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）与轻量命令行操作（`ccq cc <provider>` / `ccq ls` / `ccq use <provider>` / `ccq update` / `ccq tools update` / `ccq tools uninstall <name> [--yes|-y]` / `ccq uninstall [--yes|-y]`），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），运行时消费契约以内联文本形式内嵌进可执行文件，安装后通过 `ccq` 命令天然可达（**不注入 Profile**）。
+**OpenTUI + Bun 单文件可执行 TUI + CLI 子命令入口**，实现 Claude Code Quickstart 的 6 菜单管理控制台（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）与 `Claude Code` / `Codex` 全称 Header；轻量命令行操作包括 `ccq cc <provider>` / `ccq cx [profile]` / `ccq ls [--tool claude|codex]` / `ccq use <provider> [--tool claude|codex]` / `ccq update` / `ccq tools update` / `ccq tools uninstall <name> [--yes|-y]` / `ccq uninstall [--yes|-y]`。通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），运行时消费契约以内联文本形式内嵌进可执行文件，安装后通过 `ccq` 命令天然可达（**不注入 Profile**）。
 
 ---
 
@@ -16,7 +16,7 @@
 | 层次 | 技术选型 | 版本要求 |
 |------|---------|---------|
 | 运行时 | Bun | `>=1.2.0` |
-| 渲染引擎 | OpenTUI | `@opentui/core@0.4.1` + `@opentui/react@0.2.3` |
+| 渲染引擎 | OpenTUI | `@opentui/core@0.4.2` + `@opentui/react@0.4.2` + `@opentui/keymap@^0.4.2` |
 | UI 框架 | React | `19.0.0` |
 | 构建工具 | Bun | `bun build --compile` 交叉编译 |
 | 类型系统 | TypeScript | `5.x` |
@@ -30,14 +30,16 @@
 tui/
 ├── src/
 │   ├── index.tsx              # 入口：argv 子命令路由 + createCliRenderer + non-TTY 守卫 + CCQ_VERSION
-│   ├── app.tsx                # 双栏布局 + 6 菜单路由
-│   ├── cli/                   # 非交互 CLI 子命令（cc / ls / use / update / tools / uninstall / help / version）
+│   ├── app.tsx                # 双栏布局 + 6 菜单路由 + Claude Code/Codex Header
+│   ├── cli/                   # 非交互 CLI 子命令（cc / cx / ls / use / update / tools / uninstall / help / version）
 │   ├── core/                  # 业务逻辑（从 manage/source/core 零改写迁移）
 │   │   ├── contracts.ts       # 运行时契约内嵌读取（Bun text loader + 源码 fallback）
 │   │   ├── settings.ts        # settings.json 读写
-│   │   ├── providers.ts       # 供应商 Profile 管理
-│   │   ├── mcp.ts             # MCP vault + server 管理
-│   │   ├── skills.ts          # Skills 安装 / 更新 / 卸载
+│   │   ├── providers.ts       # Claude Code 供应商 Profile 管理
+│   │   ├── codex.ts           # Codex 官方 profile-file / provider TOML 管理
+│   │   ├── toml-edit.ts       # Codex config/profile/MCP 结构化 TOML 编辑
+│   │   ├── mcp.ts             # MCP vault + Claude/Codex 双目标 server 管理
+│   │   ├── skills.ts          # Skills 安装 / 更新 / 卸载（agent 参数化）
 │   │   └── ...
 │   ├── services/              # 平台服务（从 manage/source/services 零改写迁移）
 │   ├── state/                 # 状态管理（从 manage/source/state 零改写迁移）
@@ -151,8 +153,8 @@ TUI 不新增第 7 个 Codex 菜单；改由右侧 content 顶部的全局 **Hea
 - **Cometixline 组**（Ccline）：**仅 Claude Code** 上下文显示。
 - **Tools 组**（OpenSpec / CcgWorkflow / CodeGraph）：两种上下文都显示。
 - install/update/uninstall 经 lifecycle command resolver 按 `agentContext` 返回不同指令：
-  - **CodeGraph**：install 确保 `@colbymchenry/codegraph` CLI 后执行 `codegraph install --target=<claude|codex> --location=global --yes`；**默认 uninstall** 只执行 `codegraph uninstall --target=<claude|codex> --yes`，**不 `npm uninstall`、不删 `.codegraph/` 项目索引**；「移除 CLI」是需强确认的独立高级动作（骨架 `scripts/verify-codegraph-lifecycle.mjs`）。
-  - **CcgWorkflow**：Claude 走 `npx ccg-workflow@latest init ... --install-dir ~/.claude`（保留 mcpServers 快照保护）+ `npx ccg-workflow uninstall`；Codex Mode 走官方非交互 `npx ccg-workflow codex-mode install/uninstall`。文件边界（`config.toml`/`AGENTS.md`/hooks/rules）一律交给官方命令负责，**ccq 不手写 fs 删除 `CODEX_HOME/config.toml`**（骨架 `scripts/verify-ccgworkflow-codex.mjs`）。
+  - **CodeGraph**：检测安装态必须同时满足 CLI 可用与当前 Agent MCP 已接入（Claude Code 看 `~/.claude.json.mcpServers.codegraph`，Codex 看 `CODEX_HOME/config.toml` 的 `[mcp_servers.codegraph]`）；install 确保 `@colbymchenry/codegraph` CLI 后执行 `codegraph install --target=<claude|codex> --location=global --yes` 并校验 MCP 写入成功；update 更新 npm CLI 后按已接入的 cc/cx 目标逐个重跑 `codegraph install ...`；uninstall 先执行 `codegraph uninstall --target=<claude|codex> --yes`，随后若 cc/cx 两边都无 CodeGraph MCP，则自动 `npm uninstall -g @colbymchenry/codegraph`，始终不删除项目 `.codegraph/` 索引（骨架 `scripts/verify-codegraph-lifecycle.mjs` + `scripts/verify-tools-manage.mjs`）。
+  - **CcgWorkflow**：上游 GitHub 仓库真实标识为 `fengshao1227/ccg-workflow`（查 DeepWiki/GitHub 时不要用 `MrNine-666/ccg-workflow`）；Claude 走 `npx ccg-workflow@latest init ... --install-dir ~/.claude`（保留 mcpServers 快照保护）+ `npx ccg-workflow uninstall`；Codex Mode 走官方非交互 `npx ccg-workflow codex-mode install/uninstall`。文件边界（`config.toml`/`AGENTS.md`/hooks/rules）一律交给官方命令负责，**ccq 不手写 fs 删除 `CODEX_HOME/config.toml`**（骨架 `scripts/verify-ccgworkflow-codex.mjs`）。
 
 ### HC-CONFIG-RULES-REUSE
 Config / Global Rules 视图按 `agentContext` 切换目标文件但复用同一 UI（预览页 / `e` 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入 / 损坏文件拒绝覆盖 / 脏编辑保护），骨架 `scripts/verify-config-rules-reuse.mjs`：
@@ -331,38 +333,43 @@ if (useIcon && existsSync(ICON_PATH)) {
 
 | 菜单 | 文件 | 功能 |
 |------|------|------|
-| 工具管理 | `views/tools-view.tsx` | ClaudeCode + 6 工具全生命周期（安装/更新/卸载 + 卡片范式 + 2D 导航） |
-| 供应商 | `views/provider-view.tsx` + `provider-form.tsx` | 供应商 Profile CRUD + 设置默认 + extraEnv JSON 编辑 |
-| 配置文件 | `views/config-view.tsx` | 配置文件页（view-first，对齐 PromptsView）+ 字段级（settings.json 多页共享）：进入先渲染只读当前 settings.json（**手动 JSON 着色**：key/string/数字/布尔/标点分色，opentui 无 json grammar 的回退），标题标注「已排除供应商配置」（供应商 env 剥离展示，归供应商页管，HC-12；保存时自动合并保留）；无内容则空状态提示按 `a` 新建；`a`（空白新建 `{}`）/ `e`（编辑现有）进编辑器，`Ctrl+T` 开推荐边栏（带注释 JSONC 对照·注释行分色），`Ctrl+O` fill-missing 灌缓冲（仅补缺失）/ `Ctrl+S` 保存（合并保留供应商 env）/ `Esc` 取消回只读态 |
-| 全局规则 | `views/prompts-view.tsx` | 全局规则页（view-first）：进入先渲染只读本地 CLAUDE.md（`<markdown>`），无内容则空状态提示按 `a` 新建；`a`（空白新建）/ `e`（编辑现有）进编辑器，`Ctrl+T` 开源码推荐边栏（未渲染·语法高亮对照），`Ctrl+I` 推荐灌缓冲 / `Ctrl+S` 保存 / `Ctrl+P` 预览 / `Esc` 取消回只读态（有脏先确认） |
-| MCP | `views/mcp/McpView.tsx` + `mcp-view-model.ts` | MCP Server 启用/禁用 + 凭据管理 + 字段↔JSON 双向联动 |
-| Skills | `views/skills-view.tsx` | Skills 安装 / 更新 / 卸载 |
+| 工具管理 | `views/tools-view.tsx` | Agent 组（ClaudeCode/CodexCli/AntigravityCli）两种 Header 常显；Ccline 仅 Claude Code；OpenSpec/CcgWorkflow/CodeGraph 按 `agentContext` 解析 lifecycle，CodeGraph CLI/integration 分层，CcgWorkflow Codex Mode 走官方非交互命令 |
+| 供应商 | `views/provider-view.tsx` + `provider-form.tsx` | Claude Code Header 下管理 `~/.claude/providers/*.json`；Codex Header 下管理 `$CODEX_HOME/<key>.config.toml`，key 单一身份，API key 写 `experimental_bearer_token` 且全链脱敏 |
+| 配置文件 | `views/config-view.tsx` | Claude Code 读写 `~/.claude/settings.json`；Codex 读写 `CODEX_HOME/config.toml`。复用预览 / `e` 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入，不管理 provider/MCP/hooks/Skills/rules |
+| 全局规则 | `views/prompts-view.tsx` | Claude Code 读写 `~/.claude/CLAUDE.md`；Codex 只读写 `CODEX_HOME/AGENTS.md`。复用推荐规则内容、预览/编辑/导入与脏编辑保护 |
+| MCP | `views/mcp/McpView.tsx` + `mcp-view-model.ts` | MCP Server 启用/禁用 + 凭据管理；Claude Code 状态来自 `~/.claude.json.mcpServers`，Codex 状态来自 `CODEX_HOME/config.toml` 的 `[mcp_servers]`，vault 不作 Active/Disabled 事实源 |
+| Skills | `views/skills-view.tsx` | 按 Header 调用 `skills --agent claude-code|codex`；安装 / 更新 / 卸载，物理存储与映射交给 skills CLI |
 
 ---
 
-## 热更新机制（Phase 7.5-7.8）
+## 热更新机制（确认式下载 + 结构化错误）
 
-### 方案 1：临时文件 + rename 原子替换
+### 启动检查只更新 UI 状态
 
-1. **启动后台检查**：`src/index.tsx` 入口启动后台任务，查 GitHub Release latest tag vs 内嵌版本号（`CCQ_VERSION`）
-2. **下载到临时文件**：新版下载到 `<bin>/.ccq-update.tmp`
-3. **校验完整性**：SHA256 校验（从 Release 获取）
-4. **原子替换**：`rename .ccq-update.tmp ccq[.exe]`
-   - **Windows 文件锁**：运行中可执行文件无法替换，走「退出/下次启动替换」
-   - **macOS/Linux**：直接 rename 生效
+1. `src/app.tsx` 启动后调用 `checkLatestVersion()` 查询 GitHub Release latest tag vs 内嵌版本号（`CCQ_VERSION`）。
+2. 启动检查**只更新侧边栏「检查更新」按钮状态**，不会下载文件、不会写入磁盘。
+3. 已移除 `startBackgroundUpdateCheck()` 后台静默检查/静默下载链路；禁止恢复后台自动下载。
 
-### 应用内手动入口（优先）
+### 应用内手动入口
 
-工具管理视图或侧边栏底部「检查更新」入口：
-- 立即查最新版；发现新版本后弹窗确认，`Enter` 开始更新、`Esc` 取消
-- 更新过程中 Modal 不关闭，展示 loading；此时 `Enter` 禁用，`Esc` 停止更新（下载阶段通过 AbortSignal 取消）
-- 更新完成后 Modal 转为重启确认，`Enter` 立即重启 ccq，`Esc` 稍后手动重启
-- 不可行（交互受限）则仅保留后台自动
+侧边栏底部「检查更新」入口：
+- `latest`：Enter 重新检查。
+- `available`：Enter 打开 Modal；用户再次 Enter 确认后才下载新版到 `<target-dir>/.ccq-update.tmp`，Esc 取消。
+- 下载过程中 Modal 不关闭，展示 loading；Enter 禁用，Esc 通过 AbortSignal 停止下载。
+- 下载失败时展示 `formatSelfUpdateError()` 生成的具体阶段、HTTP 状态、目标路径、临时路径或底层错误。
+- 下载成功后 Modal 进入「下载完成」确认态；用户 Enter 才应用更新并重启，Esc 稍后处理。
+
+### 替换与重启
+
+- 更新目标优先使用当前运行的 ccq 可执行文件路径；若当前 `process.execPath` 不像 ccq（例如源码/Bun dev 模式），回退到安装目标 `~/.local/bin/ccq[.exe]`。
+- **Windows**：运行中的 exe 无法可靠覆盖，使用 PowerShell helper：等待当前 pid 退出 → `Copy-Item` 临时文件覆盖目标 exe → 删除临时文件 → `Start-Process` 重启 ccq；不再依赖「下次启动时自己覆盖自己」。
+- **macOS/Linux**：下载成功后用 `rename` 替换目标文件，并 `chmod 755`。
+- CLI `ccq update [--check]` 与 TUI 复用同一 core 逻辑；失败必须输出结构化原因。
 
 ### P-5 失败不阻断 + P-6 版本相同零网络
 
-- 热更新失败不阻断当前运行
-- 版本相同跳过下载（零网络写）
+- 热更新失败不阻断当前运行，只更新 UI/CLI 错误提示。
+- 版本相同跳过下载（零网络写）。
 
 ---
 

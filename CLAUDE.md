@@ -2,7 +2,7 @@
 
 > 生成时间：2026-06-19 | 最近更新：TUI 视图层空状态/加载状态统一重构（list-state 组件）
 
-Windows 10/11 与 macOS 12+ 双平台的 **Claude Code 开发环境自动化安装器**。Windows 使用 **PS 5.1 单运行时**（前置检测内联 + winget 自动安装 + Basic 三步直装，PS7 作为推荐组件非阻塞安装、不 re-exec），macOS 使用 zsh + Homebrew + nvm 原生入口；install 仅装 Basic 三步（NodeJS / Git / ClaudeCode），进阶项（全局规则 / 配置 / 工具管理）搬进 Manage TUI；Manage 重构为根级 **OpenTUI TUI + CLI 子命令子项目**（`tui/`，Bun `>=1.2.0`）**6 菜单**（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）+ 轻量命令行操作（`ccq cc <provider>` / `ccq ls` / `ccq use <provider>` / `ccq update` / `ccq tools update` / `ccq tools uninstall <name> [--yes|-y]` / `ccq uninstall [--yes|-y]`），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），ccq 经 PATH 目录天然可达（**不注入 Profile**），支持整可执行文件热更新；契约按「谁用归谁」拆分至 `installer/contracts/`（install 链）与 `tui/contracts/`（TUI 链，**内嵌进可执行文件**）。
+Windows 10/11 与 macOS 12+ 双平台的 **Claude Code / Codex 开发环境自动化安装器**。Windows 使用 **PS 5.1 单运行时**（前置检测内联 + winget 自动安装 + bootstrap Basic 两步直装，PS7 作为推荐组件非阻塞安装、不 re-exec），macOS 使用 zsh + Homebrew + nvm 原生入口；install 仅装 bootstrap Basic 两步（NodeJS / Git）并安装 `ccq`，Claude Code / Codex / 周边工具统一交给 Manage TUI「工具管理」按需安装、更新与卸载；Manage 为根级 **OpenTUI TUI + CLI 子命令子项目**（`tui/`，Bun `>=1.2.0`）**6 菜单**（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）+ content 顶部 `Claude Code` / `Codex` 全称 Header + 轻量命令行操作（`ccq cc <provider>` / `ccq cx [profile]` / `ccq ls [--tool claude|codex]` / `ccq use <provider> [--tool claude|codex]` / `ccq update` / `ccq tools update` / `ccq tools uninstall <name> [--yes|-y]` / `ccq uninstall [--yes|-y]`），通过 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），ccq 经 PATH 目录天然可达（**不注入 Profile**），支持整可执行文件热更新；契约按「谁用归谁」拆分至 `installer/contracts/`（install 链）与 `tui/contracts/`（TUI 链，**内嵌进可执行文件**）。
 
 ---
 
@@ -18,13 +18,13 @@ claude-code-quickstart/
     ├── build.sh                      # macOS / Unix 构建入口（2 个 .sh artifact）
     ├── contracts/                    # install 链契约：steps / build / cleanup-policy + Test-Contracts.ps1
     ├── windows/
-    │   ├── Install.ps1     # Windows PS 5.1+ 安装入口（前置检测内联 + Basic 直装 + 末尾确认下载 ccq 可执行文件）
+    │   ├── Install.ps1     # Windows PS 5.1+ 安装入口（前置检测内联 + Basic 两步 + 末尾确认下载 ccq 可执行文件）
     │   ├── core/                     # Windows PowerShell runtime core（含 ccq 可执行文件管理函数）
-    │   └── steps/                    # Windows 9 个安装步骤（NodeJS 含 5 子模块；CcSwitch/CcgWorkflow/Mcp 已删）
+    │   └── steps/                    # Windows install 消费 NodeJS/Git；ClaudeCode 步骤文件仅历史保留
     └── macos/
-        ├── Install.zsh     # macOS zsh 安装入口（前置检测内联 + Basic 直装 + 末尾确认下载 ccq 可执行文件）
+        ├── Install.zsh     # macOS zsh 安装入口（前置检测内联 + Basic 两步 + 末尾确认下载 ccq 可执行文件）
         ├── core/                     # macOS zsh runtime core（含 ccq 可执行文件管理函数）
-        └── steps/                    # macOS 9 个安装步骤
+        └── steps/                    # macOS install 消费 NodeJS/Git
 ```
 
 ```mermaid
@@ -43,14 +43,14 @@ graph TD
     C --> C1["Ui / Process / Profile / Json"]
     C --> C2["Admin / Net / Registry / Update"]
     C --> C3["ccq 可执行文件管理函数（架构检测/下载/PATH）"]
-    D --> D1["NodeJS (5 子模块) / Git / ClaudeCode（Basic 直装）"]
-    D --> D2["Ccline / ClaudeConfig / ClaudeMd / OpenSpec / CodexCli / AntigravityCli（Advanced，迁 TUI）"]
+    D --> D1["NodeJS (5 子模块) / Git（Basic 直装）"]
+    D --> D2["ClaudeCode / CodexCli / Ccline / OpenSpec / CcgWorkflow / CodeGraph / AntigravityCli（由 TUI 工具管理）"]
     IC --> IC1["steps / build / cleanup-policy + Test-Contracts"]
     TC --> TC1["claude-config / mcp-servers / providers / templates（运行时内嵌）\nccg-workflow / drift.js（磁盘源契约）"]
     T --> T1["src/ → bun build --compile → 4 平台可执行文件"]
     G --> G1["Install.zsh（末尾下载 ccq）"]
     G --> G2["core: Ui / Process / Profile / Platform / PackageManager / Json / Registry + ccq 管理函数"]
-    G --> G3["steps: 9 个安装步骤"]
+    G --> G3["steps: NodeJS / Git"]
     H --> H1["install.ps1 / install.sh / ccq-windows-x64.exe / ccq-windows-arm64.exe / ccq-macos-x64 / ccq-macos-arm64"]
     click C "./installer/windows/core/CLAUDE.md"
     click D "./installer/windows/steps/CLAUDE.md"
@@ -62,9 +62,9 @@ graph TD
 ## 步骤依赖图
 
 ```
-install 仅装 Basic 三步：
-NodeJS ─── ClaudeCode ─── Git
-（Advanced 步骤 Ccline/ClaudeConfig/ClaudeMd/OpenSpec/CodexCli/AntigravityCli 已迁 Manage TUI，不在 install 消费）
+install 仅装 bootstrap Basic 两步：
+NodeJS ─── Git
+（ClaudeCode / CodexCli / Ccline / OpenSpec / CcgWorkflow / CodeGraph / AntigravityCli 等工具生命周期均由 Manage TUI「工具管理」按当前 Header 上下文承载）
 ```
 
 ---
@@ -126,7 +126,7 @@ $PROFILE                    # PowerShell 配置文件（历史遗留块清理用
 ### Windows
 
 ```powershell
-# 重新运行安装（实时检测，自动跳过已安装组件；PS5.1 单运行时直装 Basic 三步 + 末尾下载 ccq.exe）
+# 重新运行安装（实时检测，自动跳过已安装组件；PS5.1 单运行时直装 Basic 两步 + 末尾下载 ccq.exe）
 pwsh -File installer/windows/Install.ps1
 
 # 查看步骤列表（仅列 Basic）
@@ -135,10 +135,11 @@ pwsh -File installer/windows/Install.ps1 -ListSteps
 # 直接运行 ccq（6 菜单：工具管理/供应商/配置文件/全局规则/MCP/Skills）
 ccq
 
-# CLI 子命令：provider 临时启动/列表/设默认 + ccq 更新/卸载 + 工具更新/卸载
+# CLI 子命令：Claude/Codex 启动、列表/设默认 + ccq 更新/卸载 + 工具更新/卸载
 ccq cc <provider> [claude-args...]
-ccq ls
-ccq use <provider>
+ccq cx [profile] [codex-args...]
+ccq ls [--tool claude|codex]
+ccq use <provider> [--tool claude|codex]
 ccq update [--check]
 ccq tools update [name]
 ccq tools uninstall <name> [--yes|-y]
@@ -152,7 +153,7 @@ bun run dev
 ### macOS
 
 ```sh
-# 首次云端安装入口（macOS 12+，直装 Basic 三步 + 末尾下载 ccq）
+# 首次云端安装入口（macOS 12+，直装 Basic 两步 + 末尾下载 ccq）
 curl -fsSL "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/install.sh" | bash
 
 # 从源码运行安装入口
@@ -164,10 +165,11 @@ zsh installer/macos/Install.zsh --list-steps
 # 直接运行 ccq（6 菜单）
 ccq
 
-# CLI 子命令：provider 临时启动/列表/设默认 + ccq 更新/卸载 + 工具更新/卸载
+# CLI 子命令：Claude/Codex 启动、列表/设默认 + ccq 更新/卸载 + 工具更新/卸载
 ccq cc <provider> [claude-args...]
-ccq ls
-ccq use <provider>
+ccq cx [profile] [codex-args...]
+ccq ls [--tool claude|codex]
+ccq use <provider> [--tool claude|codex]
 ccq update [--check]
 ccq tools update [name]
 ccq tools uninstall <name> [--yes|-y]

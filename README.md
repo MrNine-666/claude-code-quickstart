@@ -2,7 +2,7 @@
 
 Windows 与 macOS 双平台的 Claude Code 开发环境自动化安装器。
 
-> 目标：把「装环境」变成「跑脚本」——Windows 基于 PowerShell 5.1 单运行时，macOS 基于 Homebrew / zsh / nvm，一条命令装好 Node.js / Git / Claude Code 基础三件套，供应商 / 配置 / MCP / Skills / 工具等统一交给 `ccq` 管理控制台。
+> 目标：把「装环境」变成「跑脚本」——Windows 基于 PowerShell 5.1 单运行时，macOS 基于 Homebrew / zsh / nvm，一条命令装好 Node.js / Git 与 `ccq` 管理控制台；Claude Code / Codex / 周边工具统一在 `ccq` 的「工具管理」中按需安装与维护，供应商 / 配置 / MCP / Skills 等也由 `ccq` 管理。
 
 ---
 
@@ -44,8 +44,8 @@ CCQ 通过 Windows PS 5.1 单运行时脚本、macOS 原生入口与实时检测
 - **双平台入口**：Windows 使用 PS 5.1 单运行时（前置检测内联 + Basic 直装，PS7 作为推荐组件非阻塞安装），macOS 使用 `curl ... | bash` 自动切换 zsh
 - **共享契约**：契约按「谁用归谁」拆分——`installer/contracts/`（install 链：步骤/构建/清理）与 `tui/contracts/`（TUI 链：供应商/MCP/ClaudeConfig/模板，**内嵌进 ccq 可执行文件**）
 - **实时检测**：每次运行都检测当前状态，已安装组件自动跳过
-- **分组安装**：install 专注 Basic 三步（NodeJS / Git / ClaudeCode），工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills 由 `ccq` 管理控制台统一管理
-- **单文件可执行 TUI**：OpenTUI + Bun 构建的 `ccq` 可执行文件，通过用户级 PATH 天然可达，提供 6 菜单（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）
+- **Bootstrap-only 安装**：install 专注 Basic 两步（NodeJS / Git）+ `ccq` 下载/PATH；Claude Code / Codex / 周边工具统一由 `ccq`「工具管理」安装、更新与卸载
+- **单文件可执行 TUI**：OpenTUI + Bun 构建的 `ccq` 可执行文件，通过用户级 PATH 天然可达，提供 6 菜单（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）与 `Claude Code` / `Codex` 全称 Header
 - **供应商 Profile 化**：供应商配置持久化到 `~/.claude/providers/`
 - **MCP 凭据 Vault**：凭据持久化到 `~/.ccq/mcp-meta.json`
 - **整可执行文件热更新**：后台检查 GitHub Release 最新版本，强确认下载后原子替换 `~/.local/bin/ccq[.exe]`
@@ -81,7 +81,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 irm 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/install.ps1' | iex
 ```
 
-PS 5.1 单运行时直跑：前置检测内联（Windows 版本 / winget 自动安装 / PS7 非阻塞推荐）+ Basic 三步直装（NodeJS / Git / ClaudeCode），**末尾确认下载 ccq.exe 到 `%USERPROFILE%\.local\bin\` 并加入用户 PATH**。
+PS 5.1 单运行时直跑：前置检测内联（Windows 版本 / winget 自动安装 / PS7 非阻塞推荐）+ bootstrap Basic 两步直装（NodeJS / Git），**末尾确认下载 ccq.exe 到 `%USERPROFILE%\.local\bin\` 并加入用户 PATH**。Claude Code / Codex 请在安装完成后运行 `ccq`，进入「工具管理」按需安装。
 
 安装完成后，建议在 Windows Terminal 中将 PowerShell 7 配置为管理员方式打开；后续新开终端执行 `ccq` 进入管理控制台。
 
@@ -202,8 +202,9 @@ Windows 入口基于 PowerShell 5.1+ 单运行时执行，安装基础环境并�
 
 1. Node.js LTS
 2. Git
-3. Claude Code
-4. `ccq.exe` 管理控制台（下载到 `%USERPROFILE%\.local\bin\` 并加入用户 PATH）
+3. `ccq.exe` 管理控制台（下载到 `%USERPROFILE%\.local\bin\` 并加入用户 PATH）
+
+Claude Code / Codex 不再由 installer 直接安装；安装完成后运行 `ccq`，在 `Claude Code` / `Codex` Header 下进入「工具管理」安装或维护对应工具。
 
 ### macOS
 
@@ -212,16 +213,15 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 1. Homebrew
 2. Node.js LTS（现有 node/npm 版本达标则跳过；否则优先通过当前 fnm/nvm 安装/切换 LTS，无法原地修复时通过 nvm 官方脚本兜底）
 3. Git
-4. Claude Code
-5. `ccq` 管理控制台（下载到 `~/.local/bin/` 并确保该目录在 PATH）
+4. `ccq` 管理控制台（下载到 `~/.local/bin/` 并确保该目录在 PATH）
 
-安装完成后，供应商、配置、全局规则、MCP、Skills、工具等均在 `ccq` 管理控制台操作，详见下节。
+安装完成后，Claude Code / Codex、供应商、配置、全局规则、MCP、Skills、工具等均在 `ccq` 管理控制台操作，详见下节。
 
 ---
 
 ## Manage 管理控制台（ccq）
 
-安装后直接运行 `ccq` 命令进入管理控制台。`ccq` 是 OpenTUI + Bun 构建的单文件可执行产物（`tui/` 子项目交叉编译而来），安装时下载到 `~/.local/bin/ccq[.exe]`（与 Claude Code native installer 同目录），通过用户级 PATH 天然可达。控制台提供 **6 菜单**；也可以直接使用非交互 CLI 子命令完成常用操作：
+安装后直接运行 `ccq` 命令进入管理控制台。`ccq` 是 OpenTUI + Bun 构建的单文件可执行产物（`tui/` 子项目交叉编译而来），安装时下载到 `~/.local/bin/ccq[.exe]`（与 Claude Code native installer 同目录），通过用户级 PATH 天然可达。控制台提供 **6 菜单**，右侧 content 顶部用全称 Header 在 `Claude Code` / `Codex` 间切换当前 Agent 上下文；也可以直接使用非交互 CLI 子命令完成常用操作：
 
 ### CLI 子命令
 
@@ -229,42 +229,44 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 |---|---|
 | `ccq` | 进入 OpenTUI 6 菜单管理控制台 |
 | `ccq cc <provider> [claude-args...]` | 临时使用指定 provider 启动 Claude Code；不写盘，后续参数透传给 `claude` |
-| `ccq ls` | 列出所有 provider，并标记当前默认 provider |
-| `ccq use <provider>` | 设置默认 provider，写入 `~/.claude/settings.json` 后持久生效 |
+| `ccq cx [profile] [codex-args...]` | 启动 Codex；指定 profile 时使用 `codex --profile <profile>`，不注入 ccq vault/env |
+| `ccq ls [--tool claude\|codex]` | 列出 Claude provider 或 Codex profile；默认 `--tool claude` |
+| `ccq use <provider> [--tool claude\|codex]` | 设置 Claude 默认 provider 或 Codex 默认 profile；Codex 结构化写 `CODEX_HOME/config.toml` |
 | `ccq update [--check]` | 检查或更新 ccq 可执行文件；`--check` 只检查不下载 |
 | `ccq tools update [name]` | 更新全部可更新工具，或只更新指定工具 |
 | `ccq tools uninstall <name> [--yes\|-y]` | 卸载指定工具；默认要求 y/N 确认，传 `--yes` 或 `-y` 跳过确认 |
 | `ccq uninstall [--yes\|-y]` | 卸载 ccq 本体；默认要求 y/N 确认，传 `--yes` 或 `-y` 跳过确认 |
 
-卸载类命令在非 TTY 环境必须传 `--yes` 或 `-y`，否则会拒绝执行以避免误删；`ccq cc` 与 `ccq use` 职责分离，前者只影响当前会话，后者修改持久默认配置。
+卸载类命令在非 TTY 环境必须传 `--yes` 或 `-y`，否则会拒绝执行以避免误删；`ccq cc` / `ccq cx` 是启动类动词（继承 TTY、参数透传给底层工具），`ccq use` 是管理类动词（修改持久默认配置）。
 
 ### 1) 工具管理（Tools）
 
-- ClaudeCode 与 Ccline / CcgWorkflow / OpenSpec / CodexCli / AntigravityCli 全生命周期
-- 安装 / 更新 / 卸载（强确认 + snapshot 保护）
+- Agent 组常显 ClaudeCode / CodexCli / AntigravityCli；Ccline 仅 Claude Code；OpenSpec / CcgWorkflow / CodeGraph 在两种上下文可见
+- 安装 / 更新 / 卸载（强确认 + snapshot 保护）；CodeGraph 安装/更新后校验当前 Agent MCP 接入，更新后重接入已安装的 cc/cx，卸载最后一个 CodeGraph MCP 后自动移除共享 CLI；CcgWorkflow Codex Mode 使用官方非交互 install/uninstall
 - 侧边栏底部「检查更新」按钮可更新 ccq 可执行文件本体：发现新版本后弹窗确认，更新中在弹窗内显示 loading（Enter 禁用，Esc 停止更新），完成后可选择立即重启或稍后重启
 
 ![工具管理](./assets/screenshots/tui-tool.png)
 
 ### 2) 供应商（Provider）
 
-- 供应商 Profile 的新增 / 编辑 / 删除 / 切换 / 设置默认
-- 支持从 settings.json 同步已有配置
+- Claude Code Header 下：供应商 Profile 的新增 / 编辑 / 删除 / 切换 / 设置默认；配置写入 `~/.claude/settings.json` 的 `env`，Profile 保存到 `~/.claude/providers/`
+- Codex Header 下：管理 `$CODEX_HOME/<key>.config.toml`（默认 `~/.codex/<key>.config.toml`）官方 profile 文件；key 同时作为文件名、`--profile` 名、provider id 与默认显示名
+- Codex API key 直写 `[model_providers.<key>].experimental_bearer_token`，不进入 ccq vault、不由 `ccq cx` 注入 env；`official login` 类型通过 `codex login` 完成认证
 - 内置供应商：智谱 GLM（默认 GLM-5.2）、MiniMax（默认 MiniMax-M3）、Kimi Code（需 `sk-kimi-` 前缀 Key）、DeepSeek（默认 deepseek-v4-pro[1m]）、阿里云百炼（默认 `qwen3.7-plus`）、自定义供应商
-- 配置写入 `~/.claude/settings.json` 的 `env`，Profile 保存到 `~/.claude/providers/`
 
 ![供应商管理](./assets/screenshots/tui-providers.png)
 
 ### 3) 配置文件（Config）
 
-- 查看 settings.json 推荐配置（含 description）
-- 按缺失项补全（fill-missing）/ 复制 / 外部编辑器编辑
+- Claude Code Header 下查看 `~/.claude/settings.json` 推荐配置；Codex Header 下查看 `CODEX_HOME/config.toml` 推荐配置
+- 复用预览 / 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入；不管理 provider、MCP、Skills 或规则文件内容
 
 ![配置文件管理](./assets/screenshots/tui-config.png)
 
 ### 4) 全局规则（Prompts）
 
-- 查看推荐 CLAUDE.md / 导入 / 复制 / 外部编辑器编辑
+- Claude Code Header 下维护 `~/.claude/CLAUDE.md`；Codex Header 下维护 `CODEX_HOME/AGENTS.md`
+- 复用预览 / 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` 导入，Codex 推荐内容复用 Claude Code 推荐规则
 
 ![全局规则管理](./assets/screenshots/tui-claudemd.png)
 
@@ -272,7 +274,8 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 
 - 列表仅展示已安装 Server，行显示状态圆点 + Server ID
 - `A` 新增、`E` 编辑（JSON 即真源，内置模板一键带出配置与凭据提示）、`D` 删除
-- `Enter` 切换启用 / 禁用状态；凭据持久化到 `~/.ccq/mcp-meta.json`
+- `Enter` 切换当前 Header 对应 Agent 的启用 / 禁用状态；Claude Code 写 `~/.claude.json`，Codex 结构化写 `CODEX_HOME/config.toml`
+- 凭据与配置备份持久化到 `~/.ccq/mcp-meta.json`，但 Active/Disabled 状态以运行时配置文件为事实源
 - 内置 MCP：Context7 / DeepWiki / Tavily / Playwright / Exa Search / ACE Tool / MasterGo / Figma / Chrome DevTools
 - 支持 none / single-key / args-token / url-embedded 等凭据类型，新增或编辑时按模板提示填写
 
@@ -280,8 +283,8 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 
 ### 6) Skills
 
-- 列表页：本地过滤框模糊查询已装 Skills；`u` 更新全部、`d` 卸载单条、`r` 刷新
-- 安装页（`a` 进入）：远程搜索框 + 扁平 Skill 列表，`Enter` 触发确认弹窗安装；`owner/repo@skill` 搜索结果仅安装选中的子 Skill
+- 列表页：按当前 Header 调用 `skills --agent claude-code|codex`，本地过滤框模糊查询已装 Skills；`u` 更新全部、`d` 卸载单条、`r` 刷新
+- 安装页（`a` 进入）：远程搜索框 + 扁平 Skill 列表，`Enter` 触发确认弹窗安装；`owner/repo@skill` 搜索结果仅安装选中的子 Skill；物理存储与 Agent 映射交给 skills CLI
 
 ![Skills 管理](./assets/screenshots/tui-skills.png)
 
