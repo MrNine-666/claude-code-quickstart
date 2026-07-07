@@ -21,13 +21,24 @@ const uid = process.getuid ? process.getuid() : process.pid;
 const cacheDir = join(tmpdir(), `ccq-cache-${uid}`);
 mkdirSync(cacheDir, {recursive: true});
 writeFileSync(join(cacheDir, 'npm-outdated.json'), JSON.stringify({}), 'utf8');
-writeFileSync(join(cacheDir, 'npm-view.json'), JSON.stringify({}), 'utf8');
+writeFileSync(
+	join(cacheDir, 'npm-view.json'),
+	JSON.stringify({
+		'@anthropic-ai/claude-code': '',
+		'@cometix/ccline': '',
+		'ccg-workflow': '',
+		'@fission-ai/openspec': '',
+		'@colbymchenry/codegraph': '',
+		'@openai/codex': ''
+	}),
+	'utf8'
+);
 
 // 预写 CcgWorkflow config.toml：验证本地版本取自 config.toml（而非 codeagent-wrapper 二进制）
 mkdirSync(join(home, '.claude', '.ccg'), {recursive: true});
 writeFileSync(join(home, '.claude', '.ccg', 'config.toml'), 'version = "3.1.6"\n', 'utf8');
 
-const {COMPONENT_DEFINITIONS, detectComponents, installComponent} = await import('../src/core/tools-manage.ts');
+const {COMPONENT_DEFINITIONS, detectComponents, installComponent, filterVisibleComponents} = await import('../src/core/tools-manage.ts');
 
 // ── COMPONENT_DEFINITIONS 完整性（11.4/11.6）──────────────────────────────────
 const ids = COMPONENT_DEFINITIONS.map(c => c.id);
@@ -62,6 +73,48 @@ assert.match(updateSource, /CodexCli:\s*'@openai\/codex'/, 'update.ts NPM_COMPON
 assert.match(updateSource, /CodexCli:\s*\{\s*command:\s*'codex'/, 'update.ts COMMAND_COMPONENTS CodexCli command = codex');
 console.log('[PASS] 1.1 CodexCli 使用 @openai/codex 与 codex --version');
 
+// ── r 手动刷新必须绕过 npm 远程版本缓存，避免 latest 卡在旧缓存（如 Claude Code 1.0.199）──
+const toolsViewSource = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
+const toolsManageSource = readFileSync(new URL('../src/core/tools-manage.ts', import.meta.url), 'utf8');
+const viewDetectionSource = readFileSync(new URL('../src/services/view-detection.ts', import.meta.url), 'utf8');
+const detectionCacheSource = readFileSync(new URL('../src/hooks/use-detection-cache.ts', import.meta.url), 'utf8');
+assert.match(toolsViewSource, /cache\.refresh\(\{forceRefresh:\s*true\}\)/, 'ToolsView r 刷新传 forceRefresh');
+assert.match(detectionCacheSource, /if \(services\.refreshDetection\)/, 'useDetectionCache 仅在服务提供 refreshDetection 时消费 refresh options');
+assert.match(detectionCacheSource, /services\.runDetection\(runner\)/, '无 refreshDetection 时不把 options 误传给 runDetection');
+const toolsServicesSource = readFileSync(new URL('../src/views/tools-view-services.ts', import.meta.url), 'utf8');
+assert.match(toolsServicesSource, /refreshDetection:\s*\(runner,\s*options\)\s*=>\s*runToolsDetection\(runner,\s*options\)/, 'Tools service 为手动刷新提供专用 refreshDetection');
+assert.match(viewDetectionSource, /detectComponents\(undefined,\s*options\.forceRefresh === true\)/, 'runToolsDetection 透传 forceRefresh');
+assert.match(toolsManageSource, /getNpmOutdatedGlobal\(forceRefresh\)/, 'detectComponents 强刷 npm outdated 缓存');
+assert.match(updateSource, /resolveNpmViewLatest\(Object\.values\(NPM_COMPONENT_MAP\),\s*forceRefresh\)/, 'checkCliToolUpdates 强刷 npm view 缓存');
+console.log('[PASS] r 手动刷新绕过 npm outdated/npm view 缓存');
+
+// 单项 install/update/uninstall 成功后必须同步 App 层检测缓存，否则切换 Header 时
+// detection.result 会重新下发旧版本号，覆盖 ToolsView 的局部 patch。
+function sourceSection(source, startMarker, endMarker) {
+	const start = source.indexOf(startMarker);
+	const end = source.indexOf(endMarker, start + startMarker.length);
+	assert.notEqual(start, -1, `${startMarker} 存在`);
+	assert.notEqual(end, -1, `${endMarker} 存在`);
+	return source.slice(start, end);
+}
+
+assert.match(
+	sourceSection(toolsViewSource, 'function installOne', 'function updateOne'),
+	/cache\.refresh\(\)/,
+	'单项安装成功后刷新检测缓存，避免切换 Agent 回退版本/安装态'
+);
+assert.match(
+	sourceSection(toolsViewSource, 'function updateOne', 'function updateAll'),
+	/cache\.refresh\(\)/,
+	'单项更新成功后刷新检测缓存，避免切换 Agent 回退到旧版本号'
+);
+assert.match(
+	sourceSection(toolsViewSource, 'function runUninstall', 'function renderDetectionNotice'),
+	/cache\.refresh\(\)/,
+	'单项卸载成功后刷新检测缓存，避免切换 Agent 回退安装态'
+);
+console.log('[PASS] 工具单项生命周期成功后同步 App 层检测缓存');
+
 // ── detectComponents 返回 7 项 + 不聚合 Skills/MCP（11.5/11.7）────────────────
 const components = await detectComponents();
 assert.equal(components.length, 7, 'detectComponents 返回 7 项（不聚合 Skills/MCP）');
@@ -78,12 +131,64 @@ assert.equal(ccg.hasUpdate, false, 'CcgWorkflow 无远程数据时不误报更�
 assert.ok(components.some(c => c.id === 'ClaudeCode'), 'ClaudeCode 纳入受管检测（11.6）');
 console.log('[PASS] detectComponents 7 项 + 不聚合 Skills/MCP + CcgWorkflow 版本源 (11.5/11.7)');
 
+// ── Codex Header 下工具安装态不得复用 Claude/global 状态 ────────────────────────
+{
+	const globalInstalled = components.map(component => {
+		if (component.id === 'CodeGraph') {
+			return {...component, installed: true, currentVersion: '1.2.3', latestVersion: '1.2.3', hasUpdate: false};
+		}
+
+		if (component.id === 'CcgWorkflow') {
+			return {...component, latestVersion: '3.1.11'};
+		}
+
+		return component;
+	});
+	const claudeVisibleWithoutIntegration = filterVisibleComponents(globalInstalled, 'cc');
+	const claudeCodeGraph = claudeVisibleWithoutIntegration.find(c => c.id === 'CodeGraph');
+	assert.equal(claudeCodeGraph.installed, false, 'Claude Code 未接入 CodeGraph 时不得仅凭全局 codegraph CLI 显示已安装');
+	assert.equal(claudeCodeGraph.hasUpdate, null, 'Claude Code 未接入 CodeGraph 时不显示更新态');
+	assert.match(claudeCodeGraph.statusHint, /Claude Code 未接入 CodeGraph/, 'Claude Code CodeGraph 缺失提示明确');
+
+	const codexVisibleWithoutIntegration = filterVisibleComponents(globalInstalled, 'cx');
+	const codexCcg = codexVisibleWithoutIntegration.find(c => c.id === 'CcgWorkflow');
+	const codexCodeGraph = codexVisibleWithoutIntegration.find(c => c.id === 'CodeGraph');
+	assert.equal(codexCcg.installed, false, 'Codex 未安装 Mode 时 CcgWorkflow 不得沿用 ~/.claude/.ccg/config.toml 的 installed=true');
+	assert.equal(codexCcg.hasUpdate, null, 'Codex 未安装 Mode 时 CcgWorkflow 不显示更新态');
+	assert.match(codexCcg.statusHint, /Codex Mode 未安装/, 'Codex CcgWorkflow 缺失提示明确');
+	assert.equal(codexCodeGraph.installed, false, 'Codex 未接入 CodeGraph 时不得仅凭全局 codegraph CLI 显示已安装');
+	assert.equal(codexCodeGraph.hasUpdate, null, 'Codex 未接入 CodeGraph 时不显示更新态');
+	assert.match(codexCodeGraph.statusHint, /Codex 未接入 CodeGraph/, 'Codex CodeGraph 缺失提示明确');
+
+	writeFileSync(join(home, '.claude.json'), JSON.stringify({mcpServers: {codegraph: {command: 'codegraph', args: ['serve', '--mcp']}}}), 'utf8');
+	assert.equal(filterVisibleComponents(globalInstalled, 'cc').find(c => c.id === 'CodeGraph').installed, true, 'Claude Code mcpServers.codegraph 存在时 CodeGraph 显示已安装');
+
+	mkdirSync(join(home, '.codex'), {recursive: true});
+	writeFileSync(join(home, '.codex', 'config.toml'), '[mcp_servers.codegraph]\ncommand = "codegraph"\nenabled = false\n', 'utf8');
+	assert.equal(filterVisibleComponents(globalInstalled, 'cx').find(c => c.id === 'CodeGraph').installed, false, 'Codex CodeGraph enabled=false 时不得显示已安装');
+
+	writeFileSync(join(home, '.codex', 'config.toml'), '[mcp_servers.codegraph]\ncommand = "codegraph"\nargs = ["serve", "--mcp"]\n', 'utf8');
+	writeFileSync(join(home, '.codex', '.ccg-version'), '3.1.10\n', 'utf8');
+
+	const codexVisibleWithIntegration = filterVisibleComponents(globalInstalled, 'cx');
+	const codexCcgWithIntegration = codexVisibleWithIntegration.find(c => c.id === 'CcgWorkflow');
+	assert.equal(codexCcgWithIntegration.installed, true, 'Codex Mode 版本文件存在时 CcgWorkflow 显示已安装');
+	assert.equal(codexCcgWithIntegration.currentVersion, '3.1.10', 'Codex CcgWorkflow 本地版本来自 CODEX_HOME/.ccg-version');
+	assert.equal(codexCcgWithIntegration.hasUpdate, true, 'Codex CcgWorkflow 可基于 .ccg-version 与 latestVersion 判定更新');
+	assert.equal(codexVisibleWithIntegration.find(c => c.id === 'CodeGraph').installed, true, 'Codex config.toml 含 [mcp_servers.codegraph] 时 CodeGraph 显示已安装');
+}
+console.log('[PASS] Codex Header 工具安装态按 CODEX_HOME 集成信号修正');
+
 // ── installComponent('ClaudeCode') npm install + 检测确认（11.6/11.8）────────
 const execCalls = [];
 const mockExec = async (cmd, args) => {
 	execCalls.push({cmd, args});
 	if (cmd === 'npm' && args.includes('install')) {
 		return {code: 0, stdout: '', stderr: ''};
+	}
+
+	if (cmd === 'npm' && args[0] === 'prefix') {
+		return {code: 0, stdout: `${home}\n`, stderr: ''};
 	}
 
 	if (cmd === 'claude' && args.includes('--version')) {
@@ -99,11 +204,13 @@ assert.ok(
 	execCalls.some(c => c.cmd === 'npm' && c.args.includes('@anthropic-ai/claude-code')),
 	'调起 npm install -g @anthropic-ai/claude-code'
 );
-assert.ok(
-	execCalls.some(c => c.cmd === 'claude' && c.args.includes('--version')),
-	'安装后检测 claude --version'
-);
-console.log('[PASS] installComponent ClaudeCode npm install + 检测确认 (11.6/11.8)');
+const npmInstallIndex = execCalls.findIndex(c => c.cmd === 'npm' && c.args.includes('@anthropic-ai/claude-code'));
+const npmPrefixIndex = execCalls.findIndex(c => c.cmd === 'npm' && c.args[0] === 'prefix');
+const claudeVersionIndex = execCalls.findIndex(c => c.cmd === 'claude' && c.args.includes('--version'));
+assert.ok(npmInstallIndex >= 0, '调起 npm install -g @anthropic-ai/claude-code');
+assert.ok(npmPrefixIndex > npmInstallIndex, 'ClaudeCode 安装后刷新 npm global bin PATH');
+assert.ok(claudeVersionIndex > npmPrefixIndex, '刷新 PATH 后检测 claude --version');
+console.log('[PASS] installComponent ClaudeCode npm install + PATH 刷新 + 检测确认 (11.6/11.8)');
 
 // ── installComponent 未知组件拒绝 ─────────────────────────────────────────────
 const unknown = await installComponent('UnknownId');
@@ -158,6 +265,34 @@ console.log('[PASS] P-13 snapshot 失败 → exec 零调用 (11.15)');
 	assert.equal(execCalls.length, 0, 'P-13 更新快照失败后 exec 零调用（snapshot-before-write）');
 }
 console.log('[PASS] P-13 更新路径 snapshot 失败 → exec 零调用 (applyUpdates)');
+
+// CodeGraph 更新后按已接入 Agent 重跑 install，并校验 MCP 仍存在
+{
+	const homeUpdate = mkdtempSync(join(tmpdir(), 'ccq-update-codegraph-'));
+	process.env.CCQ_HOME = homeUpdate;
+	process.env.CODEX_HOME = join(homeUpdate, '.codex');
+	mkdirSync(process.env.CODEX_HOME, {recursive: true});
+	writeFileSync(join(homeUpdate, '.claude.json'), JSON.stringify({mcpServers: {codegraph: {command: 'codegraph', args: ['serve', '--mcp']}}}), 'utf8');
+	writeFileSync(join(process.env.CODEX_HOME, 'config.toml'), '[mcp_servers.codegraph]\ncommand = "codegraph"\n', 'utf8');
+
+	const execCalls = [];
+	const mockExec = async (cmd, args) => {
+		execCalls.push({cmd, args});
+		return {code: 0, stdout: '', stderr: ''};
+	};
+	const definition = COMPONENT_DEFINITIONS.find(c => c.id === 'CodeGraph');
+	await updateComponents([{...definition, installed: true, currentVersion: '1.0.0', latestVersion: '2.0.0', hasUpdate: true}], undefined, {
+		exec: mockExec,
+		createSnapshotFn: () => join(homeUpdate, 'snapshot')
+	});
+	assert.ok(execCalls.some(c => c.cmd === 'npm' && c.args.includes('@colbymchenry/codegraph@2.0.0')), 'CodeGraph 更新先 npm install 指定 latest');
+	assert.ok(execCalls.some(c => c.cmd === 'codegraph' && c.args.includes('--target=claude')), 'CodeGraph 更新后重接入 Claude Code');
+	assert.ok(execCalls.some(c => c.cmd === 'codegraph' && c.args.includes('--target=codex')), 'CodeGraph 更新后重接入 Codex');
+	process.env.CCQ_HOME = home;
+	delete process.env.CODEX_HOME;
+	rmSync(homeUpdate, {recursive: true, force: true});
+}
+console.log('[PASS] CodeGraph 更新后重接入已安装 Agent');
 
 // P-12：CcgWorkflow 卸载走官方非交互命令（Claude Code → `ccg-workflow uninstall`），
 //       ccq 不再 fs 删除用户目录（文件边界交给官方命令负责）。
@@ -229,45 +364,37 @@ console.log('[PASS] P-12 CcgWorkflow 卸载走官方 ccg-workflow uninstall，cc
 }
 console.log('[PASS] npm 卸载命令 + Ccline 受管 statusLine 还原 (11.10/11.11)');
 
-// ── CodeGraph 默认卸载：只解除当前 Agent 集成，不 npm uninstall、不删 .codegraph/（design D4，3.9）──
-// 旧「先解除集成再 npm uninstall」语义已废止；npm 卸载 CLI 改为独立高级动作（3.10）。
+// ── CodeGraph 卸载：解除当前 Agent；若 cc/cx 都无 MCP，则移除共享 CLI ───────────────
 {
+	const homeCodeGraph = mkdtempSync(join(tmpdir(), 'ccq-uninstall-codegraph-'));
+	process.env.CCQ_HOME = homeCodeGraph;
+	process.env.CODEX_HOME = join(homeCodeGraph, '.codex');
+	mkdirSync(process.env.CODEX_HOME, {recursive: true});
+	writeFileSync(join(homeCodeGraph, '.claude.json'), JSON.stringify({}), 'utf8');
+	writeFileSync(join(process.env.CODEX_HOME, 'config.toml'), '[mcp_servers.codegraph]\ncommand = "codegraph"\n', 'utf8');
+
 	const execCalls = [];
 	const mockExec = async (cmd, args) => {
 		execCalls.push({cmd, args});
 		return {code: 0, stdout: '', stderr: ''};
 	};
 
-	// Claude Code 上下文（默认 agentContext='cc'）
 	const outcomeCc = await uninstallComponent('CodeGraph', undefined, {exec: mockExec});
 	assert.equal(outcomeCc.success, true, 'CodeGraph Claude Code 默认卸载成功');
-	assert.deepEqual(
-		execCalls[0],
-		{cmd: 'codegraph', args: ['uninstall', '--target=claude', '--yes']},
-		'Claude Code 默认卸载只执行 codegraph uninstall --target=claude --yes（无 --location=global）'
-	);
-	assert.equal(
-		execCalls.some(c => c.cmd === 'npm' && c.args.includes('uninstall')),
-		false,
-		'Claude Code 默认卸载不得 npm uninstall（CLI 移除是独立高级动作）'
-	);
+	assert.deepEqual(execCalls[0], {cmd: 'codegraph', args: ['uninstall', '--target=claude', '--yes']}, 'Claude Code 默认卸载解除 claude 集成');
+	assert.equal(execCalls.some(c => c.cmd === 'npm' && c.args.includes('uninstall')), false, 'Codex 仍有 MCP 时保留共享 CLI');
 
-	// Codex 上下文（agentContext='cx'）
+	writeFileSync(join(process.env.CODEX_HOME, 'config.toml'), '', 'utf8');
 	execCalls.length = 0;
 	const outcomeCx = await uninstallComponent('CodeGraph', undefined, {exec: mockExec, agentContext: 'cx'});
 	assert.equal(outcomeCx.success, true, 'CodeGraph Codex 默认卸载成功');
-	assert.deepEqual(
-		execCalls[0],
-		{cmd: 'codegraph', args: ['uninstall', '--target=codex', '--yes']},
-		'Codex 默认卸载只执行 codegraph uninstall --target=codex --yes'
-	);
-	assert.equal(
-		execCalls.some(c => c.cmd === 'npm' && c.args.includes('uninstall')),
-		false,
-		'Codex 默认卸载不得 npm uninstall'
-	);
+	assert.deepEqual(execCalls[0], {cmd: 'codegraph', args: ['uninstall', '--target=codex', '--yes']}, 'Codex 默认卸载解除 codex 集成');
+	assert.ok(execCalls.some(c => c.cmd === 'npm' && c.args.includes('uninstall') && c.args.includes('@colbymchenry/codegraph')), 'cc/cx 均无 MCP 后 npm uninstall 共享 CLI');
+	process.env.CCQ_HOME = home;
+	delete process.env.CODEX_HOME;
+	rmSync(homeCodeGraph, {recursive: true, force: true});
 }
-console.log('[PASS] CodeGraph 默认卸载只解除当前 Agent 集成（不 npm uninstall / 不删 .codegraph）(3.9)');
+console.log('[PASS] CodeGraph 卸载按剩余 MCP 决定是否移除共享 CLI');
 
 // 11.11 反例：用户自定义 statusLine（非受管值）卸载 Ccline 后不动
 {

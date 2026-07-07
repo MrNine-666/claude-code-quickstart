@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import {mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
+import {chmodSync, mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {delimiter, join} from 'node:path';
 
 // task 8.4：Update 检测范围收缩门禁。覆盖：
 // - 无 ClaudeMd/ClaudeConfig 组件（HC-FU-08）
@@ -23,8 +23,31 @@ const uid = process.getuid ? process.getuid() : process.pid;
 const cacheDir = join(tmpdir(), `ccq-cache-${uid}`);
 mkdirSync(cacheDir, {recursive: true});
 writeFileSync(join(cacheDir, 'npm-outdated.json'), JSON.stringify({}), 'utf8');
-// 预写 npm view 缓存（命中 TTL），避免真实 npm view ccg-workflow 调用
-writeFileSync(join(cacheDir, 'npm-view.json'), JSON.stringify({}), 'utf8');
+// 预写旧单包 npm view 缓存：验证 npm 全局包缺少 outdated 记录时仍用 npm-view 缓存判断更新，
+// 且缺包缓存会走 mock npm 补齐，不回退到真实网络。
+writeFileSync(join(cacheDir, 'npm-view.json'), JSON.stringify({'@anthropic-ai/claude-code': '9.9.9'}), 'utf8');
+
+// 预置 mock 命令，验证检测逻辑可在 outdated 为空时通过 npm view latest 识别更新，
+// 同时隔离缺包缓存补查时的 npm view 调用，避免真实网络。
+const binDir = join(home, 'bin');
+mkdirSync(binDir, {recursive: true});
+const mockClaudePath = join(binDir, process.platform === 'win32' ? 'claude.cmd' : 'claude');
+writeFileSync(
+	mockClaudePath,
+	process.platform === 'win32' ? '@echo off\r\necho 1.0.0\r\n' : '#!/usr/bin/env sh\necho 1.0.0\n',
+	'utf8'
+);
+const mockNpmPath = join(binDir, process.platform === 'win32' ? 'npm.cmd' : 'npm');
+writeFileSync(
+	mockNpmPath,
+	process.platform === 'win32' ? '@echo off\r\necho.\r\n' : '#!/usr/bin/env sh\necho\n',
+	'utf8'
+);
+if (process.platform !== 'win32') {
+	chmodSync(mockClaudePath, 0o755);
+	chmodSync(mockNpmPath, 0o755);
+}
+process.env.PATH = `${binDir}${delimiter}${process.env.PATH ?? ''}`;
 
 // 预写 CcgWorkflow config.toml：验证本地版本取自 config.toml 而非 codeagent-wrapper 二进制
 // （codeagent-wrapper 是独立二进制，版本体系与 ccg-workflow npm 包不同）
@@ -57,6 +80,13 @@ assert.equal(ccg.currentVersion, '3.1.6', 'CcgWorkflow 本地版本应取自 con
 assert.equal(ccg.latestVersion, '3.1.6', 'CcgWorkflow 远程查询未命中时 fallback 到当前版本');
 assert.equal(ccg.hasUpdate, false, 'CcgWorkflow 无远程数据时不应误报更新');
 console.log('[PASS] 8.4 CcgWorkflow npm 引擎保留 + 版本源取自 config.toml');
+
+// ── npm view 兜底：outdated 缺记录时仍能检测全局 npm 包更新 ────────────────
+const claudeUpdate = components.find(c => c.id === 'ClaudeCode');
+assert.equal(claudeUpdate.currentVersion, '1.0.0', 'ClaudeCode 本地版本来自 claude --version mock');
+assert.equal(claudeUpdate.latestVersion, '9.9.9', 'ClaudeCode latestVersion 应来自 npm-view 缓存兜底');
+assert.equal(claudeUpdate.hasUpdate, true, 'outdated 为空但 npm-view 有新版本时应提示可更新');
+console.log('[PASS] npm view 兜底检测全局 npm 包更新');
 
 // ── 1.2 CodexCli 官方包名 + 检测独立于 ClaudeCode（HC-CODEX-OFFICIAL-PACKAGE / HC-CODEX-DETECT-INDEPENDENT）──
 // checkCliToolUpdates 遍历 NPM_COMPONENT_MAP，各组件的 installed 由自身 `<command> --version`

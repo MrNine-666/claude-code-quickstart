@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync} from 'node:fs';
 import {join, relative} from 'node:path';
 import {tmpdir} from 'node:os';
+import {fileURLToPath} from 'node:url';
 import {
 	atomicWrite,
 	deletePath,
@@ -94,7 +95,7 @@ try {
 	rmSync(tempDir, {recursive: true, force: true});
 }
 
-const tuiRoot = new URL('..', import.meta.url).pathname;
+const tuiRoot = fileURLToPath(new URL('..', import.meta.url));
 const packageJson = readFileSync(join(tuiRoot, 'package.json'), 'utf8');
 assert.ok(packageJson.includes('scripts/verify-toml-edit.mjs'), 'verify 聚合必须包含 TOML 工具层门禁');
 
@@ -114,9 +115,10 @@ function listSourceFiles(dir) {
 }
 
 const directSmolTomlImports = listSourceFiles(join(tuiRoot, 'src'))
-	.filter((filePath) => !filePath.endsWith('src/core/toml-edit.ts'))
-	.filter((filePath) => readFileSync(filePath, 'utf8').includes('smol-toml'))
-	.map((filePath) => relative(tuiRoot, filePath));
+	.map((filePath) => ({filePath, relativePath: relative(tuiRoot, filePath).replaceAll('\\', '/')}))
+	.filter(({relativePath}) => relativePath !== 'src/core/toml-edit.ts')
+	.filter(({filePath}) => readFileSync(filePath, 'utf8').includes('smol-toml'))
+	.map(({relativePath}) => relativePath);
 assert.deepEqual(directSmolTomlImports, [], '生产代码必须通过 core/toml-edit.ts 统一读写 TOML');
 
 console.log('[PASS] TOML 结构化编辑：parse/stringify + path get/set/delete + 原子写 + 错误脱敏 + 统一入口');

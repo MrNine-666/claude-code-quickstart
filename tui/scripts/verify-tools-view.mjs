@@ -38,6 +38,11 @@ const succeeded = outcomes.filter(item => item.success);
 assert.equal(succeeded.length, 2, '其余 2 项成功');
 console.log('[PASS] 批量安装失败隔离 (P-6)');
 
+// 安装结果允许携带版本号，ToolsView 局部 patch 依赖该字段避免安装后卡片版本为空。
+const versionedOutcomes = await installMultipleTools(['CodexCli'], undefined, async id => ({id, success: true, version: '0.142.5'}));
+assert.equal(versionedOutcomes[0].version, '0.142.5', '安装成功结果应保留 version 字段，供 UI patch 使用');
+console.log('[PASS] 安装结果保留版本号用于卡片局部更新');
+
 // ── 工具定义完整性：6 个工具齐备 ─────────────────────────────────────────────
 const ids = TOOL_DEFINITIONS.map(item => item.id);
 assert.deepEqual(ids, ['Ccline', 'CcgWorkflow', 'OpenSpec', 'CodeGraph', 'CodexCli', 'AntigravityCli'], '6 工具定义齐备且顺序固定');

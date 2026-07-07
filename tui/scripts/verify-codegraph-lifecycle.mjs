@@ -7,8 +7,8 @@ import {
 } from '../src/core/tools-lifecycle.ts';
 
 // Task 1.6 → Phase 3：CodeGraph 生命周期命令边界（design D4/PBT-4），断言真实 resolver。
-// 不变量：install 接入当前 Agent；默认 uninstall 只解除集成（不 npm uninstall、不删 .codegraph/）；
-// 移除 CLI 为独立高级动作。
+// 不变量：resolver 层 install 接入当前 Agent；resolver 层 uninstall 只解除集成（不删 .codegraph/）；
+// 共享 CLI 移除命令独立暴露，是否执行由 tools-manage 按剩余 cc/cx MCP 决定。
 
 // agentContext 短名 → 官方 --target 全称。
 assert.equal(agentTarget('cc'), 'claude', 'cc → --target=claude');
@@ -29,9 +29,9 @@ for (const [context, target] of [['cc', 'claude'], ['cx', 'codex']]) {
 		`${target}: 默认卸载只解除当前 Agent 集成`
 	);
 
-	// 默认卸载不得 npm uninstall
+	// resolver 层卸载不得 npm uninstall；共享 CLI 清理由 tools-manage 按剩余 MCP 决定。
 	const hasNpmUninstall = uninstall.some(c => c.cmd === 'npm' && c.args.includes('uninstall'));
-	assert.equal(hasNpmUninstall, false, `${target}: 默认卸载不得 npm uninstall`);
+	assert.equal(hasNpmUninstall, false, `${target}: resolver 层卸载不得 npm uninstall`);
 
 	// 默认卸载不得删除 .codegraph/ 项目索引（不出现 uninit / rm .codegraph）
 	const touchesProjectIndex = uninstall.some(c => c.args.some(a => /\.codegraph|uninit/.test(a)));
@@ -46,4 +46,4 @@ assert.deepEqual(
 	'移除 CLI 高级动作 = npm uninstall -g @colbymchenry/codegraph'
 );
 
-console.log('[PASS] 1.6/3.8/3.9/3.10 CodeGraph 生命周期 resolver：install 接入 + 默认卸载只解除集成 + 移除 CLI 独立高级动作');
+console.log('[PASS] 1.6/3.8/3.9/3.10 CodeGraph 生命周期 resolver：install 接入 + resolver 卸载解除集成 + CLI 移除命令独立');

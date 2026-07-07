@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import {formatShortcutKey, isAppModifier, isEditingModifier} from '../src/utils/keyboard.ts';
+import {readFileSync} from 'node:fs';
+import {formatShortcutKey, hasShortcutModifier, isAppModifier, isEditingModifier} from '../src/utils/keyboard.ts';
 import {
 	CONFIG_COMMANDS,
 	MCP_COMMANDS,
@@ -28,7 +29,11 @@ assert.equal(isEditingModifier({name: 's', ctrl: true}, 'darwin'), false, 'macOS
 assert.equal(isEditingModifier({name: 's', ctrl: true}, 'default'), true, '非 macOS 编辑语义使用 Ctrl');
 assert.equal(isAppModifier({name: 't', ctrl: true}), true, 'TUI 应用功能使用 Ctrl');
 assert.equal(isAppModifier({name: 't', super: true}), false, 'TUI 应用功能不使用 Cmd/Super');
-console.log('[PASS] modifier helper：编辑语义 Command-first，应用功能 Control-first');
+assert.equal(hasShortcutModifier({name: 's', super: true}), true, '文本输入过滤应识别 macOS Cmd/Super 修饰键');
+assert.equal(hasShortcutModifier({name: 's', ctrl: true}), true, '文本输入过滤应识别 Ctrl 修饰键');
+assert.equal(hasShortcutModifier({name: 's', meta: true}), true, '文本输入过滤应识别 Alt/Meta 修饰键');
+assert.equal(hasShortcutModifier({name: 's'}), false, '普通字符输入不应被视为快捷键组合');
+console.log('[PASS] modifier helper：编辑语义 Command-first，应用功能 Control-first，文本输入过滤排除修饰键组合');
 
 // ── binding 数据源：保存走编辑语义，推荐/导入走 Control ────────────────────
 const expectedSaveKey = process.platform === 'darwin' ? 'super+s' : 'ctrl+s';
@@ -54,5 +59,12 @@ if (process.platform === 'darwin') {
 	assert.equal(shortcutByLabel['补全推荐'], 'Ctrl+O', '非 macOS footer 补全应显示 Ctrl+O');
 }
 console.log('[PASS] footer：平台化符号展示来自单一 binding source');
+
+// ── 视图源码：页面内不硬编码快捷键提示 ───────────────────────────────
+for (const file of ['src/views/ConfigView.tsx', 'src/views/PromptsView.tsx']) {
+	const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+	assert.equal(/按\s*a|Ctrl\+|Cmd\+|\[[A-Za-z]\]/.test(source), false, `${file} 不应硬编码快捷键提示`);
+}
+console.log('[PASS] 视图源码：快捷键提示仅由 footer ShortcutBar 展示');
 
 console.log('[PASS] macOS 快捷键混合策略门禁全部通过');

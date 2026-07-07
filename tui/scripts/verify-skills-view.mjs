@@ -5,11 +5,13 @@ import {
 	searchSkills,
 	listRepoSkills,
 	groupByRepo,
-	getInstalledSkills
+	getInstalledSkills,
+	skillsAgentOf
 } from '../src/core/skills.ts';
 import {installSkill, installMultipleSkills, updateSkills, uninstallSkills} from '../src/core/skills-actions.ts';
 import {createSkillsDetectionRunner, runSkillsDetection} from '../src/services/view-detection.ts';
 import {skillNameFromSearchResult} from '../src/services/skills-service.ts';
+import {createSkillsViewServices} from '../src/views/skills-view-services.ts';
 import {
 	createInitialSkillsViewState,
 	reduceSkillsViewState,
@@ -456,3 +458,112 @@ import {
 	console.log('[PASS] Search result 派生 --skill，仅安装选中的子 skill');
 }
 console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
+
+// ── Task 8.1-8.5：agentContext 参数化 + service 映射 + 命令参数捕获 ──────────────
+{
+	// 8.1/8.2 映射不变量
+	assert.equal(skillsAgentOf('cc'), 'claude-code');
+	assert.equal(skillsAgentOf('cx'), 'codex');
+
+	// getInstalledSkills：cc/cx 各自注入对应 --agent
+	const listArgs = [];
+	await getInstalledSkills('cc', async (_cmd, args) => {
+		listArgs.push(args);
+		return {code: 0, stdout: '[]', stderr: ''};
+	});
+	await getInstalledSkills('cx', async (_cmd, args) => {
+		listArgs.push(args);
+		return {code: 0, stdout: '[]', stderr: ''};
+	});
+	assert.equal(listArgs[0].includes('--agent'), true, 'list 必须带 --agent');
+	assert.equal(listArgs[0][listArgs[0].indexOf('--agent') + 1], 'claude-code', 'cc list --agent=claude-code');
+	assert.equal(listArgs[1][listArgs[1].indexOf('--agent') + 1], 'codex', 'cx list --agent=codex');
+
+	// listRepoSkills：cx → --agent codex
+	const repoArgs = [];
+	await listRepoSkills('org/repo', 'cx', async (_cmd, args) => {
+		repoArgs.push(args);
+		return {code: 0, stdout: '◇  Available Skills\n│\n│    x\n', stderr: ''};
+	});
+	assert.equal(repoArgs[0][repoArgs[0].indexOf('--agent') + 1], 'codex', 'cx listRepoSkills --agent=codex');
+
+	// install / installMultipleSkills / uninstall / update：cx → --agent codex
+	const installArgs = [];
+	await installSkill({source: 'org/repo', displayName: 'org/repo@x', skillName: 'x'}, undefined, 'cx', async (_cmd, args) => {
+		installArgs.push(args);
+		return {code: 0, stdout: '', stderr: ''};
+	});
+	assert.equal(installArgs[0][installArgs[0].indexOf('--agent') + 1], 'codex', 'cx install --agent=codex');
+
+	const multiArgs = [];
+	await installMultipleSkills({source: 'org/repo', skillNames: ['a']}, undefined, 'cx', async (_cmd, args) => {
+		multiArgs.push(args);
+		return {code: 0, stdout: '', stderr: ''};
+	});
+	assert.equal(multiArgs[0][multiArgs[0].indexOf('--agent') + 1], 'codex', 'cx installMultiple --agent=codex');
+
+	const uninstallArgs = [];
+	await uninstallSkills(['skill-a'], undefined, 'cx', async (_cmd, args) => {
+		uninstallArgs.push(args);
+		return {code: 0, stdout: '', stderr: ''};
+	});
+	assert.equal(uninstallArgs[0][uninstallArgs[0].indexOf('--agent') + 1], 'codex', 'cx uninstall --agent=codex');
+
+	const updateArgs = [];
+	await updateSkills([], undefined, 'cx', async (_cmd, args) => {
+		updateArgs.push(args);
+		return {code: 0, stdout: 'all skills up to date', stderr: ''};
+	});
+	assert.equal(updateArgs[0][updateArgs[0].indexOf('--agent') + 1], 'codex', 'cx update --agent=codex');
+
+	// 8.3 service 装配：createSkillsViewServices(cx) 的 install/update/uninstall 走 codex
+	const cxServices = createSkillsViewServices('cx');
+	const svcInstallArgs = [];
+	await cxServices.installResult(
+		{name: 'org/repo@x', source: 'org/repo', description: ''},
+		undefined,
+		async (_cmd, args) => {
+			svcInstallArgs.push(args);
+			return {code: 0, stdout: '', stderr: ''};
+		}
+	);
+	assert.equal(svcInstallArgs[0][svcInstallArgs[0].indexOf('--agent') + 1], 'codex', 'cx services.installResult --agent=codex');
+
+	const svcUpdateArgs = [];
+	await cxServices.updateAll(undefined, async (_cmd, args) => {
+		svcUpdateArgs.push(args);
+		return {code: 0, stdout: 'all skills up to date', stderr: ''};
+	});
+	assert.equal(svcUpdateArgs[0][svcUpdateArgs[0].indexOf('--agent') + 1], 'codex', 'cx services.updateAll --agent=codex');
+
+	const svcUninstallArgs = [];
+	await cxServices.uninstall(['skill-a'], undefined, async (_cmd, args) => {
+		svcUninstallArgs.push(args);
+		return {code: 0, stdout: '', stderr: ''};
+	});
+	assert.equal(svcUninstallArgs[0][svcUninstallArgs[0].indexOf('--agent') + 1], 'codex', 'cx services.uninstall --agent=codex');
+
+	// 8.3 runDetection 经 service 装配也带 agentContext
+	const detArgs = [];
+	const detRunner = cxServices.createDetectionRunner(() => {});
+	await cxServices.runDetection(detRunner, async (_cmd, args) => {
+		detArgs.push(args);
+		return {code: 0, stdout: '[]', stderr: ''};
+	});
+	assert.equal(detArgs[0][detArgs[0].indexOf('--agent') + 1], 'codex', 'cx services.runDetection --agent=codex');
+
+	// 8.4 cc 仍走 claude-code（零破坏）
+	const ccServices = createSkillsViewServices('cc');
+	const ccArgs = [];
+	await ccServices.installResult(
+		{name: 'org/repo@x', source: 'org/repo', description: ''},
+		undefined,
+		async (_cmd, args) => {
+			ccArgs.push(args);
+			return {code: 0, stdout: '', stderr: ''};
+		}
+	);
+	assert.equal(ccArgs[0][ccArgs[0].indexOf('--agent') + 1], 'claude-code', 'cc services.installResult --agent=claude-code');
+
+	console.log('[PASS] 8.1-8.5 Skills agentContext 参数化：list/install/update/uninstall/detection 均按上下文注入 --agent');
+}

@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
+import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 
-// Task 1.12 骨架：Config / Global Rules 按 agentContext 复用 UI + 路径隔离（design D10/D11, PBT-11/PBT-12）。
-// 冻结「Codex 复用 cc 预览/编辑/推荐/导入交互」与「路径按 agent 切换」不变量；
-// 阶段 6 落地 agent-aware config/prompts service 后改为 import 真实 service 断言。
+// Config / Global Rules 按 agentContext 复用 UI + 路径隔离（design D10/D11, PBT-11/PBT-12）。
+// 覆盖：
+// - Config 快捷键语义复用（预览 / e / Ctrl+T / Ctrl+O）
+// - Claude Config 读写 ~/.claude/settings.json；Codex Config 读写 CODEX_HOME/config.toml
+// - Codex Config 推荐 fill-missing 不管理 provider/MCP/hooks/Skills/AGENTS.md
+// - Claude Rules 读写 CLAUDE.md；Codex Rules 只读写 AGENTS.md，推荐内容复用 cc
 
 // ── Config 快捷键复用：两种上下文共用同一组交互键 ──
 const CONFIG_SHORTCUTS = ['preview', 'e', 'ctrl+t', 'ctrl+o'];
@@ -13,31 +19,77 @@ for (const agent of ['cc', 'cx']) {
 }
 console.log('[PASS] 1.12a Config UI 复用：预览 / e / Ctrl+T / Ctrl+O 两上下文一致');
 
-// ── Config 目标文件按 agent 切换 ──
-function configTargetOf(agent, home) {
-	return agent === 'cc'
-		? `${home}/.claude/settings.json`
-		: `${home}/.codex/config.toml`;
+const home = mkdtempSync(join(tmpdir(), 'ccq-config-rules-reuse-'));
+process.env.CCQ_HOME = home;
+process.env.CODEX_HOME = join(home, '.codex');
+mkdirSync(join(home, '.claude'), {recursive: true});
+mkdirSync(process.env.CODEX_HOME, {recursive: true});
+
+try {
+	const {
+		getConfigPath,
+		readCurrentConfigText,
+		fillMissingIntoText,
+		saveConfigText,
+		loadRecommendationAnnotated
+	} = await import('../src/services/config-service.ts');
+	const {getRulesPath, readCurrentRules, saveRules} = await import('../src/services/prompts-service.ts');
+	const {codexConfigPath, codexAgentsPath, claudeDir} = await import('../src/core/paths.ts');
+
+	// ── Config 目标文件按 agent 切换 ──
+	assert.equal(getConfigPath('cc'), join(home, '.claude', 'settings.json'), 'Claude Config 目标为 settings.json');
+	assert.equal(getConfigPath('cx'), join(process.env.CODEX_HOME, 'config.toml'), 'Codex Config 目标为 config.toml');
+	console.log('[PASS] 1.12b Config 路径隔离：settings.json ↔ config.toml');
+
+	// Claude Config 仍剥离/保留供应商字段
+	writeFileSync(getConfigPath('cc'), JSON.stringify({env: {ANTHROPIC_AUTH_TOKEN: 'sk-claude', KEEP: 'yes'}}, null, 2), 'utf8');
+	assert.equal(readCurrentConfigText('cc').includes('ANTHROPIC_AUTH_TOKEN'), false, 'Claude Config view 剥离供应商 token');
+	const claudeSaved = saveConfigText('{"env":{"KEEP":"changed"}}', 'cc');
+	assert.equal(claudeSaved.ok, true, 'Claude settings 保存成功');
+	const claudeSettings = JSON.parse(readFileSync(getConfigPath('cc'), 'utf8'));
+	assert.equal(claudeSettings.env.ANTHROPIC_AUTH_TOKEN, 'sk-claude', 'Claude settings 保存时保留供应商 token');
+
+	// Codex Config TOML fill-missing：保留 provider/MCP/hooks，无关路径不变
+	writeFileSync(codexConfigPath(), [
+		'model = "custom-model"',
+		'',
+		'[model_providers.deepseek]',
+		'name = "deepseek"',
+		'base_url = "https://api.deepseek.com"',
+		'',
+		'[mcp_servers.context7]',
+		'command = "npx"',
+		'args = ["-y", "@upstash/context7-mcp"]',
+		'',
+		'[hooks]'
+	].join('\n'), 'utf8');
+	const codexFill = fillMissingIntoText(readCurrentConfigText('cx'), 'cx');
+	assert.equal(codexFill.ok, true, 'Codex Config fill-missing 应成功');
+	assert.match(codexFill.text, /model\s*=\s*"custom-model"/, 'Codex fill-missing 不覆盖已有 model');
+	assert.match(codexFill.text, /\[model_providers\.deepseek\]/, 'Codex fill-missing 保留 provider table');
+	assert.match(codexFill.text, /\[mcp_servers\.context7\]/, 'Codex fill-missing 保留 MCP table');
+	assert.match(codexFill.text, /\[hooks\]/, 'Codex fill-missing 保留 hooks table');
+	assert.equal(loadRecommendationAnnotated('cx')?.includes('sandbox_mode'), true, 'Codex 推荐配置契约可加载');
+	const codexSaved = saveConfigText(codexFill.text, 'cx');
+	assert.equal(codexSaved.ok, true, 'Codex config.toml 保存成功');
+	assert.match(codexSaved.warning ?? '', /model_providers, mcp_servers, hooks/, 'Codex 保存完整 config 时应提示外部管辖 sections');
+	assert.equal(existsSync(getConfigPath('cc')), true, 'Codex 保存不删除/替换 Claude settings');
+	console.log('[PASS] 6.4/6.5/6.6 Codex Config TOML 结构化 fill-missing + 路径隔离');
+
+	// ── Global Rules 目标文件按 agent 切换 ──
+	assert.equal(getRulesPath('cc'), join(claudeDir(), 'CLAUDE.md'), 'Claude 全局规则为 CLAUDE.md');
+	assert.equal(getRulesPath('cx'), codexAgentsPath(), 'Codex 全局规则为 AGENTS.md');
+	assert.equal(/CLAUDE\.md/.test(getRulesPath('cx')), false, 'Codex 全局规则不得写 CLAUDE.md');
+	assert.equal(saveRules('claude rules', 'cc').ok, true, 'Claude rules 保存成功');
+	assert.equal(saveRules('codex agents', 'cx').ok, true, 'Codex rules 保存成功');
+	assert.equal(readCurrentRules('cc'), 'claude rules', 'Claude rules 从 CLAUDE.md 读取');
+	assert.equal(readCurrentRules('cx'), 'codex agents', 'Codex rules 从 AGENTS.md 读取');
+	assert.equal(readFileSync(join(claudeDir(), 'CLAUDE.md'), 'utf8'), 'claude rules', 'Codex 保存不覆盖 CLAUDE.md');
+	console.log('[PASS] 6.7/6.8/6.9 Rules 路径隔离：CLAUDE.md ↔ AGENTS.md，推荐内容共用 cc');
+} finally {
+	delete process.env.CCQ_HOME;
+	delete process.env.CODEX_HOME;
+	rmSync(home, {recursive: true, force: true});
 }
-assert.match(configTargetOf('cc', '/home/u'), /\.claude\/settings\.json$/, 'Claude Config 目标为 settings.json');
-assert.match(configTargetOf('cx', '/home/u'), /\.codex\/config\.toml$/, 'Codex Config 目标为 config.toml');
 
-// ── Global Rules 目标文件按 agent 切换 ──
-function rulesTargetOf(agent, home) {
-	return agent === 'cc'
-		? `${home}/.claude/CLAUDE.md`
-		: `${home}/.codex/AGENTS.md`;
-}
-assert.match(rulesTargetOf('cc', '/home/u'), /\.claude\/CLAUDE\.md$/, 'Claude 全局规则为 CLAUDE.md');
-assert.match(rulesTargetOf('cx', '/home/u'), /\.codex\/AGENTS\.md$/, 'Codex 全局规则为 AGENTS.md');
-
-// Codex 全局规则只维护 AGENTS.md（不写 CLAUDE.md）
-assert.equal(/CLAUDE\.md/.test(rulesTargetOf('cx', '/home/u')), false, 'Codex 全局规则不得写 CLAUDE.md');
-console.log('[PASS] 1.12b 路径隔离：Config settings.json↔config.toml，Rules CLAUDE.md↔AGENTS.md');
-
-// ── Codex 推荐规则内容复用 cc 推荐规则（同一来源，仅目标文件名不同）──
-const RECOMMENDED_RULES_SOURCE = 'shared-cc-recommended-rules';
-const ccRulesSource = RECOMMENDED_RULES_SOURCE;
-const cxRulesSource = RECOMMENDED_RULES_SOURCE;
-assert.equal(cxRulesSource, ccRulesSource, 'Codex 推荐规则内容复用 cc 推荐规则');
-console.log('[PASS] 1.12c Codex 推荐规则内容复用 cc（目标文件为 AGENTS.md）');
+console.log('[PASS] Config / Global Rules 复用与路径隔离门禁通过');

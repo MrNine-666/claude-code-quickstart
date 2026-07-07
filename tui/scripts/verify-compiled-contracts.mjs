@@ -44,7 +44,7 @@ const {target, ext} = currentTarget();
 const outfile = join(tempDir, `compiled-contracts-probe${ext}`);
 
 try {
-	const build = await run('bun', [
+	const build = await run(process.execPath, [
 		'build',
 		'--compile',
 		`--target=${target}`,
