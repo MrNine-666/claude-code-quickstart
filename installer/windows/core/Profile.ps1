@@ -561,6 +561,53 @@ function Write-FileAtomically {
     }
 }
 
+function Get-FnmSubsectionLines {
+    <#
+    .SYNOPSIS
+    从标记块内容中提取 fnm 启动命令行（剥离 [CCQ:FNM:BEGIN/END] 子段标记）
+    .DESCRIPTION
+    历史上 fnm provider 通过 Write-ProfileSubsection 把 `fnm env --use-on-cd | Out-String
+    | Invoke-Expression` 包在 `# [CCQ:FNM:BEGIN]` / `# [CCQ:FNM:END]` 子段里，再嵌入 CCQ
+    标记块。清理标记块时若整块删除会连带删掉 fnm 环境初始化，导致 fnm 管理的 Node.js
+    在新终端失效。本函数只提取子段内部的裸命令行（不含子段标记），供保留使用；无 fnm
+    子段时返回空数组。
+    .PARAMETER BlockLines
+    标记块内部内容行（Get-ManagedBlockContent 返回的 Content）
+    .RETURNS
+    fnm 子段内部的裸命令行数组（不含 [CCQ:FNM:*] 标记）
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]]$BlockLines
+    )
+
+    $fnmBeginMarker = "# [CCQ:FNM:BEGIN]"
+    $fnmEndMarker = "# [CCQ:FNM:END]"
+    $collected = [System.Collections.ArrayList]::new()
+    $inFnm = $false
+
+    foreach ($line in $BlockLines) {
+        $lineText = if ($null -eq $line) { "" } else { [string]$line }
+        $trimmed = $lineText.Trim()
+
+        if ($trimmed -eq $fnmBeginMarker) {
+            $inFnm = $true
+            continue
+        }
+        if ($trimmed -eq $fnmEndMarker) {
+            $inFnm = $false
+            continue
+        }
+        if ($inFnm) {
+            $null = $collected.Add($lineText)
+        }
+    }
+
+    # HC-13：逗号阻止 pipeline 展开，确保空/单元素数组在调用点不退化为 $null/标量
+    return ,$collected.ToArray()
+}
+
 function Remove-ManagedBlockFromFile {
     <#
     .SYNOPSIS
@@ -571,6 +618,9 @@ function Remove-ManagedBlockFromFile {
     开始标记（可选，使用默认标记）
     .PARAMETER EndMarker
     结束标记（可选，使用默认标记）
+    .PARAMETER PreserveFnmSubsection
+    移除标记块时保留其中的 fnm 启动命令（[CCQ:FNM:*] 子段），剥离子段标记后作为普通
+    profile 行留在原块位置。用于清理旧 ccq 快捷函数残留时不误删 fnm 环境初始化。
     .RETURNS
     操作成功返回 $true，失败返回 $false
     #>
@@ -580,7 +630,9 @@ function Remove-ManagedBlockFromFile {
 
         [string]$StartMarker = $script:ManagedBlockStartMarker,
 
-        [string]$EndMarker = $script:ManagedBlockEndMarker
+        [string]$EndMarker = $script:ManagedBlockEndMarker,
+
+        [switch]$PreserveFnmSubsection
     )
 
     if (-not (Test-Path $FilePath)) {
@@ -600,11 +652,28 @@ function Remove-ManagedBlockFromFile {
             return $true
         }
 
+        # 提取需保留的 fnm 启动命令（在块位置原地保留，剥离 [CCQ:FNM:*] 子段标记）
+        $preservedFnmLines = @()
+        if ($PreserveFnmSubsection) {
+            $blockLines = @($blockInfo.Content.ToArray())
+            $preservedFnmLines = @(Get-FnmSubsectionLines -BlockLines $blockLines)
+            if ($preservedFnmLines.Count -gt 0) {
+                Write-UiDim "保留 fnm 启动命令（$($preservedFnmLines.Count) 行）" -Level Detail
+            }
+        }
+
         # 构建新内容（移除标记块）
         $newContent = [System.Collections.ArrayList]::new()
 
         if ($blockInfo.BeforeBlock -and $blockInfo.BeforeBlock.Count -gt 0) {
             foreach ($line in $blockInfo.BeforeBlock) {
+                $null = $newContent.Add($line)
+            }
+        }
+
+        # 在原块位置保留 fnm 启动命令
+        if ($preservedFnmLines.Count -gt 0) {
+            foreach ($line in $preservedFnmLines) {
                 $null = $newContent.Add($line)
             }
         }

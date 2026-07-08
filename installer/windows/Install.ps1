@@ -805,7 +805,9 @@ function Invoke-ProfileLegacyCleanup {
             }
 
             Write-UiDim "检测到旧 CCQ 标记块: $profilePath" -Level Detail
-            $removed = Remove-ManagedBlockFromFile -FilePath $profilePath
+            # 只清理旧 ccq 快捷函数残留，保留块内 [CCQ:FNM:*] fnm 启动命令
+            # （老用户的 fnm 环境初始化写在同一标记块里，整块删除会导致 fnm 管理的 Node.js 在新终端失效）
+            $removed = Remove-ManagedBlockFromFile -FilePath $profilePath -PreserveFnmSubsection
             if ($removed) {
                 Write-UiSuccess "✓ 已清理旧 ccq 快捷函数残留: $profilePath"
             } else {
