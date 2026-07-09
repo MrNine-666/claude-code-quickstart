@@ -15,7 +15,7 @@ assert.match(promptsViewSource, /getRulesPath\(target\)/, '规则目标路径必
 assert.match(promptsViewSource, /readCurrentRules\(target\)/, '规则读取必须按 target 切换');
 assert.match(promptsViewSource, /saveRules\(content, target\)/, '规则保存必须按 target 切换');
 assert.match(promptsViewSource, /assembleRulesRecommendation\(target\)/, '推荐规则内容必须按 target 做 cc/cx 差异化');
-assert.match(promptsViewSource, /title=\{isCodex \? 'Codex 全局规则管理' : '全局规则管理'\}/, 'Header 标题必须随 agentContext 切换');
+assert.match(promptsViewSource, /title='全局规则管理'/, 'Header 标题统一为「全局规则管理」（Codex 上下文经由 Header 全称区分）');
 assert.match(promptsViewSource, /CODEX_HOME\/AGENTS\.md/, 'Codex Header/空状态必须指向 AGENTS.md');
 assert.match(promptsViewSource, /if \(appMod && name === 't'\) \{ togglePanel\(\); return; \}/, 'Ctrl+T 应打开推荐规则面板');
 assert.match(promptsViewSource, /if \(appMod && name === 'o'\) \{ requestImport\(\); return; \}/, 'Ctrl+O 应导入推荐规则到编辑缓冲');
@@ -67,7 +67,8 @@ try {
 	assert.doesNotMatch(promptsCoreSource, /adaptBaseRecommendationForCodex|replace\(/, 'Codex 推荐规则不得由 Claude 模板运行时替换生成');
 	assert.match(claudeRecommendation, /# Claude Code 增强配置/, 'Claude 推荐规则应包含 base 模板');
 	assert.match(claudeRecommendation, /Windows \/ PowerShell/, 'Claude Windows 推荐规则应拼接平台专用段');
-	assert.match(codexRecommendation, /# Codex AGENTS\.md 增强配置/, 'Codex 推荐规则读取 codex-md.md 独立模板');
+	assert.match(codexRecommendation, /# Codex AGENTS\.md 推荐规则/, 'Codex 推荐规则读取 codex-md.md 独立模板');
+	assert.match(codexRecommendation, /ccg-workflow/, 'Codex 推荐规则临时提示应建议使用 ccg-workflow');
 	assert.match(codexRecommendation, /AGENTS\.md/, 'Codex 推荐规则应使用 AGENTS.md 语境');
 	assert.doesNotMatch(codexRecommendation, /# Claude Code 增强配置/, 'Codex 推荐规则不得保留 Claude Code 标题');
 	assert.doesNotMatch(codexRecommendation, /Windows \/ PowerShell/, 'Codex 推荐规则不应包含 Claude Windows 平台专用段');

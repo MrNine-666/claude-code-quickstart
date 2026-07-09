@@ -160,7 +160,7 @@ TUI 不新增第 7 个 Codex 菜单；改由右侧 content 顶部的全局 **Hea
 
 ### HC-CONFIG-RULES-REUSE
 Config / Global Rules 视图按 `agentContext` 切换目标文件但复用同一 UI（预览页 / `e` 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入 / 损坏文件拒绝覆盖 / 脏编辑保护），骨架 `scripts/verify-config-rules-reuse.mjs`：
-- **Config**：Claude 读写 `~/.claude/settings.json`；Codex 读写 `CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`），经 `core/toml-edit.ts` 结构化写入；Codex 推荐配置仅 fill-missing 补齐通用运行项（`model_reasoning_effort` / `approval_policy` / `sandbox_mode` / `web_search` / `hide_agent_reasoning`），**不含 `model`**（模型由「供应商」profile 设为默认时原文覆盖决定），也不管理 provider/MCP/hooks/Skills/AGENTS.md。
+- **Config**：Claude 读写 `~/.claude/settings.json`；Codex 读写 `CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`），经 `core/toml-edit.ts` 结构化写入；Codex 推荐配置仅 fill-missing 补齐通用运行项（`model_reasoning_effort` / `approval_policy` / `sandbox_mode` / `web_search` / `hide_agent_reasoning` / `file_opener`），**不含 `model`**（模型由「供应商」profile 设为默认时原文覆盖决定），也不管理 provider/MCP/hooks/Skills/AGENTS.md。
 - **Global Rules**：Claude 读写 `~/.claude/CLAUDE.md`；Codex **只**读写 `CODEX_HOME/AGENTS.md`（默认 `~/.codex/AGENTS.md`），推荐规则内容复用 cc 推荐规则。
 
 ### HC-MCP-FILE-SOURCE
@@ -210,6 +210,22 @@ if (!process.stdin.isTTY) {
 - **接受现状**：textarea 靠光标自动滚动（功能正常），无可见滚动条指示器；用户编辑时光标到达视口边界会自动翻页。
 - **扩展方案**（未实施）：若需可见滚动位置指示，需自造独立指示器组件（读 `textareaRef.current.scrollY` 和 `lineCount` 算比例，在 textarea 旁渲染 `<box>` 模拟滚动条，监听 `onCursorChange` 实时更新），工作量大且收益有限。
 - **理由**：避免后续再次尝试 scrollbox 包裹方案踩坑（历史教训：2026-07-01 尝试为 TextareaEditor 套 `<ThemedScrollbox>`，导致编辑模式 textarea 完全不滚动，已回滚）。
+
+### HC-SPLIT-OVERFLOW-MARGIN
+**flex column 中「标题(marginBottom) + flexGrow 边框(内含 scrollbox + 可溢出内容)」结构，内容溢出会挤掉标题的 marginBottom**：scrollbox 的 min-content 高度会沿 flex 链向上传导、撑大列的总高度，把上方标题行的 `marginBottom` 空行压缩掉，使边框顶边上移一行。
+- **现象**：ConfigView / PromptsView split 分栏中，左列（推荐边栏，内容十几行溢出）边框比右列（空 textarea 不溢出）早一行、顶边不对齐。
+- **修法**：给 `flexGrow={1}` 的边框 box 加 **`flexBasis={0}` + `minHeight={0}`**，并给内部 `ThemedScrollbox` 的 style 加 `minHeight: 0`。`flexBasis={0}` 让 flex 完全按 grow 分配空间、不受子内容 min-size 影响，`minHeight={0}` 允许 flex 子项收缩到分配高度以内。
+  ```jsx
+  <box flexGrow={1} flexBasis={0} minHeight={0} borderStyle="rounded" ...>
+      <ThemedScrollbox style={{flexGrow: 1, minHeight: 0}}>...</ThemedScrollbox>
+  </box>
+  ```
+- **验证手段**：OpenTUI 提供离屏测试渲染器（`@opentui/react/test-utils` 的 `testRender` + `captureCharFrame()`），可离屏渲染并按行读取字符网格，精确测量边框顶边/底边行号——布局类 bug 应用它实测定位，禁止靠肉眼推演 flex 行为。
+- **理由**：历史教训 2026-07-09——曾误判为「标题 `<text>` 多行 JSX 引入空白子节点」，改标题单行内联后 bug 依旧（CodePreview 正常渲染的多行 `<text>` 即反例）；离屏探针受控对照实验（唯一变量=内容是否溢出）才锁定真因。由 `verify-layout-shell.mjs` 正则门禁守护。
+
+### HC-CODEPREVIEW-TRAILING-NEWLINE
+**`CodePreview` 必须剥离尾部单个换行产生的伪空行**：`content.split('\n')` 对以 `\n` 结尾的标准文件内容（如 `"a\n"`）会在尾部产出一个空串（`["a", ""]`），若直接逐行渲染会多出一道可见空行。`CodePreview` 已在拆行后去掉这个 trailing-newline 伪空行（保留正文中间的真实空行）。
+- **理由**：历史教训 2026-07-09——Codex 推荐规则模板仅 4 行（末尾带标准 `\n`），在推荐边栏正文下多渲染一道空行；Claude 侧内容长看不到末尾未察觉，实为通用渲染问题。修复对 c/cx、Config/Prompts 全部一处受益。行为对齐 `cat -n` / 编辑器（尾部换行不算独立一行，中间空行照常保留）。
 
 ---
 
@@ -344,7 +360,7 @@ if (useIcon && existsSync(ICON_PATH)) {
 |------|------|------|
 | 工具管理 | `views/tools-view.tsx` | Agent 组（ClaudeCode/CodexCli/AntigravityCli）两种 Header 常显；Ccline 仅 Claude Code；OpenSpec/CcgWorkflow/CodeGraph 按 `agentContext` 解析 lifecycle，CodeGraph CLI/integration 分层，CcgWorkflow Codex Mode 走官方非交互命令 |
 | 供应商 | `views/provider-view.tsx` + `provider-form.tsx` | Claude Code Header 下管理 `~/.claude/providers/*.json`；Codex Header 下管理 `$CODEX_HOME/<key>.config.toml`，key 单一身份，API key 写 `experimental_bearer_token` 且全链脱敏 |
-| 配置文件 | `views/config-view.tsx` | Claude Code 读写 `~/.claude/settings.json`；Codex 读写 `CODEX_HOME/config.toml`。复用预览 / `e` 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入，不管理 provider/MCP/hooks/Skills/rules |
+| 配置文件 | `views/config-view.tsx` | Claude Code 读写 `~/.claude/settings.json`；Codex 读写 `CODEX_HOME/config.toml`。复用预览 / `e` 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入；仅剥离 model + 供应商 env（AUTH_TOKEN/BASE_URL/受管模型键），Claude 侧 statusLine/hooks/outputStyle 等孤儿字段已放开直编 |
 | 全局规则 | `views/prompts-view.tsx` | Claude Code 读写 `~/.claude/CLAUDE.md`；Codex 只读写 `CODEX_HOME/AGENTS.md`。复用推荐规则内容、预览/编辑/导入与脏编辑保护 |
 | MCP | `views/mcp/McpView.tsx` + `mcp-view-model.ts` | MCP Server 启用/禁用 + 凭据管理；Claude Code 状态来自 `~/.claude.json.mcpServers`，Codex 状态来自 `CODEX_HOME/config.toml` 的 `[mcp_servers]`，vault 不作 Active/Disabled 事实源 |
 | Skills | `views/skills-view.tsx` | 按 Header 调用 `skills --agent claude-code|codex`；安装 / 更新 / 卸载，物理存储与映射交给 skills CLI |
