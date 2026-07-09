@@ -49,15 +49,11 @@
   "McpServers": {
     "context7": {
       "Name": "Context7",
-      "Description": "库文档和代码示例检索，支持最新的开发框架文档",
-      "McpType": "stdio",
-      "Command": "npx",
-      "Args": [
-        "-y",
-        "@upstash/context7-mcp"
-      ],
+      "Description": "库文档和代码示例检索，支持最新的开发框架文档（官方 remote HTTP，免 key 匿名可用）",
+      "McpType": "http",
+      "Url": "https://mcp.context7.com/mcp",
       "CredentialType": "none",
-      "RuntimeDepsRef": "DefaultMcpRuntimeDeps",
+      "Note": "官方推荐 remote endpoint；如需更高频次/私有库，可自行添加 CONTEXT7_API_KEY header",
       "Category": "Documentation",
       "Priority": 1,
       "Recommended": true
@@ -108,17 +104,11 @@
     },
     "exa": {
       "Name": "Exa Search",
-      "Description": "AI 原生高质量网络搜索和内容提取",
-      "McpType": "stdio",
-      "Command": "npx",
-      "Args": [
-        "-y",
-        "exa-mcp-server"
-      ],
-      "CredentialType": "single-key",
-      "ApiKeyName": "EXA_API_KEY",
-      "ApiKeyUrl": "https://dashboard.exa.ai/api-keys",
-      "RuntimeDepsRef": "DefaultMcpRuntimeDeps",
+      "Description": "AI 原生高质量网络搜索和内容提取（官方 remote HTTP，免 key 匿名可用）",
+      "McpType": "http",
+      "Url": "https://mcp.exa.ai/mcp",
+      "CredentialType": "none",
+      "Note": "官方推荐 remote endpoint；如需更高频次，可自行添加 x-api-key header（获取地址 https://dashboard.exa.ai/api-keys）",
       "Category": "Search",
       "Priority": 6,
       "Recommended": true

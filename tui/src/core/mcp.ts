@@ -4,6 +4,7 @@ import {readJsonFile, writeJsonAtomic} from './fs-utils.js';
 import {claudeJsonPath, codexConfigPath, settingsPath} from './paths.js';
 import {atomicWrite as writeTomlAtomic, deletePath, getPath, parse as parseToml, setPath, type TomlDocument} from './toml-edit.js';
 import {loadMcpContract, type McpServerDefinition} from './mcp-contract.js';
+import {toCodexMcpConfig} from './mcp-codex-schema.js';
 import {
 	definitionHash,
 	loadVault,
@@ -64,7 +65,8 @@ function readCodexMcpServers(): Record<string, Record<string, unknown>> {
 }
 
 function writeCodexMcpServer(serverId: string, config: Record<string, unknown>): void {
-	writeTomlAtomic(codexConfigPath(), setPath(readCodexConfigToml(), ['mcp_servers', serverId], config));
+	// Codex 只识别其 schema 支持的字段（去 type、剔除 Claude 专有字段）；HTTP 靠 url 判定，stdio 靠 command。
+	writeTomlAtomic(codexConfigPath(), setPath(readCodexConfigToml(), ['mcp_servers', serverId], toCodexMcpConfig(config)));
 }
 
 function deleteCodexMcpServer(serverId: string): void {

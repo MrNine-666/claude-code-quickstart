@@ -74,14 +74,12 @@ export default function McpView({agentContext = 'cc', active, viewportHeight = 1
 	const safeSelected = visibleRows.length === 0 ? 0 : Math.min(selected, visibleRows.length - 1);
 	const current = visibleRows[safeSelected] ?? null;
 
-	// 进入视图时刷新状态表并复位到列表。
+	// Agent 上下文切换时立即刷新状态表；不要依赖 content 焦点，否则 Header 切换后内容会滞后。
 	useEffect(() => {
-		if (active) {
-			setRows(loadMcpStatus(agentContext));
-			setSelected(0);
-			setScreen({kind: 'list'});
-		}
-	}, [active, agentContext]);
+		setRows(loadMcpStatus(agentContext));
+		setSelected(0);
+		setScreen({kind: 'list'});
+	}, [agentContext]);
 
 	// 上报当前子模式给 App footer：表单屏统一 'form'，空列表 'empty'，否则用 screen.kind。
 	useEffect(() => {
@@ -173,7 +171,7 @@ export default function McpView({agentContext = 'cc', active, viewportHeight = 1
 			{visibleRows.length === 0 ? (
 				<ListEmptyState message="暂无 MCP Server" />
 			) : (
-				<ScrollList items={items} cursor={safeSelected} viewportHeight={viewportHeight} reservedRows={3} stretch />
+				<ScrollList items={items} cursor={safeSelected} viewportHeight={viewportHeight} reservedRows={3} active={active} stretch />
 			)}
 
 			{screen.kind === 'confirm-remove' && current ? (

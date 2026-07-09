@@ -46,19 +46,27 @@ console.log('[PASS] Provider 表单模型');
 // ── buildMcpConfig parity（对齐 New-McpSettingsEntry） ─────────────────────
 const contract = loadMcpContract();
 
-// none（context7）
-const noneDef = contract.servers.context7;
-const noneResult = buildMcpConfig('context7', noneDef, {});
+// none stdio（playwright：契约中仍为 stdio/none 的代表样本）
+const noneDef = contract.servers.playwright;
+const noneResult = buildMcpConfig('playwright', noneDef, {});
 assert.equal(noneResult.ok, true);
 assert.equal(noneResult.config.command, 'npx');
-assert.deepEqual(noneResult.config.args, ['-y', '@upstash/context7-mcp']);
+assert.deepEqual(noneResult.config.args, ['-y', '@playwright/mcp@latest']);
 
-// single-key（exa）
-const exaDef = contract.servers.exa;
-const exaResult = buildMcpConfig('exa', exaDef, {EXA_API_KEY: 'sk-exa-123'});
-assert.equal(exaResult.ok, true);
-assert.deepEqual(exaResult.config.env, {EXA_API_KEY: 'sk-exa-123'});
-assert.equal(exaResult.permission, 'mcp__exa');
+// http/none（context7：官方 remote HTTP 默认，保留 type:http + url，无 env）
+const httpDef = contract.servers.context7;
+const httpResult = buildMcpConfig('context7', httpDef, {});
+assert.equal(httpResult.ok, true);
+assert.equal(httpResult.config.type, 'http');
+assert.equal(httpResult.config.url, 'https://mcp.context7.com/mcp');
+assert.equal(httpResult.config.env, undefined);
+
+// single-key（内联 def：契约默认已改用官方 remote HTTP，single-key 走通用样本保证类型覆盖）
+const singleKeyDef = {McpType: 'stdio', Command: 'npx', Args: ['-y', 'sample'], CredentialType: 'single-key', ApiKeyName: 'SAMPLE_API_KEY'};
+const singleKeyResult = buildMcpConfig('sample', singleKeyDef, {SAMPLE_API_KEY: 'sk-sample-123'});
+assert.equal(singleKeyResult.ok, true);
+assert.deepEqual(singleKeyResult.config.env, {SAMPLE_API_KEY: 'sk-sample-123'});
+assert.equal(singleKeyResult.permission, 'mcp__sample');
 
 // url-embedded（tavily）
 const tavilyDef = contract.servers.tavily;
@@ -83,7 +91,7 @@ assert.equal(mgResult.ok, true);
 assert.equal(mgResult.config.args.includes('--token=mg-token'), true);
 
 // 缺凭据应失败
-const missing = buildMcpConfig('exa', exaDef, {});
+const missing = buildMcpConfig('sample', singleKeyDef, {});
 assert.equal(missing.ok, false);
 assert.match(missing.error, /缺少凭据/);
 
