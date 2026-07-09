@@ -4,17 +4,28 @@
     {
       "Id": "claude-md-template.base",
       "Source": "tui/contracts/templates/claude-md.base.md",
+      "Agent": "cc",
       "Platform": "cross-platform",
       "ContentFile": "claude-md.base.md",
-      "Description": "跨平台通用章节（一~五，含输出设置）",
+      "Description": "Claude Code 跨平台通用章节（一~五，含输出设置）",
       "Status": "existing"
     },
     {
       "Id": "claude-md-template.platform-windows",
       "Source": "tui/contracts/templates/claude-md.platform-windows.md",
+      "Agent": "cc",
       "Platform": "Windows",
       "ContentFile": "claude-md.platform-windows.md",
-      "Description": "Windows 专属环境章节（四-环境特定：PowerShell 分隔符 / 中文路径 / 管道传参），仅 Windows 拼接",
+      "Description": "Claude Code Windows 专属环境章节（PowerShell 分隔符 / 中文路径 / 管道传参），仅 Windows 拼接",
+      "Status": "existing"
+    },
+    {
+      "Id": "codex-md-template.base",
+      "Source": "tui/contracts/templates/codex-md.md",
+      "Agent": "cx",
+      "Platform": "cross-platform",
+      "ContentFile": "codex-md.md",
+      "Description": "Codex AGENTS.md 推荐规则独立模板文件",
       "Status": "existing"
     }
   ]

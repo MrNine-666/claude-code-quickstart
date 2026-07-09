@@ -19,10 +19,13 @@ const mcpServers = loadContract('mcp-servers.json');
 assert.ok(mcpServers && typeof mcpServers === 'object', 'mcp-servers.json 应解析为对象');
 
 const claudeMdBase = loadTextContract('templates/claude-md.base.md');
-assert.ok(claudeMdBase.includes('# Claude Code 增强配置'), 'claude-md.base.md 应加载为模板文本');
+assert.ok(claudeMdBase.includes('# Claude Code 增强配置'), 'claude-md.base.md 应加载为 Claude base 模板文本');
 
 const claudeMdWindows = loadTextContract('templates/claude-md.platform-windows.md');
-assert.ok(claudeMdWindows.includes('Windows / PowerShell'), 'claude-md.platform-windows.md 应加载为模板文本');
+assert.ok(claudeMdWindows.includes('Windows / PowerShell'), 'claude-md.platform-windows.md 应加载为 Claude Windows 平台模板文本');
+
+const codexMd = loadTextContract('templates/codex-md.md');
+assert.ok(codexMd.includes('# Codex AGENTS.md 增强配置'), 'codex-md.md 应加载为 Codex 独立模板文本');
 
 // install 链契约 steps.json 属 installer/contracts/，不应在 TUI 契约目录（边界保护）
 assert.throws(() => loadContract('steps.json'), /契约文件不存在/,

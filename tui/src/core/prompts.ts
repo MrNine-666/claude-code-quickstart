@@ -4,14 +4,13 @@ import {loadTextContract} from './contracts.js';
 import {atomicWrite} from './fs-utils.js';
 import {claudeDir} from './paths.js';
 
-// 全局规则菜单 core：推荐 CLAUDE.md 加载（base + 平台段）+ 整文件覆盖导入。
-// 与 installer/windows/steps/ClaudeMd.ps1 / macos/steps/ClaudeMd.zsh 的拼装逻辑对齐：
-//   base.TrimEnd() + "\n\n" + platform.TrimEnd() + "\n"
-// macOS 无专属平台模板，直接用通用 base；Windows 在 base 末尾拼接平台差异段。
+// 全局规则菜单 core：推荐规则加载 + 整文件覆盖导入。
+// Claude Code 保持既有 base + 平台段模板；Codex 维护独立 codex-md.md 模板，禁止
+// 从 Claude 模板运行时替换生成 Codex 模板。
 // Update 检测已收缩（HC-FU-08 不再检测 ClaudeMd），导入不写指纹种子。
-// 工作台消费：assembleRecommendation() 给左栏全文对照 + Ctrl+I 灌缓冲（整体，不分片段）。
 
 export type PromptsPlatform = 'windows' | 'macos';
+export type RulesRecommendationTarget = 'cc' | 'cx';
 
 export type PromptsRecommendation = {
 	readonly available: boolean;
@@ -28,33 +27,37 @@ function readTemplateFile(fileName: string): string | null {
 	}
 }
 
-/** 读 claude-md.<name>.md 模板（assembleRecommendation 拼装用）。 */
-function readTemplate(name: string): string | null {
-	return readTemplateFile(`claude-md.${name}.md`);
-}
-
-/** 推断当前运行平台（Windows / macOS），决定拼装哪段平台模板。 */
 function detectPlatform(): PromptsPlatform {
 	return process.platform === 'darwin' ? 'macos' : 'windows';
 }
 
-/**
- * 拼装完整推荐 CLAUDE.md 内容（base + 平台段），与两端 installer 拼装规则一致。
- * Windows：base + 平台差异段；macOS：无专属平台模板，直接用通用 base。
- * base 缺失则返回 null（视图据此提示契约不可用）；平台段缺失则仅返回 base。
- */
+function readClaudeTemplate(name: string): string | null {
+	return readTemplateFile(`claude-md.${name}.md`);
+}
+
+/** 加载 Claude Code 推荐规则（base + 平台段，兼容旧调用）。 */
 export function assembleRecommendation(platform: PromptsPlatform = detectPlatform()): string | null {
-	const base = readTemplate('base');
+	const base = readClaudeTemplate('base');
 	if (!base) {
 		return null;
 	}
 
-	const platformContent = readTemplate(`platform-${platform}`);
+	const platformContent = readClaudeTemplate(`platform-${platform}`);
 	if (!platformContent) {
 		return `${base.trimEnd()}\n`;
 	}
 
 	return `${base.trimEnd()}\n\n${platformContent.trimEnd()}\n`;
+}
+
+/** 按 Agent 目标加载推荐规则：cc 走 Claude 分段模板，cx 走独立 Codex 模板。 */
+export function assembleRulesRecommendation(target: RulesRecommendationTarget = 'cc', platform: PromptsPlatform = detectPlatform()): string | null {
+	if (target === 'cc') {
+		return assembleRecommendation(platform);
+	}
+
+	const content = readTemplateFile('codex-md.md');
+	return content === null ? null : `${content.trimEnd()}\n`;
 }
 
 /** 加载推荐全局规则（供视图预览）。 */
@@ -104,4 +107,51 @@ export function readInstalledClaudeMd(): string | null {
 	} catch {
 		return null;
 	}
+}
+
+
+/**
+ * 工具注入的受管注释块标记对（Ctrl+O 导入推荐时保留，不被推荐正文覆盖）。
+ * CODEGRAPH_* 由 ccq 工具管理注入；CCG-* 由 ccg-workflow 注入（fast-context / grok / codex-mode）。
+ */
+const MANAGED_MARKER_PAIRS: ReadonlyArray<readonly [start: string, end: string]> = [
+	['<!-- CODEGRAPH_START -->', '<!-- CODEGRAPH_END -->'],
+	['<!-- CCG-FAST-CONTEXT-START -->', '<!-- CCG-FAST-CONTEXT-END -->'],
+	['<!-- CCG-GROK-SEARCH-PROMPT-START -->', '<!-- CCG-GROK-SEARCH-PROMPT-END -->'],
+	['<!-- CCG:START -->', '<!-- CCG:END -->']
+];
+
+/** 从文本提取所有受管注释块（按原文出现顺序）；缺少成对标记的跳过。 */
+export function extractManagedBlocks(text: string): string[] {
+	const found: Array<{start: number; block: string}> = [];
+	for (const [startMarker, endMarker] of MANAGED_MARKER_PAIRS) {
+		let searchFrom = 0;
+		for (;;) {
+			const startIdx = text.indexOf(startMarker, searchFrom);
+			if (startIdx === -1) {
+				break;
+			}
+			const endIdx = text.indexOf(endMarker, startIdx + startMarker.length);
+			if (endIdx === -1) {
+				break;
+			}
+			const end = endIdx + endMarker.length;
+			found.push({start: startIdx, block: text.slice(startIdx, end)});
+			searchFrom = end;
+		}
+	}
+	found.sort((a, b) => a.start - b.start);
+	return found.map(item => item.block);
+}
+
+/**
+ * 导入推荐时合并：推荐正文覆盖注释块以外的内容，工具注入的注释块原样保留并追加在后。
+ * currentText 无受管块时直接返回推荐正文。
+ */
+export function mergeRecommendationPreservingManagedBlocks(recommendation: string, currentText: string): string {
+	const blocks = extractManagedBlocks(currentText);
+	if (blocks.length === 0) {
+		return recommendation;
+	}
+	return `${recommendation.trimEnd()}\n\n${blocks.join('\n\n')}\n`;
 }

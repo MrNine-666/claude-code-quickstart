@@ -12,7 +12,7 @@ import {
 	CodePreview,
 	type TextEditorHandle
 } from '../components/index.js';
-import { assembleRecommendation } from '../core/prompts.js';
+import { assembleRulesRecommendation, mergeRecommendationPreservingManagedBlocks } from '../core/prompts.js';
 import {
 	getRulesPath,
 	readCurrentRules,
@@ -45,7 +45,7 @@ export type PromptsViewProps = {
 export function PromptsView({ agentContext, active, viewportHeight = 16, onSubModeChange, onExitToNav, onExitToHeader, syntaxStyle = null }: PromptsViewProps) {
 	const target: PromptsTarget = agentContext;
 	const isCodex = target === 'cx';
-	const recommendationContent = useMemo(() => assembleRecommendation() ?? '', []);
+	const recommendationContent = useMemo(() => assembleRulesRecommendation(target) ?? '', [target]);
 	const recommendationAvailable = recommendationContent !== '';
 	const rulesPath = useMemo(() => getRulesPath(target), [target]);
 
@@ -74,6 +74,16 @@ export function PromptsView({ agentContext, active, viewportHeight = 16, onSubMo
 			: panel === 'split'
 				? (focus === 'recommend' ? 'edit-split-recommend' : 'edit-split-editor')
 				: 'edit';
+
+	useEffect(() => {
+		setViewContent(readCurrentRules(target) ?? '');
+		setEditInitial('');
+		setMode('view');
+		setPanel('editor');
+		setFocus('editor');
+		setConfirm('none');
+		setDirty(false);
+	}, [target]);
 
 	useEffect(() => {
 		if (!active) return;
@@ -132,10 +142,14 @@ export function PromptsView({ agentContext, active, viewportHeight = 16, onSubMo
 			setConfirm('none');
 			return;
 		}
-		editorRef.current?.replaceText(recommendationContent);
+		// 保留 CodeGraph / ccg-workflow 注入到已安装规则文件的注释块：以磁盘文件为权威来源
+		// （不依赖 textarea 编辑缓冲的 plainText 时序），只覆盖块以外的推荐正文（cc/cx 同源处理）。
+		const installed = readCurrentRules(target) ?? '';
+		const merged = mergeRecommendationPreservingManagedBlocks(recommendationContent, installed);
+		editorRef.current?.replaceText(merged);
 		setDirty(true);
 		setConfirm('none');
-		toast.success('已导入完整推荐到编辑器（可撤销，保存后生效）');
+		toast.success('已导入推荐到编辑器（保留注入块，可撤销，保存后生效）');
 	};
 
 	const handleSave = (content: string): { ok: boolean; error?: string } => {

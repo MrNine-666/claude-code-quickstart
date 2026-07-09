@@ -14,6 +14,7 @@ import codexConfigToml from "../../contracts/codex-config.toml" with { type: "te
 // Markdown 模板
 import claudeMdBase from "../../contracts/templates/claude-md.base.md" with { type: "text" };
 import claudeMdWindows from "../../contracts/templates/claude-md.platform-windows.md" with { type: "text" };
+import codexMd from "../../contracts/templates/codex-md.md" with { type: "text" };
 
 function fileAsset(value: unknown): string {
 	return value as string;
@@ -29,6 +30,7 @@ export const EMBEDDED_CONTRACTS = new Map<string, string>([
 	["codex-config.toml", fileAsset(codexConfigToml)],
 	["templates/claude-md.base.md", fileAsset(claudeMdBase)],
 	["templates/claude-md.platform-windows.md", fileAsset(claudeMdWindows)],
+	["templates/codex-md.md", fileAsset(codexMd)],
 ]);
 
 /**

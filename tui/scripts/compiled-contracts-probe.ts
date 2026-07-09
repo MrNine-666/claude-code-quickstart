@@ -49,11 +49,14 @@ try {
 	const claudeConfig = loadContract('claude-config.json');
 	assertObject('claude-config.json', claudeConfig);
 
-	const baseTemplate = loadTextContract('templates/claude-md.base.md');
-	assertText('templates/claude-md.base.md', baseTemplate, '# Claude Code 增强配置');
+	const claudeBaseTemplate = loadTextContract('templates/claude-md.base.md');
+	assertText('templates/claude-md.base.md', claudeBaseTemplate, '# Claude Code 增强配置');
 
-	const windowsTemplate = loadTextContract('templates/claude-md.platform-windows.md');
-	assertText('templates/claude-md.platform-windows.md', windowsTemplate, 'Windows / PowerShell');
+	const claudeWindowsTemplate = loadTextContract('templates/claude-md.platform-windows.md');
+	assertText('templates/claude-md.platform-windows.md', claudeWindowsTemplate, 'Windows / PowerShell');
+
+	const codexTemplate = loadTextContract('templates/codex-md.md');
+	assertText('templates/codex-md.md', codexTemplate, '# Codex AGENTS.md 增强配置');
 
 	assertThrows('ccg-workflow.json', () => loadContract('ccg-workflow.json'));
 	assertThrows('templates/index.json', () => loadContract('templates/index.json'));
@@ -62,8 +65,9 @@ try {
 	console.log(JSON.stringify({
 		status: 'PROBE_PASS',
 		providers: Object.keys((providers as JsonObject).BuiltinProviders as JsonObject).length,
-		baseTemplateLength: baseTemplate.length,
-		windowsTemplateLength: windowsTemplate.length
+		claudeBaseTemplateLength: claudeBaseTemplate.length,
+		claudeWindowsTemplateLength: claudeWindowsTemplate.length,
+		codexTemplateLength: codexTemplate.length
 	}));
 } catch (error) {
 	console.error(`PROBE_FAIL: ${error instanceof Error ? error.message : String(error)}`);

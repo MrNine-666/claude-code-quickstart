@@ -362,7 +362,8 @@ function Test-TemplatesContract {
     $templateIds = @($Contract['Templates'] | ForEach-Object { [string]$_['Id'] })
     foreach ($requiredId in @(
         'claude-md-template.base',
-        'claude-md-template.platform-windows'
+        'claude-md-template.platform-windows',
+        'codex-md-template.base'
     )) {
         if ($templateIds -notcontains $requiredId) {
             Add-Issue "templates 缺少条目: $requiredId"
