@@ -13,6 +13,7 @@ import {
 	type TextEditorHandle
 } from '../components/index.js';
 import {
+	configFileExists,
 	fillMissingIntoText,
 	getConfigPath,
 	loadRecommendationAnnotated,
@@ -51,9 +52,11 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 	const recommendationAvailable = recommendationContent !== '';
 	const configPath = useMemo(() => getConfigPath(target), [target]);
 
-	// view 态展示内容（Claude 剥离供应商 env；Codex 展示 config.toml 原文）
+	// view 态展示内容（过滤非 Config 页管辖字段；文件存在但过滤后为空也应进入预览态）
 	const [viewContent, setViewContent] = useState<string>(() => readCurrentConfigText(target));
-	const hasContent = viewContent.trim().length > 0;
+	const [fileExists, setFileExists] = useState<boolean>(() => configFileExists(target));
+	const hasContent = fileExists || viewContent.trim().length > 0;
+	const previewContent = viewContent.trim().length > 0 ? viewContent : (isCodex ? '' : '{\n}');
 
 	// edit 态
 	const [mode, setMode] = useState<Mode>('view');
@@ -75,6 +78,16 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 			: 'edit';
 
 	useEffect(() => {
+		setViewContent(readCurrentConfigText(target));
+		setFileExists(configFileExists(target));
+		setEditInitial('');
+		setMode('view');
+		setPanel('editor');
+		setFocus('editor');
+		setDirty(false);
+	}, [target]);
+
+	useEffect(() => {
 		if (!active) return;
 		onSubModeChange?.(subMode);
 	}, [active, subMode, onSubModeChange]);
@@ -90,6 +103,7 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 	// ── 操作 ──
 	const refreshView = (): void => {
 		setViewContent(readCurrentConfigText(target));
+		setFileExists(configFileExists(target));
 	};
 
 	// 进入编辑器：initial = '{}' (a 新建·仅空状态) | 现有磁盘内容（已剥离供应商 env）(e 编辑)
@@ -231,7 +245,7 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 				{hasContent ? (
 					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
 						<ThemedScrollbox ref={viewScrollRef} style={{flexGrow: 1}}>
-							<CodePreview content={viewContent} filetype={isCodex ? 'text' : 'json'} />
+							<CodePreview content={previewContent} filetype={isCodex ? 'text' : 'json'} />
 						</ThemedScrollbox>
 					</box>
 				) : (

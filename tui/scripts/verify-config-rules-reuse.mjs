@@ -49,32 +49,42 @@ try {
 	const claudeSettings = JSON.parse(readFileSync(getConfigPath('cc'), 'utf8'));
 	assert.equal(claudeSettings.env.ANTHROPIC_AUTH_TOKEN, 'sk-claude', 'Claude settings 保存时保留供应商 token');
 
-	// Codex Config TOML fill-missing：保留 provider/MCP/hooks，无关路径不变
-	writeFileSync(codexConfigPath(), [
-		'model = "custom-model"',
-		'',
-		'[model_providers.deepseek]',
-		'name = "deepseek"',
-		'base_url = "https://api.deepseek.com"',
-		'',
-		'[mcp_servers.context7]',
-		'command = "npx"',
-		'args = ["-y", "@upstash/context7-mcp"]',
-		'',
-		'[hooks]'
-	].join('\n'), 'utf8');
-	const codexFill = fillMissingIntoText(readCurrentConfigText('cx'), 'cx');
-	assert.equal(codexFill.ok, true, 'Codex Config fill-missing 应成功');
-	assert.match(codexFill.text, /model\s*=\s*"custom-model"/, 'Codex fill-missing 不覆盖已有 model');
-	assert.match(codexFill.text, /\[model_providers\.deepseek\]/, 'Codex fill-missing 保留 provider table');
-	assert.match(codexFill.text, /\[mcp_servers\.context7\]/, 'Codex fill-missing 保留 MCP table');
-	assert.match(codexFill.text, /\[hooks\]/, 'Codex fill-missing 保留 hooks table');
-	assert.equal(loadRecommendationAnnotated('cx')?.includes('sandbox_mode'), true, 'Codex 推荐配置契约可加载');
-	const codexSaved = saveConfigText(codexFill.text, 'cx');
-	assert.equal(codexSaved.ok, true, 'Codex config.toml 保存成功');
-	assert.match(codexSaved.warning ?? '', /model_providers, mcp_servers, hooks/, 'Codex 保存完整 config 时应提示外部管辖 sections');
-	assert.equal(existsSync(getConfigPath('cc')), true, 'Codex 保存不删除/替换 Claude settings');
-	console.log('[PASS] 6.4/6.5/6.6 Codex Config TOML 结构化 fill-missing + 路径隔离');
+		// Codex Config TOML fill-missing：展示/编辑过滤 provider/MCP/hooks，保存时从原文件合并保留。
+		writeFileSync(codexConfigPath(), [
+			'model = "custom-model"',
+			'',
+			'[model_providers.deepseek]',
+			'name = "deepseek"',
+			'base_url = "https://api.deepseek.com"',
+			'',
+			'[mcp_servers.context7]',
+			'command = "npx"',
+			'args = ["-y", "@upstash/context7-mcp"]',
+			'',
+			'[hooks]'
+		].join('\n'), 'utf8');
+		const codexVisible = readCurrentConfigText('cx');
+		assert.doesNotMatch(codexVisible, /model\s*=\s*"custom-model"/, 'Codex Config view 过滤 model（归供应商管）');
+		assert.doesNotMatch(codexVisible, /\[model_providers\.deepseek\]/, 'Codex Config view 过滤 provider table');
+		assert.doesNotMatch(codexVisible, /\[mcp_servers\.context7\]/, 'Codex Config view 过滤 MCP table');
+		assert.doesNotMatch(codexVisible, /\[hooks\]/, 'Codex Config view 过滤 hooks table');
+		const codexFill = fillMissingIntoText(codexVisible, 'cx');
+		assert.equal(codexFill.ok, true, 'Codex Config fill-missing 应成功');
+		assert.doesNotMatch(codexFill.text, /model\s*=\s*"custom-model"/, 'Codex fill-missing 缓冲不含 model（归供应商管）');
+		assert.doesNotMatch(codexFill.text, /\[model_providers\.deepseek\]/, 'Codex fill-missing 缓冲不暴露 provider table');
+		assert.doesNotMatch(codexFill.text, /\[mcp_servers\.context7\]/, 'Codex fill-missing 缓冲不暴露 MCP table');
+		assert.doesNotMatch(codexFill.text, /\[hooks\]/, 'Codex fill-missing 缓冲不暴露 hooks table');
+		assert.equal(loadRecommendationAnnotated('cx')?.includes('sandbox_mode'), true, 'Codex 推荐配置契约可加载');
+		const codexSaved = saveConfigText(codexFill.text, 'cx');
+		assert.equal(codexSaved.ok, true, 'Codex config.toml 保存成功');
+		assert.equal(codexSaved.warning, undefined, 'Codex Config 保存过滤缓冲时不应提示用户编辑了外部 sections');
+		const codexAfterSave = readFileSync(codexConfigPath(), 'utf8');
+		assert.match(codexAfterSave, /model\s*=\s*"custom-model"/, 'Codex 保存必须从原文件恢复 model（归供应商管）');
+		assert.match(codexAfterSave, /\[model_providers\.deepseek\]/, 'Codex 保存保留原 provider table');
+		assert.match(codexAfterSave, /\[mcp_servers\.context7\]/, 'Codex 保存保留原 MCP table');
+		assert.match(codexAfterSave, /\[hooks\]/, 'Codex 保存保留原 hooks table');
+		assert.equal(existsSync(getConfigPath('cc')), true, 'Codex 保存不删除/替换 Claude settings');
+		console.log('[PASS] 6.4/6.5/6.6 Codex Config TOML 结构化 fill-missing + 过滤展示 + 路径隔离');
 
 	// ── Global Rules 目标文件按 agent 切换 ──
 	assert.equal(getRulesPath('cc'), join(claudeDir(), 'CLAUDE.md'), 'Claude 全局规则为 CLAUDE.md');

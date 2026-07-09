@@ -12,6 +12,7 @@ import {
 	readCodexConfigText,
 	saveCodexConfigToml
 } from '../core/codex-config.js';
+import {existsSync} from 'node:fs';
 import {atomicWrite} from '../core/fs-utils.js';
 import {codexConfigPath} from '../core/paths.js';
 import type {AgentContext} from '../state/manage-state.js';
@@ -56,6 +57,11 @@ export function fillMissingIntoText(jsonText: string, target: ConfigTarget = 'cc
 /** 获取配置目标路径（供视图展示）。 */
 export function getConfigPath(target: ConfigTarget = 'cc'): string {
 	return target === 'cx' ? codexConfigPath() : settingsFilePath();
+}
+
+/** 判断配置目标文件是否存在；用于区分“文件不存在”和“过滤后暂无本页管辖项”。 */
+export function configFileExists(target: ConfigTarget = 'cc'): boolean {
+	return existsSync(getConfigPath(target));
 }
 
 /** 兼容旧调用：获取 settings.json 文件路径。 */

@@ -1,5 +1,20 @@
-# Codex 推荐配置（ccq fill-missing 仅补缺失，不管理 provider/MCP/hooks/Skills/AGENTS.md）
-model = "gpt-5"
+# 模型推理投入程度（Responses API 生效）。取值：minimal | low | medium | high | xhigh。
+# medium 为速度与质量的平衡点；追求更强推理可调 high。
 model_reasoning_effort = "medium"
+
+# 执行生成命令前的审批策略。取值：untrusted | on-request | never | { granular = { ... } }。
+# on-request 在需要时才暂停询问，兼顾安全与顺畅，适合日常开发。
 approval_policy = "on-request"
+
+# 沙箱文件/网络访问级别。取值：read-only | workspace-write | danger-full-access。
+# workspace-write 允许在工作区内读写、默认禁网，是安全与可用的推荐档位。
 sandbox_mode = "workspace-write"
+
+# 联网搜索模式。取值：disabled | cached | live。
+# cached（官方默认）走 OpenAI 维护的索引，不抓取实时页面，降低提示注入风险；
+# 需要最新实时结果时再改 live。
+web_search = "cached"
+
+# 是否隐藏模型推理过程输出。取值：true | false。
+# false 保留推理展示，便于观察 Codex 的思考；CI 等噪声敏感场景可设 true。
+hide_agent_reasoning = false

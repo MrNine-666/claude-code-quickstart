@@ -324,80 +324,110 @@ export function applyFillMissingToText(jsonText: string):
 	return {ok: true, text: JSON.stringify(settings, null, 2), changed: updatedItems.length};
 }
 
+function ownershipSets(): {topLevel: Set<string>; env: Set<string>} {
+	const ownership = loadConfigContract()?.Ownership;
+	return {
+		topLevel: new Set(ownership?.DoNotManageTopLevelKeys ?? []),
+		env: new Set(ownership?.DoNotManageEnvKeys ?? [])
+	};
+}
+
+function stripUnmanagedSettings(settings: JsonObject): JsonObject {
+	const {topLevel, env: forbiddenEnv} = ownershipSets();
+	const cleaned: JsonObject = {};
+	for (const [key, value] of Object.entries(settings)) {
+		if (!topLevel.has(key)) {
+			cleaned[key] = value;
+		}
+	}
+
+	const env = settings['env'];
+	if (isObject(env)) {
+		const cleanedEnv: JsonObject = {};
+		for (const [key, value] of Object.entries(env)) {
+			if (!forbiddenEnv.has(key)) {
+				cleanedEnv[key] = value;
+			}
+		}
+		cleaned['env'] = cleanedEnv;
+	}
+
+	return cleaned;
+}
+
 /**
- * 从 settings 文本剥离供应商 env 字段（DoNotManageEnvKeys），供配置文件页 view/edit 展示。
- * 不暴露 token/base_url/model 等供应商字段（归供应商页管，HC-12 字段所有权）。
+ * 从 settings 文本剥离 Config 页不拥有的字段，供配置文件页 view/edit 展示。
+ * 不暴露供应商 env、MCP、hooks、statusLine/model 等外部字段；这些分别归专属视图或用户设置管。
  * 文本非 JSON 对象时返回 {ok:false}，调用方可回退展示原文。
  */
 export function stripProviderEnvFromText(jsonText: string):
 	| {readonly ok: true; readonly text: string}
 	| {readonly ok: false; readonly error: string} {
-	let parsed: JsonObject;
 	try {
-		const obj = JSON.parse(jsonText) as unknown;
-		if (!isObject(obj)) {
+		const parsed = JSON.parse(jsonText) as unknown;
+		if (!isObject(parsed)) {
 			return {ok: false, error: 'settings.json 不是 JSON 对象'};
 		}
-		parsed = obj;
+		return {ok: true, text: JSON.stringify(stripUnmanagedSettings(parsed), null, 2)};
 	} catch (error) {
 		return {ok: false, error: error instanceof Error ? error.message : String(error)};
 	}
-
-	const forbidden = new Set(loadConfigContract()?.Ownership?.DoNotManageEnvKeys ?? []);
-	const env = parsed['env'];
-	if (!isObject(env) || forbidden.size === 0) {
-		return {ok: true, text: JSON.stringify(parsed, null, 2)};
-	}
-
-	const cleaned: JsonObject = {};
-	for (const [key, value] of Object.entries(env as JsonObject)) {
-		if (!forbidden.has(key)) {
-			cleaned[key] = value;
-		}
-	}
-	return {ok: true, text: JSON.stringify({...parsed, env: cleaned}, null, 2)};
 }
 
 /**
- * 保存合并：edited 是用户编辑（不含供应商 env），从 original 恢复供应商 env 字段后整体返回。
- * 配置文件页不展示/不编辑供应商 env（token/base_url/model 等），保存时自动从原文件原样保留，绝不丢失。
- * original 缺失或解析失败时按 edited 写入（首次新建场景）。
+ * 保存合并：edited 是 Config 页拥有字段，从 original 恢复外部字段后整体返回。
+ * 配置文件页不展示/不编辑供应商、MCP、hooks、statusLine/model 等字段；保存时原样保留，绝不丢失。
+ * original 缺失或解析失败时按清理后的 edited 写入（首次新建场景）。
  */
 export function mergeProviderEnvOnSave(editedText: string, originalText: string | null):
 	| {readonly ok: true; readonly text: string}
 	| {readonly ok: false; readonly error: string} {
 	let edited: JsonObject;
 	try {
-		const obj = JSON.parse(editedText) as unknown;
-		if (!isObject(obj)) {
+		const parsed = JSON.parse(editedText) as unknown;
+		if (!isObject(parsed)) {
 			return {ok: false, error: '编辑内容不是 JSON 对象'};
 		}
-		edited = obj;
+		edited = stripUnmanagedSettings(parsed);
 	} catch (error) {
 		return {ok: false, error: error instanceof Error ? error.message : String(error)};
 	}
 
-	const forbidden = new Set(loadConfigContract()?.Ownership?.DoNotManageEnvKeys ?? []);
-	if (forbidden.size === 0 || !originalText) {
+	const {topLevel, env: forbiddenEnv} = ownershipSets();
+	if (!originalText) {
 		return {ok: true, text: JSON.stringify(edited, null, 2)};
 	}
 
 	try {
 		const original = JSON.parse(originalText) as unknown;
-		if (!isObject(original) || !isObject(original['env'])) {
+		if (!isObject(original)) {
 			return {ok: true, text: JSON.stringify(edited, null, 2)};
 		}
-		const providerEntries = Object.fromEntries(
-			Object.entries(original['env'] as JsonObject).filter(([k]) => forbidden.has(k))
-		);
-		if (Object.keys(providerEntries).length === 0) {
-			return {ok: true, text: JSON.stringify(edited, null, 2)};
+
+		const merged: JsonObject = {...edited};
+		for (const key of topLevel) {
+			if (Object.prototype.hasOwnProperty.call(original, key)) {
+				merged[key] = original[key];
+			}
 		}
-		const editedEnv: JsonObject = isObject(edited['env']) ? {...(edited['env'] as JsonObject)} : {};
-		// 供应商字段从原文件恢复（用户编辑器看不到这些键，不会主动编辑）；其余 env 字段尊重用户编辑。
-		return {ok: true, text: JSON.stringify({...edited, env: {...editedEnv, ...providerEntries}}, null, 2)};
+
+		const originalEnv = isObject(original['env']) ? original['env'] as JsonObject : null;
+		const preservedEnv = originalEnv
+			? Object.fromEntries(Object.entries(originalEnv).filter(([key]) => forbiddenEnv.has(key)))
+			: {};
+		const editedEnv = isObject(merged['env']) ? {...(merged['env'] as JsonObject)} : {};
+		for (const key of forbiddenEnv) {
+			delete editedEnv[key];
+		}
+		if (Object.keys(editedEnv).length > 0 || Object.keys(preservedEnv).length > 0) {
+			merged['env'] = {...editedEnv, ...preservedEnv};
+		} else {
+			delete merged['env'];
+		}
+
+		return {ok: true, text: JSON.stringify(merged, null, 2)};
 	} catch {
-		// original 解析失败：忽略，按 edited 写入（不阻塞保存）。
+		// original 解析失败：忽略，按已清理 edited 写入（不阻塞首次修复损坏配置）。
 		return {ok: true, text: JSON.stringify(edited, null, 2)};
 	}
 }

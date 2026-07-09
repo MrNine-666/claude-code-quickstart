@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {applyFillMissing, importFillMissing, loadConfigContract, settingsFilePath} from '../src/core/config-recommend.ts';
+import {applyFillMissing, importFillMissing, loadConfigContract, mergeProviderEnvOnSave, settingsFilePath, stripProviderEnvFromText} from '../src/core/config-recommend.ts';
 
 // Phase 5 配置文件菜单门禁：守住 fill-missing 的两条核心不变量——
 //   P-1 幂等性：同一配置导入两次，第二次无变更；
@@ -79,12 +79,38 @@ try {
 	rmSync(badHome, {recursive: true, force: true});
 }
 
+// ── ConfigView ownership：展示/编辑过滤外部字段，保存合并保护 ─────────────
+const claudeOriginal = JSON.stringify({
+	model: 'keep-model',
+	statusLine: {type: 'command', command: 'ccline'},
+	hooks: {Stop: [{matcher: ''}]},
+	mcpServers: {context7: {command: 'npx'}},
+	env: {ANTHROPIC_AUTH_TOKEN: 'sk-secret', MAX_THINKING_TOKENS: '123'},
+	language: '简体中文'
+}, null, 2);
+const strippedClaude = stripProviderEnvFromText(claudeOriginal);
+assert.equal(strippedClaude.ok, true, 'Claude Config 展示过滤应成功');
+assert.equal(strippedClaude.text.includes('keep-model'), false, 'Claude Config 展示必须过滤 model');
+assert.equal(strippedClaude.text.includes('statusLine'), false, 'Claude Config 展示必须过滤 statusLine');
+assert.equal(strippedClaude.text.includes('mcpServers'), false, 'Claude Config 展示必须过滤 MCP 配置');
+assert.equal(strippedClaude.text.includes('ANTHROPIC_AUTH_TOKEN'), false, 'Claude Config 展示必须过滤供应商 env');
+const mergedClaude = mergeProviderEnvOnSave(strippedClaude.text, claudeOriginal);
+assert.equal(mergedClaude.ok, true, 'Claude Config 保存合并应成功');
+const mergedClaudeJson = JSON.parse(mergedClaude.text);
+assert.equal(mergedClaudeJson.model, 'keep-model', 'Claude Config 保存必须保留原 model');
+assert.deepEqual(mergedClaudeJson.statusLine, {type: 'command', command: 'ccline'}, 'Claude Config 保存必须保留原 statusLine');
+assert.deepEqual(mergedClaudeJson.mcpServers, {context7: {command: 'npx'}}, 'Claude Config 保存必须保留原 MCP 配置');
+assert.equal(mergedClaudeJson.env.ANTHROPIC_AUTH_TOKEN, 'sk-secret', 'Claude Config 保存必须保留原供应商 env');
+console.log('[PASS] ConfigView Claude ownership 过滤展示 + 保存合并保护');
+
 // ── 6.10 Codex ConfigView：agentContext 源码不变量 + TOML 结构化保存 ─────────────
 const configViewSource = readFileSync(new URL('../src/views/ConfigView.tsx', import.meta.url), 'utf8');
 assert.match(configViewSource, /const target: ConfigTarget = agentContext/, 'ConfigView 必须从 agentContext 派生 target');
 assert.match(configViewSource, /loadRecommendationAnnotated\(target\)/, '推荐配置必须按 target 加载');
 assert.match(configViewSource, /getConfigPath\(target\)/, '目标路径必须按 target 切换');
 assert.match(configViewSource, /readCurrentConfigText\(target\)/, '读取配置必须按 target 切换');
+assert.match(configViewSource, /configFileExists\(target\)/, '空状态必须区分目标文件存在与过滤后内容为空');
+assert.match(configViewSource, /const hasContent = fileExists \|\| viewContent\.trim\(\)\.length > 0;/, '存在 config.toml 时即使过滤后为空也必须展示预览态');
 assert.match(configViewSource, /fillMissingIntoText\([^\n]+target\)/, 'Ctrl+O fill-missing 必须按 target 路由');
 assert.match(configViewSource, /saveConfigText\(content, target\)/, '保存必须按 target 路由');
 assert.match(configViewSource, /isJson=\{!isCodex\}/, 'Codex Config 编辑器不得启用 JSON 校验，应交给 TOML service 校验');
@@ -92,7 +118,8 @@ assert.match(configViewSource, /filetype=\{isCodex \? 'text' : 'json'\}/, 'Codex
 assert.match(configViewSource, /title=\{isCodex \? 'Codex 配置文件管理' : '配置文件管理'\}/, '编辑态 Header 必须随 agentContext 切换标题');
 assert.match(configViewSource, /subtitle=\{isCodex \? '查看、补全与编辑 CODEX_HOME\/config\.toml' : '查看、补全与编辑 Claude Code settings\.json'\}/, '编辑态 Header 必须随 agentContext 切换副标题');
 assert.match(configViewSource, /if \(dirty\) toast\.info\('已放弃未保存的编辑'\);/, '取消编辑必须识别 dirty 状态');
-assert.match(configViewSource, /setDirty\(false\);/, '保存/取消后必须清理 dirty 状态，避免跨上下文误写');
+assert.match(configViewSource, /\}, \[target\]\);/, 'agentContext/target 切换时必须重载视图状态，避免旧配置页内容残留');
+assert.match(configViewSource, /setDirty\(false\);/, '保存/取消/切换后必须清理 dirty 状态，避免跨上下文误写');
 console.log('[PASS] 6.10 ConfigView agentContext + Codex TOML 编辑源码不变量');
 
 const codexHome = mkdtempSync(join(tmpdir(), 'ccq-config-codex-view-'));
@@ -100,7 +127,7 @@ process.env.CCQ_HOME = codexHome;
 process.env.CODEX_HOME = join(codexHome, '.codex');
 try {
 	mkdirSync(process.env.CODEX_HOME, {recursive: true});
-	const {getConfigPath, readCurrentConfigText, fillMissingIntoText, saveConfigText} = await import('../src/services/config-service.ts');
+	const {configFileExists, getConfigPath, readCurrentConfigText, fillMissingIntoText, saveConfigText} = await import('../src/services/config-service.ts');
 	const codexPath = getConfigPath('cx');
 	writeFileSync(codexPath, [
 		'model = "custom-model"',
@@ -121,17 +148,42 @@ try {
 	assert.equal(readFileSync(codexPath, 'utf8'), before, '无效 TOML 保存失败时不得覆盖原文件');
 	assert.equal(invalid.error.includes('sk-codex-config-secret'), false, 'TOML 错误输出不得泄漏已有 token');
 
-	const fill = fillMissingIntoText(readCurrentConfigText('cx'), 'cx');
-	assert.equal(fill.ok, true, 'Codex Config fill-missing 应接受 TOML');
-	assert.match(fill.text, /model\s*=\s*"custom-model"/, 'Codex fill-missing 不覆盖用户 model');
-	assert.match(fill.text, /\[model_providers\.deepseek\]/, 'Codex fill-missing 保留 provider table');
-	assert.match(fill.text, /experimental_bearer_token\s*=\s*"sk-codex-config-secret"/, 'Codex fill-missing 结构化保留用户 profile/provider 字段');
-	assert.match(fill.text, /\[mcp_servers\.context7\]/, 'Codex fill-missing 保留 MCP table');
-	assert.match(fill.text, /\[hooks\]/, 'Codex fill-missing 保留 hooks table');
+	const visible = readCurrentConfigText('cx');
+	assert.doesNotMatch(visible, /model\s*=\s*"custom-model"/, 'Codex Config 展示必须过滤 model（归供应商管）');
+	assert.doesNotMatch(visible, /\[model_providers\.deepseek\]/, 'Codex Config 展示必须过滤 provider table');
+	assert.doesNotMatch(visible, /experimental_bearer_token/, 'Codex Config 展示不得暴露 provider token 字段');
+	assert.doesNotMatch(visible, /\[mcp_servers\.context7\]/, 'Codex Config 展示必须过滤 MCP table');
+	assert.doesNotMatch(visible, /\[hooks\]/, 'Codex Config 展示必须过滤 hooks table');
+
+	const fill = fillMissingIntoText(visible, 'cx');
+	assert.equal(fill.ok, true, 'Codex Config fill-missing 应接受过滤后的 TOML');
+	assert.doesNotMatch(fill.text, /model\s*=\s*"custom-model"/, 'Codex fill-missing 缓冲不含 model（归供应商管）');
+	assert.doesNotMatch(fill.text, /\[model_providers\.deepseek\]/, 'Codex fill-missing 缓冲不得重新暴露 provider table');
+	assert.doesNotMatch(fill.text, /\[mcp_servers\.context7\]/, 'Codex fill-missing 缓冲不得重新暴露 MCP table');
+	assert.doesNotMatch(fill.text, /\[hooks\]/, 'Codex fill-missing 缓冲不得重新暴露 hooks table');
+	writeFileSync(codexPath, [
+		'[model_providers.only_provider]',
+		'name = "only_provider"',
+		'',
+		'[mcp_servers.context7]',
+		'command = "npx"',
+		'',
+		'[hooks]'
+	].join('\n'), 'utf8');
+	assert.equal(configFileExists('cx'), true, 'Codex config.toml 存在时必须可被视图识别');
+	assert.equal(readCurrentConfigText('cx').trim(), '', '只有外部 sections 时 Config 可见内容允许为空');
+
+	writeFileSync(codexPath, before, 'utf8');
 	const saved = saveConfigText(fill.text, 'cx');
 	assert.equal(saved.ok, true, 'Codex Config 应保存合法 TOML');
+	const afterSave = readFileSync(codexPath, 'utf8');
+	assert.match(afterSave, /model\s*=\s*"custom-model"/, 'Codex Config 保存必须从原文件恢复 model（归供应商管）');
+	assert.match(afterSave, /\[model_providers\.deepseek\]/, 'Codex Config 保存必须从原文件恢复 provider table');
+	assert.match(afterSave, /experimental_bearer_token\s*=\s*"sk-codex-config-secret"/, 'Codex Config 保存必须保留原 provider token');
+	assert.match(afterSave, /\[mcp_servers\.context7\]/, 'Codex Config 保存必须保留原 MCP table');
+	assert.match(afterSave, /\[hooks\]/, 'Codex Config 保存必须保留原 hooks table');
 	assert.equal(existsSync(join(codexHome, '.claude', 'settings.json')), false, 'Codex Config 保存不得创建 Claude settings.json');
-	console.log('[PASS] 6.10 Codex Config TOML 结构化保存 + 路径隔离 + 错误脱敏');
+	console.log('[PASS] 6.10 Codex Config TOML 结构化保存 + 过滤展示 + 路径隔离 + 错误脱敏');
 } finally {
 	delete process.env.CCQ_HOME;
 	delete process.env.CODEX_HOME;

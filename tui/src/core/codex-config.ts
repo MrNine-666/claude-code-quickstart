@@ -1,16 +1,17 @@
 import {existsSync, readFileSync} from 'node:fs';
 import {codexConfigPath} from './paths.js';
-import {atomicWrite, getPath, parse, redactTomlSecrets, setPath, stringify, type TomlDocument} from './toml-edit.js';
+import {atomicWrite, deletePath, getPath, parse, redactTomlSecrets, setPath, stringify, type TomlDocument} from './toml-edit.js';
 import {loadTextContract} from './contracts.js';
 
 // Codex 推荐配置 + fill-missing（design D10 / HC-CONFIG-RULES-REUSE）。
 // 与 Claude ConfigView UI 复用：预览页 / e 编辑 / Ctrl+T 推荐 / Ctrl+O fill-missing 导入。
-// 仅管理 Codex 自身运行配置（model / approval_policy / sandbox_mode 等），不触碰
-// provider/MCP/hooks/Skills/AGENTS.md（分别归 Provider/MCP/Skills/Global Rules 管）。
+// 仅管理 Codex 自身通用运行项（model_reasoning_effort / approval_policy / sandbox_mode /
+// web_search / hide_agent_reasoning）。model 归供应商（由 Provider profile 设为默认时写入
+// config.toml），Config 页与 provider/MCP/hooks/Skills/AGENTS.md 一样不展示、不管理，仅在
+// 保存时从原文件合并保留（分别归 Provider/MCP/Skills/Global Rules 管）。
 
-const RECOMMENDED_TOP_LEVEL_KEYS = ['model', 'model_reasoning_effort', 'approval_policy', 'sandbox_mode'] as const;
-const CODEX_FOREIGN_SECTIONS = ['model_providers', 'mcp_servers', 'hooks'] as const;
-const CODEX_OWNED_TOP_LEVEL_KEYS = new Set<string>(RECOMMENDED_TOP_LEVEL_KEYS);
+const RECOMMENDED_TOP_LEVEL_KEYS = ['model_reasoning_effort', 'approval_policy', 'sandbox_mode', 'web_search', 'hide_agent_reasoning'] as const;
+const CODEX_UNMANAGED_KEYS = ['model', 'model_provider', 'model_providers', 'mcp_servers', 'hooks'] as const;
 
 /** 读取 Codex 推荐配置契约文本（TOML），缺失返回 null。 */
 export function loadCodexConfigRecommendationText(): string | null {
@@ -35,8 +36,30 @@ function loadRecommendedDocument(): TomlDocument | null {
 	}
 }
 
-/** 读取当前 `CODEX_HOME/config.toml` 原始文本（不存在返回 null）。 */
-export function readCodexConfigText(): string | null {
+function stripCodexUnmanagedKeys(document: TomlDocument): TomlDocument {
+	let next = document;
+	for (const key of CODEX_UNMANAGED_KEYS) {
+		next = deletePath(next, [key]);
+	}
+	return next;
+}
+
+function mergeCodexUnmanagedKeys(edited: TomlDocument, original: TomlDocument | null): TomlDocument {
+	let next = stripCodexUnmanagedKeys(edited);
+	if (!original) {
+		return next;
+	}
+
+	for (const key of CODEX_UNMANAGED_KEYS) {
+		const value = getPath(original, [key]);
+		if (value !== undefined) {
+			next = setPath(next, [key], value);
+		}
+	}
+	return next;
+}
+
+function readCodexConfigRawText(): string | null {
 	const path = codexConfigPath();
 	if (!existsSync(path)) {
 		return null;
@@ -46,6 +69,20 @@ export function readCodexConfigText(): string | null {
 		return readFileSync(path, 'utf8');
 	} catch {
 		return null;
+	}
+}
+
+/** 读取当前 `CODEX_HOME/config.toml` 的 Config 页管辖内容（不存在返回 null）。 */
+export function readCodexConfigText(): string | null {
+	const text = readCodexConfigRawText();
+	if (text === null) {
+		return null;
+	}
+
+	try {
+		return stringify(stripCodexUnmanagedKeys(parse(text)));
+	} catch {
+		return text;
 	}
 }
 
@@ -80,7 +117,7 @@ export function applyCodexFillMissingToText(tomlText: string):
 		return {ok: false, error: `当前编辑内容不是合法 TOML：${redactTomlSecrets(error instanceof Error ? error.message : String(error))}`};
 	}
 
-	let next = current;
+	let next = stripCodexUnmanagedKeys(current);
 	let changed = 0;
 	for (const key of RECOMMENDED_TOP_LEVEL_KEYS) {
 		const existing = getPath(next, [key]);
@@ -113,7 +150,7 @@ export function importCodexFillMissing(): {ok: boolean; changed?: number; error?
 		}
 	}
 
-	let next = current;
+	let next = stripCodexUnmanagedKeys(current);
 	let changed = 0;
 	for (const key of RECOMMENDED_TOP_LEVEL_KEYS) {
 		const existing = getPath(next, [key]);
@@ -127,7 +164,7 @@ export function importCodexFillMissing(): {ok: boolean; changed?: number; error?
 	}
 
 	try {
-		atomicWrite(path, next);
+		atomicWrite(path, mergeCodexUnmanagedKeys(next, current));
 		return {ok: true, changed};
 	} catch (error) {
 		return {ok: false, error: redactTomlSecrets(error instanceof Error ? error.message : String(error))};
@@ -139,7 +176,7 @@ export function assembleCodexRecommendationAnnotated(): string | null {
 	return loadCodexConfigRecommendationText();
 }
 
-/** 保存编辑后的 TOML 文本到 `CODEX_HOME/config.toml`（结构化校验 + 原子写）。 */
+/** 保存编辑后的 TOML 文本到 `CODEX_HOME/config.toml`（结构化校验 + 原子写，外部 section 原样合并保留）。 */
 export function saveCodexConfigToml(tomlContent: string): {ok: boolean; error?: string; warning?: string} {
 	let document: TomlDocument;
 	try {
@@ -148,15 +185,19 @@ export function saveCodexConfigToml(tomlContent: string): {ok: boolean; error?: 
 		return {ok: false, error: `TOML 格式错误: ${redactTomlSecrets(error instanceof Error ? error.message : String(error))}`};
 	}
 
-	void CODEX_OWNED_TOP_LEVEL_KEYS;
-	const foreignSections = CODEX_FOREIGN_SECTIONS.filter(key => getPath(document, [key]) !== undefined);
-	const warning = foreignSections.length > 0
-		? `已保存完整 config.toml；${foreignSections.join(', ')} 由 Provider/MCP/Hooks 等页面管理，推荐导入不会修改这些字段。`
-		: undefined;
+	const rawOriginal = readCodexConfigRawText();
+	let original: TomlDocument | null = null;
+	if (rawOriginal !== null) {
+		try {
+			original = parse(rawOriginal);
+		} catch {
+			original = null;
+		}
+	}
 
 	try {
-		atomicWrite(codexConfigPath(), document);
-		return warning ? {ok: true, warning} : {ok: true};
+		atomicWrite(codexConfigPath(), mergeCodexUnmanagedKeys(document, original));
+		return {ok: true};
 	} catch (error) {
 		return {ok: false, error: redactTomlSecrets(error instanceof Error ? error.message : String(error))};
 	}
