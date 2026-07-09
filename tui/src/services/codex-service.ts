@@ -33,6 +33,7 @@ export type CodexProviderFormInput = {
 	readonly profile?: CodexProfile | null;
 	readonly providerType?: string;
 	readonly rawToml?: string;
+	readonly existingProfiles?: readonly Pick<CodexProfile, 'providerType'>[];
 };
 
 export function loadCodexProviderDisplay(): ProviderDisplayData {
@@ -84,6 +85,10 @@ export function saveCodexProviderForm(input: CodexProviderFormInput, values: Cod
 	}
 
 	try {
+		if (input.mode !== 'edit' && values.providerType === 'officialLogin' && listCodexProfiles().some(profile => profile.providerType === 'officialLogin')) {
+			return {ok: false, error: '已存在 official login Codex profile；如需重建请先删除旧 profile，删除时会同步清空 auth.json。'};
+		}
+
 		const key = input.mode === 'edit' ? (input.profileKey ?? values.profileKey) : values.profileKey.trim();
 		const rawToml = values.toml || codexProviderValuesToToml(values);
 		const profile = saveCodexProfileToml(key, rawToml);
@@ -140,6 +145,18 @@ function updateCodexTomlFromFields(values: CodexProviderFormValues): string {
 	const apiKey = values.apiKey.trim();
 
 	document = model ? setPath(document, ['model'], model) : deletePath(document, ['model']);
+
+	// Codex key = 唯一身份（HC-CLI-MULTITOOL）：model_providers 下只应保留当前 key 的 table。
+	// 文件名字段逐字符编辑时（如 1→12→123），旧 key 的 table 必须清除，否则会累加残留。
+	const existingProviders = getPath(document, ['model_providers']);
+	if (existingProviders && typeof existingProviders === 'object' && !Array.isArray(existingProviders)) {
+		for (const staleKey of Object.keys(existingProviders as Record<string, unknown>)) {
+			if (staleKey !== key) {
+				document = deletePath(document, ['model_providers', staleKey]);
+			}
+		}
+	}
+
 	if (values.providerType === 'officialLogin') {
 		document = deletePath(document, ['model_provider']);
 		document = deletePath(document, ['model_providers', key]);
@@ -183,7 +200,7 @@ function recordToCodexValues(record: Record<string, string>, fallback: CodexProv
 }
 
 export const codexProviderFormAdapter: ProviderFormAdapter<CodexProviderFormInput, CodexProviderFormValues, CodexProviderFormModel> = {
-	textLabel: '最终 TOML（真实 profile 文件）',
+	textLabel: (values) => values.providerType === 'officialLogin' ? 'auth.json（只读脱敏预览）' : '最终 TOML（真实 profile 文件）',
 	title: (model) => model.mode === 'edit' ? '编辑 Codex profile' : '添加 Codex profile',
 	savedMessage: (model, values) =>
 		model.mode === 'edit'
@@ -191,15 +208,18 @@ export const codexProviderFormAdapter: ProviderFormAdapter<CodexProviderFormInpu
 			: `Codex profile ${values.profileKey} 已添加${values.activateAfterSave ? '并激活' : ''}`,
 	valuesToRecord: codexValuesToRecord,
 	recordToValues: recordToCodexValues,
-	buildText: (values) => values.toml || codexProviderValuesToToml(values),
-	parseText: codexProviderValuesFromToml,
-	makeProviderTypeInput: (providerType) => ({mode: 'add', providerType}),
+	buildText: (values) => values.providerType === 'officialLogin' ? values.authJson : (values.toml || codexProviderValuesToToml(values)),
+	parseText: (baseValues, raw) => baseValues.providerType === 'officialLogin'
+		? {ok: true, values: baseValues}
+		: codexProviderValuesFromToml(baseValues, raw),
+	makeProviderTypeInput: (providerType) => ({mode: 'add', providerType, existingProfiles: listCodexProfiles()}),
 	makeSubmitInput: (model, record) => ({
 		mode: model.mode,
 		profileKey: model.mode === 'edit' ? record.profileKey : undefined,
 		profile: null,
 		providerType: record.providerType
-	})
+	}),
+	isTextReadOnly: (values) => values.providerType === 'officialLogin'
 };
 
 export function readCodexProfileToml(profilePath: string): string {

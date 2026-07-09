@@ -1,4 +1,4 @@
-import {loadProviderContract} from './provider-contract.js';
+import {existsSync, readFileSync} from 'node:fs';
 import {
 	buildCodexProfileToml,
 	parseCodexProfileToml,
@@ -6,10 +6,11 @@ import {
 	type CodexProviderType,
 	type CodexProfile
 } from './codex.js';
+import {codexAuthJsonPath} from './paths.js';
 import {isNullOrWhiteSpace, normalizeBaseUrl} from './text-utils.js';
 import type {FormField, SelectOption} from '../components/form/field-types.js';
 
-// Codex provider 表单模型：复用 Claude provider 的供应商类型语义，但输出官方 Codex TOML profile。
+// Codex provider 表单模型：生成 Codex profile 字段，并输出官方 profile TOML。
 
 export type CodexProviderFormMode = 'add' | 'edit';
 
@@ -20,6 +21,7 @@ export type CodexProviderFormValues = {
 	model: string;
 	apiKey: string;
 	toml: string;
+	authJson: string;
 	activateAfterSave: boolean;
 };
 
@@ -36,7 +38,52 @@ export type CodexTomlValuesResult =
 export const CODEX_OFFICIAL_LOGIN_TYPE = 'officialLogin';
 export const CODEX_CUSTOM_TYPE = 'custom';
 
-const TOML_FIELD_ID = 'codexProfileToml';
+type CodexProviderTemplate = {
+	readonly label: string;
+	readonly profileKey: string;
+	readonly baseUrl: string;
+	readonly model: string;
+};
+
+const CODEX_PROVIDER_ORDER = ['zhipu', 'minimax', 'moonshot', 'deepseek', 'bailian'] as const;
+const CODEX_PROVIDER_TEMPLATES: Readonly<Record<(typeof CODEX_PROVIDER_ORDER)[number], CodexProviderTemplate>> = {
+	zhipu: {
+		label: '智谱 GLM',
+		profileKey: 'zhipu',
+		baseUrl: 'https://open.bigmodel.cn/api/paas/v4/',
+		model: 'glm-5.2'
+	},
+	minimax: {
+		label: 'MiniMax',
+		profileKey: 'minimax',
+		baseUrl: 'https://api.minimax.io/v1',
+		model: 'MiniMax-M3'
+	},
+	moonshot: {
+		label: 'Kimi Code',
+		profileKey: 'moonshot',
+		baseUrl: 'https://api.moonshot.ai/v1',
+		model: 'kimi-k2.6'
+	},
+	deepseek: {
+		label: 'DeepSeek',
+		profileKey: 'deepseek',
+		baseUrl: 'https://api.deepseek.com',
+		model: 'deepseek-v4-pro'
+	},
+	bailian: {
+		label: '阿里云百炼',
+		profileKey: 'bailian',
+		baseUrl: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+		model: 'qwen-plus'
+	}
+};
+
+const AUTH_JSON_SECRET_KEYS = new Set(['access_token', 'refresh_token', 'id_token', 'api_key', 'apikey', 'token', 'secret']);
+
+function hasOfficialLoginProfile(profiles: readonly Pick<CodexProfile, 'providerType'>[] | undefined): boolean {
+	return profiles?.some(profile => profile.providerType === 'officialLogin') ?? false;
+}
 
 function isOfficialLogin(providerType: string): boolean {
 	return providerType === CODEX_OFFICIAL_LOGIN_TYPE;
@@ -46,40 +93,63 @@ function toCodexProviderType(providerType: string): CodexProviderType {
 	return isOfficialLogin(providerType) ? 'officialLogin' : 'apiKey';
 }
 
-function buildProviderTypeOptions(): SelectOption[] {
+function buildProviderTypeOptions(existingProfiles?: readonly Pick<CodexProfile, 'providerType'>[]): SelectOption[] {
 	const options: SelectOption[] = [
-		{value: CODEX_OFFICIAL_LOGIN_TYPE, label: 'official login'}
+		...CODEX_PROVIDER_ORDER.map((key) => ({value: key, label: CODEX_PROVIDER_TEMPLATES[key].label})),
+		{value: CODEX_CUSTOM_TYPE, label: '自定义 API 供应商'}
 	];
-
-	const contract = loadProviderContract();
-	for (const [key, provider] of Object.entries(contract.builtinProviders)) {
-		if (key === CODEX_CUSTOM_TYPE) {
-			continue;
-		}
-
-		options.push({value: key, label: provider.name || key});
+	if (!hasOfficialLoginProfile(existingProfiles)) {
+		options.unshift({value: CODEX_OFFICIAL_LOGIN_TYPE, label: 'official login'});
 	}
-
-	options.push({value: CODEX_CUSTOM_TYPE, label: '自定义供应商'});
 	return options;
 }
 
 function templateFor(providerType: string): Pick<CodexProviderFormValues, 'profileKey' | 'baseUrl' | 'model' | 'apiKey'> {
-	if (isOfficialLogin(providerType) || providerType === CODEX_CUSTOM_TYPE) {
-		return {profileKey: '', baseUrl: '', model: '', apiKey: ''};
+	if (providerType in CODEX_PROVIDER_TEMPLATES) {
+		const template = CODEX_PROVIDER_TEMPLATES[providerType as keyof typeof CODEX_PROVIDER_TEMPLATES];
+		return {profileKey: template.profileKey, baseUrl: template.baseUrl, model: template.model, apiKey: ''};
 	}
 
-	const builtin = loadProviderContract().builtinProviders[providerType];
-	const model = Object.values(builtin?.modelEnv ?? {}).find(value => !isNullOrWhiteSpace(value)) ?? '';
-	return {
-		profileKey: providerType,
-		baseUrl: builtin?.baseUrl ?? '',
-		model,
-		apiKey: ''
-	};
+	return {profileKey: '', baseUrl: '', model: '', apiKey: ''};
 }
 
-function valuesToToml(values: Omit<CodexProviderFormValues, 'toml'>): string {
+function redactAuthJsonValue(value: unknown, key = ''): unknown {
+	if (AUTH_JSON_SECRET_KEYS.has(key.toLowerCase())) {
+		return '***';
+	}
+
+	if (Array.isArray(value)) {
+		return value.map((item) => redactAuthJsonValue(item));
+	}
+
+	if (value && typeof value === 'object') {
+		const result: Record<string, unknown> = {};
+		for (const [childKey, childValue] of Object.entries(value)) {
+			result[childKey] = redactAuthJsonValue(childValue, childKey);
+		}
+		return result;
+	}
+
+	return value;
+}
+
+export function readCodexAuthJsonPreview(): string {
+	const authPath = codexAuthJsonPath();
+	if (!existsSync(authPath)) {
+		return `未检测到 CODEX_HOME/auth.json\n\n请运行 codex login 完成 official login。\nccq 仅只读展示 auth.json 状态，不写入该文件。`;
+	}
+
+	try {
+		const raw = readFileSync(authPath, 'utf8');
+		const parsed = JSON.parse(raw) as unknown;
+		return `${JSON.stringify(redactAuthJsonValue(parsed), null, 2)}\n`;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return `已检测到 CODEX_HOME/auth.json，但无法解析为 JSON。\n\n${message}`;
+	}
+}
+
+function valuesToToml(values: Omit<CodexProviderFormValues, 'toml' | 'authJson'>): string {
 	return buildCodexProfileToml({
 		key: values.profileKey || 'profile',
 		providerType: toCodexProviderType(values.providerType),
@@ -94,6 +164,7 @@ function makeValues(input: {
 	readonly profile?: CodexProfile | null;
 	readonly providerType?: string;
 	readonly rawToml?: string;
+	readonly existingProfiles?: readonly Pick<CodexProfile, 'providerType'>[];
 }): CodexProviderFormValues {
 	if (input.mode === 'edit' && input.profile) {
 		const providerType = input.profile.providerType === 'officialLogin' ? CODEX_OFFICIAL_LOGIN_TYPE : (input.providerType ?? CODEX_CUSTOM_TYPE);
@@ -111,11 +182,14 @@ function makeValues(input: {
 				apiKey: '',
 				activateAfterSave: false
 			}),
+			authJson: readCodexAuthJsonPreview(),
 			activateAfterSave: false
 		};
 	}
 
-	const providerType = input.providerType ?? CODEX_OFFICIAL_LOGIN_TYPE;
+	const officialLoginExists = hasOfficialLoginProfile(input.existingProfiles);
+	const requestedProviderType = input.providerType ?? (officialLoginExists ? CODEX_PROVIDER_ORDER[0] : CODEX_OFFICIAL_LOGIN_TYPE);
+	const providerType = officialLoginExists && requestedProviderType === CODEX_OFFICIAL_LOGIN_TYPE ? CODEX_PROVIDER_ORDER[0] : requestedProviderType;
 	const template = templateFor(providerType);
 	const values: Omit<CodexProviderFormValues, 'toml'> = {
 		profileKey: template.profileKey,
@@ -123,6 +197,7 @@ function makeValues(input: {
 		baseUrl: template.baseUrl,
 		model: template.model,
 		apiKey: template.apiKey,
+			authJson: readCodexAuthJsonPreview(),
 		activateAfterSave: true
 	};
 	return {...values, toml: values.profileKey ? valuesToToml(values) : ''};
@@ -133,6 +208,7 @@ export function buildCodexProviderFormModel(input: {
 	readonly profile?: CodexProfile | null;
 	readonly providerType?: string;
 	readonly rawToml?: string;
+	readonly existingProfiles?: readonly Pick<CodexProfile, 'providerType'>[];
 }): CodexProviderFormModel {
 	const values = makeValues(input);
 	const fields: FormField[] = [];
@@ -143,39 +219,40 @@ export function buildCodexProviderFormModel(input: {
 			type: 'radio',
 			label: '供应商类型',
 			value: values.providerType,
-			options: buildProviderTypeOptions(),
-			helpText: 'Codex 复用 Claude 内置供应商语义，并额外支持 official login。'
+			options: buildProviderTypeOptions(input.existingProfiles),
+			helpText: hasOfficialLoginProfile(input.existingProfiles)
+					? '已存在 official login profile；如需重建请先删除旧 profile，删除时会同步清空 auth.json。'
+					: 'Codex profile 独立管理；official login 使用 codex login，自定义 API 供应商写入 profile TOML。'
 		});
 	}
 
 	fields.push(
 		input.mode === 'edit'
-			? {id: 'profileKey', type: 'readonly', label: 'Profile key', value: values.profileKey}
-			: {id: 'profileKey', type: 'text', label: 'Profile key', value: values.profileKey},
-		{
-			id: 'baseUrl',
-			type: 'text',
-			label: 'Base URL',
-			value: values.baseUrl,
-			disabled: isOfficialLogin(values.providerType)
-		},
-		{id: 'model', type: 'text', label: '默认模型', value: values.model},
-		{
-			id: 'apiKey',
-			type: 'secret',
-			label: 'API Key',
-			value: values.apiKey,
-			disabled: isOfficialLogin(values.providerType),
-			helpText: isOfficialLogin(values.providerType) ? 'official login 使用 codex login，不需要 API key。' : undefined
-		},
-		{
-			id: TOML_FIELD_ID,
-			type: 'readonly',
-			label: 'TOML',
-			value: values.toml,
-			helpText: '真实保存内容为 CODEX_HOME/<key>.config.toml；编辑器视图在 Phase 6 接入。'
-		}
+			? {
+					id: 'profileKey',
+					type: 'readonly',
+					label: '文件名',
+					value: values.profileKey,
+					helpText: '对应 CODEX_HOME/<文件名>.config.toml，并作为 codex --profile 名称。'
+				}
+			: {
+					id: 'profileKey',
+					type: 'text',
+					label: '文件名',
+					value: values.profileKey,
+					helpText: '填写文件名主体；保存为 CODEX_HOME/<文件名>.config.toml，并作为 codex --profile 名称。'
+				}
 	);
+
+	if (isOfficialLogin(values.providerType)) {
+		fields.push({id: 'model', type: 'text', label: '默认模型', value: values.model});
+	} else {
+		fields.push(
+			{id: 'baseUrl', type: 'text', label: 'Base URL', value: values.baseUrl},
+			{id: 'model', type: 'text', label: '默认模型', value: values.model},
+			{id: 'apiKey', type: 'secret', label: 'API Key', value: values.apiKey}
+		);
+	}
 
 	if (input.mode !== 'edit') {
 		fields.push({
@@ -221,9 +298,9 @@ export function validateCodexProviderForm(mode: CodexProviderFormMode, values: C
 	const errors: string[] = [];
 	if (mode !== 'edit') {
 		if (isNullOrWhiteSpace(values.profileKey)) {
-			errors.push('Profile key 不能为空');
+			errors.push('文件名不能为空');
 		} else if (!testCodexProfileKey(values.profileKey.trim())) {
-			errors.push('请填写安全 Profile key（字母/数字/. _ -，不能为 . / .. 或以 - 开头）');
+			errors.push('请填写安全文件名（字母/数字/. _ -，不能为 . / .. 或以 - 开头）');
 		}
 	}
 

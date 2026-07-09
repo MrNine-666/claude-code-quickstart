@@ -43,12 +43,12 @@ const providerViewSource = readFileSync(new URL('../src/views/provider-view.tsx'
 assert.match(providerViewSource, /agentContext:\s*AgentContext/, 'ProviderView props 必须接收 agentContext');
 assert.match(providerViewSource, /const isCodex = agentContext === 'cx'/, 'ProviderView 必须由 agentContext 切换 Codex 模式');
 assert.match(providerViewSource, /isCodex \? loadCodexProviderDisplay\(\) : loadProviderDisplay\(\)/, 'ProviderView 列表必须按 agentContext 切换数据源');
-assert.match(providerViewSource, /setScreen\(\{kind: 'list'\}\);\n\t\}, \[isCodex\]\);/, '切换 agentContext 时必须重置列表屏，避免表单脏状态写入错误目标');
-assert.match(providerViewSource, /adapter=\{codexProviderFormAdapter\}/, 'Codex Provider 表单必须使用真实 TOML textarea adapter');
+assert.match(providerViewSource, /setScreen\(\{kind: 'list'\}\);\r?\n\t\}, \[isCodex\]\);/, '切换 agentContext 时必须重置列表屏，避免表单脏状态写入错误目标');
+assert.match(providerViewSource, /adapter=\{codexProviderFormAdapter\}/, 'Codex Provider 表单必须保留真实 TOML textarea adapter');
 assert.match(providerViewSource, /save=\{saveCodexProviderForm\}/, 'Codex Provider 新增必须走 Codex service/core，不得复用 Claude provider');
 assert.match(providerViewSource, /isCodex \? switchActiveCodexProvider\(current\.key\) : switchActiveProvider\(current\.key\)/, '设置默认必须按 agentContext 路由');
 assert.match(providerViewSource, /isCodex \? removeCodexProvider\(current\.key\) : removeProvider\(current\.key\)/, '删除必须按 agentContext 路由');
-console.log('[PASS] 6.10 ProviderView agentContext 切换 + Codex TOML 表单源码不变量');
+console.log('[PASS] 6.10 ProviderView agentContext 切换 + Codex profile 表单源码不变量');
 
 function readSettings() {
 	return JSON.parse(readFileSync(settingsPath, 'utf8'));
@@ -175,6 +175,16 @@ const preservedValues = codexProviderFormAdapter.recordToValues(
 assert.match(preservedValues.toml, /experimental_bearer_token\s*=\s*"sk-codex-secret-never-log"/, '字段变化且 API Key 留空时必须保留 textarea 既有 token');
 assert.match(preservedValues.toml, /approval_policy\s*=\s*"on-request"/, '字段变化必须保留 textarea 未知字段');
 assert.match(preservedValues.toml, /model\s*=\s*"deepseek-reasoner"/, '字段变化应定点更新 model');
+
+// 文件名逐字符输入（1 → 12）时，旧 model_providers.<旧key> 不得残留累加（Codex key = 唯一身份）。
+const keyStepValues = codexProviderFormAdapter.recordToValues(
+	{...codexProviderFormAdapter.valuesToRecord(codexValues), profileKey: '12'},
+	{...codexValues, toml: 'model_provider = "1"\n\n[model_providers.1]\nname = "1"\n'}
+);
+assert.equal(/\[model_providers\.1\]/.test(keyStepValues.toml), false, '文件名变化后旧 model_providers.<旧key> table 必须清除');
+assert.match(keyStepValues.toml, /\[model_providers\.12\]/, '文件名变化后只保留当前 key 的 provider table');
+assert.match(keyStepValues.toml, /model_provider\s*=\s*"12"/, 'model_provider 应指向当前 key');
+
 const saved = saveCodexProviderForm({mode: 'add', providerType: 'custom'}, codexValues);
 assert.equal(saved.ok, true, 'Codex profile 保存应成功');
 assert.equal(existsSync(join(process.env.CODEX_HOME, 'deepseek.config.toml')), true, 'Codex profile 写入 CODEX_HOME/<key>.config.toml');
@@ -194,6 +204,16 @@ const official = saveCodexProviderForm({mode: 'add', providerType: 'officialLogi
 	activateAfterSave: false
 });
 assert.equal(official.ok, true, 'official login Codex profile 不要求 API key');
+const duplicateOfficial = saveCodexProviderForm({mode: 'add', providerType: 'officialLogin'}, {
+	...buildCodexForm({mode: 'add', providerType: 'officialLogin'}).values,
+	profileKey: 'official2',
+	providerType: 'officialLogin',
+	model: 'gpt-5',
+	activateAfterSave: false
+});
+assert.equal(duplicateOfficial.ok, false, 'official login Codex profile 已存在时不得重复新增');
+assert.match(duplicateOfficial.ok ? '' : duplicateOfficial.error, /已存在 official login Codex profile/, '重复新增 official login 应提示用户先删除旧 profile');
+writeFileSync(join(process.env.CODEX_HOME, 'auth.json'), '{"access_token":"secret"}', 'utf8');
 const switched = switchActiveCodexProvider('official');
 assert.equal(switched.ok, true, 'Codex official-login set default 应成功');
 assert.equal(loadCodexProviderDisplay().profiles.some(profile => profile.key === 'official'), true, 'Codex display 保留 official-login profile');
@@ -202,7 +222,8 @@ assert.equal(switchBack.ok, true, 'Codex API-key set default 应成功');
 assert.equal(loadCodexProviderDisplay().activeKey, 'deepseek', 'Codex display 标记 API-key 默认 profile');
 const remove = removeCodexProvider('official');
 assert.equal(remove.ok, true, '非默认 Codex profile 可删除');
-console.log('[PASS] 6.1/6.2/6.3 Codex Provider service 路径隔离 + TOML adapter + official login');
+assert.equal(existsSync(join(process.env.CODEX_HOME, 'auth.json')), false, '删除 official login profile 应同步清空 auth.json');
+console.log('[PASS] 6.1/6.2/6.3 Codex Provider service 路径隔离 + TOML adapter + official login 单例/清理');
 
 delete process.env.CODEX_HOME;
 

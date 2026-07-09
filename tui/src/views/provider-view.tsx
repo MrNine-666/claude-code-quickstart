@@ -126,7 +126,10 @@ export function ProviderView({
 	// 表单屏（add/edit 统一走 ProviderForm）：Claude 使用 JSON，Codex 使用真实 TOML adapter。
 	if (screen.kind === 'add') {
 		if (isCodex) {
-			const model = buildCodexForm({mode: 'add'});
+			const existingProfiles = profiles
+					.map(profile => loadCodexProviderProfile(profile.profilePath))
+					.filter((profile): profile is NonNullable<typeof profile> => profile !== null);
+				const model = buildCodexForm({mode: 'add', existingProfiles});
 			return (
 				<ProviderForm<CodexProviderFormInput, CodexProviderFormValues, CodexProviderFormModel>
 					model={model}
@@ -238,6 +241,7 @@ export function ProviderView({
 					selectedIndex={safeSelected}
 					viewportHeight={viewportHeight}
 					reservedRows={migrationFailed.length > 0 ? 6 : 3}
+					active={active}
 					summaryForProfile={(profile) => isCodex ? codexModelSummary(loadCodexProviderProfile(profile.profilePath)) : modelSummary(loadProviderProfile(profile.profilePath))}
 				/>
 			)}
@@ -330,12 +334,14 @@ function ProviderTable({
 	selectedIndex,
 	viewportHeight,
 	reservedRows,
+	active,
 	summaryForProfile
 }: {
 	readonly profiles: readonly ProviderDisplayProfile[];
 	readonly selectedIndex: number;
 	readonly viewportHeight: number;
 	readonly reservedRows: number;
+	readonly active: boolean;
 	readonly summaryForProfile: (profile: ProviderDisplayProfile) => string;
 }) {
 	const items: ScrollListItem[] = profiles.map((profile) => ({
@@ -352,7 +358,7 @@ function ProviderTable({
 		)
 	}));
 
-	return <ScrollList items={items} cursor={selectedIndex} viewportHeight={viewportHeight} reservedRows={reservedRows} stretch />;
+	return <ScrollList items={items} cursor={selectedIndex} viewportHeight={viewportHeight} reservedRows={reservedRows} active={active} stretch />;
 }
 
 // 左栏状态圆点：active 用更新页同款绿点（latest 表示当前生效），非活跃用弱化灰点；

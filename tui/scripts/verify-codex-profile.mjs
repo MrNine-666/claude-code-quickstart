@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {
@@ -120,9 +120,16 @@ try {
 	const officialBaseConfig = readFileSync(baseConfigPath, 'utf8');
 	assert.equal(officialBaseConfig.includes('[model_providers.deepseek]'), false, '切换默认时清理上一 provider table');
 	assert.equal(officialBaseConfig.includes(rawKey), false, '切换默认时清理上一 provider token');
+	writeFileSync(join(process.env.CODEX_HOME, 'auth.json'), '{"access_token":"secret"}', 'utf8');
 	deleteCodexProfile(key);
 	assert.equal(codexProfileExists(key), false, '非默认 profile 可删除');
-	console.log('[PASS] 5.9 Codex profile 删除保护：默认拒绝，非默认可删除，切换默认清理旧 provider');
+	assert.equal(existsSync(join(process.env.CODEX_HOME, 'auth.json')), true, '删除 API-key profile 不应清空 auth.json');
+	saveCodexProfile({key: 'other', providerType: 'apiKey', baseUrl: 'https://api.example.com', apiKey: 'sk-other-token'});
+	setDefaultCodexProfile('other');
+	deleteCodexProfile('official');
+	assert.equal(codexProfileExists('official'), false, 'official login profile 可在非默认时删除');
+	assert.equal(existsSync(join(process.env.CODEX_HOME, 'auth.json')), false, '删除 official login profile 应同步清空 auth.json');
+	console.log('[PASS] 5.9 Codex profile 删除保护：默认拒绝，非默认可删除，official login 删除清空 auth.json');
 
 	// ── 1.11 输出脱敏：raw key 不得出现在展示用文本 ──
 	assert.equal(redactCodexTomlForOutput(toml).includes(rawKey), false, '展示用 TOML 必须脱敏 raw key');

@@ -1,6 +1,6 @@
 import {existsSync, readFileSync, readdirSync, unlinkSync} from 'node:fs';
 import {normalizeBaseUrl, testProviderKey} from './text-utils.js';
-import {codexConfigPath, codexDir, codexProfilePath} from './paths.js';
+import {codexAuthJsonPath, codexConfigPath, codexDir, codexProfilePath} from './paths.js';
 import {atomicWrite as atomicWriteText} from './fs-utils.js';
 import {
 	atomicWrite,
@@ -247,9 +247,17 @@ export function deleteCodexProfile(key: string): void {
 		throw new Error(`不能删除当前默认 Codex profile: ${safe}`);
 	}
 
+	const profile = codexProfileExists(safe) ? readCodexProfile(safe) : null;
 	const profilePath = codexProfilePath(safe);
 	if (existsSync(profilePath)) {
 		unlinkSync(profilePath);
+	}
+
+	if (profile?.providerType === 'officialLogin') {
+		const authPath = codexAuthJsonPath();
+		if (existsSync(authPath)) {
+			unlinkSync(authPath);
+		}
 	}
 }
 

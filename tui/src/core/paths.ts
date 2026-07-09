@@ -65,6 +65,11 @@ export function codexConfigPath(): string {
 	return join(codexDir(), 'config.toml');
 }
 
+/** Codex official login 凭据文件 `$CODEX_HOME/auth.json`。 */
+export function codexAuthJsonPath(): string {
+	return join(codexDir(), 'auth.json');
+}
+
 /** Codex 官方 profile 文件 `$CODEX_HOME/<key>.config.toml`。调用前由 codex core 校验 key。 */
 export function codexProfilePath(key: string): string {
 	return join(codexDir(), `${key}.config.toml`);

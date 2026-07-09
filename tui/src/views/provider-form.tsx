@@ -39,7 +39,7 @@ export type ProviderFormTextResult<TValues> =
 	| {readonly ok: false; readonly error: string};
 
 export type ProviderFormAdapter<TInput, TValues, TModel extends FormModelBase<TValues>> = {
-	readonly textLabel: string;
+	readonly textLabel: string | ((values: TValues) => string);
 	readonly title: (model: TModel) => string;
 	readonly savedMessage: (model: TModel, values: TValues) => string;
 	readonly valuesToRecord: (values: TValues) => Record<string, string>;
@@ -48,6 +48,7 @@ export type ProviderFormAdapter<TInput, TValues, TModel extends FormModelBase<TV
 	readonly parseText: (baseValues: TValues, raw: string) => ProviderFormTextResult<TValues>;
 	readonly makeProviderTypeInput: (providerType: string) => TInput;
 	readonly makeSubmitInput: (model: TModel, record: Record<string, string>) => TInput;
+	readonly isTextReadOnly?: (values: TValues) => boolean;
 };
 
 function valuesToRecord(values: ProviderFormValues): Record<string, string> {
@@ -258,6 +259,12 @@ export function ProviderForm<TInput = ProviderFormInput, TValues = ProviderFormV
 			return;
 		}
 
+		if (formAdapter.isTextReadOnly?.(baseValues)) {
+			pendingTextareaSync.current = text;
+			textareaRef.current?.setText(text);
+			return;
+		}
+
 		setText(content);
 		const parsed = formAdapter.parseText(baseValues, content);
 		if (!parsed.ok) {
@@ -298,6 +305,13 @@ export function ProviderForm<TInput = ProviderFormInput, TValues = ProviderFormV
 
 	useKeyboard((keyEvent) => {
 		if (!active || !textFocused) {
+			return;
+		}
+
+		if (formAdapter.isTextReadOnly?.(baseValues)) {
+			if (keyEvent.name.toLowerCase() === 'escape') {
+				onCancel();
+			}
 			return;
 		}
 
@@ -344,6 +358,7 @@ export function ProviderForm<TInput = ProviderFormInput, TValues = ProviderFormV
 	};
 
 	const title = formAdapter.title(model);
+	const textLabel = typeof formAdapter.textLabel === 'function' ? formAdapter.textLabel(baseValues) : formAdapter.textLabel;
 	const scrollHeight = Math.max(8, contentHeight - (errors.length > 0 ? 2 : 0));
 	const textHeight = Math.max(8, Math.floor(contentHeight * 0.45));
 
@@ -374,7 +389,7 @@ export function ProviderForm<TInput = ProviderFormInput, TValues = ProviderFormV
 
 				<box id={JSON_FIELD_ID} marginTop={1} flexDirection="column" flexShrink={0}>
 					<text fg={textFocused ? colors.primary : colors.text} attributes={textFocused ? TextAttributes.BOLD : 0}>
-						{textFocused ? '› ' : '  '}{formAdapter.textLabel}
+						{textFocused ? '› ' : '  '}{textLabel}
 					</text>
 					<box height={textHeight} borderStyle="rounded" borderColor={textFocused ? borderColors.active : borderColors.inactive}>
 						<textarea
