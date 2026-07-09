@@ -75,7 +75,7 @@ function recordToValues(record: Record<string, string>, fallback: ProviderFormVa
 			ANTHROPIC_DEFAULT_OPUS_MODEL: record.ANTHROPIC_DEFAULT_OPUS_MODEL ?? '',
 			ANTHROPIC_DEFAULT_SONNET_MODEL: record.ANTHROPIC_DEFAULT_SONNET_MODEL ?? ''
 		},
-		extraEnv: fallback.extraEnv,
+		env: fallback.env,
 		activateAfterSave: (record.activateAfterSave ?? 'yes') === 'yes',
 		providerType: record.providerType || fallback.providerType
 	};

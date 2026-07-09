@@ -19,7 +19,9 @@ export type ProviderFormValues = {
 	baseUrl: string;
 	apiKey: string;
 	modelEnv: Record<string, string>;
-	extraEnv: Record<string, string>;
+	// 用户经底部 JSON 直填的完整 env（5 必填字段外的任意键）。
+	// textarea 为真源，modelEnv/apiKey/baseUrl 由其派生供结构化字段显示与快捷编辑。
+	env: Record<string, string>;
 	activateAfterSave: boolean;
 	// add 模式表单内选择的供应商类型（builtin key 或 'custom'）；edit 模式不含。
 	providerType?: string;
@@ -39,7 +41,7 @@ export type ProviderSavePayload =
 			readonly baseUrl?: string;
 			readonly apiKey: string;
 			readonly modelEnv?: Record<string, string>;
-			readonly extraEnv?: Record<string, string>;
+			readonly env?: Record<string, string>;
 			readonly activate: boolean;
 	  }
 	| {
@@ -49,7 +51,7 @@ export type ProviderSavePayload =
 			readonly baseUrl?: string;
 			readonly apiKey?: string;
 			readonly modelEnv?: Record<string, string> | null;
-			readonly extraEnv?: Record<string, string> | null;
+			readonly env?: Record<string, string> | null;
 	  };
 
 const AUTH_TOKEN_KEY = 'ANTHROPIC_AUTH_TOKEN';
@@ -84,28 +86,28 @@ function firstBuiltinKey(): string | undefined {
 
 /**
  * 取供应商类型对应的预填模板（供 add 表单初始化与切换覆盖复用）。
- * 内置类型返回契约模板，'custom'/未知返回空白。
+ * 内置类型返回契约模板，'custom'/未知返回空白。env 含模板的全部非必填字段（模板 ExtraEnv）。
  */
 export function getProviderTemplate(providerType: string): {
 	profileKey: string;
 	baseUrl: string;
 	modelEnv: Record<string, string>;
-	extraEnv: Record<string, string>;
+	env: Record<string, string>;
 } {
 	if (!providerType || providerType === PROVIDER_CUSTOM_TYPE) {
-		return {profileKey: '', baseUrl: '', modelEnv: {}, extraEnv: {}};
+		return {profileKey: '', baseUrl: '', modelEnv: {}, env: {}};
 	}
 
 	const builtin = loadProviderContract().builtinProviders[providerType];
 	if (!builtin) {
-		return {profileKey: providerType, baseUrl: '', modelEnv: {}, extraEnv: {}};
+		return {profileKey: providerType, baseUrl: '', modelEnv: {}, env: {}};
 	}
 
 	return {
 		profileKey: providerType,
 		baseUrl: builtin.baseUrl,
 		modelEnv: pickManagedModelDefaults(builtin.modelEnv as Record<string, string> | undefined),
-		extraEnv: {...(builtin.extraEnv ?? {})}
+		env: {...(builtin.extraEnv ?? {})}
 	};
 }
 
@@ -124,17 +126,12 @@ function pickManagedModelDefaults(source: Record<string, string> | undefined): R
 	return result;
 }
 
-// 从 profile.env 提取 extra env（排除 token/baseUrl/受管模型键），供 edit 回填 JSON 区。
-function pickExtraEnv(env: Record<string, string> | undefined): Record<string, string> {
+// 清洗 env：丢弃空 key/value 条目（textarea 真源清洗）。
+function sanitizeEnv(env: Record<string, string>): Record<string, string> {
 	const result: Record<string, string> = {};
-	if (!env) {
-		return result;
-	}
-
-	const reserved = new Set<string>([AUTH_TOKEN_KEY, BASE_URL_KEY, ...MODEL_KEY_ORDER]);
 	for (const [k, v] of Object.entries(env)) {
-		if (!reserved.has(k) && !isNullOrWhiteSpace(v)) {
-			result[k] = String(v);
+		if (!isNullOrWhiteSpace(k) && !isNullOrWhiteSpace(v)) {
+			result[k.trim()] = String(v);
 		}
 	}
 
@@ -151,7 +148,7 @@ export function buildProviderFormModel(input: ProviderFormInput): ProviderFormMo
 		baseUrl: '',
 		apiKey: '',
 		modelEnv: {},
-		extraEnv: {},
+		env: {},
 		activateAfterSave: input.mode !== 'edit'
 	};
 
@@ -167,13 +164,13 @@ export function buildProviderFormModel(input: ProviderFormInput): ProviderFormMo
 		values.profileKey = template.profileKey;
 		values.baseUrl = template.baseUrl;
 		values.modelEnv = template.modelEnv;
-		values.extraEnv = template.extraEnv;
+		values.env = template.env;
 	} else if (input.profile) {
 		values.profileKey = input.profileKey ?? '';
 		values.baseUrl = input.profile.env?.[BASE_URL_KEY] ?? '';
 		values.apiKey = input.profile.env?.[AUTH_TOKEN_KEY] ?? '';
 		values.modelEnv = getManagedModelEnv(input.profile);
-		values.extraEnv = pickExtraEnv(input.profile.env);
+		values.env = pickNonManagedEnv(input.profile.env);
 	}
 
 	const fields: FormField[] = [];
@@ -233,6 +230,23 @@ export function buildProviderFormModel(input: ProviderFormInput): ProviderFormMo
 	return {mode: input.mode, fields, values};
 }
 
+// 从 profile.env 提取非必填 env（排除 token/baseUrl/受管模型键），供 edit 回填 JSON 区。
+function pickNonManagedEnv(env: Record<string, string> | undefined): Record<string, string> {
+	const result: Record<string, string> = {};
+	if (!env) {
+		return result;
+	}
+
+	const reserved = new Set<string>([AUTH_TOKEN_KEY, BASE_URL_KEY, ...MODEL_KEY_ORDER]);
+	for (const [k, v] of Object.entries(env)) {
+		if (!reserved.has(k) && !isNullOrWhiteSpace(v)) {
+			result[k] = String(v);
+		}
+	}
+
+	return result;
+}
+
 export function providerValuesToProfile(values: ProviderFormValues): ProviderProfile {
 	const env: Record<string, string> = {};
 
@@ -251,7 +265,7 @@ export function providerValuesToProfile(values: ProviderFormValues): ProviderPro
 		}
 	}
 
-	for (const [key, value] of Object.entries(sanitizeExtraEnv(values.extraEnv))) {
+	for (const [key, value] of Object.entries(sanitizeEnv(values.env))) {
 		env[key] = value;
 	}
 
@@ -299,7 +313,7 @@ export function valuesFromProviderProfileJson(baseValues: ProviderFormValues, ra
 			apiKey: normalizedEnv[AUTH_TOKEN_KEY] ?? '',
 			baseUrl: normalizedEnv[BASE_URL_KEY] ?? '',
 			modelEnv: pickManagedModelDefaults(normalizedEnv),
-			extraEnv: pickExtraEnv(normalizedEnv)
+			env: pickNonManagedEnv(normalizedEnv)
 		}
 	};
 }
@@ -332,7 +346,7 @@ export function validateProviderForm(mode: ProviderFormMode, values: ProviderFor
 /** 将表单值转换为 addProvider / editProvider 可消费的 payload（仅写非空受管字段）。 */
 export function toProviderSavePayload(input: ProviderFormInput, values: ProviderFormValues): ProviderSavePayload {
 	const modelEnv = pickManagedModelDefaults(values.modelEnv);
-	const extraEnv = sanitizeExtraEnv(values.extraEnv);
+	const env = sanitizeEnv(values.env);
 
 	if (input.mode === 'edit') {
 		return {
@@ -341,7 +355,7 @@ export function toProviderSavePayload(input: ProviderFormInput, values: Provider
 			baseUrl: values.baseUrl || undefined,
 			apiKey: values.apiKey || undefined,
 			modelEnv: Object.keys(modelEnv).length > 0 ? modelEnv : null,
-			extraEnv
+			env
 		};
 	}
 
@@ -356,19 +370,7 @@ export function toProviderSavePayload(input: ProviderFormInput, values: Provider
 		baseUrl: values.baseUrl,
 		apiKey: values.apiKey,
 		modelEnv: Object.keys(modelEnv).length > 0 ? modelEnv : undefined,
-		extraEnv,
+		env,
 		activate: values.activateAfterSave
 	};
-}
-
-// 清洗 extra env：丢弃空 key/value 条目（§3.4）。
-function sanitizeExtraEnv(extraEnv: Record<string, string>): Record<string, string> {
-	const result: Record<string, string> = {};
-	for (const [k, v] of Object.entries(extraEnv)) {
-		if (!isNullOrWhiteSpace(k) && !isNullOrWhiteSpace(v)) {
-			result[k.trim()] = String(v);
-		}
-	}
-
-	return result;
 }

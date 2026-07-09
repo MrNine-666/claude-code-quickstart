@@ -16,7 +16,6 @@ export type BuiltinProvider = {
 export type ProviderRuntimeConfig = {
 	readonly managedModelEnvKeys: readonly string[];
 	readonly modelEnvLabels: Readonly<Record<string, string>>;
-	readonly managedExtraEnvKeys: readonly string[];
 	readonly legacyModelKey: string;
 	readonly builtinProviders: Readonly<Record<string, BuiltinProvider>>;
 };
@@ -26,7 +25,6 @@ type RawProviderContract = {
 	ManagedEnv?: {
 		ProviderManagedModelEnvKeys?: string[];
 		ProviderModelEnvLabels?: Record<string, string>;
-		ProviderManagedExtraEnvKeys?: string[];
 		LegacyProviderModelKey?: string;
 	};
 	BuiltinProviders?: Record<string, RawBuiltinProvider>;
@@ -91,7 +89,6 @@ function normalizeContract(raw: RawProviderContract): ProviderRuntimeConfig {
 	return {
 		managedModelEnvKeys: (managedEnv.ProviderManagedModelEnvKeys ?? []).map(String),
 		modelEnvLabels,
-		managedExtraEnvKeys: (managedEnv.ProviderManagedExtraEnvKeys ?? []).map(String),
 		legacyModelKey: String(managedEnv.LegacyProviderModelKey ?? 'modelMapping'),
 		builtinProviders
 	};

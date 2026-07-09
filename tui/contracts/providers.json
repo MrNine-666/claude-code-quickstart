@@ -16,14 +16,6 @@
       "ANTHROPIC_DEFAULT_OPUS_MODEL": "Opus 模型",
       "ANTHROPIC_DEFAULT_SONNET_MODEL": "Sonnet 模型"
     },
-    "ProviderManagedExtraEnvKeys": [
-      "ANTHROPIC_MODEL",
-      "CLAUDE_CODE_SUBAGENT_MODEL",
-      "CLAUDE_CODE_EFFORT_LEVEL",
-      "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK",
-      "API_TIMEOUT_MS",
-      "ENABLE_TOOL_SEARCH"
-    ],
     "LegacyProviderModelKey": "modelMapping"
   },
   "BuiltinProviders": {

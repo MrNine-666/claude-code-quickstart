@@ -89,7 +89,7 @@ export function saveProviderForm(input: ProviderFormInput, values: ProviderFormV
 				baseUrl: payload.baseUrl,
 				apiKey: payload.apiKey,
 				modelEnv: payload.modelEnv,
-				extraEnv: payload.extraEnv,
+				env: payload.env,
 				activate: payload.activate
 			};
 			const result = addProvider(opts);
@@ -105,7 +105,7 @@ export function saveProviderForm(input: ProviderFormInput, values: ProviderFormV
 			baseUrl: payload.baseUrl,
 			profileKey: payload.profileKey,
 			modelEnv: payload.modelEnv,
-			extraEnv: payload.extraEnv
+			env: payload.env
 		};
 		const result = editProvider(payload.key, updates);
 		return {ok: true, data: result};

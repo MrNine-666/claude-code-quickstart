@@ -58,7 +58,9 @@ export type AddProviderOptions = {
 	readonly baseUrl?: string;
 	readonly apiKey?: string;
 	readonly modelEnv?: Record<string, string>;
-	readonly extraEnv?: Record<string, string>;
+	// 用户经表单底部 JSON 直填的完整 env（5 必填字段外的供应商特定键）。
+	// 传入时以此为真源与模板预填 env 合并；未传入时回退模板 ExtraEnv + ModelEnv。
+	readonly env?: Record<string, string>;
 	readonly activate?: boolean;
 	readonly conflictStrategy?: 'increment' | 'overwrite' | 'error';
 };
@@ -79,7 +81,10 @@ export type EditProviderUpdates = {
 	readonly name?: string;
 	readonly profileKey?: string; // 用户改写文件名（§2.7），触发重命名
 	readonly modelEnv?: Record<string, string> | null;
-	readonly extraEnv?: Record<string, string> | null; // 全量 extra env（§2.8）
+	// 用户经表单底部 JSON 直填的完整 env（5 必填字段外的键）。
+	// 全量替换语义：传入时 textarea 为真源，profile.env 的非必填键整体被该值替换；
+	// token/baseUrl/受管模型键由专用路径写入，不受此字段影响。
+	readonly env?: Record<string, string> | null;
 };
 
 // 旧格式 → settings-compatible 迁移结果（HC-FU-05/06）。
@@ -274,20 +279,21 @@ function setManagedModelEnv(profile: ProviderProfile, modelEnv: Record<string, s
 }
 
 /**
- * 写入 Profile.env 的额外 env 键（§2.8：不再区分受管/非受管，全量原样写入）。
+ * 将用户直填的 env 整体合并进 profile.env（5 必填字段外的供应商特定键）。
  * 跳过 token/baseUrl/受管模型键以免与专用写入路径冲突；空 key/value 丢弃。
+ * profile.env 中由模板预填但用户 env 未携带的键保留（不主动清理），由 edit 全量替换路径负责删除。
  */
-function setManagedExtraEnv(profile: ProviderProfile, extraEnv: Record<string, string> | null | undefined): void {
+function mergeEnvIntoProfile(profile: ProviderProfile, env: Record<string, string> | null | undefined): void {
 	if (!profile.env) {
 		profile.env = {};
 	}
 
-	if (!extraEnv) {
+	if (!env) {
 		return;
 	}
 
 	const reserved = new Set<string>(['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', ...cfg().managedModelEnvKeys]);
-	for (const [k, v] of Object.entries(extraEnv)) {
+	for (const [k, v] of Object.entries(env)) {
 		if (isNullOrWhiteSpace(k) || isNullOrWhiteSpace(v) || reserved.has(k)) {
 			continue;
 		}
@@ -518,8 +524,8 @@ function switchProviderUnlocked(key: string): {success: boolean; providerName: s
 		env[k] = v;
 	}
 
-	// 4. §2.8.1：写入 profile.env 全量除 token/baseUrl 外的所有键（供应商受管 extra env），
-	//    不再区分受管/非受管，模型键已由步骤 3 覆盖
+	// 4. 写入 profile.env 全量除 token/baseUrl 外的所有键（供应商携带的 env 字段），
+	//    模型键已由步骤 3 覆盖。
 	if (profile.env) {
 		for (const [k, v] of Object.entries(profile.env)) {
 			if (k === 'ANTHROPIC_AUTH_TOKEN' || k === 'ANTHROPIC_BASE_URL') {
@@ -635,14 +641,14 @@ function addProviderUnlocked(opts: AddProviderOptions): AddProviderResult {
 		setManagedModelEnv(profile, templateModelEnv);
 	}
 
-	// §2.8：当 TUI 传入 extraEnv（来自最终 JSON）时以用户 JSON 为真源；未传入时回退模板 extraEnv。
+	// 用户经 JSON 直填 env 为真源时以其为优先；未传入时回退模板 ExtraEnv。
 	const templateExtraEnv = template?.extraEnv as Record<string, string> | undefined;
-	const mergedExtraEnv: Record<string, string> = opts.extraEnv !== undefined
-		? {...opts.extraEnv}
+	const mergedEnv: Record<string, string> = opts.env !== undefined
+		? {...opts.env}
 		: {...(templateExtraEnv ?? {})};
 
-	if (Object.keys(mergedExtraEnv).length > 0) {
-		setManagedExtraEnv(profile, mergedExtraEnv);
+	if (Object.keys(mergedEnv).length > 0) {
+		mergeEnvIntoProfile(profile, mergedEnv);
 	}
 
 	if (!existsSync(providersDir())) {
@@ -745,8 +751,9 @@ function editProviderUnlocked(key: string, updates: EditProviderUpdates): {succe
 		setManagedModelEnv(profile, updates.modelEnv);
 	}
 
-	// §2.8：extraEnv 全量覆盖——先清除 profile.env 中非 token/baseUrl/模型键的旧 extra 项，再写入新值
-	if (updates.extraEnv !== undefined) {
+	// 全量替换 env：textarea 为真源，先清除 profile.env 中非 token/baseUrl/模型键的旧键，再写入新值。
+	// token/baseUrl/受管模型键由上方专用路径写入，不受此字段影响。
+	if (updates.env !== undefined) {
 		const reserved = new Set<string>(['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', ...cfg().managedModelEnvKeys]);
 		for (const k of Object.keys(envData)) {
 			if (!reserved.has(k)) {
@@ -754,7 +761,7 @@ function editProviderUnlocked(key: string, updates: EditProviderUpdates): {succe
 			}
 		}
 
-		setManagedExtraEnv(profile, updates.extraEnv);
+		mergeEnvIntoProfile(profile, updates.env);
 	}
 
 	const effectiveKey = pendingNewKey || key;

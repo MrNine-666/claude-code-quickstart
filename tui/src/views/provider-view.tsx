@@ -47,7 +47,7 @@ import { colors } from '../theme/index.js';
 // - Enter 切换活跃供应商、D 删除确认且禁止删除 active
 //
 // Phase 4 实现：列表屏 + 删除确认 Modal
-// Phase 5 实现：表单屏（包含 extraEnv 内嵌编辑）
+// Phase 5 实现：表单屏（含底部 env JSON 区内嵌编辑）
 
 type ProviderScreen =
 	| { readonly kind: 'list' }
@@ -216,8 +216,8 @@ export function ProviderView({
 	return (
 		<box flexDirection="column" flexGrow={1}>
 			<ViewHeader
-				title={isCodex ? 'Codex profile 管理' : '供应商管理'}
-				subtitle={isCodex ? '管理 CODEX_HOME 下的 Codex profile TOML' : '管理 API 供应商、密钥与模型环境变量'}
+				title='供应商管理'
+				subtitle='管理 API 供应商、密钥与模型环境变量'
 			/>
 
 			{migrationFailed.length > 0 ? (
@@ -233,7 +233,7 @@ export function ProviderView({
 			{profiles.length === 0 ? (
 				<ListEmptyState
 					message={isCodex ? '暂无 Codex profile' : '暂无供应商配置'}
-					hint={{label: isCodex ? '添加第一个 Codex profile（支持 official login / 自定义）' : '添加第一个供应商（可在表单内选择类型，含自定义）', enabled: true}}
+					hint={{label: isCodex ? '添加第一个供应商（可在表单内选择类型，支持 official login / 自定义）' : '添加第一个供应商（可在表单内选择类型，含自定义）', enabled: true}}
 				/>
 			) : (
 				<ProviderTable
@@ -249,7 +249,7 @@ export function ProviderView({
 			{screen.kind === 'confirm-delete' && current ? (
 				<Modal
 					active
-					title={current.isActive ? (isCodex ? '禁止删除默认 Codex profile' : '禁止删除活跃供应商') : (isCodex ? '确认删除 Codex profile' : '确认删除供应商')}
+					title={current.isActive ? '禁止删除活跃供应商' : '确认删除供应商'}
 					hint="Enter 确认  Esc 取消"
 					tone="danger"
 					viewportWidth={viewportWidth}
@@ -257,8 +257,8 @@ export function ProviderView({
 				>
 					<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 						{current.isActive
-							? `${current.key} 是当前${isCodex ? '默认 Codex profile' : '活跃供应商'}，删除前请先切换到其他${isCodex ? ' profile' : '供应商'}。`
-							: `即将删除${isCodex ? ' Codex profile' : '供应商'} ${current.key}，此操作不可撤销。`}
+							? `${current.key} 是当前活跃供应商，删除前请先切换到其他供应商。`
+							: `即将删除供应商 ${current.key}，此操作不可撤销。`}
 					</text>
 				</Modal>
 			) : null}
@@ -276,7 +276,7 @@ export function ProviderView({
 					const result = isCodex ? switchActiveCodexProvider(current.key) : switchActiveProvider(current.key);
 					if (result.ok) {
 						refresh();
-						toast.success(isCodex ? `已设置默认 Codex profile：${result.data.providerName}` : `已切换为活跃供应商：${result.data.providerName}`);
+						toast.success(`已切换为活跃供应商：${result.data.providerName}`);
 					} else {
 						toast.error(result.error);
 					}
@@ -308,7 +308,7 @@ export function ProviderView({
 					}
 
 					if (current.isActive) {
-						toast.error(`无法删除当前${isCodex ? '默认 Codex profile' : '活跃供应商'} ${current.key}，请先切换到其他${isCodex ? ' profile' : '供应商'}。`);
+						toast.error(`无法删除当前活跃供应商 ${current.key}，请先切换到其他供应商。`);
 						setScreen({ kind: 'list' });
 						return;
 					}
@@ -316,7 +316,7 @@ export function ProviderView({
 					const result = isCodex ? removeCodexProvider(current.key) : removeProvider(current.key);
 					refresh();
 					if (result.ok) {
-						toast.success(`已删除${isCodex ? ' Codex profile' : '供应商'}：${current.key}`);
+						toast.success(`已删除供应商：${current.key}`);
 					} else {
 						toast.error(result.error);
 					}
