@@ -1,17 +1,43 @@
 import {existsSync, readFileSync} from 'node:fs';
 import {codexConfigPath} from './paths.js';
-import {atomicWrite, deletePath, getPath, parse, redactTomlSecrets, setPath, stringify, type TomlDocument} from './toml-edit.js';
+import {atomicWrite, deletePath, getPath, parse, redactTomlSecrets, setPath, stringify, type TomlDocument, type TomlPath} from './toml-edit.js';
 import {loadTextContract} from './contracts.js';
 
 // Codex 推荐配置 + fill-missing（design D10 / HC-CONFIG-RULES-REUSE）。
 // 与 Claude ConfigView UI 复用：预览页 / e 编辑 / Ctrl+T 推荐 / Ctrl+O fill-missing 导入。
 // 仅管理 Codex 自身通用运行项（model_reasoning_effort / approval_policy / sandbox_mode /
-// web_search / hide_agent_reasoning）。model 归供应商（由 Provider profile 设为默认时写入
-// config.toml），Config 页与 provider/MCP/hooks/Skills/AGENTS.md 一样不展示、不管理，仅在
-// 保存时从原文件合并保留（分别归 Provider/MCP/Skills/Global Rules 管）。
+// web_search / hide_agent_reasoning / file_opener）。
+// model 归供应商（由 Provider profile 设为默认时写入 config.toml），Config 页与
+// provider/MCP/hooks/Skills/AGENTS.md 一样不展示、不管理，仅在保存时从原文件合并保留
+// （分别归 Provider/MCP/Skills/Global Rules 管）。
 
-const RECOMMENDED_TOP_LEVEL_KEYS = ['model_reasoning_effort', 'approval_policy', 'sandbox_mode', 'web_search', 'hide_agent_reasoning'] as const;
+// fill-missing 托管键（TomlPath 支持嵌套路径，便于后续扩展 table 段子键）。补齐语义：仅当目标路径缺失时写入推荐值。
+const RECOMMENDED_KEY_PATHS: readonly TomlPath[] = [
+	['model_reasoning_effort'],
+	['approval_policy'],
+	['sandbox_mode'],
+	['web_search'],
+	['hide_agent_reasoning'],
+	['file_opener']
+];
 const CODEX_UNMANAGED_KEYS = ['model', 'model_provider', 'model_providers', 'mcp_servers', 'hooks'] as const;
+
+/** 仅对缺失（undefined/null/空串）的托管路径写入推荐值，返回新 document 与新增计数。 */
+function fillMissingRecommended(current: TomlDocument, recommended: TomlDocument): {document: TomlDocument; changed: number} {
+	let next = current;
+	let changed = 0;
+	for (const path of RECOMMENDED_KEY_PATHS) {
+		const existing = getPath(next, path);
+		if (existing === undefined || existing === null || (typeof existing === 'string' && existing.trim() === '')) {
+			const value = getPath(recommended, path);
+			if (value !== undefined && value !== null) {
+				next = setPath(next, path, value);
+				changed++;
+			}
+		}
+	}
+	return {document: next, changed};
+}
 
 /** 读取 Codex 推荐配置契约文本（TOML），缺失返回 null。 */
 export function loadCodexConfigRecommendationText(): string | null {
@@ -117,19 +143,7 @@ export function applyCodexFillMissingToText(tomlText: string):
 		return {ok: false, error: `当前编辑内容不是合法 TOML：${redactTomlSecrets(error instanceof Error ? error.message : String(error))}`};
 	}
 
-	let next = stripCodexUnmanagedKeys(current);
-	let changed = 0;
-	for (const key of RECOMMENDED_TOP_LEVEL_KEYS) {
-		const existing = getPath(next, [key]);
-		if (existing === undefined || existing === null || (typeof existing === 'string' && existing.trim() === '')) {
-			const value = getPath(recommended, [key]);
-			if (value !== undefined && value !== null) {
-				next = setPath(next, [key], value);
-				changed++;
-			}
-		}
-	}
-
+	const {document: next, changed} = fillMissingRecommended(stripCodexUnmanagedKeys(current), recommended);
 	return {ok: true, text: stringify(next), changed};
 }
 
@@ -150,18 +164,7 @@ export function importCodexFillMissing(): {ok: boolean; changed?: number; error?
 		}
 	}
 
-	let next = stripCodexUnmanagedKeys(current);
-	let changed = 0;
-	for (const key of RECOMMENDED_TOP_LEVEL_KEYS) {
-		const existing = getPath(next, [key]);
-		if (existing === undefined || existing === null || (typeof existing === 'string' && existing.trim() === '')) {
-			const value = getPath(recommended, [key]);
-			if (value !== undefined && value !== null) {
-				next = setPath(next, [key], value);
-				changed++;
-			}
-		}
-	}
+	const {document: next, changed} = fillMissingRecommended(stripCodexUnmanagedKeys(current), recommended);
 
 	try {
 		atomicWrite(path, mergeCodexUnmanagedKeys(next, current));

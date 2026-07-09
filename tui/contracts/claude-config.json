@@ -6,24 +6,14 @@
     "InstallStrategy": "fill-missing-only",
     "UpdateStrategy": "align-owned-env-and-append-permissions",
     "DoNotManageTopLevelKeys": [
-      "model",
-      "statusLine",
-      "hooks",
-      "outputStyle",
-      "mcpServers"
+      "model"
     ],
     "DoNotManageEnvKeys": [
       "ANTHROPIC_AUTH_TOKEN",
       "ANTHROPIC_BASE_URL",
       "ANTHROPIC_DEFAULT_HAIKU_MODEL",
       "ANTHROPIC_DEFAULT_OPUS_MODEL",
-      "ANTHROPIC_DEFAULT_SONNET_MODEL",
-      "ANTHROPIC_MODEL",
-      "CLAUDE_CODE_SUBAGENT_MODEL",
-      "CLAUDE_CODE_EFFORT_LEVEL",
-      "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK",
-      "API_TIMEOUT_MS",
-      "ENABLE_TOOL_SEARCH"
+      "ANTHROPIC_DEFAULT_SONNET_MODEL"
     ]
   },
   "TopLevelDefaults": {
@@ -33,7 +23,8 @@
     "attribution": {
       "commit": "",
       "pr": ""
-    }
+    },
+    "disableAgentView": true
   },
   "ClaudeConfigEnvDefaults": {
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "90",
@@ -71,7 +62,8 @@
       "language": "Claude Code 界面显示语言",
       "alwaysThinkingEnabled": "始终启用扩展思考模式",
       "plansDirectory": "计划文件存储目录（相对工作区根）",
-      "attribution": "代码提交与 PR 的归因信息"
+      "attribution": "代码提交与 PR 的归因信息",
+      "disableAgentView": "关闭后台代理与代理视图（claude agents / --bg / /background / on-demand supervisor），等价 CLAUDE_CODE_DISABLE_AGENT_VIEW=1"
     },
     "ClaudeConfigEnvDefaults": {
       "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "上下文自动压缩触发阈值（百分比）",

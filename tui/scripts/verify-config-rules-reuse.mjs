@@ -74,7 +74,10 @@ try {
 		assert.doesNotMatch(codexFill.text, /\[model_providers\.deepseek\]/, 'Codex fill-missing 缓冲不暴露 provider table');
 		assert.doesNotMatch(codexFill.text, /\[mcp_servers\.context7\]/, 'Codex fill-missing 缓冲不暴露 MCP table');
 		assert.doesNotMatch(codexFill.text, /\[hooks\]/, 'Codex fill-missing 缓冲不暴露 hooks table');
+		// fill-missing 应补齐新增托管项：file_opener（顶层标量）。
+		assert.match(codexFill.text, /file_opener\s*=\s*"vscode"/, 'Codex fill-missing 补齐 file_opener');
 		assert.equal(loadRecommendationAnnotated('cx')?.includes('sandbox_mode'), true, 'Codex 推荐配置契约可加载');
+		assert.equal(loadRecommendationAnnotated('cx')?.includes('file_opener'), true, 'Codex 推荐配置含 file_opener');
 		const codexSaved = saveConfigText(codexFill.text, 'cx');
 		assert.equal(codexSaved.ok, true, 'Codex config.toml 保存成功');
 		assert.equal(codexSaved.warning, undefined, 'Codex Config 保存过滤缓冲时不应提示用户编辑了外部 sections');

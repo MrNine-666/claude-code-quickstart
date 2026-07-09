@@ -357,7 +357,9 @@ function stripUnmanagedSettings(settings: JsonObject): JsonObject {
 
 /**
  * 从 settings 文本剥离 Config 页不拥有的字段，供配置文件页 view/edit 展示。
- * 不暴露供应商 env、MCP、hooks、statusLine/model 等外部字段；这些分别归专属视图或用户设置管。
+ * 当前仅剥离 model（用户自选）与供应商 env（归供应商视图管的 AUTH_TOKEN/BASE_URL/受管模型键）；
+ * hooks/statusLine/outputStyle 等字段已在本页放开（无专属视图接管，可在配置文件页直编）。
+ * 注：mcpServers 不在 settings.json（MCP 视图写 ~/.claude.json），即便误入也不剥离。
  * 文本非 JSON 对象时返回 {ok:false}，调用方可回退展示原文。
  */
 export function stripProviderEnvFromText(jsonText: string):
@@ -376,7 +378,8 @@ export function stripProviderEnvFromText(jsonText: string):
 
 /**
  * 保存合并：edited 是 Config 页拥有字段，从 original 恢复外部字段后整体返回。
- * 配置文件页不展示/不编辑供应商、MCP、hooks、statusLine/model 等字段；保存时原样保留，绝不丢失。
+ * 仅 model 与供应商 env（AUTH_TOKEN/BASE_URL/受管模型键）从 original 恢复（归供应商/用户管，绝不丢失）；
+ * hooks/statusLine/outputStyle 等孤儿字段由编辑器持有（已在本页放开直编），随 edited 落盘。
  * original 缺失或解析失败时按清理后的 edited 写入（首次新建场景）。
  */
 export function mergeProviderEnvOnSave(editedText: string, originalText: string | null):

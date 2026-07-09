@@ -80,6 +80,8 @@ try {
 }
 
 // ── ConfigView ownership：展示/编辑过滤外部字段，保存合并保护 ─────────────
+// DoNotManageTopLevelKeys 仅剩 model：hooks/statusLine/outputStyle 等孤儿字段已在配置文件页放开（可见可编辑），
+// mcpServers 不在 settings.json（归 ~/.claude.json + MCP 视图）但即便误入也随编辑器走。
 const claudeOriginal = JSON.stringify({
 	model: 'keep-model',
 	statusLine: {type: 'command', command: 'ccline'},
@@ -91,15 +93,17 @@ const claudeOriginal = JSON.stringify({
 const strippedClaude = stripProviderEnvFromText(claudeOriginal);
 assert.equal(strippedClaude.ok, true, 'Claude Config 展示过滤应成功');
 assert.equal(strippedClaude.text.includes('keep-model'), false, 'Claude Config 展示必须过滤 model');
-assert.equal(strippedClaude.text.includes('statusLine'), false, 'Claude Config 展示必须过滤 statusLine');
-assert.equal(strippedClaude.text.includes('mcpServers'), false, 'Claude Config 展示必须过滤 MCP 配置');
+assert.equal(strippedClaude.text.includes('statusLine'), true, 'Claude Config 展示 statusLine（孤儿字段已放开）');
+assert.equal(strippedClaude.text.includes('hooks'), true, 'Claude Config 展示 hooks（孤儿字段已放开）');
+assert.equal(strippedClaude.text.includes('mcpServers'), true, 'Claude Config 展示 mcpServers（不再过滤，正常不在 settings.json）');
 assert.equal(strippedClaude.text.includes('ANTHROPIC_AUTH_TOKEN'), false, 'Claude Config 展示必须过滤供应商 env');
 const mergedClaude = mergeProviderEnvOnSave(strippedClaude.text, claudeOriginal);
 assert.equal(mergedClaude.ok, true, 'Claude Config 保存合并应成功');
 const mergedClaudeJson = JSON.parse(mergedClaude.text);
-assert.equal(mergedClaudeJson.model, 'keep-model', 'Claude Config 保存必须保留原 model');
-assert.deepEqual(mergedClaudeJson.statusLine, {type: 'command', command: 'ccline'}, 'Claude Config 保存必须保留原 statusLine');
-assert.deepEqual(mergedClaudeJson.mcpServers, {context7: {command: 'npx'}}, 'Claude Config 保存必须保留原 MCP 配置');
+assert.equal(mergedClaudeJson.model, 'keep-model', 'Claude Config 保存必须保留原 model（唯一仍过滤项）');
+// statusLine/hooks/mcpServers 已由编辑器持有（未改动则保留原值），不再从原文恢复
+assert.deepEqual(mergedClaudeJson.statusLine, {type: 'command', command: 'ccline'}, 'Claude Config 保存保留 statusLine（编辑器持有）');
+assert.deepEqual(mergedClaudeJson.hooks, {Stop: [{matcher: ''}]}, 'Claude Config 保存保留 hooks（编辑器持有）');
 assert.equal(mergedClaudeJson.env.ANTHROPIC_AUTH_TOKEN, 'sk-secret', 'Claude Config 保存必须保留原供应商 env');
 console.log('[PASS] ConfigView Claude ownership 过滤展示 + 保存合并保护');
 
@@ -115,8 +119,8 @@ assert.match(configViewSource, /fillMissingIntoText\([^\n]+target\)/, 'Ctrl+O fi
 assert.match(configViewSource, /saveConfigText\(content, target\)/, '保存必须按 target 路由');
 assert.match(configViewSource, /isJson=\{!isCodex\}/, 'Codex Config 编辑器不得启用 JSON 校验，应交给 TOML service 校验');
 assert.match(configViewSource, /filetype=\{isCodex \? 'text' : 'json'\}/, 'Codex Config 编辑器不应声明为 JSON filetype');
-assert.match(configViewSource, /title=\{isCodex \? 'Codex 配置文件管理' : '配置文件管理'\}/, '编辑态 Header 必须随 agentContext 切换标题');
-assert.match(configViewSource, /subtitle=\{isCodex \? '查看、补全与编辑 CODEX_HOME\/config\.toml' : '查看、补全与编辑 Claude Code settings\.json'\}/, '编辑态 Header 必须随 agentContext 切换副标题');
+assert.match(configViewSource, /title='配置文件管理'/, '编辑态 Header 标题统一为「配置文件管理」（Codex 上下文经由 Header 全称区分，配置文件页不再重复 Codex 前缀）');
+assert.match(configViewSource, /subtitle=\{isCodex \? '查看、补全与编辑 CODEX_HOME\/config\.toml' : '查看、补全与编辑 ~\/\.claude\/settings\.json'\}/, '编辑态 Header 必须随 agentContext 切换副标题');
 assert.match(configViewSource, /if \(dirty\) toast\.info\('已放弃未保存的编辑'\);/, '取消编辑必须识别 dirty 状态');
 assert.match(configViewSource, /\}, \[target\]\);/, 'agentContext/target 切换时必须重载视图状态，避免旧配置页内容残留');
 assert.match(configViewSource, /setDirty\(false\);/, '保存/取消/切换后必须清理 dirty 状态，避免跨上下文误写');

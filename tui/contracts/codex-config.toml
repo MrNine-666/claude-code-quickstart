@@ -18,3 +18,7 @@ web_search = "cached"
 # 是否隐藏模型推理过程输出。取值：true | false。
 # false 保留推理展示，便于观察 Codex 的思考；CI 等噪声敏感场景可设 true。
 hide_agent_reasoning = false
+
+# 输出中文件引用的打开方式。取值：vscode | vscode-insiders | windsurf | cursor | none。
+# vscode 为官方默认，点击引用可直接在 VS Code 中定位到对应文件与行号。
+file_opener = "vscode"
