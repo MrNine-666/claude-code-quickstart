@@ -16,4 +16,12 @@ assert.match(
 	'Markdown 普通行必须作为整行单 token 渲染，避免长行换行错位'
 );
 
-console.log('[PASS] CodePreview markdown 预览长行不拆 inline token');
+// HC-CODEPREVIEW-TRAILING-NEWLINE：尾部单个换行是文件标准结尾，不得渲染成可见空行。
+// split('\n') 会在尾部产出空串（"a\n" → ["a", ""]），必须裁掉这个伪空行，否则预览末尾多一道空行。
+assert.match(
+	source,
+	/rawLines\.length > 1 && rawLines\[rawLines\.length - 1\] === ''\s*\?\s*rawLines\.slice\(0, -1\)\s*:\s*rawLines/,
+	'CodePreview 必须裁掉 trailing newline 产生的尾部伪空行（保留中间空行）'
+);
+
+console.log('[PASS] CodePreview 长行不拆 inline token + 尾部换行不渲染');

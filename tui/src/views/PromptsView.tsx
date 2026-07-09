@@ -236,7 +236,7 @@ export function PromptsView({ agentContext, active, viewportHeight = 16, onSubMo
 	if (mode === 'view') {
 		return (
 			<box flexDirection="column" flexGrow={1}>
-				<ViewHeader title={isCodex ? 'Codex 全局规则管理' : '全局规则管理'} subtitle={isCodex ? '查看、导入与编辑 CODEX_HOME/AGENTS.md' : '查看、导入、复制与编辑全局 CLAUDE.md'} />
+				<ViewHeader title='全局规则管理' subtitle={isCodex ? '查看、导入与编辑 CODEX_HOME/AGENTS.md' : '查看、导入与编辑 ~/.claude/CLAUDE.md'} />
 				{hasContent ? (
 					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
 						<ThemedScrollbox ref={viewScrollRef} style={{flexGrow: 1}}>
@@ -245,7 +245,7 @@ export function PromptsView({ agentContext, active, viewportHeight = 16, onSubMo
 					</box>
 				) : (
 					<ListEmptyState
-						message={isCodex ? '尚无 Codex 全局规则文件' : '尚无全局规则文件'}
+						message='尚无全局规则文件'
 						hint={{label: `新建 ${rulesPath}`, enabled: true}}
 					/>
 				)}
@@ -276,20 +276,20 @@ export function PromptsView({ agentContext, active, viewportHeight = 16, onSubMo
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title={isCodex ? 'Codex 全局规则管理' : '全局规则管理'} subtitle={isCodex ? '查看、导入与编辑 CODEX_HOME/AGENTS.md' : '查看、导入、复制与编辑全局 CLAUDE.md'} />
+			<ViewHeader title='全局规则管理' subtitle={isCodex ? '查看、导入与编辑 CODEX_HOME/AGENTS.md' : '查看、导入与编辑 ~/.claude/CLAUDE.md'} />
 			{panel === 'split' && recommendationAvailable ? (
 				<box flexDirection="row" flexGrow={1} height={bodyViewportHeight}>
 					<box flexDirection="column" width="50%" height={editorViewportHeight}>
-						<box marginBottom={1}>
-							<text fg={colors.primary} attributes={TextAttributes.BOLD}>推荐规则</text>
-						</box>
+						<text fg={colors.primary} attributes={TextAttributes.BOLD}>推荐规则</text>
 						<box
 							flexGrow={1}
+							flexBasis={0}
+							minHeight={0}
 							borderStyle="rounded"
 							borderColor={focus === 'recommend' ? borderColors.active : borderColors.inactive}
 							paddingX={1}
 						>
-							<ThemedScrollbox ref={recommendScrollRef} style={{flexGrow: 1}}>
+							<ThemedScrollbox ref={recommendScrollRef} style={{flexGrow: 1, minHeight: 0}}>
 								<CodePreview content={recommendationContent} filetype="markdown" />
 							</ThemedScrollbox>
 						</box>

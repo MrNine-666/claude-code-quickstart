@@ -155,6 +155,12 @@ function reduceNavState(state: ManageState, keyName: ManageKeyName): ManageState
 
 function reduceHeaderState(state: ManageState, keyName: ManageKeyName): ManageState {
 	if (keyName === 'left') {
+		// 处于第一个 Agent（cc）时，左键聚焦到左侧菜单，而非循环切到第二项；
+		// 非第一项时保持原循环切换语义（cx → cc）。
+		if (state.agentContext === AGENT_CONTEXT_ORDER[0]) {
+			return appendLog({...state, focus: 'nav'}, 'Header 左边界 → 聚焦左侧菜单');
+		}
+
 		return switchAgentContext(state, previousAgentContext(state.agentContext));
 	}
 

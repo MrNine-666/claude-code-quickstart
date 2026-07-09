@@ -238,9 +238,9 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 		return (
 			<box flexDirection="column" flexGrow={1}>
 				<ViewHeader
-					title={isCodex ? 'Codex 配置文件管理' : '配置文件管理'}
-					subtitle={isCodex ? '查看、补全与编辑 CODEX_HOME/config.toml' : '查看、补全与编辑 Claude Code settings.json'}
-					right={<text fg={colors.warning} attributes={TextAttributes.DIM}>{isCodex ? '不管理 Provider/MCP/Hooks/Rules' : '已排除供应商配置'}</text>}
+					title='配置文件管理'
+					subtitle={isCodex ? '查看、补全与编辑 CODEX_HOME/config.toml' : '查看、补全与编辑 ~/.claude/settings.json'}
+					right={<text fg={colors.warning} attributes={TextAttributes.DIM}>{isCodex ? '已排除供应商/MCP配置' : '已排除供应商配置'}</text>}
 				/>
 				{hasContent ? (
 					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
@@ -262,7 +262,7 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 	const editorEl = (
 		<TextareaEditor
 			ref={editorRef}
-			title={isCodex ? '当前 Codex config.toml' : '当前配置（已排除供应商）'}
+			title='当前配置'
 			initialContent={editInitial}
 			active={editorActive}
 			isJson={!isCodex}
@@ -283,23 +283,23 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 	return (
 		<box flexDirection="column" flexGrow={1}>
 			<ViewHeader
-				title={isCodex ? 'Codex 配置文件管理' : '配置文件管理'}
-				subtitle={isCodex ? '查看、补全与编辑 CODEX_HOME/config.toml' : '查看、补全与编辑 Claude Code settings.json'}
-				right={<text fg={colors.warning} attributes={TextAttributes.DIM}>{isCodex ? '不管理 Provider/MCP/Hooks/Rules' : '已排除供应商配置'}</text>}
+				title='配置文件管理'
+				subtitle={isCodex ? '查看、补全与编辑 CODEX_HOME/config.toml' : '查看、补全与编辑 ~/.claude/settings.json'}
+				right={<text fg={colors.warning} attributes={TextAttributes.DIM}>{isCodex ? '已排除供应商/MCP配置' : '已排除供应商配置'}</text>}
 			/>
 			{panel === 'split' && recommendationAvailable ? (
 				<box flexDirection="row" flexGrow={1} height={bodyViewportHeight}>
 					<box flexDirection="column" width="50%" height={editorViewportHeight}>
-						<box marginBottom={1}>
-							<text fg={colors.primary} attributes={TextAttributes.BOLD}>推荐配置</text>
-						</box>
+						<text fg={colors.primary} attributes={TextAttributes.BOLD}>推荐配置</text>
 						<box
 							flexGrow={1}
+							flexBasis={0}
+							minHeight={0}
 							borderStyle="rounded"
 							borderColor={focus === 'recommend' ? borderColors.active : borderColors.inactive}
 							paddingX={1}
 						>
-							<ThemedScrollbox ref={recommendScrollRef} style={{flexGrow: 1}}>
+							<ThemedScrollbox ref={recommendScrollRef} style={{flexGrow: 1, minHeight: 0}}>
 								<CodePreview content={recommendationContent} filetype={isCodex ? 'text' : 'jsonc'} />
 							</ThemedScrollbox>
 						</box>

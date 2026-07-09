@@ -20,7 +20,10 @@ type JsonTokenType = 'key' | 'string' | 'number' | 'boolean' | 'punct' | 'space'
 type JsonToken = {readonly type: JsonTokenType; readonly text: string};
 
 export function CodePreview({content, filetype, showLineNumbers = true}: CodePreviewProps) {
-	const lines = content.split('\n');
+	// 末尾单个换行是文件标准结尾（POSIX），不应渲染成可见空行：split('\n') 会在尾部
+	// 产出空串（如 "a\n" → ["a", ""]），去掉这个由 trailing newline 产生的伪空行。
+	const rawLines = content.split('\n');
+	const lines = rawLines.length > 1 && rawLines[rawLines.length - 1] === '' ? rawLines.slice(0, -1) : rawLines;
 	const lineNumberWidth = Math.max(3, String(lines.length).length);
 	const markdownLines = filetype === 'markdown' ? tokenizeMarkdownLines(lines) : null;
 

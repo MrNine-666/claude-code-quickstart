@@ -224,13 +224,13 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 	if (mode === 'preview' && syntaxStyle) {
 		return (
 			<box flexDirection="column" flexGrow={1}>
-				<box marginBottom={1}>
+				<box>
 					<text fg={colors.primary} attributes={TextAttributes.BOLD}>
 						{`预览 · ${title}`}
 					</text>
 				</box>
 
-				<box flexGrow={1} borderStyle="rounded" borderColor={borderColors.active}>
+				<box flexGrow={1} flexBasis={0} minHeight={0} borderStyle="rounded" borderColor={borderColors.active}>
 					{filetype === 'markdown' ? (
 						<scrollbox style={{ flexGrow: 1 }}>
 							<markdown content={previewContent} syntaxStyle={syntaxStyle} />
@@ -260,15 +260,18 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 	}
 
 	// ── 编辑模式渲染 ──
+	// 标题行与 textarea 边框在固定 height 容器内：textarea 内容长时 min-content 会沿 flex 链向上传导、
+	// 把标题行压成 0 高（HC-SPLIT-OVERFLOW-MARGIN 同源）。给边框 box 加 flexBasis={0} minHeight={0}，
+	// 让 flex 完全按 grow 分配、不受子内容 min-size 影响，标题行稳定占 1 行。
 	return (
 		<box flexDirection="column" flexGrow={viewportHeight === undefined ? 1 : 0} height={viewportHeight}>
-			<box marginBottom={1}>
+			<box>
 				<text fg={colors.primary} attributes={TextAttributes.BOLD}>
 					{title}
 				</text>
 			</box>
 
-			<box flexGrow={1} borderStyle="rounded" borderColor={active ? borderColors.active : borderColors.inactive}>
+			<box flexGrow={1} flexBasis={0} minHeight={0} borderStyle="rounded" borderColor={active ? borderColors.active : borderColors.inactive}>
 				<textarea
 					ref={taRef}
 					initialValue={initialContent}

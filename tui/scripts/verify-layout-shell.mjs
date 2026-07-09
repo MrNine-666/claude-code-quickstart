@@ -9,6 +9,8 @@ import {readFileSync} from 'node:fs';
 const appSource = readFileSync(new URL('../src/app.tsx', import.meta.url), 'utf8');
 const themeSource = readFileSync(new URL('../src/theme/index.ts', import.meta.url), 'utf8');
 const mcpViewSource = readFileSync(new URL('../src/views/mcp/McpView.tsx', import.meta.url), 'utf8');
+const configViewSource = readFileSync(new URL('../src/views/ConfigView.tsx', import.meta.url), 'utf8');
+const promptsViewSource = readFileSync(new URL('../src/views/PromptsView.tsx', import.meta.url), 'utf8');
 
 assert.match(
 	appSource,
@@ -52,4 +54,21 @@ assert.doesNotMatch(
 	'McpView 刷新状态不得被 active 守卫拦截，否则 Header 切换 agent 后内容会滞后'
 );
 
-console.log('[PASS] layout shell：Header 宽度铺满 + active 加粗圆角边框 + MCP agent 切换即时刷新');
+// HC-SPLIT-OVERFLOW-MARGIN：split 分栏左列（推荐边栏）边框内含 scrollbox + 可溢出内容时，
+// scrollbox 的 min-content 高度会沿 flex 链上传、撑大列总高，把标题的 marginBottom 挤没，
+// 导致左列边框比右列（空 textarea 不溢出）早一行、顶边不对齐。修法：给边框 box 加
+// flexBasis={0} + minHeight={0}，让 flex 按 grow 分配、不受内容 min-size 影响。
+for (const [name, source] of [['ConfigView', configViewSource], ['PromptsView', promptsViewSource]]) {
+	assert.match(
+		source,
+		/flexGrow=\{1\}\s*\n\s*flexBasis=\{0\}\s*\n\s*minHeight=\{0\}\s*\n\s*borderStyle="rounded"/,
+		`${name} split 左列推荐边框必须带 flexBasis={0} + minHeight={0}，避免溢出内容挤掉标题 marginBottom 导致边框错位`
+	);
+	assert.match(
+		source,
+		/ThemedScrollbox[^>]*style=\{\{flexGrow: 1, minHeight: 0\}\}/,
+		`${name} split 左列推荐 ThemedScrollbox 必须带 minHeight: 0，让内容在分配空间内收缩而非撑大父容器`
+	);
+}
+
+console.log('[PASS] layout shell：Header 宽度铺满 + active 加粗圆角边框 + MCP agent 切换即时刷新 + split 溢出不挤 margin');
