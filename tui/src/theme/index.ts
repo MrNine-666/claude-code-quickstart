@@ -1,7 +1,7 @@
 // 集中主题：Claude 品牌橙 + 终端 dark/light 双套语义色系统
 // OpenTUI 通过 renderer.themeMode 检测终端主题，脚本侧通过 OSC 11/COLORFGBG 对齐
 
-import type { ThemeMode as OpenTuiThemeMode } from '@opentui/core';
+import type { BorderCharacters, ThemeMode as OpenTuiThemeMode } from '@opentui/core';
 
 export type AppThemeMode = Extract<OpenTuiThemeMode, 'dark' | 'light'>;
 
@@ -239,10 +239,25 @@ export const colors = {...activeTheme.colors};
 /** 区域/卡片边框色：活跃用主色，非活跃用中性边框。 */
 export const borderColors = {...activeTheme.borderColors};
 
-/** 区域边框样式：活跃用 double（加粗视觉），非活跃用 rounded（轻量）。 */
+/** 区域边框样式：活跃用 heavy（加粗视觉），非活跃用 rounded（轻量）。 */
 export const borderStyles = {
-	active: 'double' as const,
+	active: 'heavy' as const,
 	inactive: 'rounded' as const
+};
+
+/** 活跃区域自定义边框：圆角转角 + 加粗单线边，接近“加粗圆角”的终端字符最佳近似。 */
+export const activeBorderChars: BorderCharacters = {
+	topLeft: '╭',
+	topRight: '╮',
+	bottomLeft: '╰',
+	bottomRight: '╯',
+	horizontal: '━',
+	vertical: '┃',
+	topT: '┳',
+	bottomT: '┻',
+	leftT: '┣',
+	rightT: '┫',
+	cross: '╋'
 };
 
 /** 状态圆点语义色（检查更新页 + 通用状态指示，对齐 SC-3）。 */

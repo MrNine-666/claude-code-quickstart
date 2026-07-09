@@ -33,7 +33,7 @@ console.log('[PASS] ccq 自更新：Windows helper 替换流程已锁定');
 
 // ── TUI/CLI 行为边界 ────────────────────────────────────────────────────────
 assert.match(appSource, /const runUpdateCheck = async \(\): Promise<void> => \{[\s\S]*checkLatestVersion\(\)[\s\S]*\};/, 'TUI 启动检查应只调用 checkLatestVersion 更新状态');
-const runUpdateCheckBlock = appSource.match(/const runUpdateCheck = async \(\): Promise<void> => \{[\s\S]*?\n\t\t\};/)?.[0] ?? '';
+const runUpdateCheckBlock = appSource.match(/const runUpdateCheck = async \(\): Promise<void> => \{[\s\S]*?\r?\n\t\t\};/)?.[0] ?? '';
 assert.equal(/downloadUpdate\(/.test(runUpdateCheckBlock), false, 'TUI 启动检查不得下载更新文件');
 assert.match(appSource, /downloadUpdate\(downloadUrl, abortController\.signal\)/, 'TUI 仅在用户确认更新后下载');
 assert.match(appSource, /formatSelfUpdateError/, 'TUI 下载/应用失败应展示具体错误原因');

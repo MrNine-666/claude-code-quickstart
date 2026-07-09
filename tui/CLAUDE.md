@@ -149,20 +149,29 @@ TUI 不新增第 7 个 Codex 菜单；改由右侧 content 顶部的全局 **Hea
 
 ### HC-TOOLS-AGENT-GROUP
 工具管理按 `group` 分组并按 `agentContext` 决定可见性（骨架 `scripts/verify-tools-context.mjs`）：
+- UI 必须展示为「分组 label + 当前分组 grid」结构，分组顺序固定为 **Agent → statusLine → 三方工具**；空分组隐藏（例如 Codex Header 下不展示 statusLine）。
+- 分组事实源只能来自 `COMPONENT_META` / `TOOL_GROUP_ORDER` / `TOOL_GROUP_META`，禁止在 `ToolsView` 内硬编码第二套分类或工具顺序。
 - **Agent 组**（ClaudeCode / CodexCli / AntigravityCli）：两种上下文**常显**，主 Agent 不因切换被隐藏。
-- **Cometixline 组**（Ccline）：**仅 Claude Code** 上下文显示。
-- **Tools 组**（OpenSpec / CcgWorkflow / CodeGraph）：两种上下文都显示。
+- **statusLine 组**（Ccline）：**仅 Claude Code** 上下文显示。
+- **三方工具组**（OpenSpec / CcgWorkflow / CodeGraph）：两种上下文都显示。
 - install/update/uninstall 经 lifecycle command resolver 按 `agentContext` 返回不同指令：
-  - **CodeGraph**：检测安装态必须同时满足 CLI 可用与当前 Agent MCP 已接入（Claude Code 看 `~/.claude.json.mcpServers.codegraph`，Codex 看 `CODEX_HOME/config.toml` 的 `[mcp_servers.codegraph]`）；install 确保 `@colbymchenry/codegraph` CLI 后执行 `codegraph install --target=<claude|codex> --location=global --yes` 并校验 MCP 写入成功；update 更新 npm CLI 后按已接入的 cc/cx 目标逐个重跑 `codegraph install ...`；uninstall 先执行 `codegraph uninstall --target=<claude|codex> --yes`，随后若 cc/cx 两边都无 CodeGraph MCP，则自动 `npm uninstall -g @colbymchenry/codegraph`，始终不删除项目 `.codegraph/` 索引（骨架 `scripts/verify-codegraph-lifecycle.mjs` + `scripts/verify-tools-manage.mjs`）。
+  - **CodeGraph**：检测安装态必须同时满足 CLI 可用与当前 Agent MCP 已接入（Claude Code 看 `~/.claude.json.mcpServers.codegraph`，Codex 看 `CODEX_HOME/config.toml` 的 `[mcp_servers.codegraph]`）；install 语义是“确保共享 CLI + 接入当前 Agent”：若 `codegraph --version` 已可用，必须跳过 `npm install -g @colbymchenry/codegraph`，直接执行 `codegraph install --target=<claude|codex> --location=global --yes` 并校验 MCP 写入成功；CLI 不可用时才安装 npm 包；update 更新 npm CLI 后按已接入的 cc/cx 目标逐个重跑 `codegraph install ...`；uninstall 先执行 `codegraph uninstall --target=<claude|codex> --yes`，随后若 cc/cx 两边都无 CodeGraph MCP，则自动 `npm uninstall -g @colbymchenry/codegraph`，始终不删除项目 `.codegraph/` 索引（骨架 `scripts/verify-codegraph-lifecycle.mjs` + `scripts/verify-tools-manage.mjs`）。
   - **CcgWorkflow**：上游 GitHub 仓库真实标识为 `fengshao1227/ccg-workflow`（查 DeepWiki/GitHub 时不要用 `MrNine-666/ccg-workflow`）；Claude 走 `npx ccg-workflow@latest init ... --install-dir ~/.claude`（保留 mcpServers 快照保护）+ `npx ccg-workflow uninstall`；Codex Mode 走官方非交互 `npx ccg-workflow codex-mode install/uninstall`。文件边界（`config.toml`/`AGENTS.md`/hooks/rules）一律交给官方命令负责，**ccq 不手写 fs 删除 `CODEX_HOME/config.toml`**（骨架 `scripts/verify-ccgworkflow-codex.mjs`）。
 
 ### HC-CONFIG-RULES-REUSE
 Config / Global Rules 视图按 `agentContext` 切换目标文件但复用同一 UI（预览页 / `e` 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入 / 损坏文件拒绝覆盖 / 脏编辑保护），骨架 `scripts/verify-config-rules-reuse.mjs`：
-- **Config**：Claude 读写 `~/.claude/settings.json`；Codex 读写 `CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`），经 `core/toml-edit.ts` 结构化写入；Codex 推荐配置不管理 provider/MCP/hooks/Skills/AGENTS.md。
+- **Config**：Claude 读写 `~/.claude/settings.json`；Codex 读写 `CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`），经 `core/toml-edit.ts` 结构化写入；Codex 推荐配置仅 fill-missing 补齐通用运行项（`model_reasoning_effort` / `approval_policy` / `sandbox_mode` / `web_search` / `hide_agent_reasoning`），**不含 `model`**（模型由「供应商」profile 设为默认时原文覆盖决定），也不管理 provider/MCP/hooks/Skills/AGENTS.md。
 - **Global Rules**：Claude 读写 `~/.claude/CLAUDE.md`；Codex **只**读写 `CODEX_HOME/AGENTS.md`（默认 `~/.codex/AGENTS.md`），推荐规则内容复用 cc 推荐规则。
 
 ### HC-MCP-FILE-SOURCE
 MCP 状态以运行时配置文件为唯一事实源，**忽略 vault 历史 `disabled` 字段**（骨架 `scripts/verify-mcp-multitool.mjs`）：Claude 读 `~/.claude.json` 的 `mcpServers.<id>` 是否存在；Codex 读 `CODEX_HOME/config.toml` 的 `[mcp_servers.<id>]`（`enabled = false` 判 Disabled）。同一 MCP 可在 Claude Code / Codex 独立启用。vault 只保管 MCP 凭据、配置备份、definition hash，**不作 Active/Disabled 状态源，也不保存 Codex API key**。
+
+### HC-MCP-OFFICIAL-DEFAULT（新增）
+内置 MCP 默认配置对齐官方推荐，且 Claude Code 与 Codex 输出 schema 分离（骨架 `scripts/verify-mcp-official.mjs`）：
+- **Exa / Context7 默认走官方 remote HTTP endpoint**（`https://mcp.exa.ai/mcp` / `https://mcp.context7.com/mcp`），`CredentialType: none`（免 key 匿名可用，key 可选不强制）；Playwright / Chrome DevTools / ACE Tool / MasterGo 保持 stdio 官方 npx 形态。
+- **Claude Code HTTP MCP 输出保留 `type:'http'`**（`.claude.json mcpServers` 语义）；**Codex HTTP MCP TOML 不写 `type`**，靠 `url` 字段判定 streamable HTTP；Codex stdio 同样不写 `type`，仅保留 `command`/`args`/`env`。
+- **Codex schema 转换在唯一出口**：`mcp.ts` 的 `writeCodexMcpServer` 经 `core/mcp-codex-schema.ts` 的 `toCodexMcpConfig` 按白名单（`command`/`args`/`env`/`url`/`bearer_token_env_var`/`http_headers`/`env_http_headers`/`startup_timeout_sec`/`tool_timeout_sec`/`enabled`/`required`）过滤，丢弃 `type` 与 Claude 专有字段；persist/enable/sync 补回三条写入路径统一走此出口。
+- **effective definition**：契约 `McpServerDefinition` 可选带 `AgentConfigs: {cc?: Partial, cx?: Partial}`，`resolveEffectiveDefinition(def, agentContext)` 浅合并 base + 覆盖；无覆盖时 pass-through base，不制造差异。`AgentConfigs` 字段不参与最终定义输出。
 
 ### HC-SKILLS-AGENT
 Skills 的 `SKILLS_CLI_AGENT` 硬编码改为按 `agentContext` 参数化：Claude Code → `--agent claude-code`，Codex → `--agent codex`（骨架 `scripts/verify-skills-agent.mjs`）。物理存储与目录映射交由 `skills` CLI（`~/.agents/skills`），ccq 不手写 symlink/copy。
@@ -260,7 +269,7 @@ bun build --compile --target bun-macos-arm64 --outfile dist/ccq-macos-arm64 src/
 ### contracts 内嵌策略
 
 运行时消费的契约通过 Bun `with { type: "text" }` 以内联字符串形式内嵌进可执行文件：
-- **打包后**：`providers.json` / `mcp-servers.json` / `claude-config.json` / `templates/claude-md.*.md` 从 `EMBEDDED_CONTRACTS` Map 读取，不依赖 Bun 虚拟文件系统路径。
+- **打包后**：`providers.json` / `mcp-servers.json` / `claude-config.json` / `templates/claude-md.base.md` / `templates/claude-md.platform-windows.md` / `templates/codex-md.md` 从 `EMBEDDED_CONTRACTS` Map 读取，不依赖 Bun 虚拟文件系统路径。
 - **源码模式**：`contracts.ts` 通过相对路径上溯读取 `tui/contracts/`，零网络。
 - **磁盘源契约**：`ccg-workflow.json` / `templates/index.json` / `claude-config-drift.js` 保留在 `tui/contracts/`，供 CI、installer 合约测试或后续迁移使用，不再作为 TUI 运行时内嵌 entry。
 
@@ -415,7 +424,8 @@ TUI 链契约分为运行时内嵌契约与磁盘源契约：
 - `providers.json` — 供应商定义（运行时内嵌）
 - `mcp-servers.json` — MCP Server 配置（运行时内嵌）
 - `claude-config.json` — Claude 配置模板（运行时内嵌）
-- `templates/claude-md.*.md` — CLAUDE.md 推荐模板（运行时内嵌）
+- `templates/claude-md.base.md` / `templates/claude-md.platform-windows.md` — Claude Code CLAUDE.md 推荐模板（运行时内嵌，按平台拼接）
+- `templates/codex-md.md` — Codex AGENTS.md 推荐模板（运行时内嵌，独立维护）
 - `ccg-workflow.json` — CCG Workflow 配置（磁盘源契约，未来工具管理迁移用）
 - `templates/index.json` — 模板索引（磁盘源契约，installer 合约测试读取）
 - `claude-config-drift.js` — 配置漂移检测脚本（磁盘源契约，CI / installer 引用）

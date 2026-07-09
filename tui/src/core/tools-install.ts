@@ -187,6 +187,16 @@ async function installNpmPackage(definition: ToolDefinition, onProgress?: Progre
 	await refreshNpmGlobalBinPath(onProgress, definition.id);
 }
 
+async function ensureCodeGraphCli(definition: ToolDefinition, onProgress?: ProgressCallback): Promise<void> {
+	const status = await detectTool(definition);
+	if (status.installed) {
+		onProgress?.({level: 'success', message: `CodeGraph CLI 已存在，跳过 npm install${status.version ? ` (${status.version})` : ''}`, componentId: definition.id});
+		return;
+	}
+
+	await installNpmPackage(definition, onProgress);
+}
+
 /** CodeGraph 后置：CLI 就绪后非交互接入当前 Agent（agentContext → --target=claude|codex）。 */
 async function postInstallCodeGraph(context: AgentContext, onProgress?: ProgressCallback): Promise<void> {
 	const [command] = codeGraphInstallCommands(context);
@@ -335,13 +345,15 @@ export async function installTool(id: ToolId, onProgress?: ProgressCallback, con
 		let installedVersion: string | undefined;
 		switch (definition.kind) {
 			case 'npm':
+				if (definition.id === 'CodeGraph') {
+					await ensureCodeGraphCli(definition, onProgress);
+					await postInstallCodeGraph(context, onProgress);
+					break;
+				}
+
 				await installNpmPackage(definition, onProgress);
 				if (definition.id === 'Ccline') {
 					await postInstallCcline(onProgress);
-				}
-
-				if (definition.id === 'CodeGraph') {
-					await postInstallCodeGraph(context, onProgress);
 				}
 
 				break;

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {chmodSync, mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
+import {chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {delimiter, join} from 'node:path';
 import {npmGlobalBinFromPrefix, prependPathForCurrentProcess} from '../src/core/npm-path.ts';
@@ -55,4 +55,59 @@ try {
 } finally {
 	process.env.PATH = originalPath;
 	rmSync(home, {recursive: true, force: true});
+}
+
+const codeGraphHome = mkdtempSync(join(tmpdir(), 'ccq-codegraph-install-'));
+const codeGraphBin = join(codeGraphHome, 'bin');
+const codexHome = join(codeGraphHome, '.codex');
+mkdirSync(codeGraphBin, {recursive: true});
+mkdirSync(codexHome, {recursive: true});
+try {
+	const codeGraphLog = join(codeGraphHome, 'codegraph.log');
+	const npmLog = join(codeGraphHome, 'npm.log');
+	const codeGraphPath = join(codeGraphBin, process.platform === 'win32' ? 'codegraph.cmd' : 'codegraph');
+	const npmPath = join(codeGraphBin, process.platform === 'win32' ? 'npm.cmd' : 'npm');
+	writeFileSync(
+		codeGraphPath,
+		process.platform === 'win32'
+			? `@echo off\r\necho %*>>"${codeGraphLog}"\r\nif "%1"=="--version" (\r\n  echo codegraph 1.2.3\r\n  exit /b 0\r\n)\r\nif "%1"=="install" (\r\n  if not exist "%CODEX_HOME%" mkdir "%CODEX_HOME%"\r\n  >"%CODEX_HOME%\\config.toml" echo [mcp_servers.codegraph]\r\n  >>"%CODEX_HOME%\\config.toml" echo command = "codegraph"\r\n  exit /b 0\r\n)\r\nexit /b 1\r\n`
+			: `#!/bin/sh\nprintf '%s\\n' "$*" >> "${codeGraphLog}"\nif [ "$1" = "--version" ]; then\n  echo 'codegraph 1.2.3'\n  exit 0\nfi\nif [ "$1" = "install" ]; then\n  mkdir -p "$CODEX_HOME"\n  printf '[mcp_servers.codegraph]\\ncommand = "codegraph"\\n' > "$CODEX_HOME/config.toml"\n  exit 0\nfi\nexit 1\n`,
+		'utf8'
+	);
+	writeFileSync(
+		npmPath,
+		process.platform === 'win32'
+			? `@echo off\r\necho %*>>"${npmLog}"\r\nexit /b 14\r\n`
+			: `#!/bin/sh\nprintf '%s\\n' "$*" >> "${npmLog}"\nexit 14\n`,
+		'utf8'
+	);
+	if (process.platform !== 'win32') {
+		chmodSync(codeGraphPath, 0o755);
+		chmodSync(npmPath, 0o755);
+	}
+
+	const originalCodeHome = process.env.CODEX_HOME;
+	process.env.PATH = [codeGraphBin, originalPath].filter(Boolean).join(delimiter);
+	process.env.CODEX_HOME = codexHome;
+	try {
+		const progress = [];
+		const {installTool} = await import('../src/core/tools-install.ts');
+		const outcome = await installTool('CodeGraph', event => progress.push(event), 'cx');
+		assert.equal(outcome.success, true, 'CodeGraph CLI 已存在时 Codex 安装路径应成功');
+		assert.equal(outcome.version, '1.2.3', 'CodeGraph 返回既有 CLI 版本');
+		assert.equal(existsSync(npmLog), false, 'CodeGraph CLI 已存在时不得调用 npm reinstall');
+		assert.match(readFileSync(codeGraphLog, 'utf8'), /install\s+"?--target=codex"?\s+"?--location=global"?\s+--yes/, '仍应执行 Codex CodeGraph 接入命令');
+		assert.match(readFileSync(join(codexHome, 'config.toml'), 'utf8'), /\[mcp_servers\.codegraph\]/, 'fake codegraph install 写入 Codex MCP table');
+		assert.ok(progress.some(event => /跳过 npm install/.test(event.message)), '进度提示应明确跳过 npm install');
+		console.log('[PASS] CodeGraph CLI 已存在时跳过 npm reinstall 并接入 Codex');
+	} finally {
+		if (originalCodeHome === undefined) {
+			delete process.env.CODEX_HOME;
+		} else {
+			process.env.CODEX_HOME = originalCodeHome;
+		}
+		process.env.PATH = originalPath;
+	}
+} finally {
+	rmSync(codeGraphHome, {recursive: true, force: true});
 }

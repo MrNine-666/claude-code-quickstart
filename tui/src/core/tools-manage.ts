@@ -103,7 +103,12 @@ export const COMPONENT_DEFINITIONS: readonly ComponentDefinition[] = [
 
 export type ToolGroup = 'agent' | 'companion' | 'tool';
 
-/** 组件分组 + 可见上下文元数据（可见性 resolver 单一真理源）。 */
+export type ToolGroupDisplayMeta = {
+	readonly label: string;
+	readonly description: string;
+};
+
+/** 组件分组 + 可见上下文元数据（可见性 resolver 单一真理源；key 顺序即组内展示顺序）。 */
 export type ComponentMeta = {
 	readonly group: ToolGroup;
 	readonly contexts: readonly AgentContext[];
@@ -124,24 +129,76 @@ export const COMPONENT_META: Readonly<Record<ComponentId, ComponentMeta>> = {
 /** 分组展示顺序（agent → companion → tool）。 */
 export const TOOL_GROUP_ORDER: readonly ToolGroup[] = ['agent', 'companion', 'tool'];
 
+export const TOOL_GROUP_META: Readonly<Record<ToolGroup, ToolGroupDisplayMeta>> = {
+	agent: {label: 'Agent', description: 'Claude Code / Codex / Antigravity 等主入口 CLI'},
+	companion: {label: 'statusLine', description: '状态栏与伴随增强'},
+	tool: {label: '三方工具', description: 'OpenSpec / CCG Workflow / CodeGraph 等通用工具'}
+};
+
+export type ToolGroupSection<T extends {readonly id: ComponentId}> = {
+	readonly group: ToolGroup;
+	readonly label: string;
+	readonly components: readonly T[];
+};
+
+const COMPONENT_DISPLAY_ORDER = Object.keys(COMPONENT_META) as ComponentId[];
+const COMPONENT_DISPLAY_INDEX = new Map<ComponentId, number>(COMPONENT_DISPLAY_ORDER.map((id, index) => [id, index]));
+
+function groupOrderIndex(group: ToolGroup): number {
+	const index = TOOL_GROUP_ORDER.indexOf(group);
+	return index === -1 ? TOOL_GROUP_ORDER.length : index;
+}
+
+function componentDisplayIndex(id: ComponentId): number {
+	return COMPONENT_DISPLAY_INDEX.get(id) ?? COMPONENT_DISPLAY_INDEX.size;
+}
+
+/** 按 group 顺序 + 组内展示顺序排序，供 UI 和可见定义共用。 */
+export function sortComponentsByToolGroup<T extends {readonly id: ComponentId}>(components: readonly T[]): readonly T[] {
+	return [...components].sort((left, right) => {
+		const leftMeta = COMPONENT_META[left.id];
+		const rightMeta = COMPONENT_META[right.id];
+		const groupDelta = groupOrderIndex(leftMeta.group) - groupOrderIndex(rightMeta.group);
+		if (groupDelta !== 0) {
+			return groupDelta;
+		}
+
+		return componentDisplayIndex(left.id) - componentDisplayIndex(right.id);
+	});
+}
+
+/** 将组件整理为“分组 label + grid”视图结构，空组自动隐藏。 */
+export function groupComponentsByToolGroup<T extends {readonly id: ComponentId}>(components: readonly T[]): readonly ToolGroupSection<T>[] {
+	const sorted = sortComponentsByToolGroup(components);
+	return TOOL_GROUP_ORDER
+		.map(group => ({
+			group,
+			label: TOOL_GROUP_META[group].label,
+			components: sorted.filter(component => COMPONENT_META[component.id].group === group)
+		}))
+		.filter(section => section.components.length > 0);
+}
+
 /** 某组件是否在给定 agentContext 下可见。 */
 export function isComponentVisible(id: ComponentId, context: AgentContext): boolean {
 	return COMPONENT_META[id].contexts.includes(context);
 }
 
-/** 按 agentContext 过滤可见组件定义（保持 COMPONENT_DEFINITIONS 原始顺序）。 */
+/** 按 agentContext 过滤可见组件定义，并按工具管理分组展示顺序排序。 */
 export function visibleComponentDefinitions(context: AgentContext): readonly ComponentDefinition[] {
-	return COMPONENT_DEFINITIONS.filter(def => isComponentVisible(def.id, context));
+	return sortComponentsByToolGroup(COMPONENT_DEFINITIONS.filter(def => isComponentVisible(def.id, context)));
 }
 
-/** 按 agentContext 过滤可见运行时组件（供 ToolsView 消费）。 */
+/** 按 agentContext 过滤可见运行时组件（供 ToolsView 消费），并对齐分组展示顺序。 */
 export function filterVisibleComponents(
 	components: readonly ManagedComponent[],
 	context: AgentContext
 ): readonly ManagedComponent[] {
-	return components
-		.filter(component => isComponentVisible(component.id, context))
-		.map(component => withContextInstallState(component, context));
+	return sortComponentsByToolGroup(
+		components
+			.filter(component => isComponentVisible(component.id, context))
+			.map(component => withContextInstallState(component, context))
+	);
 }
 
 /**

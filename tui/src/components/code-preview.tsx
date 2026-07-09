@@ -174,29 +174,7 @@ function markdownTokensForLine(line: string, inFence: boolean): readonly Preview
 	if (/^\s*(-|\*|\+|\d+\.)\s+/.test(line)) {
 		return [{text: line, fg: syntax.markupList}];
 	}
-	return tokenizeMarkdownInline(line);
-}
-
-function tokenizeMarkdownInline(line: string): readonly PreviewToken[] {
-	const syntax = getActiveTheme().syntax;
-	const tokens: PreviewToken[] = [];
-	let cursor = 0;
-	while (cursor < line.length) {
-		const backtick = line.indexOf('`', cursor);
-		if (backtick === -1) {
-			tokens.push({text: line.slice(cursor), fg: syntax.default});
-			break;
-		}
-		if (backtick > cursor) {
-			tokens.push({text: line.slice(cursor, backtick), fg: syntax.default});
-		}
-		const end = line.indexOf('`', backtick + 1);
-		if (end === -1) {
-			tokens.push({text: line.slice(backtick), fg: syntax.markupRaw});
-			break;
-		}
-		tokens.push({text: line.slice(backtick, end + 1), fg: syntax.markupRaw});
-		cursor = end + 1;
-	}
-	return tokens.length > 0 ? tokens : plainToken(line);
+	// Markdown 预览保持“每行一个 text 节点”：OpenTUI flex row 遇到多个行内 token 时，
+	// 长行换行会把 token 当作独立 flex item 重新排布，导致反引号片段错位。
+	return [{text: line, fg: syntax.default}];
 }

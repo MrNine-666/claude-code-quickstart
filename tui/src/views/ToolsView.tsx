@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useReducer, useRef } from 'react';
 import { TextAttributes, type ScrollBoxRenderable } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
-import { Card, ErrorPanel, ListEmptyState, ListLoadingState, Modal, Spinner, StatusDot, ThemedScrollbox, ViewHeader, toast, type StatusDotKind } from '../components/index.js';
+import { Card, ErrorPanel, ListEmptyState, ListLoadingState, Modal, ProgressLog, StatusDot, ThemedScrollbox, ViewHeader, toast, type StatusDotKind } from '../components/index.js';
 import { colors } from '../theme/index.js';
-import type {ProgressCallback, ProgressLevel} from '../core/exec.js';
+import type {ProgressCallback} from '../core/exec.js';
 import type { DetectionState } from '../services/async-detection.js';
 import type { DetectionCache } from '../hooks/use-detection-cache.js';
 import type { DetectionRunner, DetectionRunOptions, DetectionStateSink } from '../services/detection-runner.js';
@@ -23,7 +23,7 @@ import {
 	type ToolsViewAction,
 	type ToolsViewState
 } from '../state/tools-view-state.js';
-import {filterVisibleComponents, uninstallImpactNotice} from '../core/tools-manage.js';
+import {filterVisibleComponents, groupComponentsByToolGroup, uninstallImpactNotice} from '../core/tools-manage.js';
 import type {AgentContext} from '../state/manage-state.js';
 
 type Dispatch = React.Dispatch<ToolsViewAction>;
@@ -148,8 +148,8 @@ export function ToolsView({ services: rawServices, cache, agentContext, active =
 		<box flexDirection="column" flexGrow={1}>
 			<ViewHeader title="工具管理" subtitle="管理常用 CLI 工具的安装、更新与卸载" />
 			{renderDetectionNotice(detection.status)}
-			{/* 检测中时隐藏网格，仅显示 Spinner；检测完成后才显示网格或空状态 */}
-			{detection.status !== 'loading' && detection.status !== 'idle' ? renderGrid(view, scrollRef) : null}
+			{/* 检测中时隐藏网格，仅显示加载态；检测完成后才显示分组网格或空状态 */}
+			{detection.status !== 'loading' && detection.status !== 'idle' ? renderGrid(view, scrollRef, active) : null}
 			{activeProgressTasks(view).length > 0 ? <ActiveProgressTasks tasks={activeProgressTasks(view)} /> : null}
 			{view.errorText ? <ErrorPanel message={view.errorText} /> : null}
 			{view.mode === 'confirm-uninstall' ? <UninstallConfirm view={view} dispatch={dispatch} services={services} cache={cache} active={active} agentContext={agentContext} viewportWidth={viewportWidth} viewportHeight={viewportHeight} /> : null}
@@ -171,16 +171,20 @@ function handleGridKey(
 	const k = key.toLowerCase();
 
 	if (k === 'up' || k === 'arrowup') {
-		if (view.cursor < columns && onExitToHeader) {
+		const nextCursor = visualVerticalCursor(view, columns, -1);
+		if (nextCursor === null && onExitToHeader) {
 			onExitToHeader();
-		} else {
-			dispatch({ type: 'nav', delta: -columns });
+		} else if (nextCursor !== null) {
+			dispatch({ type: 'nav', delta: nextCursor - view.cursor });
 		}
 		return;
 	}
 
 	if (k === 'down' || k === 'arrowdown') {
-		dispatch({ type: 'nav', delta: columns });
+		const nextCursor = visualVerticalCursor(view, columns, 1);
+		if (nextCursor !== null) {
+			dispatch({ type: 'nav', delta: nextCursor - view.cursor });
+		}
 		return;
 	}
 
@@ -433,24 +437,71 @@ function toolCardId(component: ManagedComponent, index: number): string {
 	return `tools-grid-item-${index}-${component.id}`;
 }
 
-function renderGrid(view: ToolsViewState, scrollRef: React.RefObject<ScrollBoxRenderable | null>): React.ReactNode {
+type GridRow = readonly number[];
+
+function groupedGridRows(view: ToolsViewState, columns: number): readonly GridRow[] {
+	return groupComponentsByToolGroup(view.components).flatMap(section => {
+		const indices = section.components.map(component => view.components.findIndex(item => item.id === component.id)).filter(index => index >= 0);
+		const rows: GridRow[] = [];
+		for (let offset = 0; offset < indices.length; offset += columns) {
+			rows.push(indices.slice(offset, offset + columns));
+		}
+
+		return rows;
+	});
+}
+
+function visualVerticalCursor(view: ToolsViewState, columns: number, direction: -1 | 1): number | null {
+	const rows = groupedGridRows(view, columns);
+	const rowIndex = rows.findIndex(row => row.includes(view.cursor));
+	if (rowIndex === -1) {
+		return null;
+	}
+
+	const currentRow = rows[rowIndex];
+	if (!currentRow) {
+		return null;
+	}
+
+	const columnIndex = currentRow.indexOf(view.cursor);
+	const targetRow = rows[rowIndex + direction];
+	if (!targetRow) {
+		return null;
+	}
+
+	return targetRow[Math.min(columnIndex, targetRow.length - 1)] ?? null;
+}
+
+function renderGrid(view: ToolsViewState, scrollRef: React.RefObject<ScrollBoxRenderable | null>, active: boolean): React.ReactNode {
 	// 加载态由 renderDetectionNotice 独占（Spinner「检测中...」），此处只处理「已加载但无组件」空状态，避免双重「检测中」。
 	if (view.components.length === 0) {
 		return view.loaded ? <ListEmptyState message="未检测到可管理的组件" /> : null;
 	}
 
-	// flex 自由换行：每卡固定宽度，按终端宽度自动排布（对齐原 UpdateView 范式）。
+	const sections = groupComponentsByToolGroup(view.components);
+
+	// 每组采用「分组 label + 该组 grid」；状态机仍使用扁平 view.components，避免改写光标/生命周期逻辑。
 	// 外层用 ThemedScrollbox 承载溢出区域，键盘导航时 scrollChildIntoView 保证焦点卡片可见。
 	return (
 		<ThemedScrollbox ref={scrollRef} style={{flexGrow: 1}} viewportCulling scrollY scrollX={false}>
-			<box flexDirection="row" flexWrap="wrap">
-				{view.components.map((component, index) => (
-					<box key={component.id} id={toolCardId(component, index)} marginRight={1} marginBottom={0} flexShrink={0}>
-						<ToolCard
-							component={component}
-							focused={index === view.cursor}
-							status={itemStatusOf(view, component.id)}
-						/>
+			<box flexDirection="column">
+				{sections.map(section => (
+					<box key={section.group} flexDirection="column" marginBottom={1}>
+						<text fg={colors.primary} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{section.label}</text>
+						<box flexDirection="row" flexWrap="wrap">
+							{section.components.map(component => {
+								const index = view.components.findIndex(item => item.id === component.id);
+								return (
+									<box key={component.id} id={toolCardId(component, index)} marginRight={1} marginBottom={0} flexShrink={0}>
+										<ToolCard
+											component={component}
+											focused={active && index === view.cursor}
+											status={itemStatusOf(view, component.id)}
+										/>
+									</box>
+								);
+							})}
+						</box>
 					</box>
 				))}
 			</box>
@@ -476,29 +527,13 @@ function ToolCard({
 }
 
 /** 活跃任务进度：遍历进行中的组件，每个一项；完成（离开进行时态）自动从列表消失，下方上移补齐。 */
-function ActiveProgressTasks({tasks}: {readonly tasks: readonly {readonly id: string; readonly name: string; readonly message: string; readonly level: ProgressLevel}[]}) {
+function ActiveProgressTasks({tasks}: {readonly tasks: ReturnType<typeof activeProgressTasks>}) {
 	return (
-		<box flexDirection="column">
-			<text fg={colors.text} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>执行进度</text>
-			{tasks.map(task => (
-				<text key={task.id} fg={progressColor(task.level)} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>· {task.name} · {task.message}</text>
-			))}
-		</box>
+		<ProgressLog
+			title="执行进度"
+			entries={tasks.map(task => ({id: task.id, message: `${task.name} · ${task.message}`, level: task.level}))}
+		/>
 	);
-}
-
-/** 进度 level → 主题语义色（light 主题下避免继承默认前景色导致白底白字）。 */
-function progressColor(level: ProgressLevel): string {
-	switch (level) {
-		case 'success':
-			return colors.success;
-		case 'warning':
-			return colors.warning;
-		case 'danger':
-			return colors.danger;
-		default:
-			return colors.info;
-	}
 }
 
 /** 把组件状态 + 执行态映射为圆点语义。执行态优先于版本态。 */

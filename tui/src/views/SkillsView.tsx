@@ -103,14 +103,14 @@ export function SkillsView({
 		<box flexDirection="column" flexGrow={1}>
 			<ViewHeader title="Skills 技能管理" subtitle={`搜索、安装、更新和卸载 ${AGENT_CONTEXT_LABELS[agentContext]} Skills`} />
 			{renderDetectionNotice(detection.status)}
-			{renderPage(view, detection, viewportHeight, confirmRows, stretchLists)}
+			{renderPage(view, detection, viewportHeight, confirmRows, stretchLists, active)}
 			{view.busyAction ? <ProgressLog title="执行进度" messages={view.progress} /> : null}
 			{view.errorText ? (
 				<box marginTop={1}>
 					<ErrorPanel message={view.errorText} />
 				</box>
 			) : null}
-			{confirmActive ? renderConfirm(view, viewportWidth, viewportHeight) : null}
+			{confirmActive ? renderConfirm(view, viewportWidth, viewportHeight, agentContext) : null}
 		</box>
 	);
 }
@@ -492,7 +492,7 @@ function renderDetectionNotice(status: DetectionState<InstalledSkill[]>['status'
 }
 
 /** 底部确认框（confirm-install 单个 skill / confirm-uninstall 单条）。 */
-function renderConfirm(view: SkillsViewState, viewportWidth: number, viewportHeight: number): React.ReactNode {
+function renderConfirm(view: SkillsViewState, viewportWidth: number, viewportHeight: number, agentContext: AgentContext): React.ReactNode {
 	if (view.mode === 'confirm-install') {
 		const skill = selectedResult(view);
 		const skillName = skill ? displaySkillName(skill.name) : '';
@@ -505,9 +505,12 @@ function renderConfirm(view: SkillsViewState, viewportWidth: number, viewportHei
 	}
 
 	const names = uninstallTargets(view);
+	// Codex 直接读共享目录 ~/.agents/skills：若该 Skill 仍被其他 Agent 引用，canonical 文件保留，Codex 仍可见。
+	const codexHint = agentContext === 'cx' ? '（Codex 直读共享目录，若其他 Agent 仍引用则文件保留、Codex 仍可见）' : '';
 	return (
 		<Modal active title="确认卸载 Skill" hint="Enter 确认  Esc 取消" tone="danger" viewportWidth={viewportWidth} viewportHeight={viewportHeight}>
 			<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{names.length > 0 ? `即将卸载：${names.join(', ')}` : '无卸载目标'}</text>
+			{codexHint ? <text fg={colors.muted}>{codexHint}</text> : null}
 		</Modal>
 	);
 }
@@ -517,23 +520,24 @@ function renderPage(
 	detection: DetectionState<InstalledSkill[]>,
 	viewportHeight: number,
 	confirmRows: number,
-	stretchLists: boolean
+	stretchLists: boolean,
+	active: boolean
 ): React.ReactNode {
 	const page = pageOf(view.mode, view.busyAction);
 	if (page === 'install') {
-		return renderInstallPage(view, viewportHeight, confirmRows, stretchLists);
+		return renderInstallPage(view, viewportHeight, confirmRows, stretchLists, active);
 	}
 
 	// 列表页（默认）。detection 未就绪时由 detectionNotice 占位，body 留空。
 	if (detection.status === 'success') {
-		return renderListPage(view, viewportHeight, confirmRows, stretchLists);
+		return renderListPage(view, viewportHeight, confirmRows, stretchLists, active);
 	}
 
 	return null;
 }
 
 /** 列表页：顶部本地过滤框 + 已装列表（过滤后）。 */
-function renderListPage(view: SkillsViewState, viewportHeight: number, confirmRows: number, stretchLists: boolean): React.ReactNode {
+function renderListPage(view: SkillsViewState, viewportHeight: number, confirmRows: number, stretchLists: boolean, active: boolean): React.ReactNode {
 	const filtered = filteredInstalled(view);
 	const items = filtered.map((skill) => ({
 		key: skill.name,
@@ -542,7 +546,7 @@ function renderListPage(view: SkillsViewState, viewportHeight: number, confirmRo
 
 	return (
 		<box flexDirection="column" flexGrow={stretchLists ? 1 : 0}>
-			<InputBox label="过滤" value={view.filterText} focused={view.filterFocused} placeholder="输入关键词模糊筛选已装 skill" />
+			<InputBox label="过滤" value={view.filterText} focused={active && view.filterFocused} placeholder="输入关键词模糊筛选已装 skill" />
 			{filtered.length === 0 ? (
 				<ListEmptyState
 					message={view.installed.length === 0 ? '暂无已安装 skill' : '没有匹配的已装 skill'}
@@ -550,11 +554,11 @@ function renderListPage(view: SkillsViewState, viewportHeight: number, confirmRo
 				/>
 			) : stretchLists ? (
 				<box marginTop={1} flexGrow={1}>
-					<ScrollList items={items} cursor={view.installedIndex} viewportHeight={viewportHeight} reservedRows={6 + confirmRows} stretch />
+					<ScrollList items={items} cursor={view.installedIndex} viewportHeight={viewportHeight} reservedRows={6 + confirmRows} active={active} stretch />
 				</box>
 			) : (
 				<box marginTop={1}>
-					<ScrollList items={items} cursor={view.installedIndex} viewportHeight={viewportHeight} reservedRows={6 + confirmRows} />
+					<ScrollList items={items} cursor={view.installedIndex} viewportHeight={viewportHeight} reservedRows={6 + confirmRows} active={active} />
 				</box>
 			)}
 		</box>
@@ -562,7 +566,7 @@ function renderListPage(view: SkillsViewState, viewportHeight: number, confirmRo
 }
 
 /** 安装页：远程搜索框 + 扁平 skill 列表 + 表头。 */
-function renderInstallPage(view: SkillsViewState, viewportHeight: number, confirmRows: number, stretchLists: boolean): React.ReactNode {
+function renderInstallPage(view: SkillsViewState, viewportHeight: number, confirmRows: number, stretchLists: boolean, active: boolean): React.ReactNode {
 	const items = view.results.map((skill) => {
 		// 解析 skill 名称：owner/repo@skill 格式，提取 @ 后的 skill 名（复用 displaySkillName）
 		const skillName = displaySkillName(skill.name);
@@ -592,7 +596,7 @@ function renderInstallPage(view: SkillsViewState, viewportHeight: number, confir
 
 	return (
 		<box flexDirection="column" flexGrow={stretchLists ? 1 : 0}>
-			<InputBox label="搜索" value={view.query} focused={view.queryFocused} placeholder="输入关键词搜索 skills.sh" />
+			<InputBox label="搜索" value={view.query} focused={active && view.queryFocused} placeholder="输入关键词搜索 skills.sh" />
 			{view.searching ? (
 				<ListLoadingState message="正在搜索..." />
 			) : items.length > 0 ? (
@@ -604,6 +608,7 @@ function renderInstallPage(view: SkillsViewState, viewportHeight: number, confir
 						reservedRows={7 + confirmRows}
 						stretch={stretchLists}
 						header={header}
+						active={active}
 					/>
 				</box>
 			) : (

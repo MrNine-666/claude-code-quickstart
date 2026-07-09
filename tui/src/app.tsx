@@ -17,7 +17,7 @@ import {
 } from './state/manage-state.js';
 import { navShortcuts, viewShortcuts, updateButtonShortcuts, headerShortcuts } from './state/shortcuts.js';
 import { Modal, ShortcutBar, Spinner, ToastViewport, toast, shortcutBarRows, type Shortcut, type StatusDotKind } from './components/index.js';
-import { colors, borderColors, borderStyles, PRIMARY, getTheme, setActiveTheme, type AppThemeMode, type ThemePalette } from './theme/index.js';
+import { colors, borderColors, borderStyles, activeBorderChars, PRIMARY, getTheme, setActiveTheme, type AppThemeMode, type ThemePalette } from './theme/index.js';
 import { CCQ_LOGO } from './theme/logo.js';
 import { CCQ_VERSION } from './version.js';
 import { applyUpdate, checkLatestVersion, downloadUpdate, formatSelfUpdateError, restartExecutable } from './core/update.js';
@@ -345,6 +345,7 @@ export default function App({ initialThemeMode }: AppProps) {
 					flexShrink={0}
 					borderStyle={navActive ? borderStyles.active : borderStyles.inactive}
 					borderColor={navActive ? borderColors.active : borderColors.inactive}
+					customBorderChars={navActive ? activeBorderChars : undefined}
 					paddingX={1}
 				>
 					{/* Logo 区域：逐行垂直渐变（橙色系，亮→深），制造炫彩光泽；alignItems 居中 */}
@@ -386,46 +387,51 @@ export default function App({ initialThemeMode }: AppProps) {
 					/>
 				</box>
 
-				{/* 右侧内容区 */}
-				<box
-					flexDirection="column"
-					flexGrow={1}
-					borderStyle={!navActive ? borderStyles.active : borderStyles.inactive}
-					borderColor={!navActive ? borderColors.active : borderColors.inactive}
-					paddingX={1}
-				>
-					{/* Agent 上下文 Header（全称切换 Claude Code / Codex，不展示 cc/cx 缩写） */}
-					<AgentHeader agentContext={state.agentContext} width={contentWidth} active={headerActive} />
+					{/* 右侧区域：Header 独立固定行，content 卡片占满剩余空间 */}
+					<box flexDirection="column" flexGrow={1} minWidth={0}>
+						{/* Agent 上下文 Header（全称切换 Claude Code / Codex，不展示 cc/cx 缩写） */}
+						<AgentHeader agentContext={state.agentContext} active={headerActive} />
 
-					{/* 内容视图区域 */}
-					<box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={1} overflow="hidden">
-						<ModuleContent
-							moduleId={displayMenuId}
-							agentContext={state.agentContext}
-							viewportHeight={contentViewportHeight}
-							contentWidth={contentWidth}
-							active={state.focus === 'view'}
-							skillsViewServices={skillsViewServices}
-							skillsCache={skillsCache}
-							toolsViewServices={toolsViewServices}
-							toolsCache={toolsCache}
-							onSubModeChange={setViewSubMode}
-							syntaxStyle={syntaxStyle}
-							onExitToNav={() => {
-								setViewSubMode('');
-								setState(current => reduceManageState(current, 'escape'));
-							}}
-							onExitToHeader={() => {
-								setState(current => reduceManageState(current, 'up'));
-							}}
-						/>
+						<box
+							flexDirection="column"
+							flexGrow={1}
+							flexShrink={1}
+							minHeight={1}
+							borderStyle={state.focus === 'view' ? borderStyles.active : borderStyles.inactive}
+							borderColor={state.focus === 'view' ? borderColors.active : borderColors.inactive}
+							customBorderChars={state.focus === 'view' ? activeBorderChars : undefined}
+							paddingX={1}
+						>
+							{/* 内容视图区域 */}
+							<box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={1} overflow="hidden">
+								<ModuleContent
+									moduleId={displayMenuId}
+									agentContext={state.agentContext}
+									viewportHeight={contentViewportHeight}
+									contentWidth={contentWidth}
+									active={state.focus === 'view'}
+									skillsViewServices={skillsViewServices}
+									skillsCache={skillsCache}
+									toolsViewServices={toolsViewServices}
+									toolsCache={toolsCache}
+									onSubModeChange={setViewSubMode}
+									syntaxStyle={syntaxStyle}
+									onExitToNav={() => {
+										setViewSubMode('');
+										setState(current => reduceManageState(current, 'escape'));
+									}}
+									onExitToHeader={() => {
+										setState(current => reduceManageState(current, 'up'));
+									}}
+								/>
+							</box>
+
+							<Divider width={terminalWidth - SIDEBAR_WIDTH - 4} />
+
+							{/* Footer 快捷键提示 */}
+							<ShortcutBar shortcuts={activeFooterShortcuts} width={contentWidth} />
+						</box>
 					</box>
-
-					<Divider width={terminalWidth - SIDEBAR_WIDTH - 4} />
-
-					{/* Footer 快捷键提示 */}
-					<ShortcutBar shortcuts={activeFooterShortcuts} width={contentWidth} />
-				</box>
 			</box>
 
 			{/* 检查更新浮窗：确认更新、更新进度与重启确认在同一 Modal 内完成 */}
@@ -452,14 +458,16 @@ function Divider({ width }: { readonly width: number }) {
 // Agent 上下文 Header：右侧 content 顶部，全称标签 Claude Code / Codex 切换。
 // spec manage-tui-shell：可见标签必须为全称，禁止 cc/cx 缩写；切换不改左侧 6 菜单顺序/选中。
 // Header 获焦后用 ←/→ 切换 Agent，并用主题色边框提示焦点。
-function AgentHeader({ agentContext, width, active }: { readonly agentContext: AgentContext; readonly width: number; readonly active: boolean }) {
+// 宽度使用百分比铺满父容器，而不是用 contentWidth 估算值写死，避免 Header 比 content 卡片短一截。
+function AgentHeader({ agentContext, active }: { readonly agentContext: AgentContext; readonly active: boolean }) {
 	return (
 		<box
 			flexDirection="row"
-			width={width}
+			width="100%"
 			flexShrink={0}
 			borderStyle={active ? borderStyles.active : borderStyles.inactive}
 			borderColor={active ? borderColors.active : borderColors.inactive}
+			customBorderChars={active ? activeBorderChars : undefined}
 			paddingX={1}
 		>
 			{AGENT_CONTEXT_ORDER.map(ctx => {

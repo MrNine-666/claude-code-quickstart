@@ -38,14 +38,23 @@ writeFileSync(
 mkdirSync(join(home, '.claude', '.ccg'), {recursive: true});
 writeFileSync(join(home, '.claude', '.ccg', 'config.toml'), 'version = "3.1.6"\n', 'utf8');
 
-const {COMPONENT_DEFINITIONS, detectComponents, installComponent, filterVisibleComponents} = await import('../src/core/tools-manage.ts');
+const {
+	COMPONENT_DEFINITIONS,
+	COMPONENT_META,
+	TOOL_GROUP_META,
+	TOOL_GROUP_ORDER,
+	detectComponents,
+	installComponent,
+	filterVisibleComponents,
+	groupComponentsByToolGroup
+} = await import('../src/core/tools-manage.ts');
 
 // ── COMPONENT_DEFINITIONS 完整性（11.4/11.6）──────────────────────────────────
 const ids = COMPONENT_DEFINITIONS.map(c => c.id);
 assert.deepEqual(
 	ids,
 	['ClaudeCode', 'Ccline', 'CcgWorkflow', 'OpenSpec', 'CodeGraph', 'CodexCli', 'AntigravityCli'],
-	'7 组件齐备且顺序固定（ClaudeCode + 6 工具）'
+	'7 组件齐备且定义顺序固定（ClaudeCode + 6 工具）'
 );
 for (const def of COMPONENT_DEFINITIONS) {
 	assert.ok(def.name && def.description, `${def.id} 有 name + description`);
@@ -59,6 +68,20 @@ assert.equal(claude.npmPackage, '@anthropic-ai/claude-code', 'ClaudeCode npm 包
 assert.equal(claude.optional, false, 'ClaudeCode 非可选');
 assert.equal(COMPONENT_DEFINITIONS.filter(c => c.isBase).length, 1, '仅 ClaudeCode 为 isBase');
 console.log('[PASS] COMPONENT_DEFINITIONS 7 组件齐备 + isBase 语义 (11.4/11.6)');
+
+// ── 工具管理分组事实源：Agent / statusLine / 三方工具 ─────────────────────────
+assert.deepEqual(TOOL_GROUP_ORDER, ['agent', 'companion', 'tool'], '工具管理分组顺序为 agent → companion → tool');
+assert.equal(TOOL_GROUP_META.agent.label, 'Agent', 'agent 分组 label = Agent');
+assert.equal(TOOL_GROUP_META.companion.label, 'statusLine', 'companion 分组 label = statusLine');
+assert.equal(TOOL_GROUP_META.tool.label, '三方工具', 'tool 分组 label = 三方工具');
+assert.equal(COMPONENT_META.CodexCli.group, 'agent', 'CodexCli 属于 Agent 组');
+assert.equal(COMPONENT_META.AntigravityCli.group, 'agent', 'AntigravityCli 属于 Agent 组');
+assert.equal(COMPONENT_META.Ccline.group, 'companion', 'Ccline 属于 statusLine 组');
+assert.equal(COMPONENT_META.CodeGraph.group, 'tool', 'CodeGraph 属于三方工具组');
+const groupedDefinitions = groupComponentsByToolGroup(COMPONENT_DEFINITIONS);
+assert.deepEqual(groupedDefinitions.map(section => section.label), ['Agent', 'statusLine', '三方工具'], '分组结构输出 label + grid sections');
+assert.deepEqual(groupedDefinitions.flatMap(section => section.components.map(component => component.id)), ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'Ccline', 'OpenSpec', 'CcgWorkflow', 'CodeGraph'], '分组展示顺序按 Agent/statusLine/三方工具重排');
+console.log('[PASS] 工具管理分组事实源与展示顺序');
 
 // ── 1.1 CodexCli 官方包名与命令（HC-CODEX-OFFICIAL-PACKAGE）──────────────────
 const codexDef = COMPONENT_DEFINITIONS.find(c => c.id === 'CodexCli');
@@ -86,6 +109,9 @@ assert.match(toolsServicesSource, /refreshDetection:\s*\(runner,\s*options\)\s*=
 assert.match(viewDetectionSource, /detectComponents\(undefined,\s*options\.forceRefresh === true\)/, 'runToolsDetection 透传 forceRefresh');
 assert.match(toolsManageSource, /getNpmOutdatedGlobal\(forceRefresh\)/, 'detectComponents 强刷 npm outdated 缓存');
 assert.match(updateSource, /resolveNpmViewLatest\(Object\.values\(NPM_COMPONENT_MAP\),\s*forceRefresh\)/, 'checkCliToolUpdates 强刷 npm view 缓存');
+assert.match(toolsViewSource, /groupComponentsByToolGroup\(view\.components\)/, 'ToolsView 按分组结构渲染 label + grid');
+assert.match(toolsViewSource, /<text[^>]+>\{section\.label\}<\/text>/, 'ToolsView 渲染分组 label');
+assert.doesNotMatch(toolsViewSource, /label:\s*['"]Agent['"]/, 'ToolsView 不硬编码 Agent 分组 label');
 console.log('[PASS] r 手动刷新绕过 npm outdated/npm view 缓存');
 
 // 单项 install/update/uninstall 成功后必须同步 App 层检测缓存，否则切换 Header 时
@@ -145,12 +171,15 @@ console.log('[PASS] detectComponents 7 项 + 不聚合 Skills/MCP + CcgWorkflow 
 		return component;
 	});
 	const claudeVisibleWithoutIntegration = filterVisibleComponents(globalInstalled, 'cc');
+	assert.deepEqual(claudeVisibleWithoutIntegration.map(c => c.id), ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'Ccline', 'OpenSpec', 'CcgWorkflow', 'CodeGraph'], 'Claude Code Header 下可见组件按 Agent/statusLine/三方工具展示');
 	const claudeCodeGraph = claudeVisibleWithoutIntegration.find(c => c.id === 'CodeGraph');
 	assert.equal(claudeCodeGraph.installed, false, 'Claude Code 未接入 CodeGraph 时不得仅凭全局 codegraph CLI 显示已安装');
 	assert.equal(claudeCodeGraph.hasUpdate, null, 'Claude Code 未接入 CodeGraph 时不显示更新态');
 	assert.match(claudeCodeGraph.statusHint, /Claude Code 未接入 CodeGraph/, 'Claude Code CodeGraph 缺失提示明确');
 
 	const codexVisibleWithoutIntegration = filterVisibleComponents(globalInstalled, 'cx');
+	assert.deepEqual(codexVisibleWithoutIntegration.map(c => c.id), ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'OpenSpec', 'CcgWorkflow', 'CodeGraph'], 'Codex Header 下隐藏空 statusLine 组并保持分组顺序');
+	assert.deepEqual(groupComponentsByToolGroup(codexVisibleWithoutIntegration).map(section => section.label), ['Agent', '三方工具'], 'Codex Header 下空 statusLine 分组不展示');
 	const codexCcg = codexVisibleWithoutIntegration.find(c => c.id === 'CcgWorkflow');
 	const codexCodeGraph = codexVisibleWithoutIntegration.find(c => c.id === 'CodeGraph');
 	assert.equal(codexCcg.installed, false, 'Codex 未安装 Mode 时 CcgWorkflow 不得沿用 ~/.claude/.ccg/config.toml 的 installed=true');

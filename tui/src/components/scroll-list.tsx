@@ -36,6 +36,8 @@ export type ScrollListProps = {
 	readonly emptyText?: string;
 	// 可选表头（渲染在列表上方）
 	readonly header?: React.ReactNode;
+	// 列表是否拥有内容焦点；失焦时保留 cursor 位置但不显示卡片 focused 高亮。
+	readonly active?: boolean;
 };
 
 // 底部 (n/total) 计数占 1 行。
@@ -52,7 +54,8 @@ export function ScrollList({
 	reservedRows = 0,
 	stretch = false,
 	emptyText = '暂无数据',
-	header
+	header,
+	active = true
 }: ScrollListProps) {
 	const ref = useRef<ScrollBoxRenderable>(null);
 	const safeCursor = items.length === 0 ? 0 : Math.min(Math.max(cursor, 0), items.length - 1);
@@ -95,7 +98,7 @@ export function ScrollList({
 							titleAttrs={item.titleAttrs}
 							titleRight={item.titleRight}
 							leading={item.leading}
-							focused={index === safeCursor}
+							focused={active && index === safeCursor}
 							selected={item.selected}
 							multiLine={item.multiLine}
 						>
