@@ -1,4 +1,5 @@
 import type {AgentContext} from '../state/manage-state.js';
+import type {SkillsExecFn} from '../core/skills-actions.js';
 import {
 	installSearchResult,
 	searchSkillCatalogue,
@@ -19,6 +20,8 @@ export function createSkillsViewServices(agentContext: AgentContext = 'cc'): Ski
 		updateAll: (onProgress, exec) => updateAllSkills(onProgress, agentContext, exec),
 		uninstall: (names, onProgress, exec) => uninstallSelected(names, onProgress, agentContext, exec),
 		createDetectionRunner: onChange => createSkillsDetectionRunner(onChange),
-		runDetection: runner => runSkillsDetection(runner, agentContext)
+		// runDetection 与 install/update/uninstall 一致透传 exec，使 detection 路径同样可注入 mock（可测性）。
+		// useDetectionCache 只调 runDetection(runner) 不传第二参，加可选 exec 协变安全、零破坏。
+		runDetection: (runner, exec) => runSkillsDetection(runner, agentContext, exec)
 	};
 }

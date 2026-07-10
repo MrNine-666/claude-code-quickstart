@@ -42,7 +42,7 @@ export type SkillsViewServices = {
 	readonly createDetectionRunner: (
 		onChange: import('../services/detection-runner.js').DetectionStateSink<InstalledSkill[]>
 	) => import('../services/detection-runner.js').DetectionRunner<InstalledSkill[]>;
-	readonly runDetection: (runner: import('../services/detection-runner.js').DetectionRunner<InstalledSkill[]>, options?: import('../services/detection-runner.js').DetectionRunOptions) => Promise<unknown>;
+	readonly runDetection: (runner: import('../services/detection-runner.js').DetectionRunner<InstalledSkill[]>, exec?: import('../core/skills-actions.js').SkillsExecFn) => Promise<unknown>;
 };
 
 export type SkillsViewProps = {

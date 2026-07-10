@@ -551,7 +551,6 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 		return {code: 0, stdout: '[]', stderr: ''};
 	});
 	assert.equal(detArgs[0][detArgs[0].indexOf('--agent') + 1], 'codex', 'cx services.runDetection --agent=codex');
-
 	// 8.4 cc 仍走 claude-code（零破坏）
 	const ccServices = createSkillsViewServices('cc');
 	const ccArgs = [];
