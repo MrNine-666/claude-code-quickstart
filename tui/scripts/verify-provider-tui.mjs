@@ -66,8 +66,8 @@ function assertUserFieldsIntact(label) {
 
 // ── 5.7 字段所有权：add（含激活） ───────────────────────────────────────────
 const addResult = addProvider({
-	builtinKey: 'zhipu',
-	apiKey: 'sk-zhipu-aaaaaaaaaaaa',
+	builtinKey: 'glm',
+	apiKey: 'sk-glm-aaaaaaaaaaaa',
 	activate: true
 });
 assert.equal(addResult.success, true, 'addProvider 应成功');
@@ -75,7 +75,7 @@ assert.equal(addResult.activated, true, 'addProvider 激活应成功');
 assertUserFieldsIntact('add+activate');
 
 let settings = readSettings();
-assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, 'sk-zhipu-aaaaaaaaaaaa', 'AUTH_TOKEN 应写入');
+assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, 'sk-glm-aaaaaaaaaaaa', 'AUTH_TOKEN 应写入');
 assert.equal(settings.env.ANTHROPIC_BASE_URL, 'https://open.bigmodel.cn/api/anthropic', 'BASE_URL 应写入');
 assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.2', '受管模型键应写入');
 assert.equal(settings.env.EXISTING, 'keep-me', '已有非受管 env 键应保留');
@@ -100,7 +100,7 @@ assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, undefined, 'switch 到�
 console.log('[PASS] 5.7 switch 字段所有权');
 
 // ── 5.7 字段所有权：edit ─────────────────────────────────────────────────────
-const editResult = editProvider(addResult.key, {apiKey: 'sk-zhipu-cccccccccccc'});
+const editResult = editProvider(addResult.key, {apiKey: 'sk-glm-cccccccccccc'});
 assert.equal(editResult.success, true, 'editProvider 应成功');
 assertUserFieldsIntact('edit');
 console.log('[PASS] 5.7 edit 字段所有权');

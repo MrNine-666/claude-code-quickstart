@@ -1,6 +1,6 @@
 // `ccq cx [key] [args...]` — 启动 Codex。
 // 有 key 时使用官方 `codex --profile <key>`；无 key 时 plain `codex` 读取 base config。
-// 不写盘、不注入 ccq vault/env；Codex 自行读取 CODEX_HOME/profile TOML。
+// 不写盘、不注入 ccq vault/env；Codex 自行读取 ~/.codex/profile TOML。
 
 import {codexProfileExists, safeCodexProfileKey} from '../../core/codex.js';
 

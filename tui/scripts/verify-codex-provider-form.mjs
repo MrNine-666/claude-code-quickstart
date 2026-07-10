@@ -22,14 +22,16 @@ try {
 	const options = providerTypeField?.type === 'radio' ? providerTypeField.options : [];
 	assert.deepEqual(
 		options.map(option => option.value),
-		['officialLogin', 'zhipu', 'minimax', 'moonshot', 'deepseek', 'bailian', 'custom'],
-		'Codex 供应商类型应包含 official login、内置 API 供应商与自定义'
+		['officialLogin', 'minimax', 'custom'],
+		'Codex 供应商类型仅含 official login、Codex 原生可接入的 MiniMax 与自定义'
 	);
 	assert.ok(options.some(option => option.value === 'officialLogin' && option.label === 'official login'), 'Codex 增加 official login 类型');
-	assert.ok(options.some(option => option.value === 'zhipu' && /智谱 GLM/.test(option.label)), 'Codex 还原智谱 GLM 类型');
-	assert.ok(options.some(option => option.value === 'deepseek' && option.label === 'DeepSeek'), 'Codex 还原 DeepSeek 类型');
+	assert.ok(options.some(option => option.value === 'minimax' && /MiniMax/.test(option.label)), 'Codex 保留 MiniMax 内置类型');
 	assert.ok(options.some(option => option.value === 'custom' && /自定义 API 供应商/.test(option.label)), 'Codex 保留自定义 API 供应商语义');
 	assert.equal(options.some(option => /OpenAI-compatible/i.test(option.label)), false, '不得新增 OpenAI-compatible 标签');
+	assert.equal(options.some(option => option.value === 'bailian'), false, 'Codex 不再提供阿里云百炼类型');
+	// GLM/Kimi/DeepSeek 仅 Chat Completions，Codex 只认 Responses，直连不可用，故移除内置一键模板。
+	assert.equal(options.some(option => ['zhipu', 'moonshot', 'deepseek'].includes(option.value)), false, 'Codex 不再内置仅 Chat Completions 的 GLM/Kimi/DeepSeek');
 	assert.equal(add.fields.some(field => field.id === 'codexProfileToml'), false, '表单字段区不得展示写死 TOML readonly 字段');
 	assert.equal(add.fields.find(field => field.id === 'profileKey')?.label, '文件名', 'profile key 文案应面向用户显示为文件名');
 
@@ -41,36 +43,16 @@ try {
 	const singletonField = addAfterOfficialLogin.fields.find(field => field.id === 'providerType');
 	const singletonOptions = singletonField?.type === 'radio' ? singletonField.options : [];
 	assert.equal(singletonOptions.some(option => option.value === 'officialLogin'), false, 'official login 已存在时新增类型列表不再展示该类型');
-	assert.equal(addAfterOfficialLogin.values.providerType, 'zhipu', '直接选择 official login 且已存在时应回退到可新增 API 类型并提示用户');
+	assert.equal(addAfterOfficialLogin.values.providerType, 'minimax', '直接选择 official login 且已存在时应回退到可新增 API 类型并提示用户');
 	assert.match(singletonField?.helpText ?? '', /已存在 official login profile/, '类型字段应提示 official login 单例原因');
 	console.log('[PASS] 5.4 Codex provider 类型：official login + 内置供应商 + custom，无 OpenAI-compatible + login 单例过滤');
 
-	// ── 内置供应商模板：按官方 OpenAI-compatible base_url 预填 ─────────────────────
-	const zhipu = buildCodexProviderFormModel({mode: 'add', providerType: 'zhipu'}).values;
-	assert.equal(zhipu.profileKey, 'zhipu');
-	assert.equal(zhipu.baseUrl, 'https://open.bigmodel.cn/api/paas/v4/');
-	assert.equal(zhipu.model, 'glm-5.2');
-
+	// ── 内置供应商模板：仅保留 Codex 原生可接入的 MiniMax，按官方 Responses 兼容 base_url 预填 ──
 	const minimax = buildCodexProviderFormModel({mode: 'add', providerType: 'minimax'}).values;
 	assert.equal(minimax.profileKey, 'minimax');
 	assert.equal(minimax.baseUrl, 'https://api.minimax.io/v1');
 	assert.equal(minimax.model, 'MiniMax-M3');
-
-	const moonshot = buildCodexProviderFormModel({mode: 'add', providerType: 'moonshot'}).values;
-	assert.equal(moonshot.profileKey, 'moonshot');
-	assert.equal(moonshot.baseUrl, 'https://api.moonshot.ai/v1');
-	assert.equal(moonshot.model, 'kimi-k2.6');
-
-	const deepseek = buildCodexProviderFormModel({mode: 'add', providerType: 'deepseek'}).values;
-	assert.equal(deepseek.profileKey, 'deepseek');
-	assert.equal(deepseek.baseUrl, 'https://api.deepseek.com');
-	assert.equal(deepseek.model, 'deepseek-v4-pro');
-
-	const bailian = buildCodexProviderFormModel({mode: 'add', providerType: 'bailian'}).values;
-	assert.equal(bailian.profileKey, 'bailian');
-	assert.equal(bailian.baseUrl, 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1');
-	assert.equal(bailian.model, 'qwen-plus');
-	console.log('[PASS] Codex 内置供应商模板预填官方 OpenAI-compatible base_url');
+	console.log('[PASS] Codex 内置供应商模板预填官方 Responses 兼容 base_url（仅 MiniMax）');
 
 	// ── 5.7 official login：不要求 API key / Base URL，移除 Auth 单行字段，textarea 只读展示 auth.json ─────────────
 	const official = buildCodexProviderFormModel({mode: 'add', providerType: 'officialLogin'});
@@ -79,7 +61,7 @@ try {
 	assert.equal(officialFieldIds.includes('baseUrl'), false, 'official login 不展示 Base URL 字段');
 	assert.equal(officialFieldIds.includes('apiKey'), false, 'official login 不展示 API Key 字段');
 	assert.equal(officialFieldIds.includes('authStatus'), false, 'official login 不再展示 Auth 单行状态字段');
-	assert.match(official.values.authJson, /未检测到 CODEX_HOME\/auth\.json/, '无 auth.json 时 textarea 应提示运行 codex login');
+	assert.match(official.values.authJson, /未检测到 ~\/\.codex\/auth\.json/, '无 auth.json 时 textarea 应提示运行 codex login');
 	assert.equal(validateCodexProviderForm('add', {...official.values, profileKey: 'official'}).length, 0,
 		'official login 不要求 API key/Base URL');
 	const officialToml = codexProviderValuesToToml({...official.values, profileKey: 'official', model: 'gpt-5'});

@@ -66,8 +66,8 @@ export const HELP_CX = `ccq cx — 启动 Codex
   ccq cx [name] [codex-args...] [-- 透传...]
 
 行为:
-  - 不带 name 时直接启动 plain codex，让 Codex 读取 CODEX_HOME/config.toml 或 ~/.codex/config.toml
-  - 带 name 时校验 $CODEX_HOME/<name>.config.toml 存在，并启动 codex --profile <name>
+  - 不带 name 时直接启动 plain codex，让 Codex 读取 ~/.codex/config.toml
+  - 带 name 时校验 ~/.codex/<name>.config.toml 存在，并启动 codex --profile <name>
   - 不读取 ccq vault，不注入 API key env；Codex 自行读取 profile TOML 或官方登录状态
   - codex 不在 PATH 时返回 127，并提示到 TUI 工具管理安装 CodexCli
 
@@ -88,7 +88,7 @@ export const HELP_LS = `ccq ls — 列出 provider/profile
 行为:
   - 默认等价 ccq ls --tool claude
   - claude：扫描 ~/.claude/providers/*.json，列出 key + BaseUrl，并标记当前默认 provider
-  - codex：扫描 CODEX_HOME 或 ~/.codex 下的 <key>.config.toml，列出 profile 并标记当前默认
+  - codex：扫描 ~/.codex 下的 <key>.config.toml，列出 profile 并标记当前默认
   - 非 TTY 友好（纯文本输出，可在管道/CI 中使用）
 `;
 
@@ -102,7 +102,7 @@ export const HELP_USE = `ccq use — 设默认 provider/profile
 行为:
   - 默认等价 ccq use <name> --tool claude
   - claude：将 <name> 的 env 合并写入 ~/.claude/settings.json（持久生效）
-  - codex：读取 CODEX_HOME/<name>.config.toml，并结构化写入 CODEX_HOME/config.toml
+  - codex：读取 ~/.codex/<name>.config.toml，并结构化写入 ~/.codex/config.toml
   - codex 不写 profile = "<name>" 或 [profiles.<name>]
 
 与 cc/cx 的区别:

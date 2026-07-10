@@ -239,7 +239,7 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 			<box flexDirection="column" flexGrow={1}>
 				<ViewHeader
 					title='配置文件管理'
-					subtitle={isCodex ? '查看、补全与编辑 CODEX_HOME/config.toml' : '查看、补全与编辑 ~/.claude/settings.json'}
+					subtitle={isCodex ? '查看、补全与编辑 ~/.codex/config.toml' : '查看、补全与编辑 ~/.claude/settings.json'}
 					right={<text fg={colors.warning} attributes={TextAttributes.DIM}>{isCodex ? '已排除供应商/MCP配置' : '已排除供应商配置'}</text>}
 				/>
 				{hasContent ? (
@@ -259,6 +259,11 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 	}
 
 	// ── edit 态渲染 ──
+	// 关键：editor 容器在树中的父路径必须恒定，否则 split↔editor 切换时 React 卸载重挂
+	// TextareaEditor，<textarea initialValue> 用 editInitial 重新初始化、丢失用户编辑。
+	// 做法：始终渲染 row 容器 + 固定位置的 editor 面板（key='editor-panel'），推荐边栏作为
+	// 带 key 的兄弟条件插入/移除。React 按 key 匹配，editor 面板不 remount，textarea 状态保留。
+	const showRecommend = panel === 'split' && recommendationAvailable;
 	const editorEl = (
 		<TextareaEditor
 			ref={editorRef}
@@ -284,12 +289,12 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 		<box flexDirection="column" flexGrow={1}>
 			<ViewHeader
 				title='配置文件管理'
-				subtitle={isCodex ? '查看、补全与编辑 CODEX_HOME/config.toml' : '查看、补全与编辑 ~/.claude/settings.json'}
+				subtitle={isCodex ? '查看、补全与编辑 ~/.codex/config.toml' : '查看、补全与编辑 ~/.claude/settings.json'}
 				right={<text fg={colors.warning} attributes={TextAttributes.DIM}>{isCodex ? '已排除供应商/MCP配置' : '已排除供应商配置'}</text>}
 			/>
-			{panel === 'split' && recommendationAvailable ? (
-				<box flexDirection="row" flexGrow={1} height={bodyViewportHeight}>
-					<box flexDirection="column" width="50%" height={editorViewportHeight}>
+			<box flexDirection="row" flexGrow={1} height={bodyViewportHeight}>
+				{showRecommend ? (
+					<box key='recommend-panel' flexDirection="column" width="50%" height={editorViewportHeight}>
 						<text fg={colors.primary} attributes={TextAttributes.BOLD}>推荐配置</text>
 						<box
 							flexGrow={1}
@@ -304,13 +309,11 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 							</ThemedScrollbox>
 						</box>
 					</box>
-					<box flexDirection="column" width="50%" marginLeft={1}>
-						{editorEl}
-					</box>
+				) : null}
+				<box key='editor-panel' flexDirection="column" flexGrow={1} width={showRecommend ? '50%' : undefined} marginLeft={showRecommend ? 1 : 0}>
+					{editorEl}
 				</box>
-			) : (
-				editorEl
-			)}
+			</box>
 		</box>
 	);
 }

@@ -15,7 +15,7 @@ import {loadVault} from '../src/core/mcp-vault.ts';
 
 // MCP 双 Agent 文件事实源。
 // MCP 列表不再由内置契约生成；用户自管 MCP，状态只来自 runtime 配置与 vault 备份。
-// Codex 的 CODEX_HOME/config.toml 与 vault 双向补齐：config-only 备份到 vault；vault-only 补回 config.toml 且 enabled=false。
+// Codex 的 ~/.codex/config.toml 与 vault 双向补齐：config-only 备份到 vault；vault-only 补回 config.toml 且 enabled=false。
 // 只有 ccq remove 才同时删除 table 与 vault entry；用户手动删 config table 不删除 vault。
 // vault 只备份 credentials/config/definitionHash，不再写/读 disabled 作为状态事实源。
 

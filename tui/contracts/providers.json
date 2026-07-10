@@ -19,54 +19,40 @@
     "LegacyProviderModelKey": "modelMapping"
   },
   "BuiltinProviders": {
-    "zhipu": {
+    "glm": {
       "Name": "智谱 GLM",
-      "Description": "智谱 GLM Coding Plan，默认使用 GLM-5.2 旗舰模型",
+      "Description": "智谱 GLM Coding Plan",
       "BaseUrl": "https://open.bigmodel.cn/api/anthropic",
       "PlatformUrl": "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
       "ModelEnv": {
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4.5-air",
         "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.2",
         "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2"
-      },
-      "ExtraEnv": {
-        "API_TIMEOUT_MS": "3000000"
       }
     },
     "minimax": {
       "Name": "MiniMax",
-      "Description": "MiniMax API，默认使用 MiniMax-M3",
+      "Description": "MiniMax API",
       "BaseUrl": "https://api.minimaxi.com/anthropic",
       "PlatformUrl": "https://platform.minimaxi.com/user-center/basic-information/interface-key",
       "ModelEnv": {
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M3",
         "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M3",
         "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M3"
-      },
-      "ExtraEnv": {
-        "ANTHROPIC_MODEL": "MiniMax-M3",
-        "API_TIMEOUT_MS": "3000000"
       }
     },
     "moonshot": {
-      "Name": "Kimi Code",
-      "Description": "Kimi Code 会员专属 API，使用 sk-kimi- 前缀 Key",
-      "BaseUrl": "https://api.kimi.com/coding/",
+      "Name": "Kimi Coding Plan",
+      "Description": "Kimi Coding Plan 专属 API",
+      "BaseUrl": "https://api.kimi.com/coding",
       "PlatformUrl": "https://www.kimi.com/code/console",
-      "ModelEnv": {
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-for-coding",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "kimi-for-coding",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-for-coding"
-      },
       "ExtraEnv": {
-        "ANTHROPIC_MODEL": "kimi-for-coding",
-        "CLAUDE_CODE_SUBAGENT_MODEL": "kimi-for-coding",
-        "ENABLE_TOOL_SEARCH": "false"
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": 262144
       }
     },
     "deepseek": {
       "Name": "DeepSeek",
-      "Description": "DeepSeek Anthropic API，支持 V4 Pro/Flash 与 1M 上下文",
+      "Description": "DeepSeek Anthropic API",
       "BaseUrl": "https://api.deepseek.com/anthropic",
       "PlatformUrl": "https://platform.deepseek.com/api_keys",
       "ModelEnv": {
@@ -75,24 +61,8 @@
         "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro[1m]"
       },
       "ExtraEnv": {
-        "ANTHROPIC_MODEL": "deepseek-v4-pro[1m]",
         "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-v4-flash",
         "CLAUDE_CODE_EFFORT_LEVEL": "max"
-      }
-    },
-    "bailian": {
-      "Name": "阿里云百炼",
-      "Description": "阿里云百炼平台，默认使用 Qwen3.7 Plus",
-      "BaseUrl": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
-      "PlatformUrl": "https://bailian.console.aliyun.com/cn-beijing/?tab=coding-plan#/efm/coding-plan-detail",
-      "ModelEnv": {
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "qwen3.7-plus",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "qwen3.7-plus",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": "qwen3.7-plus"
-      },
-      "ExtraEnv": {
-        "ANTHROPIC_MODEL": "qwen3.7-plus",
-        "CLAUDE_CODE_SUBAGENT_MODEL": "qwen3.7-plus"
       }
     },
     "custom": {

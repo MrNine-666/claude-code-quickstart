@@ -24,4 +24,11 @@ assert.match(
 	'CodePreview 必须裁掉 trailing newline 产生的尾部伪空行（保留中间空行）'
 );
 
-console.log('[PASS] CodePreview 长行不拆 inline token + 尾部换行不渲染');
+// HC-CODEPREVIEW-SELECTABLE：只读预览区 <text> 必须加 selectable，
+// 配合 renderer 'selection' 事件实现 copy-on-select（鼠标拖选自动复制）。
+// 行号 <text> 同样 selectable，跨行选择时行号文本会被聚合进 selection 文本，
+// 取舍为「能选」优于「行号干净」，与 OpenTUI 官方 selectable 行为一致。
+assert.match(source, /<text key=\{tokenIndex\}[^>]*selectable[^>]*>/, 'CodePreview 正文 <text> 必须声明 selectable 以支持 copy-on-select');
+assert.match(source, /<text fg=\{colors\.lineNumberForeground\}[^>]*selectable/, 'CodePreview 行号 <text> 必须声明 selectable 以支持跨行选择');
+
+console.log('[PASS] CodePreview 长行不拆 inline token + 尾部换行不渲染 + selectable copy-on-select');

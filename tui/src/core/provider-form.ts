@@ -250,8 +250,12 @@ function pickNonManagedEnv(env: Record<string, string> | undefined): Record<stri
 export function providerValuesToProfile(values: ProviderFormValues): ProviderProfile {
 	const env: Record<string, string> = {};
 
+	// add 模式（providerType 存在）AUTH_TOKEN 常显示：apiKey 未填时以空串占位，引导用户填写；
+	// edit 模式仅在非空时写入，避免污染既有 profile。
 	if (!isNullOrWhiteSpace(values.apiKey)) {
 		env[AUTH_TOKEN_KEY] = values.apiKey;
+	} else if (values.providerType !== undefined) {
+		env[AUTH_TOKEN_KEY] = '';
 	}
 
 	if (!isNullOrWhiteSpace(values.baseUrl)) {

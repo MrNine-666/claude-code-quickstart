@@ -5,7 +5,7 @@ import {join} from 'node:path';
 
 // Phase 6.10 全局规则视图门禁：
 // - PromptsView 必须按 agentContext 切换 CLAUDE.md / AGENTS.md。
-// - Codex 规则只写 CODEX_HOME/AGENTS.md，不触碰 Claude CLAUDE.md。
+// - Codex 规则只写 ~/.codex/AGENTS.md，不触碰 Claude CLAUDE.md。
 // - UI 交互复用预览 / e / Ctrl+T / Ctrl+O / dirty 取消语义。
 
 const promptsViewSource = readFileSync(new URL('../src/views/PromptsView.tsx', import.meta.url), 'utf8');
@@ -16,7 +16,7 @@ assert.match(promptsViewSource, /readCurrentRules\(target\)/, '规则读取必�
 assert.match(promptsViewSource, /saveRules\(content, target\)/, '规则保存必须按 target 切换');
 assert.match(promptsViewSource, /assembleRulesRecommendation\(target\)/, '推荐规则内容必须按 target 做 cc/cx 差异化');
 assert.match(promptsViewSource, /title='全局规则管理'/, 'Header 标题统一为「全局规则管理」（Codex 上下文经由 Header 全称区分）');
-assert.match(promptsViewSource, /CODEX_HOME\/AGENTS\.md/, 'Codex Header/空状态必须指向 AGENTS.md');
+assert.match(promptsViewSource, /~\/\.codex\/AGENTS\.md/, 'Codex Header/空状态必须指向 AGENTS.md');
 assert.match(promptsViewSource, /if \(appMod && name === 't'\) \{ togglePanel\(\); return; \}/, 'Ctrl+T 应打开推荐规则面板');
 assert.match(promptsViewSource, /if \(appMod && name === 'o'\) \{ requestImport\(\); return; \}/, 'Ctrl+O 应导入推荐规则到编辑缓冲');
 assert.match(promptsViewSource, /if \(dirty\) toast\.info\('已放弃未保存的编辑'\);/, '取消编辑必须识别 dirty 状态');
@@ -30,6 +30,13 @@ assert.match(
 	/useEffect\(\(\) => \{[\s\S]*setViewContent\(readCurrentRules\(target\) \?\? ''\);[\s\S]*setMode\('view'\);[\s\S]*setDirty\(false\);[\s\S]*\}, \[target\]\);/,
 	'PromptsView 切换 agentContext/target 时必须重读目标文件并清理编辑临时态'
 );
+// HC-EDITOR-PANEL-STABLE：editor 面板容器父路径必须恒定（始终 row 容器内的 key='editor-panel'），
+// 推荐边栏作为带 key 的兄弟条件插入/移除。否则 split↔editor 切换会改变 editorEl 父路径，React 卸载重挂
+// TextareaEditor，<textarea initialValue> 用 editInitial 重新初始化、丢失用户编辑（关闭推荐边栏内容回退 bug）。
+// 注：React key 仅在同一父节点的兄弟间保证复用；跨父路径的 key 无效，故必须靠稳定结构而非给 TextareaEditor 加 key。
+assert.match(promptsViewSource, /key='editor-panel'/, 'PromptsView editor 面板必须有稳定 key，父路径恒定避免 textarea 重挂丢内容');
+assert.match(promptsViewSource, /key='recommend-panel'/, 'PromptsView 推荐边栏必须作为带 key 的兄弟节点条件渲染，不改变 editor 面板父路径');
+assert.doesNotMatch(promptsViewSource, /\?\s*\([\s\S]{0,200}\{editorEl\}[\s\S]{0,200}\)\s*:\s*\(\s*editorEl\s*\)/, 'editor 不得再走 split/非 split 两分支渲染（会改变父路径导致重挂）');
 console.log('[PASS] 6.10 PromptsView agentContext + 快捷键 + dirty 源码不变量');
 
 const home = mkdtempSync(join(tmpdir(), 'ccq-prompts-view-'));

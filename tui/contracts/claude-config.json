@@ -36,7 +36,8 @@
     "CODEAGENT_POST_MESSAGE_DELAY": "1",
     "CODEX_TIMEOUT": "7200",
     "BASH_DEFAULT_TIMEOUT_MS": "600000",
-    "BASH_MAX_TIMEOUT_MS": "3600000"
+    "BASH_MAX_TIMEOUT_MS": "3600000",
+    "API_TIMEOUT_MS": "3000000"
   },
   "ClaudeConfigDeprecatedEnvKeys": [],
   "ClaudeConfigBasePermissions": [
@@ -75,7 +76,8 @@
       "CODEAGENT_POST_MESSAGE_DELAY": "CodeAgent 消息发送间隔秒数（ccg-workflow推荐配置）",
       "CODEX_TIMEOUT": "Codex 命令超时秒数（ccg-workflow推荐配置）",
       "BASH_DEFAULT_TIMEOUT_MS": "Bash 命令默认超时毫秒数（ccg-workflow推荐配置）",
-      "BASH_MAX_TIMEOUT_MS": "Bash 命令最大超时毫秒数（ccg-workflow推荐配置）"
+      "BASH_MAX_TIMEOUT_MS": "Bash 命令最大超时毫秒数（ccg-workflow推荐配置）",
+      "API_TIMEOUT_MS": "API 请求超时毫秒数（推荐配置）"
     },
     "ClaudeConfigBasePermissions": "Claude Code 基础权限白名单，授予常用文件、命令与工具操作能力（导入时仅追加缺失项，不删除用户已有权限）"
   }

@@ -19,17 +19,19 @@ import {
 
 const home = mkdtempSync(join(tmpdir(), 'ccq-codex-profile-'));
 process.env.CCQ_HOME = home;
-process.env.CODEX_HOME = join(home, '.codex-custom');
+// ccq 的 codexDir() 硬编码 ~/.codex（不认 CODEX_HOME，对齐上游 ccg-workflow）；
+// 测试经 CCQ_HOME 注入临时 home，Codex 目录即 home/.codex。
+const codexHome = join(home, '.codex');
 
 try {
 	const key = 'deepseek';
 	const rawKey = 'sk-secret-should-never-leak';
 
-	// ── 1.9 官方 profile 文件机制：--profile <key> ↔ $CODEX_HOME/<key>.config.toml ──
-	assert.equal(codexProfileKeyFromPath(join(process.env.CODEX_HOME, `${key}.config.toml`)), key,
-		'profile 文件为 $CODEX_HOME/<key>.config.toml');
-	assert.equal(codexProfileKeyFromPath(join(process.env.CODEX_HOME, 'provider', `${key}.config.toml`)), key,
-		'路径解析只取 basename，存储位置由 codexProfilePath/saveCodexProfile 负责限制在 CODEX_HOME 根');
+	// ── 1.9 官方 profile 文件机制：--profile <key> ↔ ~/.codex/<key>.config.toml ──
+	assert.equal(codexProfileKeyFromPath(join(codexHome, `${key}.config.toml`)), key,
+		'profile 文件为 ~/.codex/<key>.config.toml');
+	assert.equal(codexProfileKeyFromPath(join(codexHome, 'provider', `${key}.config.toml`)), key,
+		'路径解析只取 basename，存储位置由 codexProfilePath/saveCodexProfile 负责限制在 ~/.codex 根');
 	assert.equal(testCodexProfileKey('../bad'), false, '拒绝路径穿越 key');
 	assert.equal(testCodexProfileKey('-bad'), false, '拒绝 - 开头 key');
 	console.log('[PASS] 1.9 Codex 官方 profile 机制：<key>.config.toml + 安全 key');
@@ -75,7 +77,7 @@ try {
 	assert.equal(officialToml.includes('model_providers'), false, 'official login 不要求 provider table/API key');
 	console.log('[PASS] 5.7 official login profile 不要求 API key');
 
-	// ── 5.8 保存 profile：写 CODEX_HOME 根目录，不写 ccq vault/Claude provider ──
+	// ── 5.8 保存 profile：写 ~/.codex 根目录，不写 ccq vault/Claude provider ──
 	const saved = saveCodexProfile({
 		key,
 		providerType: 'apiKey',
@@ -83,7 +85,7 @@ try {
 		model: 'deepseek-chat',
 		apiKey: rawKey
 	});
-	assert.equal(saved.profilePath, join(process.env.CODEX_HOME, `${key}.config.toml`));
+	assert.equal(saved.profilePath, join(codexHome, `${key}.config.toml`));
 	assert.equal(codexProfileExists(key), true, '保存后 profile 文件存在');
 	assert.equal(readFileSync(saved.profilePath, 'utf8').includes(rawKey), true,
 		'profile TOML 是 direct bearer token 事实源');
@@ -96,22 +98,23 @@ try {
 		/model_provider 不一致/,
 		'raw TOML 保存必须校验文件 key 与 model_provider 一致'
 	);
-	console.log('[PASS] 5.8 Codex profile 原子保存到 CODEX_HOME/<key>.config.toml + raw TOML 边界');
+	console.log('[PASS] 5.8 Codex profile 原子保存到 ~/.codex/<key>.config.toml + raw TOML 边界');
 
-	// ── 5.10 默认设置：用 profile TOML 原文覆盖 base config，删除 legacy selector ──
-	const baseConfigPath = join(process.env.CODEX_HOME, 'config.toml');
+	// ── 5.10 默认设置：合并写供应商键，保留 mcp_servers/approval_policy，删除 legacy selector ──
+	const baseConfigPath = join(codexHome, 'config.toml');
 	writeFileSync(baseConfigPath, 'approval_policy = "on-request"\nprofile = "old"\n[profiles.old]\nmodel = "old"\n[mcp_servers.context7]\ncommand = "context7"\n', 'utf8');
 	setDefaultCodexProfile(key);
 	const baseConfig = readFileSync(baseConfigPath, 'utf8');
-	assert.equal(baseConfig, readFileSync(saved.profilePath, 'utf8'), '默认切换应以 profile TOML 原文覆盖 config.toml');
-	assert.equal(baseConfig.includes('[mcp_servers.context7]'), false, '默认切换覆盖主 config，不保留旧 MCP table');
+	assert.match(baseConfig, /approval_policy\s*=\s*"on-request"/, '默认切换保留非供应商配置 approval_policy');
+	assert.match(baseConfig, /\[mcp_servers\.context7\]/, '默认切换保留 MCP table，不整体覆盖 config.toml');
 	assert.match(baseConfig, /model_provider\s*=\s*"deepseek"/, '写入默认 model_provider');
-	assert.match(baseConfig, /experimental_bearer_token\s*=\s*"sk-secret-should-never-leak"/, '复制 provider table 到 base config');
-	assert.equal(/profile\s*=\s*"|\[profiles\./.test(baseConfig), false, 'base config 不得写 legacy profile selector');
+	assert.match(baseConfig, /experimental_bearer_token\s*=\s*"sk-secret-should-never-leak"/, '导入新 provider table 到 base config');
+	assert.equal(/profile\s*=\s*"|\[profiles\./.test(baseConfig), false, 'base config 清理 legacy profile selector');
+	assert.equal(/model\s*=\s*"old"/.test(baseConfig), false, '删除旧 profile 的残留 model 值');
 	setDefaultCodexProfile(key);
 	assert.equal(readFileSync(baseConfigPath, 'utf8'), baseConfig, '重复设置默认应幂等');
 	assert.equal(listCodexProfiles().find(item => item.key === key)?.isDefault, true, 'list 标记当前默认');
-	console.log('[PASS] 5.10 Codex 默认 profile 原文覆盖 + 禁 legacy selector + 幂等');
+	console.log('[PASS] 5.10 Codex 默认 profile 合并写 + 保留 MCP/其他配置 + 禁 legacy selector + 幂等');
 
 	// ── 5.9 删除 profile：当前默认拒绝删除，切换默认后可删除非默认 ──
 	assert.throws(() => deleteCodexProfile(key), /默认 Codex profile/, '默认 profile 删除前拒绝');
@@ -120,15 +123,15 @@ try {
 	const officialBaseConfig = readFileSync(baseConfigPath, 'utf8');
 	assert.equal(officialBaseConfig.includes('[model_providers.deepseek]'), false, '切换默认时清理上一 provider table');
 	assert.equal(officialBaseConfig.includes(rawKey), false, '切换默认时清理上一 provider token');
-	writeFileSync(join(process.env.CODEX_HOME, 'auth.json'), '{"access_token":"secret"}', 'utf8');
+	writeFileSync(join(codexHome, 'auth.json'), '{"access_token":"secret"}', 'utf8');
 	deleteCodexProfile(key);
 	assert.equal(codexProfileExists(key), false, '非默认 profile 可删除');
-	assert.equal(existsSync(join(process.env.CODEX_HOME, 'auth.json')), true, '删除 API-key profile 不应清空 auth.json');
+	assert.equal(existsSync(join(codexHome, 'auth.json')), true, '删除 API-key profile 不应清空 auth.json');
 	saveCodexProfile({key: 'other', providerType: 'apiKey', baseUrl: 'https://api.example.com', apiKey: 'sk-other-token'});
 	setDefaultCodexProfile('other');
 	deleteCodexProfile('official');
 	assert.equal(codexProfileExists('official'), false, 'official login profile 可在非默认时删除');
-	assert.equal(existsSync(join(process.env.CODEX_HOME, 'auth.json')), false, '删除 official login profile 应同步清空 auth.json');
+	assert.equal(existsSync(join(codexHome, 'auth.json')), false, '删除 official login profile 应同步清空 auth.json');
 	console.log('[PASS] 5.9 Codex profile 删除保护：默认拒绝，非默认可删除，official login 删除清空 auth.json');
 
 	// ── 1.11 输出脱敏：raw key 不得出现在展示用文本 ──

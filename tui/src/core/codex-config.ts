@@ -8,8 +8,9 @@ import {loadTextContract} from './contracts.js';
 // 仅管理 Codex 自身通用运行项（model_reasoning_effort / approval_policy / sandbox_mode /
 // web_search / hide_agent_reasoning / file_opener）。
 // model 归供应商（由 Provider profile 设为默认时写入 config.toml），Config 页与
-// provider/MCP/hooks/Skills/AGENTS.md 一样不展示、不管理，仅在保存时从原文件合并保留
-// （分别归 Provider/MCP/Skills/Global Rules 管）。
+// provider/MCP/Skills/AGENTS.md 一样不展示、不管理，仅在保存时从原文件合并保留
+// （分别归 Provider/MCP/Skills/Global Rules 管）。hooks 无专属视图接管，已放开在
+// 本页直编（与 Claude settings.json 侧一致），随 edited 落盘。
 
 // fill-missing 托管键（TomlPath 支持嵌套路径，便于后续扩展 table 段子键）。补齐语义：仅当目标路径缺失时写入推荐值。
 const RECOMMENDED_KEY_PATHS: readonly TomlPath[] = [
@@ -20,7 +21,10 @@ const RECOMMENDED_KEY_PATHS: readonly TomlPath[] = [
 	['hide_agent_reasoning'],
 	['file_opener']
 ];
-const CODEX_UNMANAGED_KEYS = ['model', 'model_provider', 'model_providers', 'mcp_servers', 'hooks'] as const;
+// model/model_provider/model_providers 归供应商（Provider profile 设默认时合并写入），
+// mcp_servers 归 MCP 视图管；三者在 Config 页仅展示前剥离、保存时从原文件合并保留。
+// hooks 已放开：与 Claude settings.json 侧一致，无专属视图接管，在配置文件页直编。
+const CODEX_UNMANAGED_KEYS = ['model', 'model_provider', 'model_providers', 'mcp_servers'] as const;
 
 /** 仅对缺失（undefined/null/空串）的托管路径写入推荐值，返回新 document 与新增计数。 */
 function fillMissingRecommended(current: TomlDocument, recommended: TomlDocument): {document: TomlDocument; changed: number} {
@@ -98,7 +102,7 @@ function readCodexConfigRawText(): string | null {
 	}
 }
 
-/** 读取当前 `CODEX_HOME/config.toml` 的 Config 页管辖内容（不存在返回 null）。 */
+/** 读取当前 `~/.codex/config.toml` 的 Config 页管辖内容（不存在返回 null）。 */
 export function readCodexConfigText(): string | null {
 	const text = readCodexConfigRawText();
 	if (text === null) {
@@ -112,7 +116,7 @@ export function readCodexConfigText(): string | null {
 	}
 }
 
-/** 读取当前 `CODEX_HOME/config.toml` 为 document；不存在或解析失败返回 null。 */
+/** 读取当前 `~/.codex/config.toml` 为 document；不存在或解析失败返回 null。 */
 export function readCodexConfigDocument(): TomlDocument | null {
 	const text = readCodexConfigText();
 	if (!text) {
@@ -147,7 +151,7 @@ export function applyCodexFillMissingToText(tomlText: string):
 	return {ok: true, text: stringify(next), changed};
 }
 
-/** 端到端 fill-missing 导入到 `CODEX_HOME/config.toml`：解析失败时拒绝覆盖。 */
+/** 端到端 fill-missing 导入到 `~/.codex/config.toml`：解析失败时拒绝覆盖。 */
 export function importCodexFillMissing(): {ok: boolean; changed?: number; error?: string} {
 	const recommended = loadRecommendedDocument();
 	if (!recommended) {
@@ -179,7 +183,7 @@ export function assembleCodexRecommendationAnnotated(): string | null {
 	return loadCodexConfigRecommendationText();
 }
 
-/** 保存编辑后的 TOML 文本到 `CODEX_HOME/config.toml`（结构化校验 + 原子写，外部 section 原样合并保留）。 */
+/** 保存编辑后的 TOML 文本到 `~/.codex/config.toml`（结构化校验 + 原子写，外部 section 原样合并保留）。 */
 export function saveCodexConfigToml(tomlContent: string): {ok: boolean; error?: string; warning?: string} {
 	let document: TomlDocument;
 	try {

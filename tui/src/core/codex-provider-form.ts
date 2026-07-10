@@ -45,37 +45,16 @@ type CodexProviderTemplate = {
 	readonly model: string;
 };
 
-const CODEX_PROVIDER_ORDER = ['zhipu', 'minimax', 'moonshot', 'deepseek', 'bailian'] as const;
+// 仅保留 Codex 原生可接入的供应商：MiniMax 提供 Responses API 兼容端点。
+// GLM / Kimi / DeepSeek 仅暴露 Chat Completions，而 Codex CLI 自 v0.138 起只认 wire_api="responses"，
+// 直连会 404/空流，需经 LiteLLM/OmniRoute 等网关转协议——故不在此内置为一键模板。
+const CODEX_PROVIDER_ORDER = ['minimax'] as const;
 const CODEX_PROVIDER_TEMPLATES: Readonly<Record<(typeof CODEX_PROVIDER_ORDER)[number], CodexProviderTemplate>> = {
-	zhipu: {
-		label: '智谱 GLM',
-		profileKey: 'zhipu',
-		baseUrl: 'https://open.bigmodel.cn/api/paas/v4/',
-		model: 'glm-5.2'
-	},
 	minimax: {
 		label: 'MiniMax',
 		profileKey: 'minimax',
 		baseUrl: 'https://api.minimax.io/v1',
 		model: 'MiniMax-M3'
-	},
-	moonshot: {
-		label: 'Kimi Code',
-		profileKey: 'moonshot',
-		baseUrl: 'https://api.moonshot.ai/v1',
-		model: 'kimi-k2.6'
-	},
-	deepseek: {
-		label: 'DeepSeek',
-		profileKey: 'deepseek',
-		baseUrl: 'https://api.deepseek.com',
-		model: 'deepseek-v4-pro'
-	},
-	bailian: {
-		label: '阿里云百炼',
-		profileKey: 'bailian',
-		baseUrl: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
-		model: 'qwen-plus'
 	}
 };
 
@@ -136,7 +115,7 @@ function redactAuthJsonValue(value: unknown, key = ''): unknown {
 export function readCodexAuthJsonPreview(): string {
 	const authPath = codexAuthJsonPath();
 	if (!existsSync(authPath)) {
-		return `未检测到 CODEX_HOME/auth.json\n\n请运行 codex login 完成 official login。\nccq 仅只读展示 auth.json 状态，不写入该文件。`;
+		return `未检测到 ~/.codex/auth.json\n\n请运行 codex login 完成 official login。\nccq 仅只读展示 auth.json 状态，不写入该文件。`;
 	}
 
 	try {
@@ -145,7 +124,7 @@ export function readCodexAuthJsonPreview(): string {
 		return `${JSON.stringify(redactAuthJsonValue(parsed), null, 2)}\n`;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		return `已检测到 CODEX_HOME/auth.json，但无法解析为 JSON。\n\n${message}`;
+		return `已检测到 ~/.codex/auth.json，但无法解析为 JSON。\n\n${message}`;
 	}
 }
 
@@ -233,14 +212,14 @@ export function buildCodexProviderFormModel(input: {
 					type: 'readonly',
 					label: '文件名',
 					value: values.profileKey,
-					helpText: '对应 CODEX_HOME/<文件名>.config.toml，并作为 codex --profile 名称。'
+					helpText: '对应 ~/.codex/<文件名>.config.toml，并作为 codex --profile 名称。'
 				}
 			: {
 					id: 'profileKey',
 					type: 'text',
 					label: '文件名',
 					value: values.profileKey,
-					helpText: '填写文件名主体；保存为 CODEX_HOME/<文件名>.config.toml，并作为 codex --profile 名称。'
+					helpText: '填写文件名主体；保存为 ~/.codex/<文件名>.config.toml，并作为 codex --profile 名称。'
 				}
 	);
 

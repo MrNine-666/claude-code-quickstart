@@ -4,6 +4,7 @@ import {codexAuthJsonPath, codexConfigPath, codexDir, codexProfilePath} from './
 import {atomicWrite as atomicWriteText} from './fs-utils.js';
 import {
 	atomicWrite,
+	deletePath,
 	getPath,
 	parse,
 	redactTomlSecrets,
@@ -45,6 +46,12 @@ export type CodexProfileInput = {
 const PROFILE_SUFFIX = '.config.toml';
 const API_KEY_FIELD = 'experimental_bearer_token';
 const FORBIDDEN_AUTH_FIELDS = ['env_key', 'auth', 'requires_openai_auth'] as const;
+// 供应商在 config.toml 的全部痕迹：设为默认时先删旧值，再导入新 profile 的对应键。
+// 含官方键（model/model_provider/model_providers）与 legacy selector（profile/[profiles.*]）——
+// 后者 ccq 从不写入，但必须清理用户遗留值，否则残留 `profile = "<key>"` 会让 Codex
+// 仍读旧 profile、与新默认冲突。其余顶层键（mcp_servers/hooks/approval_policy/
+// sandbox_mode 等）原样保留，绝不整体覆盖。
+const CODEX_PROVIDER_KEYS = ['model', 'model_provider', 'model_providers', 'profile', 'profiles'] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -101,7 +108,7 @@ export function codexIdentityFromKey(key: string): {
 	};
 }
 
-/** 解析 profile 文件路径为 key（仅识别 `$CODEX_HOME/<key>.config.toml`）。 */
+/** 解析 profile 文件路径为 key（仅识别 `~/.codex/<key>.config.toml`）。 */
 export function codexProfileKeyFromPath(profilePath: string): string | null {
 	const fileName = profilePath.split(/[/\\]/).pop() ?? '';
 	if (!fileName.endsWith(PROFILE_SUFFIX)) {
@@ -112,7 +119,7 @@ export function codexProfileKeyFromPath(profilePath: string): string | null {
 	return testCodexProfileKey(stem) ? stem : null;
 }
 
-/** 扫描 `$CODEX_HOME` 下所有 `<key>.config.toml`，返回合法 key 列表（不解析文件内容）。 */
+/** 扫描 `~/.codex` 下所有 `<key>.config.toml`，返回合法 key 列表（不解析文件内容）。 */
 export function listCodexProfileKeys(): readonly string[] {
 	const dir = codexDir();
 	if (!existsSync(dir)) {
@@ -285,13 +292,32 @@ export function listCodexProfiles(): readonly CodexProfileListItem[] {
 }
 
 /**
- * 将选中 profile 的真实 TOML 覆盖到 `$CODEX_HOME/config.toml`。
+ * 将选中 profile 的供应商键合并写入 `~/.codex/config.toml`：先删旧供应商键
+ * （model/model_provider/model_providers），再从新 profile 导入这些键；其余顶层键
+ * （mcp_servers/hooks/approval_policy/sandbox_mode 等）原样保留，绝不整体覆盖。
  * 不写 legacy `profile = "<key>"` 或 `[profiles.<key>]` selector。
  */
 export function setDefaultCodexProfile(key: string): void {
 	const rawToml = readCodexProfileToml(key);
-	parse(rawToml);
-	atomicWriteText(codexConfigPath(), rawToml);
+	const profileDoc = parse(rawToml);
+
+	const configPath = codexConfigPath();
+	let merged: TomlDocument = existsSync(configPath) ? parse(readFileSync(configPath, 'utf8')) : {};
+
+	// 1. 删旧供应商：清掉现有 config 里的三个供应商键
+	for (const providerKey of CODEX_PROVIDER_KEYS) {
+		merged = deletePath(merged, [providerKey]);
+	}
+
+	// 2. 导新供应商：从新 profile 取三个键（profile 有才写，如 official login 无 provider 表）
+	for (const providerKey of CODEX_PROVIDER_KEYS) {
+		const value = getPath(profileDoc, [providerKey]);
+		if (value !== undefined) {
+			merged = setPath(merged, [providerKey], value);
+		}
+	}
+
+	atomicWrite(configPath, merged);
 }
 
 /** 输出前统一脱敏，供调用层展示解析/保存失败信息时复用。 */

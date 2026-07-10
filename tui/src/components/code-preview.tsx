@@ -34,7 +34,7 @@ export function CodePreview({content, filetype, showLineNumbers = true}: CodePre
 					{showLineNumbers ? <LineNumber index={index} width={lineNumberWidth} /> : null}
 					<box flexDirection="row">
 						{tokensForLine(line, filetype, markdownLines?.[index]).map((token, tokenIndex) => (
-							<text key={tokenIndex} fg={token.fg} attributes={token.attributes} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+							<text key={tokenIndex} fg={token.fg} attributes={token.attributes} selectable selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 								{token.text.length > 0 ? token.text : ' '}
 							</text>
 						))}
@@ -47,7 +47,7 @@ export function CodePreview({content, filetype, showLineNumbers = true}: CodePre
 
 function LineNumber({index, width}: {readonly index: number; readonly width: number}) {
 	return (
-		<text fg={colors.lineNumberForeground} bg={colors.lineNumberBackground} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+		<text fg={colors.lineNumberForeground} bg={colors.lineNumberBackground} selectable selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 			{`${String(index + 1).padStart(width, ' ')} │ `}
 		</text>
 	);

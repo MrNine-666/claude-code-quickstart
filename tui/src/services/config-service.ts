@@ -19,7 +19,7 @@ import type {AgentContext} from '../state/manage-state.js';
 
 // Config service：配置文件视图唯一入口，按 agentContext 切换目标文件。
 // Claude target：~/.claude/settings.json（剥离供应商 env，保存合并保留）。
-// Codex target：CODEX_HOME/config.toml（TOML 结构化校验，推荐 fill-missing 不管理 provider/MCP/hooks/Skills/AGENTS.md）。
+// Codex target：~/.codex/config.toml（TOML 结构化校验，推荐 fill-missing 不管理 provider/MCP/hooks/Skills/AGENTS.md）。
 
 export type ConfigTarget = AgentContext;
 

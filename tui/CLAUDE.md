@@ -127,7 +127,8 @@ ccq 可执行文件支持「无参进 TUI + 子命令非交互」双入口。`sr
 - `cc` 与 `use` 语义必须分离：`cc` = 临时 session 覆盖；`use` = 持久默认。新增 CLI 命令按 `ccq <verb> [object] [--flags] [-- passthrough]` 子命令骨架扩展，禁止把动作塞进裸 flag（如 `-cc`）。
 - **多工具命名与 agentContext（HC-CLI-MULTITOOL）**：ccq 支持 Claude Code 与 Codex 双 Agent（内部键 `agentContext: 'cc' | 'cx'`，界面只展示全称 `Claude Code` / `Codex`，不显示缩写）。两工具的 provider/profile 独立存储，**禁止复用 claude provider 文件或塞进 `~/.claude/settings.json`**：
   - 独立短动词：claude = `cc`，codex = `cx`（`ccq cx <key> [codex-args...]`）；`cc` 语义不变。
-  - Codex 走官方 `$CODEX_HOME/<key>.config.toml`（默认 `~/.codex`）+ `codex --profile <key>` 机制；**不支持** `$CODEX_HOME/provider/*.config.toml`，Codex 0.134.0+ 不再读 `[profiles.<key>]` 与顶层 `profile = "<key>"` selector。
+  - Codex 走官方 `~/.codex/<key>.config.toml` + `codex --profile <key>` 机制；**不支持** `~/.codex/provider/*.config.toml`，Codex 0.134.0+ 不再读 `[profiles.<key>]` 与顶层 `profile = "<key>"` selector。
+  - **Codex 路径固定 `~/.codex`**：ccq 管理的是用户系统级 Codex 配置，`codexDir()` **不读取 `CODEX_HOME`**。原因：上游 `ccg-workflow codex-mode` 硬编码 `~/.codex`；orca 等工具即使注入临时 `CODEX_HOME`，也以系统 `~/.codex` 为镜像源。禁止把 ccq 写入目标改回运行时 `CODEX_HOME`，避免临时 runtime home 与系统配置分裂。
   - **Codex key = 唯一身份**：用户只填一个 key，同时作为 `<key>.config.toml` 文件名、`--profile` 名、`model_provider` id、`[model_providers.<key>]` table id 与默认显示名；不设独立 profileName/providerId/displayName。
   - **Codex API key = 直写 profile TOML**：写入 `[model_providers.<key>].experimental_bearer_token`，同一 provider table 禁止再写 `env_key` / `auth` / `requires_openai_auth`；**不写 ccq vault、`ccq cx` 不注入 env**；UI 字段默认 mask，日志/toast/error/verify 输出全链脱敏。`official login` 类型不要求 API key，靠 `codex login` 完成认证。
   - `ls`/`use` 扩展 `--tool claude|codex`，`--tool` 缺省 = claude（`ccq ls` / `ccq use` 行为零破坏）；`ccq use <key> --tool codex` 结构化写 `~/.codex/config.toml` 的 provider/default 路径，**不写** `profile =` / `[profiles.<key>]`。
@@ -155,16 +156,16 @@ TUI 不新增第 7 个 Codex 菜单；改由右侧 content 顶部的全局 **Hea
 - **statusLine 组**（Ccline）：**仅 Claude Code** 上下文显示。
 - **三方工具组**（OpenSpec / CcgWorkflow / CodeGraph）：两种上下文都显示。
 - install/update/uninstall 经 lifecycle command resolver 按 `agentContext` 返回不同指令：
-  - **CodeGraph**：检测安装态必须同时满足 CLI 可用与当前 Agent MCP 已接入（Claude Code 看 `~/.claude.json.mcpServers.codegraph`，Codex 看 `CODEX_HOME/config.toml` 的 `[mcp_servers.codegraph]`）；install 语义是“确保共享 CLI + 接入当前 Agent”：若 `codegraph --version` 已可用，必须跳过 `npm install -g @colbymchenry/codegraph`，直接执行 `codegraph install --target=<claude|codex> --location=global --yes` 并校验 MCP 写入成功；CLI 不可用时才安装 npm 包；update 更新 npm CLI 后按已接入的 cc/cx 目标逐个重跑 `codegraph install ...`；uninstall 先执行 `codegraph uninstall --target=<claude|codex> --yes`，随后若 cc/cx 两边都无 CodeGraph MCP，则自动 `npm uninstall -g @colbymchenry/codegraph`，始终不删除项目 `.codegraph/` 索引（骨架 `scripts/verify-codegraph-lifecycle.mjs` + `scripts/verify-tools-manage.mjs`）。
-  - **CcgWorkflow**：上游 GitHub 仓库真实标识为 `fengshao1227/ccg-workflow`（查 DeepWiki/GitHub 时不要用 `MrNine-666/ccg-workflow`）；Claude 走 `npx ccg-workflow@latest init ... --install-dir ~/.claude`（保留 mcpServers 快照保护）+ `npx ccg-workflow uninstall`；Codex Mode 走官方非交互 `npx ccg-workflow codex-mode install/uninstall`。文件边界（`config.toml`/`AGENTS.md`/hooks/rules）一律交给官方命令负责，**ccq 不手写 fs 删除 `CODEX_HOME/config.toml`**（骨架 `scripts/verify-ccgworkflow-codex.mjs`）。
+  - **CodeGraph**：检测安装态必须同时满足 CLI 可用与当前 Agent MCP 已接入（Claude Code 看 `~/.claude.json.mcpServers.codegraph`，Codex 看 `~/.codex/config.toml` 的 `[mcp_servers.codegraph]`）；install 语义是“确保共享 CLI + 接入当前 Agent”：若 `codegraph --version` 已可用，必须跳过 `npm install -g @colbymchenry/codegraph`，直接执行 `codegraph install --target=<claude|codex> --location=global --yes` 并校验 MCP 写入成功；CLI 不可用时才安装 npm 包；update 更新 npm CLI 后按已接入的 cc/cx 目标逐个重跑 `codegraph install ...`；uninstall 先执行 `codegraph uninstall --target=<claude|codex> --yes`，随后若 cc/cx 两边都无 CodeGraph MCP，则自动 `npm uninstall -g @colbymchenry/codegraph`，始终不删除项目 `.codegraph/` 索引（骨架 `scripts/verify-codegraph-lifecycle.mjs` + `scripts/verify-tools-manage.mjs`）。
+  - **CcgWorkflow**：上游 GitHub 仓库真实标识为 `fengshao1227/ccg-workflow`（查 DeepWiki/GitHub 时不要用 `MrNine-666/ccg-workflow`）；Claude 走 `npx ccg-workflow@latest init ... --install-dir ~/.claude`（保留 mcpServers 快照保护）+ `npx ccg-workflow uninstall`；Codex Mode 走官方非交互 `npx ccg-workflow codex-mode install/uninstall`。文件边界（`config.toml`/`AGENTS.md`/hooks/rules）一律交给官方命令负责，**ccq 不手写 fs 删除 `~/.codex/config.toml`**（骨架 `scripts/verify-ccgworkflow-codex.mjs`）。
 
 ### HC-CONFIG-RULES-REUSE
 Config / Global Rules 视图按 `agentContext` 切换目标文件但复用同一 UI（预览页 / `e` 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入 / 损坏文件拒绝覆盖 / 脏编辑保护），骨架 `scripts/verify-config-rules-reuse.mjs`：
-- **Config**：Claude 读写 `~/.claude/settings.json`；Codex 读写 `CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`），经 `core/toml-edit.ts` 结构化写入；Codex 推荐配置仅 fill-missing 补齐通用运行项（`model_reasoning_effort` / `approval_policy` / `sandbox_mode` / `web_search` / `hide_agent_reasoning` / `file_opener`），**不含 `model`**（模型由「供应商」profile 设为默认时原文覆盖决定），也不管理 provider/MCP/hooks/Skills/AGENTS.md。
-- **Global Rules**：Claude 读写 `~/.claude/CLAUDE.md`；Codex **只**读写 `CODEX_HOME/AGENTS.md`（默认 `~/.codex/AGENTS.md`），推荐规则内容复用 cc 推荐规则。
+- **Config**：Claude 读写 `~/.claude/settings.json`；Codex 读写 `~/.codex/config.toml`，经 `core/toml-edit.ts` 结构化写入；Codex 推荐配置仅 fill-missing 补齐通用运行项（`model_reasoning_effort` / `approval_policy` / `sandbox_mode` / `web_search` / `hide_agent_reasoning` / `file_opener`），**不含 `model`**（模型由「供应商」profile 设为默认时原文覆盖决定），也不管理 provider/MCP/hooks/Skills/AGENTS.md。
+- **Global Rules**：Claude 读写 `~/.claude/CLAUDE.md`；Codex **只**读写 `~/.codex/AGENTS.md`，推荐规则内容复用 cc 推荐规则。
 
 ### HC-MCP-FILE-SOURCE
-MCP 状态以运行时配置文件为唯一事实源，**忽略 vault 历史 `disabled` 字段**（骨架 `scripts/verify-mcp-multitool.mjs`）：Claude 读 `~/.claude.json` 的 `mcpServers.<id>` 是否存在；Codex 读 `CODEX_HOME/config.toml` 的 `[mcp_servers.<id>]`（`enabled = false` 判 Disabled）。同一 MCP 可在 Claude Code / Codex 独立启用。vault 只保管 MCP 凭据、配置备份、definition hash，**不作 Active/Disabled 状态源，也不保存 Codex API key**。
+MCP 状态以运行时配置文件为唯一事实源，**忽略 vault 历史 `disabled` 字段**（骨架 `scripts/verify-mcp-multitool.mjs`）：Claude 读 `~/.claude.json` 的 `mcpServers.<id>` 是否存在；Codex 读 `~/.codex/config.toml` 的 `[mcp_servers.<id>]`（`enabled = false` 判 Disabled）。同一 MCP 可在 Claude Code / Codex 独立启用。vault 只保管 MCP 凭据、配置备份、definition hash，**不作 Active/Disabled 状态源，也不保存 Codex API key**。
 
 ### HC-MCP-OFFICIAL-DEFAULT（新增）
 内置 MCP 默认配置对齐官方推荐，且 Claude Code 与 Codex 输出 schema 分离（骨架 `scripts/verify-mcp-official.mjs`）：
@@ -359,10 +360,10 @@ if (useIcon && existsSync(ICON_PATH)) {
 | 菜单 | 文件 | 功能 |
 |------|------|------|
 | 工具管理 | `views/tools-view.tsx` | Agent 组（ClaudeCode/CodexCli/AntigravityCli）两种 Header 常显；Ccline 仅 Claude Code；OpenSpec/CcgWorkflow/CodeGraph 按 `agentContext` 解析 lifecycle，CodeGraph CLI/integration 分层，CcgWorkflow Codex Mode 走官方非交互命令 |
-| 供应商 | `views/provider-view.tsx` + `provider-form.tsx` | Claude Code Header 下管理 `~/.claude/providers/*.json`；Codex Header 下管理 `$CODEX_HOME/<key>.config.toml`，key 单一身份，API key 写 `experimental_bearer_token` 且全链脱敏 |
-| 配置文件 | `views/config-view.tsx` | Claude Code 读写 `~/.claude/settings.json`；Codex 读写 `CODEX_HOME/config.toml`。复用预览 / `e` 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入；仅剥离 model + 供应商 env（AUTH_TOKEN/BASE_URL/受管模型键），Claude 侧 statusLine/hooks/outputStyle 等孤儿字段已放开直编 |
-| 全局规则 | `views/prompts-view.tsx` | Claude Code 读写 `~/.claude/CLAUDE.md`；Codex 只读写 `CODEX_HOME/AGENTS.md`。复用推荐规则内容、预览/编辑/导入与脏编辑保护 |
-| MCP | `views/mcp/McpView.tsx` + `mcp-view-model.ts` | MCP Server 启用/禁用 + 凭据管理；Claude Code 状态来自 `~/.claude.json.mcpServers`，Codex 状态来自 `CODEX_HOME/config.toml` 的 `[mcp_servers]`，vault 不作 Active/Disabled 事实源 |
+| 供应商 | `views/provider-view.tsx` + `provider-form.tsx` | Claude Code Header 下管理 `~/.claude/providers/*.json`；Codex Header 下管理 `~/.codex/<key>.config.toml`，key 单一身份，API key 写 `experimental_bearer_token` 且全链脱敏 |
+| 配置文件 | `views/config-view.tsx` | Claude Code 读写 `~/.claude/settings.json`；Codex 读写 `~/.codex/config.toml`。复用预览 / `e` 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入；仅剥离 model + 供应商 env（AUTH_TOKEN/BASE_URL/受管模型键），Claude 侧 statusLine/hooks/outputStyle 等孤儿字段已放开直编 |
+| 全局规则 | `views/prompts-view.tsx` | Claude Code 读写 `~/.claude/CLAUDE.md`；Codex 只读写 `~/.codex/AGENTS.md`。复用推荐规则内容、预览/编辑/导入与脏编辑保护 |
+| MCP | `views/mcp/McpView.tsx` + `mcp-view-model.ts` | MCP Server 启用/禁用 + 凭据管理；Claude Code 状态来自 `~/.claude.json.mcpServers`，Codex 状态来自 `~/.codex/config.toml` 的 `[mcp_servers]`，vault 不作 Active/Disabled 事实源 |
 | Skills | `views/skills-view.tsx` | 按 Header 调用 `skills --agent claude-code|codex`；安装 / 更新 / 卸载，物理存储与映射交给 skills CLI |
 
 ---

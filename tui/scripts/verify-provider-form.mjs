@@ -81,7 +81,7 @@ assert.equal('EMPTY_VAL' in saved.env, false, '空值条目未写入');
 console.log('[PASS] 8.2 端到端：用户文件名落盘 + env 区写入 env');
 
 // ── 内置模板表单结构（HC-12 单层 env：env 区走底部 JSON，不再是表单字段） ──
-const builtinForm = buildProviderFormModel({mode: 'add-builtin', builtinKey: 'zhipu'});
+const builtinForm = buildProviderFormModel({mode: 'add-builtin', builtinKey: 'deepseek'});
 assert.equal(builtinForm.mode, 'add-builtin');
 assert.ok(Array.isArray(builtinForm.fields), '应返回 fields 数组');
 // add 模式首字段为供应商类型 radio
@@ -94,7 +94,9 @@ assert.ok(builtinForm.fields.some(f => f.id === 'apiKey'), '含 apiKey 字段');
 // env 在 values 维护（底部 JSON 区），不再是表单字段
 assert.equal(builtinForm.fields.find(f => f.id === 'env'), undefined, 'env 不再是表单字段');
 assert.ok(typeof builtinForm.values.env === 'object', 'values.env 存在');
-assert.equal(builtinForm.values.env.API_TIMEOUT_MS, '3000000', '内置模板 ExtraEnv 预填进 env 区');
+assert.equal(builtinForm.values.env.CLAUDE_CODE_SUBAGENT_MODEL, 'deepseek-v4-flash', '内置模板 ExtraEnv 预填进 env 区');
+assert.equal('ANTHROPIC_MODEL' in builtinForm.values.env, false, '模板不再含 ANTHROPIC_MODEL');
+assert.equal('API_TIMEOUT_MS' in builtinForm.values.env, false, '模板不再含 API_TIMEOUT_MS');
 console.log('[PASS] 8.2 内置模板表单结构（env 走 values 不走 fields）');
 
 rmSync(home, {recursive: true, force: true});

@@ -6,6 +6,7 @@ import App from "./app.js";
 import { setActiveTheme, type AppThemeMode } from "./theme/index.js";
 import { parseCli } from "./cli/argv.js";
 import { runCli } from "./cli/index.js";
+import { copyTextWithFeedback } from "./utils/copy-feedback.js";
 
 // argv 子命令路由（HC-CLI-SUBCOMMAND）：有子命令 → 走非交互路径，不进 TUI。
 // 必须在 non-TTY 守卫之前执行，否则管道/CI 下 ccq ls 等命令会被守卫挡掉。
@@ -34,6 +35,13 @@ if (!process.stdin.isTTY) {
 const renderer = await createCliRenderer({
 	autoFocus: true,  // 启用自动聚焦，确保键盘事件能被捕获
 	exitOnCtrlC: false  // 释放 Ctrl+C 给终端复制；应用内退出使用 q
+});
+
+// copy-on-select：鼠标拖选只读预览文本（CodePreview 的 <text selectable>）后自动复制到剪贴板。
+// 编辑态 textarea 的复制由 textarea-edit-keys 的 Cmd/Ctrl+C 自管，此处只覆盖只读预览区。
+// 复制成功弹 toast 反馈，终端不支持 / 无选中文本时静默跳过（见 copyTextWithFeedback）。
+renderer.on('selection', (selection) => {
+	copyTextWithFeedback(renderer, selection.getSelectedText());
 });
 // @opentui/keymap 自带 @opentui/core 依赖；Bun 会保留一份嵌套副本。
 // 运行时版本已对齐到 0.4.2，这里只做 CliRenderer 私有类型桥接。

@@ -6,7 +6,7 @@ import type {AgentContext} from '../state/manage-state.js';
 import {existsSync, readFileSync} from 'node:fs';
 
 // Prompts service：TUI 视图唯一入口，按 agentContext 切换全局规则目标文件。
-// Claude Code → ~/.claude/CLAUDE.md；Codex → CODEX_HOME/AGENTS.md。
+// Claude Code → ~/.claude/CLAUDE.md；Codex → ~/.codex/AGENTS.md。
 // 推荐内容仍复用 core/prompts 的 CLAUDE.md 推荐模板，只切落盘目标。
 
 export type PromptsTarget = AgentContext;

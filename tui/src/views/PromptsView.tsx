@@ -236,7 +236,7 @@ export function PromptsView({ agentContext, active, viewportHeight = 16, onSubMo
 	if (mode === 'view') {
 		return (
 			<box flexDirection="column" flexGrow={1}>
-				<ViewHeader title='全局规则管理' subtitle={isCodex ? '查看、导入与编辑 CODEX_HOME/AGENTS.md' : '查看、导入与编辑 ~/.claude/CLAUDE.md'} />
+				<ViewHeader title='全局规则管理' subtitle={isCodex ? '查看、导入与编辑 ~/.codex/AGENTS.md' : '查看、导入与编辑 ~/.claude/CLAUDE.md'} />
 				{hasContent ? (
 					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
 						<ThemedScrollbox ref={viewScrollRef} style={{flexGrow: 1}}>
@@ -254,6 +254,11 @@ export function PromptsView({ agentContext, active, viewportHeight = 16, onSubMo
 	}
 
 	// ── edit 态渲染 ──
+	// 关键：editor 容器在树中的父路径必须恒定，否则 split↔editor 切换时 React 卸载重挂
+	// TextareaEditor，<textarea initialValue> 用 editInitial 重新初始化、丢失用户编辑。
+	// 做法：始终渲染 row 容器 + 固定位置的 editor 面板（key='editor-panel'），推荐边栏作为
+	// 带 key 的兄弟条件插入/移除。React 按 key 匹配，editor 面板不 remount，textarea 状态保留。
+	const showRecommend = panel === 'split' && recommendationAvailable;
 	const editorEl = (
 		<TextareaEditor
 			ref={editorRef}
@@ -276,10 +281,10 @@ export function PromptsView({ agentContext, active, viewportHeight = 16, onSubMo
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title='全局规则管理' subtitle={isCodex ? '查看、导入与编辑 CODEX_HOME/AGENTS.md' : '查看、导入与编辑 ~/.claude/CLAUDE.md'} />
-			{panel === 'split' && recommendationAvailable ? (
-				<box flexDirection="row" flexGrow={1} height={bodyViewportHeight}>
-					<box flexDirection="column" width="50%" height={editorViewportHeight}>
+			<ViewHeader title='全局规则管理' subtitle={isCodex ? '查看、导入与编辑 ~/.codex/AGENTS.md' : '查看、导入与编辑 ~/.claude/CLAUDE.md'} />
+			<box flexDirection="row" flexGrow={1} height={bodyViewportHeight}>
+				{showRecommend ? (
+					<box key='recommend-panel' flexDirection="column" width="50%" height={editorViewportHeight}>
 						<text fg={colors.primary} attributes={TextAttributes.BOLD}>推荐规则</text>
 						<box
 							flexGrow={1}
@@ -294,13 +299,11 @@ export function PromptsView({ agentContext, active, viewportHeight = 16, onSubMo
 							</ThemedScrollbox>
 						</box>
 					</box>
-					<box flexDirection="column" width="50%" marginLeft={1}>
-						{editorEl}
-					</box>
+				) : null}
+				<box key='editor-panel' flexDirection="column" flexGrow={1} width={showRecommend ? '50%' : undefined} marginLeft={showRecommend ? 1 : 0}>
+					{editorEl}
 				</box>
-			) : (
-				editorEl
-			)}
+			</box>
 		</box>
 	);
 }

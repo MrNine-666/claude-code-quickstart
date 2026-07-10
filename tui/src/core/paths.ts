@@ -48,34 +48,35 @@ export function skillsDir(): string {
 }
 
 /**
- * Codex 主目录：CODEX_HOME 优先（官方约定），否则 `~/.codex`。
- * 与 resolveHome 一致支持测试注入（CCQ_HOME 影响默认 `~/.codex` 的 home 基点）。
+ * Codex 主目录：**硬编码 `~/.codex`，不认 CODEX_HOME**。
+ * 与 resolveHome 一致支持测试注入（CCQ_HOME 影响 `~/.codex` 的 home 基点）。
+ * 覆盖所有 Codex 路径：config.toml / auth.json / AGENTS.md / <key>.config.toml / MCP / ccg-workflow 产物。
+ *
+ * 为何不认 CODEX_HOME：ccq 管理的是用户系统级 Codex 配置（`~/.codex`），
+ * 与上游 ccg-workflow（`codex-mode install` 硬编码 `join(homedir(), '.codex')`）保持一致；
+ * orca 等工具虽会注入 CODEX_HOME 到自己的 runtime home，但它以系统 `~/.codex` 为源镜像，
+ * ccq 写 `~/.codex` 反而契合其数据流向，也避免运行时临时目录被重建覆盖导致的读写分裂。
  */
 export function codexDir(): string {
-	const override = process.env.CODEX_HOME;
-	if (override && override.trim() !== '') {
-		return override;
-	}
-
 	return join(resolveHome(), '.codex');
 }
 
-/** Codex 基础用户配置 `$CODEX_HOME/config.toml`（Codex 卸载绝不删除此文件）。 */
+/** Codex 基础用户配置 `~/.codex/config.toml`（Codex 卸载绝不删除此文件）。 */
 export function codexConfigPath(): string {
 	return join(codexDir(), 'config.toml');
 }
 
-/** Codex official login 凭据文件 `$CODEX_HOME/auth.json`。 */
+/** Codex official login 凭据文件 `~/.codex/auth.json`。 */
 export function codexAuthJsonPath(): string {
 	return join(codexDir(), 'auth.json');
 }
 
-/** Codex 官方 profile 文件 `$CODEX_HOME/<key>.config.toml`。调用前由 codex core 校验 key。 */
+/** Codex 官方 profile 文件 `~/.codex/<key>.config.toml`。调用前由 codex core 校验 key。 */
 export function codexProfilePath(key: string): string {
 	return join(codexDir(), `${key}.config.toml`);
 }
 
-/** Codex 全局规则文件 `$CODEX_HOME/AGENTS.md`。 */
+/** Codex 全局规则文件 `~/.codex/AGENTS.md`。 */
 export function codexAgentsPath(): string {
 	return join(codexDir(), 'AGENTS.md');
 }

@@ -31,10 +31,10 @@ function readSettings() {
 	return JSON.parse(readFileSync(settingsPath, 'utf8'));
 }
 
-// 新增 A（zhipu：模型键 + API_TIMEOUT_MS）、B（deepseek：不同 extra env），均不激活
-const a = addProvider({builtinKey: 'zhipu', apiKey: 'sk-zhipu-aaaaaaaa', activate: false});
+// 新增 A（deepseek：模型键 + CLAUDE_CODE_EFFORT_LEVEL extra env）、B（moonshot：CLAUDE_CODE_AUTO_COMPACT_WINDOW extra env），均不激活
+const a = addProvider({builtinKey: 'deepseek', apiKey: 'sk-ds-aaaaaaaa', activate: false});
 assert.equal(a.success, true, '新增 A 应成功');
-const b = addProvider({builtinKey: 'deepseek', apiKey: 'sk-ds-bbbbbbbb', activate: false});
+const b = addProvider({builtinKey: 'moonshot', apiKey: 'sk-kimi-bbbbbbbb', activate: false});
 assert.equal(b.success, true, '新增 B 应成功');
 
 // ── onboarding 标记首次新增时写入 ───────────────────────────────────────────
@@ -45,20 +45,20 @@ console.log('[PASS] 8.3 onboarding 标记首次新增时写入');
 // ── 设置默认 A：模型键 + extra env + ClaudeConfig env 保留 ──────────────────
 switchProvider(a.key);
 let env = readSettings().env;
-assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'sk-zhipu-aaaaaaaa');
-assert.equal(env.ANTHROPIC_BASE_URL, 'https://open.bigmodel.cn/api/anthropic');
-assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.2', 'A 模型键写入');
-assert.equal(env.API_TIMEOUT_MS, '3000000', 'A extra env 写入');
+assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'sk-ds-aaaaaaaa');
+assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic');
+assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'deepseek-v4-pro[1m]', 'A 模型键写入');
+assert.equal(env.CLAUDE_CODE_EFFORT_LEVEL, 'max', 'A extra env 写入');
 assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '80', 'ClaudeConfig 非 provider env 保留');
 console.log('[PASS] 8.3 设置默认 A：模型键 + extra env + ClaudeConfig env 保留');
 
 // ── 设置默认 B：清理 A 独有 env、写入 B、ClaudeConfig 仍保留 ─────────────────
 switchProvider(b.key);
 env = readSettings().env;
-assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'sk-ds-bbbbbbbb', '切到 B token');
-assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic');
-assert.equal(env.CLAUDE_CODE_EFFORT_LEVEL, 'max', 'B extra env 写入');
-assert.equal('API_TIMEOUT_MS' in env, false, '不残留旧供应商 A 的 extra env');
+assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'sk-kimi-bbbbbbbb', '切到 B token');
+assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.kimi.com/coding');
+assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '262144', 'B extra env 写入');
+assert.equal('CLAUDE_CODE_EFFORT_LEVEL' in env, false, '不残留旧供应商 A 的 extra env');
 assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '80', '切换后 ClaudeConfig env 仍保留');
 console.log('[PASS] 8.3 切换 B：不残留旧供应商 env + ClaudeConfig 保留');
 
@@ -69,9 +69,9 @@ const allowed = new Set([
 	'ANTHROPIC_DEFAULT_HAIKU_MODEL',
 	'ANTHROPIC_DEFAULT_OPUS_MODEL',
 	'ANTHROPIC_DEFAULT_SONNET_MODEL',
-	'ANTHROPIC_MODEL',
 	'CLAUDE_CODE_SUBAGENT_MODEL',
 	'CLAUDE_CODE_EFFORT_LEVEL',
+	'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
 	'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE'
 ]);
 for (const k of Object.keys(env)) {

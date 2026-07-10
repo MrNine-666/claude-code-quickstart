@@ -23,7 +23,7 @@ import type {ProviderDisplayData} from '../core/provider.js';
 import type {ProviderServiceResult} from './provider-service.js';
 import type {ProviderFormAdapter} from '../views/provider-form.js';
 
-// Codex service：把 Codex profile core 包装为 ProviderView 可消费的 service，视图不直接读写 CODEX_HOME。
+// Codex service：把 Codex profile core 包装为 ProviderView 可消费的 service，视图不直接读写 ~/.codex。
 
 const CODEX_API_KEY_FIELD = 'experimental_bearer_token';
 

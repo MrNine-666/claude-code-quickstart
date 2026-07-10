@@ -1,5 +1,6 @@
 import type { TextareaRenderable, CliRenderer, KeyEvent } from '@opentui/core';
 import { isEditingModifier, shortcutPlatform } from '../../utils/keyboard.js';
+import { copyTextWithFeedback } from '../../utils/copy-feedback.js';
 
 type KeyEventLike = {
 	readonly name: string;
@@ -54,11 +55,9 @@ export function handleTextareaEditKeys(
 	}
 
 	if (name === 'c' && editingMod) {
-		if (textarea && textarea.hasSelection() && renderer?.isOsc52Supported()) {
-			const selected = textarea.getSelectedText();
-			if (selected) {
-				renderer.copyToClipboardOSC52(selected);
-			}
+		// 复制成功弹 toast（copyTextWithFeedback 统一处理）；无选中文本 / 终端不支持时静默跳过。
+		if (textarea && textarea.hasSelection()) {
+			copyTextWithFeedback(renderer, textarea.getSelectedText());
 		}
 
 		return true;

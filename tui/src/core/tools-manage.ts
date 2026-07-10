@@ -203,7 +203,7 @@ export function filterVisibleComponents(
 
 /**
  * Tools 组在两个 Header 下都可见，但 CcgWorkflow / CodeGraph 的“已安装”语义是 per-Agent 集成。
- * Codex 下必须看 CODEX_HOME 的真实落盘信号，不能把 Claude Code 或全局 CLI 状态直接复用过来。
+ * Codex 下必须看 ~/.codex 的真实落盘信号，不能把 Claude Code 或全局 CLI 状态直接复用过来。
  */
 function withContextInstallState(component: ManagedComponent, context: AgentContext): ManagedComponent {
 	if (component.id === 'CodeGraph') {
@@ -264,7 +264,7 @@ export function uninstallImpactNotice(id: ComponentId, context: AgentContext): s
 			return `仅解除 ${agentLabel} 的 CodeGraph 集成（codegraph uninstall），不卸载 npm CLI、不删除项目 .codegraph/ 索引。`;
 		case 'CcgWorkflow':
 			return context === 'cx'
-				? '将通过官方命令 `npx ccg-workflow codex-mode uninstall` 卸载 Codex Mode；CODEX_HOME/config.toml 由官方命令处理，ccq 不直接删除。'
+				? '将通过官方命令 `npx ccg-workflow codex-mode uninstall` 卸载 Codex Mode；~/.codex/config.toml 由官方命令处理，ccq 不直接删除。'
 				: '将通过官方命令 `npx ccg-workflow uninstall` 卸载 CCG Workflow；CCG-managed 文件/hooks 由官方命令清理。';
 		default:
 			return '确认卸载此组件？此操作不可撤销。';

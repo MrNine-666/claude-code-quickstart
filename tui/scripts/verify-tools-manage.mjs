@@ -202,11 +202,11 @@ console.log('[PASS] detectComponents 7 项 + 不聚合 Skills/MCP + CcgWorkflow 
 	const codexVisibleWithIntegration = filterVisibleComponents(globalInstalled, 'cx');
 	const codexCcgWithIntegration = codexVisibleWithIntegration.find(c => c.id === 'CcgWorkflow');
 	assert.equal(codexCcgWithIntegration.installed, true, 'Codex Mode 版本文件存在时 CcgWorkflow 显示已安装');
-	assert.equal(codexCcgWithIntegration.currentVersion, '3.1.10', 'Codex CcgWorkflow 本地版本来自 CODEX_HOME/.ccg-version');
+	assert.equal(codexCcgWithIntegration.currentVersion, '3.1.10', 'Codex CcgWorkflow 本地版本来自 ~/.codex/.ccg-version');
 	assert.equal(codexCcgWithIntegration.hasUpdate, true, 'Codex CcgWorkflow 可基于 .ccg-version 与 latestVersion 判定更新');
 	assert.equal(codexVisibleWithIntegration.find(c => c.id === 'CodeGraph').installed, true, 'Codex config.toml 含 [mcp_servers.codegraph] 时 CodeGraph 显示已安装');
 }
-console.log('[PASS] Codex Header 工具安装态按 CODEX_HOME 集成信号修正');
+console.log('[PASS] Codex Header 工具安装态按 ~/.codex 集成信号修正');
 
 // ── installComponent('ClaudeCode') npm install + 检测确认（11.6/11.8）────────
 const execCalls = [];

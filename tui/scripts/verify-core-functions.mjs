@@ -30,7 +30,7 @@ assert.equal(testProviderKey('../evil'), false);
 console.log('[PASS] 文本/凭据工具');
 
 // ── provider 表单 ─────────────────────────────────────────────────────────
-const builtinForm = buildProviderFormModel({mode: 'add-builtin', builtinKey: 'zhipu'});
+const builtinForm = buildProviderFormModel({mode: 'add-builtin', builtinKey: 'glm'});
 assert.equal(builtinForm.values.baseUrl, 'https://open.bigmodel.cn/api/anthropic');
 assert.equal(builtinForm.values.modelEnv.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.2');
 assert.deepEqual(validateProviderForm('add-builtin', {...builtinForm.values, apiKey: ''}), ['API Key 不能为空']);
@@ -38,9 +38,9 @@ assert.deepEqual(validateProviderForm('add-builtin', {...builtinForm.values, api
 const customForm = buildProviderFormModel({mode: 'add-custom'});
 assert.deepEqual(validateProviderForm('add-custom', customForm.values).length > 0, true, 'custom 空 baseUrl 应报错');
 
-const editPayload = toProviderSavePayload({mode: 'edit', profileKey: 'zhipu'}, {...builtinForm.values, apiKey: 'sk-test'});
+const editPayload = toProviderSavePayload({mode: 'edit', profileKey: 'glm'}, {...builtinForm.values, apiKey: 'sk-test'});
 assert.equal(editPayload.action, 'edit');
-assert.equal(editPayload.key, 'zhipu');
+assert.equal(editPayload.key, 'glm');
 console.log('[PASS] Provider 表单模型');
 
 // ── buildMcpConfig parity（对齐 New-McpSettingsEntry） ─────────────────────
