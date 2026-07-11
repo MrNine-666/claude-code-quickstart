@@ -117,7 +117,15 @@ try {
 		return 9;
 	}), 9, 'cx 应透传 codex 退出码');
 	assert.deepEqual(codexArgs, ['--profile', 'dev', '-m', 'gpt-5']);
-	console.log('[PASS] cx 子命令 plain/profile 透传 + 不读 ccq vault/env');
+
+	// official login 虚拟条目：cx official 不拼 --profile，等价 plain codex 读 base config。
+	codexArgs = null;
+	assert.equal(await runCx('official', ['--help'], async args => {
+		codexArgs = [...args];
+		return 0;
+	}), 0, 'cx official 应等价 plain codex 启动');
+	assert.deepEqual(codexArgs, ['--help'], 'cx official 不注入 --profile official');
+	console.log('[PASS] cx 子命令 plain/profile/official 透传 + 不读 ccq vault/env');
 
 	// ── use --tool codex：结构化写 base config，不写 legacy selector ─────────────
 	assert.equal(runUse('dev', 'codex'), 0, 'use --tool codex 应设置默认 Codex profile');
@@ -125,7 +133,12 @@ try {
 	assert.match(baseConfig, /model_provider\s*=\s*"dev"/, 'Codex base config 写 model_provider');
 	assert.equal(/profile\s*=\s*"dev"|\[profiles\.dev\]/.test(baseConfig), false, 'use --tool codex 不写 legacy selector');
 	assert.equal(runUse('missing', 'codex'), 1, 'use --tool codex 缺 profile 时失败');
-	console.log('[PASS] use --tool codex 默认切换');
+
+	// use official --tool codex：激活 official 虚拟条目 = 清空 config.toml 供应商键（不校验文件存在）。
+	assert.equal(runUse('official', 'codex'), 0, 'use official --tool codex 激活官方登录态');
+	const officialConfig = readFileSync(join(process.env.CODEX_HOME, 'config.toml'), 'utf8');
+	assert.equal(/model_provider\s*=/.test(officialConfig), false, 'official 激活清空 model_provider');
+	console.log('[PASS] use --tool codex 默认切换 + official 虚拟条目激活');
 } finally {
 	rmSync(tempHome, {recursive: true, force: true});
 	delete process.env.CCQ_HOME;

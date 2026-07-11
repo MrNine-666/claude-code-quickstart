@@ -131,6 +131,8 @@ ccq 可执行文件支持「无参进 TUI + 子命令非交互」双入口。`sr
   - **Codex 路径固定 `~/.codex`**：ccq 管理的是用户系统级 Codex 配置，`codexDir()` **不读取 `CODEX_HOME`**。原因：上游 `ccg-workflow codex-mode` 硬编码 `~/.codex`；orca 等工具即使注入临时 `CODEX_HOME`，也以系统 `~/.codex` 为镜像源。禁止把 ccq 写入目标改回运行时 `CODEX_HOME`，避免临时 runtime home 与系统配置分裂。
   - **Codex key = 唯一身份**：用户只填一个 key，同时作为 `<key>.config.toml` 文件名、`--profile` 名、`model_provider` id、`[model_providers.<key>]` table id 与默认显示名；不设独立 profileName/providerId/displayName。
   - **Codex API key = 直写 profile TOML**：写入 `[model_providers.<key>].experimental_bearer_token`，同一 provider table 禁止再写 `env_key` / `auth` / `requires_openai_auth`；**不写 ccq vault、`ccq cx` 不注入 env**；UI 字段默认 mask，日志/toast/error/verify 输出全链脱敏。`official login` 类型不要求 API key，靠 `codex login` 完成认证。
+  - **official login auth.json 可编辑**：`official` 虚拟条目仍不落盘 profile TOML，但支持编辑 `~/.codex/auth.json`——**add 态**（新增/选类型）textarea 展示脱敏预览（`access_token`/`refresh_token` 等 → `***`）且只读；**edit 态**（对 official 按 E）textarea 回填**明文原文**供直接编辑，`writeCodexAuthJson` 是唯一写入口，保存前校验 JSON 合法性（顶层须为对象），空内容保存 = 登出（删除 auth.json）。编辑态必然明文展示凭据（否则无法编辑），但 toast/日志/error 输出仍全链脱敏。区分 add/edit 靠 `CodexProviderFormValues.authEditable` 标志，adapter 的 `isTextReadOnly`/`buildText`/`parseText` 据此路由。
+  - **编辑活跃 profile 同步 config.toml**：`saveCodexProviderForm` edit 态保存子文件后，若该 profile 是当前默认（`isDefaultCodexProfile`），必须重新 `setDefaultCodexProfile` 把新供应商键刷进 `~/.codex/config.toml`——否则子文件已改而 config.toml 停留在激活那一刻的旧值；非活跃 profile 编辑不触碰 config.toml。
   - `ls`/`use` 扩展 `--tool claude|codex`，`--tool` 缺省 = claude（`ccq ls` / `ccq use` 行为零破坏）；`ccq use <key> --tool codex` 结构化写 `~/.codex/config.toml` 的 provider/default 路径，**不写** `profile =` / `[profiles.<key>]`。
   - `cx` 与 `cc` 同为启动类：`Bun.spawn(..., {stdio:['inherit','inherit','inherit']})` 继承 TTY，退出码透传，ENOENT=127。
   - TOML 读写统一走 `core/toml-edit.ts` 结构化编辑（parse/get/set/delete/atomicWrite），**不默认使用 managed marker block**，只更新明确路径、保留无关字段/注释。
@@ -147,15 +149,23 @@ ccq 可执行文件支持「无参进 TUI + 子命令非交互」双入口。`sr
 
 ### HC-AGENT-CONTEXT-SHELL
 TUI 不新增第 7 个 Codex 菜单；改由右侧 content 顶部的全局 **Header** 用全称 `Claude Code` / `Codex` 切换 `agentContext`（内部键 `cc` / `cx`，界面不展示缩写）。左侧导航恒为 6 项（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills），Header 切换**不改变**菜单顺序，只重渲染当前模块的 Agent 数据域；默认 `Claude Code`。`agentContext` 下发给 Tools / Provider / Config / Prompts / MCP / Skills 各视图及其 service，视图不自行推断路径、不直接写运行时配置文件（写盘只在 core/service 层）。骨架门禁 `scripts/verify-agent-context.mjs`。
+- **工具管理隐藏 Header**（shared-resource-injection-ui）：`displayMenuId === 'tools'` 时**不渲染 AgentHeader**，content 高度不预留 Header 行；残留 `focus === 'header'` 强制回 `view`，网格顶行 `↑` 停在首项（不退回 header），`Esc` / 光标 0 时 `←` 回 `nav`。全局 `agentContext` 状态**保留**，进出工具管理不改其值；切到其它 5 个 Agent 独占模块时 Header 恢复并展示保留的上下文。其它模块 Header 与 `view↑→header` 行为不变（门禁 `scripts/verify-manage-tui-state.mjs` / `scripts/verify-agent-context.mjs`）。
 
 ### HC-TOOLS-AGENT-GROUP
-工具管理按 `group` 分组并按 `agentContext` 决定可见性（骨架 `scripts/verify-tools-context.mjs`）：
-- UI 必须展示为「分组 label + 当前分组 grid」结构，分组顺序固定为 **Agent → statusLine → 三方工具**；空分组隐藏（例如 Codex Header 下不展示 statusLine）。
-- 分组事实源只能来自 `COMPONENT_META` / `TOOL_GROUP_ORDER` / `TOOL_GROUP_META`，禁止在 `ToolsView` 内硬编码第二套分类或工具顺序。
-- **Agent 组**（ClaudeCode / CodexCli / AntigravityCli）：两种上下文**常显**，主 Agent 不因切换被隐藏。
-- **statusLine 组**（Ccline）：**仅 Claude Code** 上下文显示。
-- **三方工具组**（OpenSpec / CcgWorkflow / CodeGraph）：两种上下文都显示。
-- install/update/uninstall 经 lifecycle command resolver 按 `agentContext` 返回不同指令：
+工具管理以**共享资源列表**为主（shared-resource-injection-ui）：列表**不按 `agentContext` 过滤**，7 组件全集常显（骨架 `scripts/verify-tools-context.mjs` / `scripts/verify-tools-shared-projection.mjs`）：
+- Tools UI 主路径 = `projectSharedToolComponents(detected)`（返回 `SharedManagedComponent[]`，全集恒定顺序），**禁止**再用 `filterVisibleComponents(..., agentContext)` 作为列表主路径（该函数保留仅供 legacy 门禁 / CLI 兼容）。
+- UI 必须展示为「分组 label + grid」结构，分组顺序固定为 **Agent → statusLine → 三方工具**；空分组隐藏。分组事实源只能来自 `COMPONENT_META` / `TOOL_GROUP_ORDER` / `TOOL_GROUP_META`，禁止在 `ToolsView` 内硬编码第二套分类或工具顺序。
+- **资源分类 `sharingKind`（挂在 `COMPONENT_META`，单一事实源）驱动呈现**：
+  - `shared-cli-per-agent-inject`（**CodeGraph / CcgWorkflow**）：卡片行 2 展示 `Claude Code ●|○` + `Codex ●|○` 双态徽章（全称，禁 `cc`/`cx` 缩写；`●`=已注入 success，`○`=未注入 muted），两侧状态由 `injectByAgent` 独立投影、互不塌缩（CodeGraph 来自 `hasClaude/CodexCodeGraphIntegration`，CcgWorkflow 来自 `hasClaude/CodexCcgWorkflowMode`；CcgWorkflow 无真·共享 CLI，**不伪造** `sharedInstalled`）。
+  - `fully-shared-no-inject`（**OpenSpec / AntigravityCli**）：仅全局安装态，**无**行 2 inject 徽章。
+  - `agent-exclusive`（**ClaudeCode / CodexCli / Ccline**）：行 2 仅标注适用范围（`Claude Code 本体` / `Codex 本体` / `仅 Claude Code`），Ccline 不提供 Codex 注入。
+- **交互（Enter 开关 Modal / u 更新 / d 全量卸载，职责分离硬约束）**：
+  - inject 类 **Enter** 打开开关管理 Modal（`select-inject-target`）：进入时用当前双侧 `injectByAgent.integrated` 初始化本地草稿（`injectDraft`），`↑/↓` 选 `Claude Code`/`Codex`，`空格`切换该侧草稿开/关（纯本地，不落盘），`Enter` 统一应用——对比草稿与实际态、对每个变化侧顺序执行 `injectComponent(id, target)` / `ejectComponent(id, target)`，`Esc` 取消。目标 **显式传入**，禁止依赖 Header agentContext（`ToolsView` 不得 useMemo 把 Header 绑死到 inject 路径）；无变化时提示「未改变任何开关」。
+  - **u** = 更新当前项（含 inject 类共享 CLI）：inject 类 Enter 被开关 Modal 占用后，单项更新统一改由 `u` 触发；无更新则提示已是最新。
+  - inject 类 **d** = 全量卸载（`confirm-uninstall`，`uninstallComponent(id, {fullUninstall:true})`：解除两侧注入 + 移除共享 CLI/包），**不**进入开关 Modal；确认文案写明「CLI + 全部注入」。单侧关闭注入**只走 Enter 开关 Modal**。
+  - 非 inject 类 Enter 保持 install/update/已是最新，`u` 更新当前项，`d` 保持既有全局卸载。
+- 快捷键单一数据源（HC-SHORTCUT-SINGLE-SOURCE）：开关相关键位注册在 `keybindings.ts`（`TOOLS_COMMANDS.INJECT_TARGET_TOGGLE`=空格 / `INJECT_TARGET_CONFIRM`=Enter 应用 / `INJECT_TARGET_CANCEL`=Esc；`UPDATE_ONE`=u），footer 仅在光标落在 inject 类（`grid-inject`）时提示「管理开关」，禁止视图硬编码键位字面量。
+- install/update/uninstall 经 lifecycle command resolver 按目标 Agent 返回不同指令：
   - **CodeGraph**：检测安装态必须同时满足 CLI 可用与当前 Agent MCP 已接入（Claude Code 看 `~/.claude.json.mcpServers.codegraph`，Codex 看 `~/.codex/config.toml` 的 `[mcp_servers.codegraph]`）；install 语义是“确保共享 CLI + 接入当前 Agent”：若 `codegraph --version` 已可用，必须跳过 `npm install -g @colbymchenry/codegraph`，直接执行 `codegraph install --target=<claude|codex> --location=global --yes` 并校验 MCP 写入成功；CLI 不可用时才安装 npm 包；update 更新 npm CLI 后按已接入的 cc/cx 目标逐个重跑 `codegraph install ...`；uninstall 先执行 `codegraph uninstall --target=<claude|codex> --yes`，随后若 cc/cx 两边都无 CodeGraph MCP，则自动 `npm uninstall -g @colbymchenry/codegraph`，始终不删除项目 `.codegraph/` 索引（骨架 `scripts/verify-codegraph-lifecycle.mjs` + `scripts/verify-tools-manage.mjs`）。
   - **CcgWorkflow**：上游 GitHub 仓库真实标识为 `fengshao1227/ccg-workflow`（查 DeepWiki/GitHub 时不要用 `MrNine-666/ccg-workflow`）；Claude 走 `npx ccg-workflow@latest init ... --install-dir ~/.claude`（保留 mcpServers 快照保护）+ `npx ccg-workflow uninstall`；Codex Mode 走官方非交互 `npx ccg-workflow codex-mode install/uninstall`。文件边界（`config.toml`/`AGENTS.md`/hooks/rules）一律交给官方命令负责，**ccq 不手写 fs 删除 `~/.codex/config.toml`**（骨架 `scripts/verify-ccgworkflow-codex.mjs`）。
 

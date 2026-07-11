@@ -157,12 +157,12 @@ function isTimeoutError(error: unknown): boolean {
 	return error instanceof Error && /命令超时|timed out|timeout/i.test(error.message);
 }
 
-async function execVersionCommand(command: string, args: readonly string[]): Promise<{readonly code: number; readonly stdout: string; readonly stderr: string}> {
+async function execVersionCommand(command: string, args: readonly string[], exec: typeof execCommand = execCommand): Promise<{readonly code: number; readonly stdout: string; readonly stderr: string}> {
 	try {
-		return await execCommand(command, args, {timeout: DETECT_TIMEOUT_MS});
+		return await exec(command, args, {timeout: DETECT_TIMEOUT_MS});
 	} catch (error) {
 		if (isTimeoutError(error)) {
-			return execCommand(command, args, {timeout: DETECT_TIMEOUT_MS});
+			return exec(command, args, {timeout: DETECT_TIMEOUT_MS});
 		}
 
 		throw error;
@@ -170,9 +170,9 @@ async function execVersionCommand(command: string, args: readonly string[]): Pro
 }
 
 /** 检测单个工具（命令可用性 + 版本）。 */
-export async function detectTool(definition: ToolDefinition): Promise<ToolStatus> {
+export async function detectTool(definition: ToolDefinition, exec: typeof execCommand = execCommand): Promise<ToolStatus> {
 	try {
-		const result = await execVersionCommand(definition.command, definition.versionArgs);
+		const result = await execVersionCommand(definition.command, definition.versionArgs, exec);
 		if (result.code !== 0) {
 			return {id: definition.id, installed: false, version: ''};
 		}
@@ -185,7 +185,7 @@ export async function detectTool(definition: ToolDefinition): Promise<ToolStatus
 
 /** 并发检测全部工具状态。 */
 export async function detectAllTools(): Promise<ToolStatus[]> {
-	return Promise.all(TOOL_DEFINITIONS.map(detectTool));
+	return Promise.all(TOOL_DEFINITIONS.map(definition => detectTool(definition)));
 }
 
 /** 友好错误信息（对齐 skills-actions getFriendlyError）。 */
@@ -202,39 +202,39 @@ function friendlyError(text: string, fallback: string): string {
 }
 
 /** npm install -g <package>。 */
-async function installNpmPackage(definition: ToolDefinition, onProgress?: ProgressCallback): Promise<void> {
+async function installNpmPackage(definition: ToolDefinition, onProgress?: ProgressCallback, exec: typeof execCommand = execCommand): Promise<void> {
 	if (!definition.npmPackage) {
 		throw new Error(`${definition.id} 缺少 npm 包名`);
 	}
 
 	onProgress?.({level: 'info', message: `npm install -g ${definition.npmPackage}`, componentId: definition.id});
-	const result = await execCommand('npm', ['install', '-g', definition.npmPackage], {timeout: INSTALL_TIMEOUT_MS});
+	const result = await exec('npm', ['install', '-g', definition.npmPackage], {timeout: INSTALL_TIMEOUT_MS});
 	if (result.code !== 0) {
 		throw new Error(friendlyError(result.stderr || result.stdout, `npm install 失败 (exit ${result.code})`));
 	}
 
-	await refreshNpmGlobalBinPath(onProgress, definition.id);
+	await refreshNpmGlobalBinPath(onProgress, definition.id, exec);
 }
 
-async function ensureCodeGraphCli(definition: ToolDefinition, onProgress?: ProgressCallback): Promise<void> {
-	const status = await detectTool(definition);
+async function ensureCodeGraphCli(definition: ToolDefinition, onProgress?: ProgressCallback, exec: typeof execCommand = execCommand): Promise<void> {
+	const status = await detectTool(definition, exec);
 	if (status.installed) {
 		onProgress?.({level: 'success', message: `CodeGraph CLI 已存在，跳过 npm install${status.version ? ` (${status.version})` : ''}`, componentId: definition.id});
 		return;
 	}
 
-	await installNpmPackage(definition, onProgress);
+	await installNpmPackage(definition, onProgress, exec);
 }
 
 /** CodeGraph 后置：CLI 就绪后非交互接入当前 Agent（agentContext → --target=claude|codex）。 */
-async function postInstallCodeGraph(context: AgentContext, onProgress?: ProgressCallback): Promise<void> {
+async function postInstallCodeGraph(context: AgentContext, onProgress?: ProgressCallback, exec: typeof execCommand = execCommand): Promise<void> {
 	const [command] = codeGraphInstallCommands(context);
 	if (!command) {
 		return;
 	}
 
 	onProgress?.({level: 'info', message: `${command.cmd} ${command.args.join(' ')}`, componentId: 'CodeGraph'});
-	const result = await execCommand(command.cmd, [...command.args], {timeout: INSTALL_TIMEOUT_MS});
+	const result = await exec(command.cmd, [...command.args], {timeout: INSTALL_TIMEOUT_MS});
 	if (result.code !== 0) {
 		const label = context === 'cx' ? 'Codex' : 'Claude Code';
 		throw new Error(friendlyError(result.stderr || result.stdout, `CodeGraph ${label} 接入失败 (exit ${result.code})`));
