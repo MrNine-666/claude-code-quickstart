@@ -282,9 +282,9 @@ export function PromptsView({ agentContext, active, viewportHeight = 16, onSubMo
 	return (
 		<box flexDirection="column" flexGrow={1}>
 			<ViewHeader title='全局规则管理' subtitle={isCodex ? '查看、导入与编辑 ~/.codex/AGENTS.md' : '查看、导入与编辑 ~/.claude/CLAUDE.md'} />
-			<box flexDirection="row" flexGrow={1} height={bodyViewportHeight}>
+			<box flexDirection="row" flexGrow={1} height={bodyViewportHeight} columnGap={showRecommend ? 1 : 0}>
 				{showRecommend ? (
-					<box key='recommend-panel' flexDirection="column" width="50%" height={editorViewportHeight}>
+					<box key='recommend-panel' flexDirection="column" flexGrow={1} flexBasis={0} minWidth={0}>
 						<text fg={colors.primary} attributes={TextAttributes.BOLD}>推荐规则</text>
 						<box
 							flexGrow={1}
@@ -300,7 +300,7 @@ export function PromptsView({ agentContext, active, viewportHeight = 16, onSubMo
 						</box>
 					</box>
 				) : null}
-				<box key='editor-panel' flexDirection="column" flexGrow={1} width={showRecommend ? '50%' : undefined} marginLeft={showRecommend ? 1 : 0}>
+				<box key='editor-panel' flexDirection="column" flexGrow={1} flexBasis={0} minWidth={0}>
 					{editorEl}
 				</box>
 			</box>

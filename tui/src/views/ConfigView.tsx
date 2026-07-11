@@ -292,9 +292,9 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 				subtitle={isCodex ? '查看、补全与编辑 ~/.codex/config.toml' : '查看、补全与编辑 ~/.claude/settings.json'}
 				right={<text fg={colors.warning} attributes={TextAttributes.DIM}>{isCodex ? '已排除供应商/MCP配置' : '已排除供应商配置'}</text>}
 			/>
-			<box flexDirection="row" flexGrow={1} height={bodyViewportHeight}>
+			<box flexDirection="row" flexGrow={1} height={bodyViewportHeight} columnGap={showRecommend ? 1 : 0}>
 				{showRecommend ? (
-					<box key='recommend-panel' flexDirection="column" width="50%" height={editorViewportHeight}>
+					<box key='recommend-panel' flexDirection="column" flexGrow={1} flexBasis={0} minWidth={0}>
 						<text fg={colors.primary} attributes={TextAttributes.BOLD}>推荐配置</text>
 						<box
 							flexGrow={1}
@@ -310,7 +310,7 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 						</box>
 					</box>
 				) : null}
-				<box key='editor-panel' flexDirection="column" flexGrow={1} width={showRecommend ? '50%' : undefined} marginLeft={showRecommend ? 1 : 0}>
+				<box key='editor-panel' flexDirection="column" flexGrow={1} flexBasis={0} minWidth={0}>
 					{editorEl}
 				</box>
 			</box>

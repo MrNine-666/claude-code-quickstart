@@ -18,10 +18,15 @@ export type PromptsRecommendation = {
 	readonly lineCount: number;
 };
 
-/** 读 templates 目录下任意文件；缺失或读取失败返回 null，不抛。 */
+/**
+ * 读 templates 目录下任意文件；缺失或读取失败返回 null，不抛。
+ * 统一把 CRLF/CR 归一为 LF：模板源文件可能带 Windows 行尾（\r\n），
+ * split('\n') 后残留的 \r 会在终端渲染成额外间距，且随 doImport 灌进 textarea、污染落盘文件。
+ * 在这个唯一读取入口归一，一处覆盖预览显示与导入两条路径。
+ */
 function readTemplateFile(fileName: string): string | null {
 	try {
-		return loadTextContract(`templates/${fileName}`);
+		return loadTextContract(`templates/${fileName}`).split(/\r\n?/).join('\n');
 	} catch {
 		return null;
 	}

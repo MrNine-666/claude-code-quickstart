@@ -260,18 +260,20 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 	}
 
 	// ── 编辑模式渲染 ──
-	// 标题行与 textarea 边框在固定 height 容器内：textarea 内容长时 min-content 会沿 flex 链向上传导、
-	// 把标题行压成 0 高（HC-SPLIT-OVERFLOW-MARGIN 同源）。给边框 box 加 flexBasis={0} minHeight={0}，
-	// 让 flex 完全按 grow 分配、不受子内容 min-size 影响，标题行稳定占 1 行。
+	// 边框 box 必须显式 flexDirection="column"：opentui box 默认主轴是 row，唯一子节点 textarea
+	// 处于横向主轴时，flexGrow/flexBasis/minHeight 全作用到交叉轴（宽度）、对高度失效，textarea 高度
+	// 由 native measureFunc 上报的内容全高经交叉轴 stretch 撑起，超出固定 height 容器、顶破下边框。
+	// 改为 column 后 textarea 落在纵向主轴，flexGrow={1} flexBasis={0} 才真正把高度按容器分配，
+	// 超出行数交给 textarea 自身滚动（光标跟随）。minWidth/minHeight={0} 保留：放开两轴收缩下限。
 	return (
-		<box flexDirection="column" flexGrow={viewportHeight === undefined ? 1 : 0} height={viewportHeight}>
+		<box flexDirection="column" flexGrow={viewportHeight === undefined ? 1 : 0} height={viewportHeight} minWidth={0}>
 			<box>
 				<text fg={colors.primary} attributes={TextAttributes.BOLD}>
 					{title}
 				</text>
 			</box>
 
-			<box flexGrow={1} flexBasis={0} minHeight={0} borderStyle="rounded" borderColor={active ? borderColors.active : borderColors.inactive}>
+			<box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} minWidth={0} borderStyle="rounded" borderColor={active ? borderColors.active : borderColors.inactive}>
 				<textarea
 					ref={taRef}
 					initialValue={initialContent}
@@ -283,7 +285,7 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 					selectionFg={colors.selectionFg}
 					onContentChange={onContentChange ? () => onContentChange() : undefined}
 					onKeyDown={handleEditorKey}
-					style={{ flexGrow: 1 }}
+					style={{ flexGrow: 1, flexBasis: 0, minWidth: 0, minHeight: 0 }}
 				/>
 			</box>
 

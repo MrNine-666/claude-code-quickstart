@@ -12,12 +12,10 @@ export type ModalProps = {
 	readonly viewportWidth: number;
 	readonly viewportHeight: number;
 	readonly width?: number;
-	readonly height?: number;
 	readonly children: React.ReactNode;
 };
 
 const DEFAULT_MODAL_WIDTH = 40;
-const DEFAULT_MODAL_HEIGHT = 8;
 export function Modal({
 	active,
 	title,
@@ -26,7 +24,6 @@ export function Modal({
 	viewportWidth,
 	viewportHeight,
 	width = DEFAULT_MODAL_WIDTH,
-	height = DEFAULT_MODAL_HEIGHT,
 	children
 }: ModalProps) {
 	if (!active) {
@@ -34,43 +31,59 @@ export function Modal({
 	}
 
 	const accent = accentForTone(tone);
-	const left = Math.max(0, Math.floor((viewportWidth - width) / 2));
-	const top = Math.max(0, Math.floor((viewportHeight - height) / 2));
 
 	return (
 		<box
 			position="absolute"
-			left={left}
-			top={top}
-			width={width}
-			height={height}
+			left={0}
+			top={0}
+			width={viewportWidth}
+			height={viewportHeight}
 			zIndex={100}
 			flexDirection="column"
-			borderStyle="rounded"
-			borderColor={accent}
-			backgroundColor={colors.modalBackground}
-			paddingX={1}
-			title={title}
-			titleColor={accent}
+			justifyContent="center"
+			alignItems="center"
 		>
-			<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{'─'.repeat(Math.max(1, width - 4))}</text>
-			{children}
-			<box flexGrow={1} />
-			{hint ? <ModalHint hint={hint} /> : null}
+			<box
+				width={width}
+				flexDirection="column"
+				borderStyle="rounded"
+				borderColor={accent}
+				backgroundColor={colors.modalBackground}
+				paddingX={1}
+				title={title}
+				titleColor={accent}
+			>
+				<box marginTop={1} flexDirection="column">
+					{children}
+				</box>
+				{hint ? (
+					<box marginTop={1} flexDirection="column">
+						<ModalHint hint={hint} />
+					</box>
+				) : null}
+			</box>
 		</box>
 	);
 }
 
+// hint 中高亮为主题色的按键 token：方向/空格/确认/取消键统一加粗主色，其余文案走 muted。
+const HINT_KEY_TOKENS = new Set(['↑/↓', '空格', 'Enter', 'Esc']);
+const HINT_KEY_SPLIT = /(↑\/↓|空格|Enter|Esc)/g;
+
 function ModalHint({ hint }: { readonly hint: string }) {
-	const parts = hint.split(/(Enter|Esc)/g);
+	const parts = hint.split(HINT_KEY_SPLIT);
 	return (
 		<box flexDirection="row" justifyContent="flex-end">
 			<text selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-				{parts.map((part, index) => (
-					<span key={`${part}-${index}`} fg={part === 'Enter' || part === 'Esc' ? PRIMARY : colors.muted} attributes={part === 'Enter' || part === 'Esc' ? TextAttributes.BOLD : 0}>
-						{part}
-					</span>
-				))}
+				{parts.map((part, index) => {
+					const isKey = HINT_KEY_TOKENS.has(part);
+					return (
+						<span key={`${part}-${index}`} fg={isKey ? PRIMARY : colors.muted} attributes={isKey ? TextAttributes.BOLD : 0}>
+							{part}
+						</span>
+					);
+				})}
 			</text>
 		</box>
 	);
