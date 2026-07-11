@@ -2,7 +2,9 @@ import {existsSync, readFileSync} from 'node:fs';
 import {
 	buildCodexProfileToml,
 	parseCodexProfileToml,
+	readCodexAuthJsonRaw,
 	testCodexProfileKey,
+	CODEX_OFFICIAL_LOGIN_KEY,
 	type CodexProviderType,
 	type CodexProfile
 } from './codex.js';
@@ -22,6 +24,8 @@ export type CodexProviderFormValues = {
 	apiKey: string;
 	toml: string;
 	authJson: string;
+	// official 编辑态：authJson 为明文可编辑 JSON（edit 模式），否则为脱敏只读预览（add 模式）。
+	authEditable: boolean;
 	activateAfterSave: boolean;
 };
 
@@ -60,10 +64,6 @@ const CODEX_PROVIDER_TEMPLATES: Readonly<Record<(typeof CODEX_PROVIDER_ORDER)[nu
 
 const AUTH_JSON_SECRET_KEYS = new Set(['access_token', 'refresh_token', 'id_token', 'api_key', 'apikey', 'token', 'secret']);
 
-function hasOfficialLoginProfile(profiles: readonly Pick<CodexProfile, 'providerType'>[] | undefined): boolean {
-	return profiles?.some(profile => profile.providerType === 'officialLogin') ?? false;
-}
-
 function isOfficialLogin(providerType: string): boolean {
 	return providerType === CODEX_OFFICIAL_LOGIN_TYPE;
 }
@@ -72,15 +72,13 @@ function toCodexProviderType(providerType: string): CodexProviderType {
 	return isOfficialLogin(providerType) ? 'officialLogin' : 'apiKey';
 }
 
-function buildProviderTypeOptions(existingProfiles?: readonly Pick<CodexProfile, 'providerType'>[]): SelectOption[] {
-	const options: SelectOption[] = [
+function buildProviderTypeOptions(): SelectOption[] {
+	// official login 是结构性单例的虚拟条目（不落盘、可幂等激活），恒定展示，无需按存在性隐藏。
+	return [
+		{value: CODEX_OFFICIAL_LOGIN_TYPE, label: 'official login'},
 		...CODEX_PROVIDER_ORDER.map((key) => ({value: key, label: CODEX_PROVIDER_TEMPLATES[key].label})),
 		{value: CODEX_CUSTOM_TYPE, label: '自定义 API 供应商'}
 	];
-	if (!hasOfficialLoginProfile(existingProfiles)) {
-		options.unshift({value: CODEX_OFFICIAL_LOGIN_TYPE, label: 'official login'});
-	}
-	return options;
 }
 
 function templateFor(providerType: string): Pick<CodexProviderFormValues, 'profileKey' | 'baseUrl' | 'model' | 'apiKey'> {
@@ -128,7 +126,7 @@ export function readCodexAuthJsonPreview(): string {
 	}
 }
 
-function valuesToToml(values: Omit<CodexProviderFormValues, 'toml' | 'authJson'>): string {
+function valuesToToml(values: Omit<CodexProviderFormValues, 'toml' | 'authJson' | 'authEditable'>): string {
 	return buildCodexProfileToml({
 		key: values.profileKey || 'profile',
 		providerType: toCodexProviderType(values.providerType),
@@ -147,39 +145,46 @@ function makeValues(input: {
 }): CodexProviderFormValues {
 	if (input.mode === 'edit' && input.profile) {
 		const providerType = input.profile.providerType === 'officialLogin' ? CODEX_OFFICIAL_LOGIN_TYPE : (input.providerType ?? CODEX_CUSTOM_TYPE);
+		const editingOfficial = isOfficialLogin(providerType);
 		return {
 			profileKey: input.profile.key,
 			providerType,
 			baseUrl: input.profile.baseUrl,
 			model: input.profile.model,
 			apiKey: '',
-			toml: input.rawToml ?? valuesToToml({
+			// official 编辑态无 profile TOML（虚拟条目，靠 auth.json）；仅真实 provider 生成 TOML。
+			toml: editingOfficial ? '' : (input.rawToml ?? valuesToToml({
 				profileKey: input.profile.key,
 				providerType,
 				baseUrl: input.profile.baseUrl,
 				model: input.profile.model,
 				apiKey: '',
 				activateAfterSave: false
-			}),
-			authJson: readCodexAuthJsonPreview(),
+			})),
+			// 编辑 official：textarea 回填明文 auth.json 供直接编辑；其他 provider 无 authJson 语义。
+			authJson: editingOfficial ? readCodexAuthJsonRaw() : readCodexAuthJsonPreview(),
+			authEditable: editingOfficial,
 			activateAfterSave: false
 		};
 	}
 
-	const officialLoginExists = hasOfficialLoginProfile(input.existingProfiles);
-	const requestedProviderType = input.providerType ?? (officialLoginExists ? CODEX_PROVIDER_ORDER[0] : CODEX_OFFICIAL_LOGIN_TYPE);
-	const providerType = officialLoginExists && requestedProviderType === CODEX_OFFICIAL_LOGIN_TYPE ? CODEX_PROVIDER_ORDER[0] : requestedProviderType;
+	// 新增默认 providerType：显式请求优先，否则默认 official login（虚拟条目，最常见首选）。
+	const providerType = input.providerType ?? CODEX_OFFICIAL_LOGIN_TYPE;
 	const template = templateFor(providerType);
+	// official login 虚拟条目：profileKey 固定为 sentinel（不落盘），无 baseUrl/model/apiKey。
+	const profileKey = isOfficialLogin(providerType) ? CODEX_OFFICIAL_LOGIN_KEY : template.profileKey;
 	const values: Omit<CodexProviderFormValues, 'toml'> = {
-		profileKey: template.profileKey,
+		profileKey,
 		providerType,
 		baseUrl: template.baseUrl,
 		model: template.model,
 		apiKey: template.apiKey,
-			authJson: readCodexAuthJsonPreview(),
+		// add 态 official 仅脱敏预览、只读；明文编辑仅在 edit 态放开（authEditable=false）。
+		authJson: readCodexAuthJsonPreview(),
+		authEditable: false,
 		activateAfterSave: true
 	};
-	return {...values, toml: values.profileKey ? valuesToToml(values) : ''};
+	return {...values, toml: !isOfficialLogin(providerType) && values.profileKey ? valuesToToml(values) : ''};
 }
 
 export function buildCodexProviderFormModel(input: {
@@ -198,39 +203,53 @@ export function buildCodexProviderFormModel(input: {
 			type: 'radio',
 			label: '供应商类型',
 			value: values.providerType,
-			options: buildProviderTypeOptions(input.existingProfiles),
-			helpText: hasOfficialLoginProfile(input.existingProfiles)
-					? '已存在 official login profile；如需重建请先删除旧 profile，删除时会同步清空 auth.json。'
-					: 'Codex profile 独立管理；official login 使用 codex login，自定义 API 供应商写入 profile TOML。'
+			options: buildProviderTypeOptions(),
+			helpText: 'Codex profile 独立管理；official login 使用 codex login（不落盘），自定义 API 供应商写入 profile TOML。'
 		});
 	}
 
-	fields.push(
-		input.mode === 'edit'
-			? {
-					id: 'profileKey',
-					type: 'readonly',
-					label: '文件名',
-					value: values.profileKey,
-					helpText: '对应 ~/.codex/<文件名>.config.toml，并作为 codex --profile 名称。'
-				}
-			: {
-					id: 'profileKey',
-					type: 'text',
-					label: '文件名',
-					value: values.profileKey,
-					helpText: '填写文件名主体；保存为 ~/.codex/<文件名>.config.toml，并作为 codex --profile 名称。'
-				}
-	);
-
-	if (isOfficialLogin(values.providerType)) {
-		fields.push({id: 'model', type: 'text', label: '默认模型', value: values.model});
-	} else {
+	// official login 是不落盘的虚拟条目（全局单例 + 靠 auth.json），无文件名/无 model 字段：
+	// 唯一可调操作是「保存后激活」（=清空 config.toml 供应商键，让 codex 回到登录态）。
+	if (!isOfficialLogin(values.providerType)) {
+		fields.push(
+			input.mode === 'edit'
+				? {
+						id: 'profileKey',
+						type: 'readonly',
+						label: '文件名',
+						value: values.profileKey,
+						helpText: '对应 ~/.codex/<文件名>.config.toml，并作为 codex --profile 名称。'
+					}
+				: {
+						id: 'profileKey',
+						type: 'text',
+						label: '文件名',
+						value: values.profileKey,
+						helpText: '填写文件名主体；保存为 ~/.codex/<文件名>.config.toml，并作为 codex --profile 名称。'
+					}
+		);
 		fields.push(
 			{id: 'baseUrl', type: 'text', label: 'Base URL', value: values.baseUrl},
 			{id: 'model', type: 'text', label: '默认模型', value: values.model},
 			{id: 'apiKey', type: 'secret', label: 'API Key', value: values.apiKey}
 		);
+	} else if (values.authEditable) {
+		// 编辑 official：JSON 由底部 textarea 明文可编辑，此处仅留一行说明，避免与 textarea 内容重复。
+		fields.push({
+			id: 'authStatus',
+			type: 'readonly',
+			label: '官方登录状态',
+			value: values.authJson.trim() === '' ? '未登录（保存非空 JSON 即写入 auth.json）' : '已登录（可直接编辑下方 auth.json）',
+			helpText: '下方 auth.json 为 ~/.codex/auth.json 明文；直接编辑并 Ctrl+S 保存，清空内容保存即登出（删除 auth.json）。'
+		});
+	} else {
+		fields.push({
+			id: 'authJson',
+			type: 'readonly',
+			label: '官方登录状态',
+			value: values.authJson,
+			helpText: 'official login 靠 ~/.codex/auth.json（全局单例）。请先运行 `codex login` 完成登录，或进入编辑（E）直接修改 auth.json。'
+		});
 	}
 
 	if (input.mode !== 'edit') {
@@ -275,11 +294,29 @@ export function codexProviderValuesFromToml(baseValues: CodexProviderFormValues,
 
 export function validateCodexProviderForm(mode: CodexProviderFormMode, values: CodexProviderFormValues): string[] {
 	const errors: string[] = [];
-	if (mode !== 'edit') {
+	// official login 虚拟条目 profileKey 固定为 sentinel（保留字），不走文件名校验。
+	if (mode !== 'edit' && !isOfficialLogin(values.providerType)) {
 		if (isNullOrWhiteSpace(values.profileKey)) {
 			errors.push('文件名不能为空');
 		} else if (!testCodexProfileKey(values.profileKey.trim())) {
-			errors.push('请填写安全文件名（字母/数字/. _ -，不能为 . / .. 或以 - 开头）');
+			errors.push('请填写安全文件名（字母/数字/. _ -，不能为 . / .. 或以 - 开头，且不能为保留字 official）');
+		}
+	}
+
+	// 编辑 official：auth.json 明文可编辑。非空内容须为合法 JSON 对象；空内容合法（保存即登出）。
+	if (isOfficialLogin(values.providerType) && values.authEditable) {
+		const trimmed = values.authJson.trim();
+		if (trimmed !== '') {
+			let parsedAuth: unknown;
+			try {
+				parsedAuth = JSON.parse(trimmed);
+			} catch (error) {
+				errors.push(`auth.json 不是合法 JSON：${error instanceof Error ? error.message : String(error)}`);
+			}
+
+			if (parsedAuth !== undefined && (typeof parsedAuth !== 'object' || parsedAuth === null || Array.isArray(parsedAuth))) {
+				errors.push('auth.json 顶层必须是 JSON 对象');
+			}
 		}
 	}
 

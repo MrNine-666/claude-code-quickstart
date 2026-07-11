@@ -53,6 +53,19 @@ const FORBIDDEN_AUTH_FIELDS = ['env_key', 'auth', 'requires_openai_auth'] as con
 // sandbox_mode 等）原样保留，绝不整体覆盖。
 const CODEX_PROVIDER_KEYS = ['model', 'model_provider', 'model_providers', 'profile', 'profiles'] as const;
 
+/**
+ * official login 虚拟条目 sentinel key。
+ * 它**不对应磁盘文件**：ccq 从不为它落盘 `<key>.config.toml`，其默认态由
+ * `~/.codex/config.toml` 无供应商键（model_provider 空）+ `~/.codex/auth.json` 存在共同定义。
+ * 同时作为保留字：`testCodexProfileKey` 拒绝真实 profile 使用该名，避免与虚拟条目撞名。
+ */
+export const CODEX_OFFICIAL_LOGIN_KEY = 'official';
+
+/** 是否为 official login 虚拟条目 key（sentinel，不落盘）。 */
+export function isOfficialLoginKey(key: string | undefined | null): boolean {
+	return key === CODEX_OFFICIAL_LOGIN_KEY;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
@@ -67,7 +80,10 @@ function assertHttpUrl(baseUrl: string): void {
 	}
 }
 
-/** Codex profile key 复用 Claude provider key 安全规则，并额外拒绝 `.`/`..` 与 `-` 开头。 */
+/**
+ * Codex profile key 复用 Claude provider key 安全规则，并额外拒绝 `.`/`..`、`-` 开头
+ * 与保留字 `official`（后者是 official login 虚拟条目专用，不允许真实 profile 落盘撞名）。
+ */
 export function testCodexProfileKey(key: string | undefined | null): boolean {
 	if (!testProviderKey(key)) {
 		return false;
@@ -75,6 +91,10 @@ export function testCodexProfileKey(key: string | undefined | null): boolean {
 
 	const value = String(key);
 	if (value === '.' || value === '..' || value.startsWith('-')) {
+		return false;
+	}
+
+	if (value === CODEX_OFFICIAL_LOGIN_KEY) {
 		return false;
 	}
 
@@ -249,6 +269,17 @@ export function readCodexProfileToml(key: string): string {
 }
 
 export function deleteCodexProfile(key: string): void {
+	// official login 虚拟条目：无磁盘文件，删除语义 = 登出（清空 auth.json）。
+	// 不走「当前默认拒绝删除」保护——登出即其本意；破坏性确认由视图层危险 Modal 承担。
+	if (isOfficialLoginKey(key)) {
+		const authPath = codexAuthJsonPath();
+		if (existsSync(authPath)) {
+			unlinkSync(authPath);
+		}
+
+		return;
+	}
+
 	const safe = safeCodexProfileKey(key);
 	if (isDefaultCodexProfile(safe)) {
 		throw new Error(`不能删除当前默认 Codex profile: ${safe}`);
@@ -260,6 +291,7 @@ export function deleteCodexProfile(key: string): void {
 		unlinkSync(profilePath);
 	}
 
+	// 历史遗留：真实文件型 officialLogin profile 删除时同步清 auth.json（存量迁移后不再产生）。
 	if (profile?.providerType === 'officialLogin') {
 		const authPath = codexAuthJsonPath();
 		if (existsSync(authPath)) {
@@ -279,16 +311,121 @@ function currentDefaultProviderKey(): string {
 	return typeof value === 'string' ? value : '';
 }
 
-export function isDefaultCodexProfile(key: string): boolean {
-	return currentDefaultProviderKey() === safeCodexProfileKey(key);
+/** official login 当前是否为激活默认态：config.toml 无供应商键 + auth.json 存在。 */
+export function isOfficialLoginActive(): boolean {
+	return currentDefaultProviderKey() === '' && existsSync(codexAuthJsonPath());
 }
 
+/**
+ * 读取 ~/.codex/auth.json 明文原文（供编辑态回填）。
+ * 与 readCodexAuthJsonPreview 的脱敏预览不同：此处返回真实 token，仅用于表单可编辑场景。
+ * 文件不存在返回空串（编辑态视为「新建登录」，保存即写入）。
+ */
+export function readCodexAuthJsonRaw(): string {
+	const authPath = codexAuthJsonPath();
+	if (!existsSync(authPath)) {
+		return '';
+	}
+
+	return readFileSync(authPath, 'utf8');
+}
+
+/**
+ * 写入 ~/.codex/auth.json（明文 JSON）。空内容语义 = 登出（删除文件）。
+ * 非空内容必须是合法 JSON 对象，否则抛错（不写入半成品）。auth.json 由 codex login 生成，
+ * ccq 此前只读；本函数是「official 可编辑」特性的唯一写入口，写入前做 JSON 合法性校验。
+ */
+export function writeCodexAuthJson(rawJson: string): {loggedOut: boolean} {
+	const authPath = codexAuthJsonPath();
+	const trimmed = rawJson.trim();
+
+	// 空内容即登出：删除 auth.json（不存在则幂等无操作）。
+	if (trimmed === '') {
+		if (existsSync(authPath)) {
+			unlinkSync(authPath);
+		}
+
+		return {loggedOut: true};
+	}
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(trimmed);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`auth.json 不是合法 JSON：${message}`);
+	}
+
+	if (!isRecord(parsed)) {
+		throw new Error('auth.json 顶层必须是 JSON 对象');
+	}
+
+	// 规范化为 2 空格缩进后原子写入，保持与 codex login 产物一致的可读格式。
+	atomicWriteText(authPath, `${JSON.stringify(parsed, null, 2)}\n`);
+	return {loggedOut: false};
+}
+
+/**
+ * 解析当前默认 Codex profile key（含 official 虚拟条目）：
+ * config.toml 的 model_provider 有值 → 该真实 key；为空且 auth.json 存在 → official sentinel；否则空。
+ */
+export function resolveDefaultCodexProfileKey(): string {
+	const providerKey = currentDefaultProviderKey();
+	if (providerKey) {
+		return providerKey;
+	}
+
+	return existsSync(codexAuthJsonPath()) ? CODEX_OFFICIAL_LOGIN_KEY : '';
+}
+
+export function isDefaultCodexProfile(key: string): boolean {
+	const resolved = resolveDefaultCodexProfileKey();
+	if (isOfficialLoginKey(key)) {
+		return resolved === CODEX_OFFICIAL_LOGIN_KEY;
+	}
+
+	return resolved === safeCodexProfileKey(key);
+}
+
+/** 构造 official login 虚拟条目（不落盘，profilePath 为空串标识虚拟）。 */
+function officialLoginListItem(): CodexProfileListItem {
+	return {
+		key: CODEX_OFFICIAL_LOGIN_KEY,
+		providerType: 'officialLogin',
+		baseUrl: '',
+		hasApiKey: false,
+		isDefault: isOfficialLoginActive(),
+		profilePath: ''
+	};
+}
+
+/**
+ * 列出 Codex profile：真实 `<key>.config.toml` + 始终追加一个 official login 虚拟条目。
+ * 虚拟条目排在末尾，profilePath 为空串（无磁盘文件）；其 isDefault 随 auth.json/config.toml 计算。
+ */
 export function listCodexProfiles(): readonly CodexProfileListItem[] {
-	const defaultKey = currentDefaultProviderKey();
-	return listCodexProfileKeys().map(key => {
+	const defaultKey = resolveDefaultCodexProfileKey();
+	const real = listCodexProfileKeys().map(key => {
 		const profile = readCodexProfile(key);
 		return {...profile, isDefault: key === defaultKey};
 	});
+	return [...real, officialLoginListItem()];
+}
+
+/** 读取 config.toml document（不存在返回空文档）。 */
+function readCodexConfigDocumentOrEmpty(): TomlDocument {
+	const configPath = codexConfigPath();
+	return existsSync(configPath) ? parse(readFileSync(configPath, 'utf8')) : {};
+}
+
+/** 清空 config.toml 的全部供应商键，保留其余顶层键（mcp_servers/hooks 等）。 */
+function clearCodexProviderKeys(): void {
+	let merged = readCodexConfigDocumentOrEmpty();
+	for (const providerKey of CODEX_PROVIDER_KEYS) {
+		merged = deletePath(merged, [providerKey]);
+	}
+
+	atomicWrite(codexConfigPath(), merged);
 }
 
 /**
@@ -296,13 +433,19 @@ export function listCodexProfiles(): readonly CodexProfileListItem[] {
  * （model/model_provider/model_providers），再从新 profile 导入这些键；其余顶层键
  * （mcp_servers/hooks/approval_policy/sandbox_mode 等）原样保留，绝不整体覆盖。
  * 不写 legacy `profile = "<key>"` 或 `[profiles.<key>]` selector。
+ *
+ * official login 虚拟条目：无源文件，仅清空供应商键，让 codex 回到 auth.json 登录态。
  */
 export function setDefaultCodexProfile(key: string): void {
+	if (isOfficialLoginKey(key)) {
+		clearCodexProviderKeys();
+		return;
+	}
+
 	const rawToml = readCodexProfileToml(key);
 	const profileDoc = parse(rawToml);
 
-	const configPath = codexConfigPath();
-	let merged: TomlDocument = existsSync(configPath) ? parse(readFileSync(configPath, 'utf8')) : {};
+	let merged = readCodexConfigDocumentOrEmpty();
 
 	// 1. 删旧供应商：清掉现有 config 里的三个供应商键
 	for (const providerKey of CODEX_PROVIDER_KEYS) {
@@ -317,7 +460,44 @@ export function setDefaultCodexProfile(key: string): void {
 		}
 	}
 
-	atomicWrite(configPath, merged);
+	atomicWrite(codexConfigPath(), merged);
+}
+
+/**
+ * 存量迁移：清理历史遗留的 `official.config.toml` 空壳文件。
+ * 仅当文件是 officialLogin 空壳（无 model_provider / model_providers）时删除；
+ * 若用户曾撞名建过真实 apiKey/custom profile（含供应商 table），保留不动（不误删用户数据）。
+ * 返回是否发生清理。auth.json 全程不动。
+ */
+export function migrateLegacyOfficialLoginFile(): {removed: boolean} {
+	const legacyPath = codexProfilePath(CODEX_OFFICIAL_LOGIN_KEY);
+	if (!existsSync(legacyPath)) {
+		return {removed: false};
+	}
+
+	let isOfficialShell = true;
+	try {
+		const doc = parse(readFileSync(legacyPath, 'utf8'));
+		const modelProvider = getPath(doc, ['model_provider']);
+		const providers = getPath(doc, ['model_providers']);
+		if ((typeof modelProvider === 'string' && modelProvider !== '') || isRecord(providers)) {
+			isOfficialShell = false; // 真实供应商数据，保留
+		}
+	} catch {
+		// 解析失败视为损坏空壳，可清理
+	}
+
+	if (!isOfficialShell) {
+		return {removed: false};
+	}
+
+	try {
+		unlinkSync(legacyPath);
+	} catch {
+		return {removed: false};
+	}
+
+	return {removed: true};
 }
 
 /** 输出前统一脱敏，供调用层展示解析/保存失败信息时复用。 */

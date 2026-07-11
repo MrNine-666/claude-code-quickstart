@@ -2,7 +2,7 @@
 // 有 key 时使用官方 `codex --profile <key>`；无 key 时 plain `codex` 读取 base config。
 // 不写盘、不注入 ccq vault/env；Codex 自行读取 ~/.codex/profile TOML。
 
-import {codexProfileExists, safeCodexProfileKey} from '../../core/codex.js';
+import {codexProfileExists, isOfficialLoginKey, safeCodexProfileKey} from '../../core/codex.js';
 
 export type CodexRunner = (args: readonly string[]) => Promise<number>;
 
@@ -20,7 +20,8 @@ export async function runCx(
 	runCodex: CodexRunner = runCodexWithInheritedTty
 ): Promise<number> {
 	let args: string[] = [...passthrough];
-	if (name) {
+	// official login 虚拟条目无 profile 文件：codex 不认 `--profile official`，等价 plain codex 读 base config。
+	if (name && !isOfficialLoginKey(name)) {
 		let safe: string;
 		try {
 			safe = safeCodexProfileKey(name);

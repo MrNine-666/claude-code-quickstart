@@ -8,13 +8,18 @@ import {
 	codexProfileExists,
 	codexProfileKeyFromPath,
 	deleteCodexProfile,
+	isOfficialLoginActive,
+	isOfficialLoginKey,
 	listCodexProfiles,
+	migrateLegacyOfficialLoginFile,
 	parseCodexProfileToml,
 	redactCodexTomlForOutput,
+	resolveDefaultCodexProfileKey,
 	saveCodexProfile,
 	saveCodexProfileToml,
 	setDefaultCodexProfile,
-	testCodexProfileKey
+	testCodexProfileKey,
+	CODEX_OFFICIAL_LOGIN_KEY
 } from '../src/core/codex.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'ccq-codex-profile-'));
@@ -34,7 +39,10 @@ try {
 		'路径解析只取 basename，存储位置由 codexProfilePath/saveCodexProfile 负责限制在 ~/.codex 根');
 	assert.equal(testCodexProfileKey('../bad'), false, '拒绝路径穿越 key');
 	assert.equal(testCodexProfileKey('-bad'), false, '拒绝 - 开头 key');
-	console.log('[PASS] 1.9 Codex 官方 profile 机制：<key>.config.toml + 安全 key');
+	assert.equal(testCodexProfileKey('official'), false, '拒绝保留字 official（official login 虚拟条目专用）');
+	assert.equal(isOfficialLoginKey('official'), true, 'official 被识别为 official login 虚拟条目 key');
+	assert.equal(codexProfileExists('official'), false, 'official 虚拟条目无磁盘文件');
+	console.log('[PASS] 1.9 Codex 官方 profile 机制：<key>.config.toml + 安全 key + official 保留字');
 
 	// ── 1.10 provider 单一身份：只允许 key，禁独立 profileName/providerId/displayName ──
 	const identity = codexIdentityFromKey(key);
@@ -71,11 +79,10 @@ try {
 	assert.equal(parsed.hasApiKey, true);
 	console.log('[PASS] 5.5/5.6 Codex Provider 字段/TOML 双向同步 + API key 字段策略');
 
-	// ── 5.7 official login：不要求 API key，不写 provider table ──
-	const officialToml = buildCodexProfileToml({key: 'official', providerType: 'officialLogin', model: 'gpt-5'});
-	assert.match(officialToml, /model\s*=\s*"gpt-5"/, 'official login 可保存模型默认值');
-	assert.equal(officialToml.includes('model_providers'), false, 'official login 不要求 provider table/API key');
-	console.log('[PASS] 5.7 official login profile 不要求 API key');
+	// ── 5.7 official login：虚拟条目，不落盘，不接受 saveCodexProfile ──
+	assert.throws(() => saveCodexProfile({key: 'official', providerType: 'officialLogin'}),
+		/非法 Codex profile key/, 'official 保留字不可落盘为真实 profile');
+	console.log('[PASS] 5.7 official login 为虚拟条目，不落盘');
 
 	// ── 5.8 保存 profile：写 ~/.codex 根目录，不写 ccq vault/Claude provider ──
 	const saved = saveCodexProfile({
@@ -118,21 +125,43 @@ try {
 
 	// ── 5.9 删除 profile：当前默认拒绝删除，切换默认后可删除非默认 ──
 	assert.throws(() => deleteCodexProfile(key), /默认 Codex profile/, '默认 profile 删除前拒绝');
-	saveCodexProfile({key: 'official', providerType: 'officialLogin'});
+	// official login 虚拟条目激活：不落盘，清空 config.toml 供应商键；auth.json 存在即视为登录态。
+	writeFileSync(join(codexHome, 'auth.json'), '{"access_token":"secret"}', 'utf8');
 	setDefaultCodexProfile('official');
 	const officialBaseConfig = readFileSync(baseConfigPath, 'utf8');
-	assert.equal(officialBaseConfig.includes('[model_providers.deepseek]'), false, '切换默认时清理上一 provider table');
-	assert.equal(officialBaseConfig.includes(rawKey), false, '切换默认时清理上一 provider token');
-	writeFileSync(join(codexHome, 'auth.json'), '{"access_token":"secret"}', 'utf8');
+	assert.equal(officialBaseConfig.includes('[model_providers.deepseek]'), false, 'official 激活清理上一 provider table');
+	assert.equal(officialBaseConfig.includes(rawKey), false, 'official 激活清理上一 provider token');
+	assert.equal(existsSync(join(codexHome, 'official.config.toml')), false, 'official 激活不落盘 profile 文件');
+	// 默认态判定根治：official 激活后 isDefault/list 标记正确，旧版盲区已消除。
+	assert.equal(isOfficialLoginActive(), true, 'official 激活 + auth.json 存在 → isOfficialLoginActive=true');
+	assert.equal(resolveDefaultCodexProfileKey(), CODEX_OFFICIAL_LOGIN_KEY, '默认 key 解析为 official sentinel');
+	assert.equal(listCodexProfiles().find(item => item.key === 'official')?.isDefault, true, 'list 标记 official 为当前默认');
+	// 删除 official 虚拟条目 = 登出（清空 auth.json），不被「当前默认」保护拦截（登出即其本意）。
+	deleteCodexProfile('official');
+	assert.equal(existsSync(join(codexHome, 'auth.json')), false, '删除 official 虚拟条目 = 登出，清空 auth.json');
+	// 非默认真实 profile 删除不影响 auth.json（恢复 auth.json 后验证）。
+	writeFileSync(join(codexHome, 'auth.json'), '{"access_token":"secret2"}', 'utf8');
 	deleteCodexProfile(key);
 	assert.equal(codexProfileExists(key), false, '非默认 profile 可删除');
 	assert.equal(existsSync(join(codexHome, 'auth.json')), true, '删除 API-key profile 不应清空 auth.json');
 	saveCodexProfile({key: 'other', providerType: 'apiKey', baseUrl: 'https://api.example.com', apiKey: 'sk-other-token'});
 	setDefaultCodexProfile('other');
+	// official 未激活（auth.json 存在但默认指向 other）仍可被删除登出。
 	deleteCodexProfile('official');
-	assert.equal(codexProfileExists('official'), false, 'official login profile 可在非默认时删除');
-	assert.equal(existsSync(join(codexHome, 'auth.json')), false, '删除 official login profile 应同步清空 auth.json');
-	console.log('[PASS] 5.9 Codex profile 删除保护：默认拒绝，非默认可删除，official login 删除清空 auth.json');
+	assert.equal(existsSync(join(codexHome, 'auth.json')), false, '非激活态删除 official 仍登出清空 auth.json');
+	console.log('[PASS] 5.9 Codex profile 删除保护 + official 虚拟条目默认态根治（isDefault/list/登出）');
+
+	// ── 5.11 存量迁移：清理历史遗留 official.config.toml 空壳，保留真实供应商数据 ──
+	// 空壳（无 model_provider / model_providers）→ 清理。
+	writeFileSync(join(codexHome, 'official.config.toml'), '\n', 'utf8');
+	assert.equal(migrateLegacyOfficialLoginFile().removed, true, '空壳 official.config.toml 被清理');
+	assert.equal(existsSync(join(codexHome, 'official.config.toml')), false, '空壳文件已删除');
+	// 真实供应商数据（撞名为 official 的 apiKey profile）→ 保留不动。
+	writeFileSync(join(codexHome, 'official.config.toml'),
+		'model_provider = "official"\n[model_providers.official]\nname = "official"\nbase_url = "https://x"\n', 'utf8');
+	assert.equal(migrateLegacyOfficialLoginFile().removed, false, '撞名真实供应商 profile 不被误删');
+	assert.equal(existsSync(join(codexHome, 'official.config.toml')), true, '撞名 profile 文件保留');
+	console.log('[PASS] 5.11 official.config.toml 存量迁移：空壳清理 + 真实数据保留');
 
 	// ── 1.11 输出脱敏：raw key 不得出现在展示用文本 ──
 	assert.equal(redactCodexTomlForOutput(toml).includes(rawKey), false, '展示用 TOML 必须脱敏 raw key');

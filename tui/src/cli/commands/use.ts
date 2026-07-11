@@ -4,7 +4,7 @@
 // 与 `ccq cc` / `ccq cx` 明确区分：use 写盘；启动类不写盘。
 
 import { getProviderList, switchProvider } from '../../core/provider.js';
-import { codexProfileExists, safeCodexProfileKey, setDefaultCodexProfile } from '../../core/codex.js';
+import { codexProfileExists, isOfficialLoginKey, safeCodexProfileKey, setDefaultCodexProfile } from '../../core/codex.js';
 import { testProviderKey } from '../../core/text-utils.js';
 import { listProvidersForDisplay } from './ls.js';
 import type { ToolTarget } from '../argv.js';
@@ -44,6 +44,20 @@ function runClaudeUse(name: string): number {
 }
 
 function runCodexUse(name: string): number {
+	// official login 虚拟条目：无文件、不校验存在性，激活 = 清空 config.toml 供应商键回到登录态。
+	if (isOfficialLoginKey(name)) {
+		try {
+			setDefaultCodexProfile(name);
+			console.log('已切换默认为 official login（官方账号）。');
+			console.log('已清空 ~/.codex/config.toml 供应商键；如未登录请先运行 `codex login`。');
+			return 0;
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			console.error(`切换 official login 失败: ${msg}`);
+			return 1;
+		}
+	}
+
 	let safe: string;
 	try {
 		safe = safeCodexProfileKey(name);

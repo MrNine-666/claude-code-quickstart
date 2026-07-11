@@ -27,6 +27,7 @@ import {
 	buildCodexForm,
 	codexModelSummary,
 	codexProviderFormAdapter,
+	isCodexOfficialLoggedIn,
 	loadCodexProviderDisplay,
 	loadCodexProviderProfile,
 	readCodexProfileToml,
@@ -37,6 +38,7 @@ import {
 } from '../services/codex-service.js';
 import { validateProviderForm } from '../core/provider-form.js';
 import { validateCodexProviderForm, type CodexProviderFormModel, type CodexProviderFormValues } from '../core/codex-provider-form.js';
+import { isOfficialLoginKey } from '../core/codex.js';
 import type { ProviderDisplayData, ProviderDisplayProfile } from '../core/provider.js';
 import type { AgentContext } from '../state/manage-state.js';
 import { colors } from '../theme/index.js';
@@ -92,6 +94,8 @@ export function ProviderView({
 	const profiles = display.profiles;
 	const safeSelected = profiles.length === 0 ? 0 : Math.min(selected, profiles.length - 1);
 	const current = profiles[safeSelected] ?? null;
+	// Codex official login 虚拟条目：无文件、不可编辑，删除语义为「登出」（清 auth.json）。
+	const currentIsOfficial = isCodex && current ? isOfficialLoginKey(current.key) : false;
 
 	useEffect(() => {
 		const next = isCodex ? loadCodexProviderDisplay() : loadProviderDisplay();
@@ -126,10 +130,7 @@ export function ProviderView({
 	// 表单屏（add/edit 统一走 ProviderForm）：Claude 使用 JSON，Codex 使用真实 TOML adapter。
 	if (screen.kind === 'add') {
 		if (isCodex) {
-			const existingProfiles = profiles
-					.map(profile => loadCodexProviderProfile(profile.profilePath))
-					.filter((profile): profile is NonNullable<typeof profile> => profile !== null);
-				const model = buildCodexForm({mode: 'add', existingProfiles});
+				const model = buildCodexForm({mode: 'add'});
 			return (
 				<ProviderForm<CodexProviderFormInput, CodexProviderFormValues, CodexProviderFormModel>
 					model={model}
@@ -170,8 +171,9 @@ export function ProviderView({
 
 	if (screen.kind === 'edit' && current) {
 		if (isCodex) {
-			const profile = loadCodexProviderProfile(current.profilePath);
-			const rawToml = readCodexProfileToml(current.profilePath);
+			// official 虚拟条目 profilePath 为空串：用 sentinel key 取其静态 profile，rawToml 对 official 无意义（空串）。
+			const profile = loadCodexProviderProfile(currentIsOfficial ? current.key : current.profilePath);
+			const rawToml = currentIsOfficial ? '' : readCodexProfileToml(current.profilePath);
 				const model = buildCodexForm({ mode: 'edit', profileKey: current.key, profile, rawToml });
 			return (
 				<ProviderForm<CodexProviderFormInput, CodexProviderFormValues, CodexProviderFormModel>
@@ -249,16 +251,20 @@ export function ProviderView({
 			{screen.kind === 'confirm-delete' && current ? (
 				<Modal
 					active
-					title={current.isActive ? '禁止删除活跃供应商' : '确认删除供应商'}
+					title={currentIsOfficial
+						? '确认登出官方账号'
+						: current.isActive ? '禁止删除活跃供应商' : '确认删除供应商'}
 					hint="Enter 确认  Esc 取消"
 					tone="danger"
 					viewportWidth={viewportWidth}
 					viewportHeight={viewportHeight}
 				>
 					<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-						{current.isActive
-							? `${current.key} 是当前活跃供应商，删除前请先切换到其他供应商。`
-							: `即将删除供应商 ${current.key}，此操作不可撤销。`}
+						{currentIsOfficial
+							? '将清空 ~/.codex/auth.json 登出 Codex 官方账号，此操作不可撤销。'
+							: current.isActive
+								? `${current.key} 是当前活跃供应商，删除前请先切换到其他供应商。`
+								: `即将删除供应商 ${current.key}，此操作不可撤销。`}
 					</text>
 				</Modal>
 			) : null}
@@ -273,6 +279,13 @@ export function ProviderView({
 						return;
 					}
 
+					// official login 未登录前置提示：凭据由 codex login 生成，ccq 不写入 auth.json。
+					// 切换动作本身仍会执行（清空 config.toml 供应商键），但未登录时 codex 无凭据可用，
+					// 故先 toast 警告并引导用户运行 codex login，避免"切了看起来没反应"的困惑。
+					if (isCodex && currentIsOfficial && !isCodexOfficialLoggedIn()) {
+						toast.warning('official login 未登录，请先运行 codex login 完成官方账号登录');
+					}
+
 					const result = isCodex ? switchActiveCodexProvider(current.key) : switchActiveProvider(current.key);
 					if (result.ok) {
 						refresh();
@@ -285,9 +298,12 @@ export function ProviderView({
 					setScreen({ kind: 'add' });
 				}}
 				onEdit={() => {
-					if (current) {
-						setScreen({ kind: 'edit', key: current.key });
+					if (!current) {
+						return;
 					}
+
+					// official login 编辑态 = 直接编辑 ~/.codex/auth.json 明文（含登出）；其余 provider 走 TOML 编辑。
+					setScreen({ kind: 'edit', key: current.key });
 				}}
 				onDelete={() => {
 					if (current) {
@@ -307,7 +323,7 @@ export function ProviderView({
 						return;
 					}
 
-					if (current.isActive) {
+					if (!currentIsOfficial && current.isActive) {
 						toast.error(`无法删除当前活跃供应商 ${current.key}，请先切换到其他供应商。`);
 						setScreen({ kind: 'list' });
 						return;
@@ -316,7 +332,7 @@ export function ProviderView({
 					const result = isCodex ? removeCodexProvider(current.key) : removeProvider(current.key);
 					refresh();
 					if (result.ok) {
-						toast.success(`已删除供应商：${current.key}`);
+						toast.success(currentIsOfficial ? '已登出 Codex 官方账号' : `已删除供应商：${current.key}`);
 					} else {
 						toast.error(result.error);
 					}

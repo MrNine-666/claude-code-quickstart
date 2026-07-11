@@ -36,7 +36,8 @@ const {
 	switchActiveCodexProvider,
 	removeCodexProvider,
 	buildCodexForm,
-	codexProviderFormAdapter
+	codexProviderFormAdapter,
+	loadCodexProviderProfile
 } = await import('../src/services/codex-service.ts');
 
 const providerViewSource = readFileSync(new URL('../src/views/provider-view.tsx', import.meta.url), 'utf8');
@@ -152,7 +153,10 @@ mkdirSync(codexClaudeDir, {recursive: true});
 writeFileSync(codexSettingsPath, JSON.stringify({...USER_OWNED, env: {ANTHROPIC_AUTH_TOKEN: 'sk-keep-claude'}}, null, 2), 'utf8');
 
 let codexDisplay = loadCodexProviderDisplay();
-assert.equal(codexDisplay.profiles.length, 0, 'Codex 初始不读取 Claude provider');
+// official login 虚拟条目恒定存在（不落盘）；初始无真实 profile → 仅这一个虚拟条目，且不读 Claude provider。
+assert.equal(codexDisplay.profiles.length, 1, 'Codex 初始仅含 official login 虚拟条目');
+assert.equal(codexDisplay.profiles[0].key, 'official', 'Codex 初始条目为 official 虚拟条目');
+assert.equal(codexDisplay.profiles.some(p => p.authToken === 'sk-keep-claude'), false, 'Codex 不读取 Claude provider token');
 
 const codexModel = buildCodexForm({mode: 'add', providerType: 'custom'});
 const codexValues = {
@@ -191,39 +195,88 @@ assert.equal(existsSync(join(process.env.CODEX_HOME, 'deepseek.config.toml')), t
 assert.equal(existsSync(join(codexHome, '.claude', 'providers', 'deepseek.json')), false, 'Codex profile 不写 Claude providers');
 
 codexDisplay = loadCodexProviderDisplay();
-assert.equal(codexDisplay.profiles.length, 1, 'Codex display 只列 Codex profile');
+// deepseek 真实 profile + official 虚拟条目 = 2 条；真实 profile 排在虚拟条目前。
+assert.equal(codexDisplay.profiles.length, 2, 'Codex display 列出真实 profile + official 虚拟条目');
 assert.equal(codexDisplay.profiles[0].key, 'deepseek', 'Codex display 使用 key 作为身份');
 assert.equal(codexDisplay.profiles[0].isActive, true, 'activateAfterSave 设置默认 Codex profile');
+assert.equal(codexDisplay.profiles.some(p => p.key === 'official'), true, 'official 虚拟条目恒定在列');
 assert.equal(JSON.parse(readFileSync(codexSettingsPath, 'utf8')).env.ANTHROPIC_AUTH_TOKEN, 'sk-keep-claude', 'Codex service 不改 Claude settings');
 
+// official login 是虚拟条目：保存不落盘，activateAfterSave=false 时纯 no-op（仅返回虚拟形态）。
 const official = saveCodexProviderForm({mode: 'add', providerType: 'officialLogin'}, {
 	...buildCodexForm({mode: 'add', providerType: 'officialLogin'}).values,
-	profileKey: 'official',
-	providerType: 'officialLogin',
-	model: 'gpt-5',
 	activateAfterSave: false
 });
-assert.equal(official.ok, true, 'official login Codex profile 不要求 API key');
-const duplicateOfficial = saveCodexProviderForm({mode: 'add', providerType: 'officialLogin'}, {
+assert.equal(official.ok, true, 'official login 保存成功（虚拟条目，不落盘）');
+assert.equal(official.ok ? official.data.key : '', 'official', 'official login 返回 sentinel key');
+assert.equal(existsSync(join(process.env.CODEX_HOME, 'official.config.toml')), false, 'official login 保存不落盘 profile 文件');
+// 结构性单例：无需重复守卫，再次保存幂等成功（不再产生 official2 之类真实文件）。
+const officialAgain = saveCodexProviderForm({mode: 'add', providerType: 'officialLogin'}, {
 	...buildCodexForm({mode: 'add', providerType: 'officialLogin'}).values,
-	profileKey: 'official2',
-	providerType: 'officialLogin',
-	model: 'gpt-5',
 	activateAfterSave: false
 });
-assert.equal(duplicateOfficial.ok, false, 'official login Codex profile 已存在时不得重复新增');
-assert.match(duplicateOfficial.ok ? '' : duplicateOfficial.error, /已存在 official login Codex profile/, '重复新增 official login 应提示用户先删除旧 profile');
+assert.equal(officialAgain.ok, true, 'official login 再次保存幂等成功（结构性单例，无重复守卫）');
 writeFileSync(join(process.env.CODEX_HOME, 'auth.json'), '{"access_token":"secret"}', 'utf8');
 const switched = switchActiveCodexProvider('official');
 assert.equal(switched.ok, true, 'Codex official-login set default 应成功');
-assert.equal(loadCodexProviderDisplay().profiles.some(profile => profile.key === 'official'), true, 'Codex display 保留 official-login profile');
+assert.equal(loadCodexProviderDisplay().activeKey, 'official', 'official 激活后 display 标记 official 为默认（盲区根治）');
 const switchBack = switchActiveCodexProvider('deepseek');
 assert.equal(switchBack.ok, true, 'Codex API-key set default 应成功');
 assert.equal(loadCodexProviderDisplay().activeKey, 'deepseek', 'Codex display 标记 API-key 默认 profile');
 const remove = removeCodexProvider('official');
-assert.equal(remove.ok, true, '非默认 Codex profile 可删除');
-assert.equal(existsSync(join(process.env.CODEX_HOME, 'auth.json')), false, '删除 official login profile 应同步清空 auth.json');
-console.log('[PASS] 6.1/6.2/6.3 Codex Provider service 路径隔离 + TOML adapter + official login 单例/清理');
+assert.equal(remove.ok, true, 'official 虚拟条目删除 = 登出，返回成功');
+assert.equal(existsSync(join(process.env.CODEX_HOME, 'auth.json')), false, '删除 official 虚拟条目应清空 auth.json（登出）');
+console.log('[PASS] 6.1/6.2/6.3 Codex Provider service 路径隔离 + TOML adapter + official 虚拟条目激活/登出');
+
+// ── 编辑活跃 profile 必须同步 config.toml（否则子文件已改、config.toml 停留旧值）──
+const syncBase = buildCodexForm({mode: 'add', providerType: 'custom'});
+const syncAdd = saveCodexProviderForm({mode: 'add', providerType: 'custom'}, {
+	...syncBase.values,
+	profileKey: 'synctest',
+	providerType: 'custom',
+	baseUrl: 'https://api.sync.example.com',
+	model: 'model-old',
+	apiKey: 'sk-sync-token',
+	activateAfterSave: true
+});
+assert.equal(syncAdd.ok, true, 'synctest profile 新增并激活应成功');
+const configPath = join(process.env.CODEX_HOME, 'config.toml');
+assert.match(readFileSync(configPath, 'utf8'), /model\s*=\s*"model-old"/, '激活后 config.toml 写入初始 model');
+
+// 编辑活跃 profile 的 model → 子文件与 config.toml 都应更新为新值。
+// rawToml 必传（含 bearer token），与视图层 readCodexProfileToml 调用方式一致。
+const syncRawToml = readFileSync(join(process.env.CODEX_HOME, 'synctest.config.toml'), 'utf8');
+const syncEditModel = buildCodexForm({mode: 'edit', profileKey: 'synctest', profile: loadCodexProviderProfile(join(process.env.CODEX_HOME, 'synctest.config.toml')), rawToml: syncRawToml});
+const editedToml = syncEditModel.values.toml.replace(/model-old/g, 'model-new');
+const syncEdit = saveCodexProviderForm(
+	{mode: 'edit', profileKey: 'synctest', providerType: 'custom'},
+	{...syncEditModel.values, model: 'model-new', toml: editedToml}
+);
+assert.equal(syncEdit.ok, true, '编辑活跃 profile 应成功');
+assert.match(readFileSync(join(process.env.CODEX_HOME, 'synctest.config.toml'), 'utf8'), /model\s*=\s*"model-new"/, '子文件 model 已更新');
+assert.match(readFileSync(configPath, 'utf8'), /model\s*=\s*"model-new"/, '编辑活跃 profile 必须同步刷新 config.toml 的 model');
+assert.equal(/model-old/.test(readFileSync(configPath, 'utf8')), false, 'config.toml 不得残留旧 model 值');
+
+// 编辑非活跃 profile 不应触碰 config.toml（仍指向活跃 provider）。
+const inactiveAdd = saveCodexProviderForm({mode: 'add', providerType: 'custom'}, {
+	...syncBase.values,
+	profileKey: 'inactive',
+	providerType: 'custom',
+	baseUrl: 'https://api.inactive.example.com',
+	model: 'inactive-model',
+	apiKey: 'sk-inactive-token',
+	activateAfterSave: false
+});
+assert.equal(inactiveAdd.ok, true, 'inactive profile 新增（不激活）应成功');
+const inactiveRawToml = readFileSync(join(process.env.CODEX_HOME, 'inactive.config.toml'), 'utf8');
+const inactiveEditModel = buildCodexForm({mode: 'edit', profileKey: 'inactive', profile: loadCodexProviderProfile(join(process.env.CODEX_HOME, 'inactive.config.toml')), rawToml: inactiveRawToml});
+saveCodexProviderForm(
+	{mode: 'edit', profileKey: 'inactive', providerType: 'custom'},
+	{...inactiveEditModel.values, model: 'inactive-changed', toml: inactiveEditModel.values.toml.replace(/inactive-model/g, 'inactive-changed')}
+);
+assert.match(readFileSync(configPath, 'utf8'), /model\s*=\s*"model-new"/, '编辑非活跃 profile 不改 config.toml（仍指向活跃 synctest）');
+assert.equal(/inactive-changed/.test(readFileSync(configPath, 'utf8')), false, 'config.toml 不得被非活跃 profile 编辑污染');
+console.log('[PASS] 6.1b 编辑活跃 Codex profile 同步 config.toml（非活跃不污染）');
 
 delete process.env.CODEX_HOME;
 
