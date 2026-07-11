@@ -340,17 +340,34 @@ function toolsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	}
 
 	if (subMode === 'confirm-uninstall') {
-		return manualShortcuts([{key: 'Enter', label: '确认卸载'}, {key: 'Esc', label: '取消'}]);
+		return manualShortcuts([{key: 'Enter', label: '确认全量卸载'}, {key: 'Esc', label: '取消'}]);
 	}
 
+	if (subMode === 'select-inject-target') {
+		return buildShortcuts([
+			{command: TOOLS_COMMANDS.UP, label: '选择'},
+			{command: TOOLS_COMMANDS.DOWN, label: '选择'},
+			{command: TOOLS_COMMANDS.INJECT_TARGET_TOGGLE, label: '切换开/关'},
+			{command: TOOLS_COMMANDS.INJECT_TARGET_CONFIRM, label: '应用'},
+			{command: TOOLS_COMMANDS.INJECT_TARGET_CANCEL, label: '取消'}
+		]);
+	}
+
+	// 单义键（无多义 Enter）：inject 类光标展示「m 管理开关」；非 inject 展示「i 安装」。
+	// 两者互斥（一个工具要么可安装要么是 inject 类），footer 同一时刻只展示其一。
+	const primaryShortcut: ShortcutSpec = subMode === 'grid-inject'
+		? {command: TOOLS_COMMANDS.MANAGE_INJECT, label: '管理开关'}
+		: {command: TOOLS_COMMANDS.INSTALL, label: '安装'};
 	return buildShortcuts([
 		{command: TOOLS_COMMANDS.UP, label: '选择'},
 		{command: TOOLS_COMMANDS.DOWN, label: '选择'},
 		{command: TOOLS_COMMANDS.LEFT, label: '选择'},
 		{command: TOOLS_COMMANDS.RIGHT, label: '选择'},
-		{command: TOOLS_COMMANDS.INSTALL_OR_UPDATE, label: '安装/更新'},
+		primaryShortcut,
+		{command: TOOLS_COMMANDS.UPDATE_ONE, label: '更新'},
 		{command: TOOLS_COMMANDS.UPDATE_ALL, label: '更新全部'},
-		{command: TOOLS_COMMANDS.UNINSTALL, label: '卸载'},
+		{command: TOOLS_COMMANDS.UNINSTALL, label: '全量卸载'},
+		{command: TOOLS_COMMANDS.OPEN_DOCS, label: '打开文档'},
 		{command: TOOLS_COMMANDS.REFRESH, label: '重新检测'},
 		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}
 	]);

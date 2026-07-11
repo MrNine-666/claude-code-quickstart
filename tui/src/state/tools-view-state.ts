@@ -1,14 +1,13 @@
-import type {ComponentId, ManagedComponent} from '../core/tools-manage.js';
+import type {ComponentId, ManagedComponent, SharedManagedComponent} from '../core/tools-manage.js';
 import type {ProgressLevel} from '../core/exec.js';
+import type {AgentContext} from './manage-state.js';
+import {AGENT_CONTEXT_ORDER} from './manage-state.js';
 
-// 工具管理视图状态机（Phase 11D，design TDR-11）：合并工具安装 + 检查更新为单一全生命周期菜单。
-// grid 卡片范式 + 2D 导航 + 一键批量更新 + 卸载强确认 + per-item install/update/uninstall busy。
-// 只负责 UI 模式/光标/确认词/进度/通知的有界迁移，副作用（exec 调用）由组件层执行后回填。
-// 检测状态由 detection runner 单独管理，组件以 props/state 注入，不混入此处。
+// 工具管理视图状态机：grid + 单侧 inject 目标选择 + 全量卸载确认 + per-item busy。
+// 副作用（exec）由视图层执行后回填；检测由 App 层 cache 注入。
 
-// 网格布局：卡宽固定，列数随终端宽度自适应；导航 delta 跟随列数，避免视觉/语义错位。
-// CARD_WIDTH=28（内宽 24）：容纳「● 版本号 · 无法检测更新」等长状态行，80 列退化 1 列、宽终端多列。
-export const CARD_WIDTH = 28;
+// CARD_WIDTH=44：容纳标题行右上角状态/版本 + 描述文档链接 + 双态徽章行；列数随终端宽度自适应。
+export const CARD_WIDTH = 44;
 export const CARD_GAP = 1;
 
 /** 根据内容区可用宽度计算网格列数（至少 1 列）。 */
@@ -20,15 +19,14 @@ export function computeColumns(contentWidth: number): number {
 }
 
 export type ToolsViewMode =
-	| 'grid' // 卡片网格浏览
-	| 'confirm-uninstall' // 卸载强确认（Enter 确认 / Esc 取消）
-	| 'busy'; // 异步安装/更新/卸载进行中
+	| 'grid'
+	| 'select-inject-target'
+	| 'confirm-uninstall'
+	| 'busy';
 
-/** 单卡片执行态（idle = 未在操作）。进行时态触发 loading 圆点。 */
 export type ComponentAction = 'install' | 'update' | 'uninstall';
 export type ComponentItemStatus = 'idle' | 'installing' | 'updating' | 'uninstalling';
 
-/** 动作 → 进行时态（itemStatus 存储）。 */
 function progressTense(action: ComponentAction): ComponentItemStatus {
 	switch (action) {
 		case 'install':
@@ -42,7 +40,6 @@ function progressTense(action: ComponentAction): ComponentItemStatus {
 	}
 }
 
-/** 进行时态集合（isAnyBusy 判定用）。 */
 const PROGRESS_STATUSES = new Set<ComponentItemStatus>(['installing', 'updating', 'uninstalling']);
 
 export type ToolsViewState = {
@@ -54,24 +51,33 @@ export type ToolsViewState = {
 	readonly itemError: Readonly<Record<string, string>>;
 	readonly busyAction?: ComponentAction;
 	readonly uninstallTarget?: ComponentId;
+	/** select-inject-target：0=Claude Code, 1=Codex */
+	readonly injectTargetIndex: number;
+	/** Modal 内草稿开关状态：进入 Modal 时复制 injectByAgent 的 integrated 快照，空格切换、Enter 应用前不落盘。 */
+	readonly injectDraft?: Readonly<Record<AgentContext, boolean>>;
 	readonly errorText?: string;
 	readonly progressByComponent: Readonly<Record<string, string>>;
 	readonly progressLevelByComponent: Readonly<Record<string, ProgressLevel>>;
 };
 
-/** 单 item 完成时的局部字段补丁（就地更新对应 component，不整页重检测/强刷）。 */
 export type ComponentPatch = {
 	readonly installed?: boolean;
 	readonly currentVersion?: string;
 	readonly latestVersion?: string;
 	readonly hasUpdate?: boolean | null;
 	readonly statusHint?: string;
+	readonly sharedInstalled?: boolean;
+	readonly sharedVersion?: string;
+	readonly injectByAgent?: SharedManagedComponent['injectByAgent'];
 };
 
 export type ToolsViewAction =
 	| {readonly type: 'components-loaded'; readonly components: readonly ManagedComponent[]}
 	| {readonly type: 'detection-error'; readonly error: string}
 	| {readonly type: 'nav'; readonly delta: number}
+	| {readonly type: 'open-inject-target'; readonly draft: Readonly<Record<AgentContext, boolean>>}
+	| {readonly type: 'inject-target-nav'; readonly delta: number}
+	| {readonly type: 'inject-target-toggle'}
 	| {readonly type: 'request-uninstall'}
 	| {readonly type: 'confirm-uninstall'}
 	| {readonly type: 'cancel'}
@@ -92,24 +98,22 @@ export function createInitialToolsViewState(): ToolsViewState {
 		cursor: 0,
 		itemStatus: {},
 		itemError: {},
+		injectTargetIndex: 0,
 		progressByComponent: {},
 		progressLevelByComponent: {}
 	};
 }
 
-/** 当前光标组件。 */
 export function cursorComponent(state: ToolsViewState): ManagedComponent | undefined {
 	return state.components[state.cursor];
 }
 
-/** 当前可更新（hasUpdate === true）且非进行中的组件，用于一键更新。 */
 export function updatableComponents(state: ToolsViewState): readonly ManagedComponent[] {
 	return state.components.filter(
 		component => component.hasUpdate === true && !PROGRESS_STATUSES.has(state.itemStatus[component.id] ?? 'idle')
 	);
 }
 
-/** 是否有任意组件正在执行（用于禁用并发触发）。 */
 export function isAnyBusy(state: ToolsViewState): boolean {
 	if (state.mode === 'busy') {
 		return true;
@@ -122,7 +126,18 @@ export function itemStatusOf(state: ToolsViewState, id: string): ComponentItemSt
 	return state.itemStatus[id] ?? 'idle';
 }
 
-/** 进行时态 → 中文动作标签（无进度消息时的兜底显示）。 */
+export function injectTargetContext(state: ToolsViewState): AgentContext {
+	return state.injectTargetIndex === 1 ? 'cx' : 'cc';
+}
+
+/** 从组件双侧 inject 快照构造 Modal 初始草稿（integrated → 开）。 */
+export function initialInjectDraft(component: SharedManagedComponent): Record<AgentContext, boolean> {
+	return {
+		cc: Boolean(component.injectByAgent?.cc?.integrated),
+		cx: Boolean(component.injectByAgent?.cx?.integrated)
+	};
+}
+
 function actionTenseLabel(status: ComponentItemStatus): string {
 	switch (status) {
 		case 'installing':
@@ -136,7 +151,6 @@ function actionTenseLabel(status: ComponentItemStatus): string {
 	}
 }
 
-/** 活跃任务列表：遍历进行中的组件，每个一项（组件名 + 最新进度 + level），完成（离开进行时态）自动消失、下方上移补齐。 */
 export function activeProgressTasks(state: ToolsViewState): readonly {readonly id: string; readonly name: string; readonly message: string; readonly level: ProgressLevel}[] {
 	return state.components
 		.filter(component => PROGRESS_STATUSES.has(state.itemStatus[component.id] ?? 'idle'))
@@ -151,22 +165,34 @@ export function activeProgressTasks(state: ToolsViewState): readonly {readonly i
 		});
 }
 
-/** 把 patch 应用到对应 id 的 component，返回新数组（未命中则原样返回）。 */
 function patchComponent(components: readonly ManagedComponent[], id: ComponentId, patch: ComponentPatch): readonly ManagedComponent[] {
 	const before = components.find(component => component.id === id);
 	if (!before) {
 		return components;
 	}
 
-	const patched: ManagedComponent = {
-		...before,
-		installed: patch.installed ?? before.installed,
-		currentVersion: patch.currentVersion ?? before.currentVersion,
-		latestVersion: patch.latestVersion ?? before.latestVersion,
-		hasUpdate: patch.hasUpdate ?? before.hasUpdate,
-		statusHint: patch.statusHint ?? before.statusHint
-	};
+	const beforeShared = before as SharedManagedComponent;
+	const patched = {
+		...beforeShared,
+		installed: patch.installed ?? beforeShared.installed,
+		currentVersion: patch.currentVersion ?? beforeShared.currentVersion,
+		latestVersion: patch.latestVersion ?? beforeShared.latestVersion,
+		hasUpdate: patch.hasUpdate ?? beforeShared.hasUpdate,
+		statusHint: patch.statusHint ?? beforeShared.statusHint,
+		sharedInstalled: patch.sharedInstalled ?? beforeShared.sharedInstalled,
+		sharedVersion: patch.sharedVersion ?? beforeShared.sharedVersion,
+		injectByAgent: patch.injectByAgent ?? beforeShared.injectByAgent
+	} as ManagedComponent;
 	return components.map(component => (component.id === id ? patched : component));
+}
+
+function canRequestUninstall(component: ManagedComponent): boolean {
+	const shared = component as SharedManagedComponent;
+	if (shared.sharingKind === 'shared-cli-per-agent-inject') {
+		const hasInject = Boolean(shared.injectByAgent && Object.values(shared.injectByAgent).some(s => s.integrated));
+		return component.installed || shared.sharedInstalled || hasInject;
+	}
+	return component.installed;
 }
 
 export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAction): ToolsViewState {
@@ -185,9 +211,51 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 		case 'nav':
 			return {...state, cursor: clamp(state.cursor + action.delta, state.components.length)};
 
+		case 'open-inject-target': {
+			const current = cursorComponent(state) as SharedManagedComponent | undefined;
+			if (!current) {
+				return state;
+			}
+			// 进入 Modal 用当前实际注入态初始化草稿；空格切换草稿，Enter 前不落盘。
+			const inject = current.injectByAgent;
+			return {
+				...state,
+				mode: 'select-inject-target',
+				injectTargetIndex: 0,
+				injectDraft: {
+					cc: Boolean(inject?.cc?.integrated),
+					cx: Boolean(inject?.cx?.integrated)
+				},
+				errorText: undefined
+			};
+		}
+
+		case 'inject-target-nav': {
+			if (state.mode !== 'select-inject-target') {
+				return state;
+			}
+			// 上下选择首尾相接（loop）：两侧（Claude Code / Codex）循环，避免边界卡死。
+			const targetCount = AGENT_CONTEXT_ORDER.length;
+			return {
+				...state,
+				injectTargetIndex: (state.injectTargetIndex + action.delta + targetCount) % targetCount
+			};
+		}
+
+		case 'inject-target-toggle': {
+			if (state.mode !== 'select-inject-target' || !state.injectDraft) {
+				return state;
+			}
+			const target = state.injectTargetIndex === 1 ? 'cx' : 'cc';
+			return {
+				...state,
+				injectDraft: {...state.injectDraft, [target]: !state.injectDraft[target]}
+			};
+		}
+
 		case 'request-uninstall': {
 			const current = cursorComponent(state);
-			if (!current || !current.installed) {
+			if (!current || !canRequestUninstall(current)) {
 				return {...state, errorText: '该组件未安装，无需卸载'};
 			}
 
@@ -229,6 +297,8 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				mode: 'grid',
 				busyAction: undefined,
 				uninstallTarget: undefined,
+				injectTargetIndex: 0,
+				injectDraft: undefined,
 				loaded: true,
 				components: action.components,
 				itemStatus: {...state.itemStatus, [action.id]: 'idle'},
@@ -242,6 +312,8 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				mode: 'grid',
 				busyAction: undefined,
 				uninstallTarget: undefined,
+				injectTargetIndex: 0,
+				injectDraft: undefined,
 				components: patchComponent(state.components, action.id, action.patch),
 				itemStatus: {...state.itemStatus, [action.id]: 'idle'},
 				itemError: omit(state.itemError, action.id),
@@ -256,9 +328,11 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				mode: 'grid',
 				busyAction: undefined,
 				uninstallTarget: undefined,
+				injectTargetIndex: 0,
+				injectDraft: undefined,
 				loaded: action.components !== undefined,
 				components: action.components ?? state.components,
-				itemStatus: omit(state.itemStatus, action.id), // 失败后清除状态，允许重试
+				itemStatus: omit(state.itemStatus, action.id),
 				itemError: {...state.itemError, [action.id]: action.error},
 				progressByComponent: omit(state.progressByComponent, action.id),
 				progressLevelByComponent: omit(state.progressLevelByComponent, action.id),
@@ -323,6 +397,14 @@ function cancel(state: ToolsViewState): ToolsViewState {
 				...state,
 				mode: 'grid',
 				uninstallTarget: undefined,
+				errorText: undefined
+			};
+		case 'select-inject-target':
+			return {
+				...state,
+				mode: 'grid',
+				injectTargetIndex: 0,
+				injectDraft: undefined,
 				errorText: undefined
 			};
 		default:

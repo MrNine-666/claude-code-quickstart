@@ -127,6 +127,13 @@ export default function App({ initialThemeMode }: AppProps) {
 		}
 	}, [state.selectedIndex]);
 
+	// Tools 模块不渲染 Header：残留 header 焦点强制回 view。
+	useEffect(() => {
+		if (displayMenuId === 'tools' && state.focus === 'header') {
+			setState(current => ({...current, focus: 'view'}));
+		}
+	}, [displayMenuId, state.focus]);
+
 	// 初始化 Tree-sitter 语法高亮（Phase 5B.1），配色随终端 dark/light 主题重建。
 	const [syntaxStyle, setSyntaxStyle] = useState<SyntaxStyle | null>(null);
 	useEffect(() => {
@@ -292,14 +299,17 @@ export default function App({ initialThemeMode }: AppProps) {
 		setState(current => reduceManageState(current, keyName));
 	}, !ownsViewInput);
 
-	const navActive = state.focus === 'nav';
-	const headerActive = state.focus === 'header';
+	const toolsModuleActive = displayMenuId === 'tools';
+	const effectiveFocus = toolsModuleActive && state.focus === 'header' ? 'view' : state.focus;
+	const navActive = effectiveFocus === 'nav';
+	const headerActive = effectiveFocus === 'header' && !toolsModuleActive;
 
 	const sidebarInnerWidth = SIDEBAR_WIDTH - 4;
-	const activeFooterShortcuts = footerShortcuts(state.focus, state.selectedIndex === menuItems.length, displayMenuId, viewSubMode);
+	const activeFooterShortcuts = footerShortcuts(effectiveFocus, state.selectedIndex === menuItems.length, displayMenuId, viewSubMode);
 	const footerRows = shortcutBarRows(activeFooterShortcuts, contentWidth);
-	// 外层布局由 flex 自动分配高度；这里仅给各视图内部 scrollbox/textarea 一个同步的高度估算。
-	const rightReservedRows = RIGHT_CARD_FRAME_ROWS + AGENT_HEADER_ROWS + CONTENT_DIVIDER_ROWS + footerRows;
+	// Tools 隐藏 Header 时不预留 Header 行。
+	const headerRows = toolsModuleActive ? 0 : AGENT_HEADER_ROWS;
+	const rightReservedRows = RIGHT_CARD_FRAME_ROWS + headerRows + CONTENT_DIVIDER_ROWS + footerRows;
 	const contentViewportHeight = Math.max(1, terminalHeight - rightReservedRows);
 
 	// 双卡片双层布局：
@@ -389,17 +399,18 @@ export default function App({ initialThemeMode }: AppProps) {
 
 					{/* 右侧区域：Header 独立固定行，content 卡片占满剩余空间 */}
 					<box flexDirection="column" flexGrow={1} minWidth={0}>
-						{/* Agent 上下文 Header（全称切换 Claude Code / Codex，不展示 cc/cx 缩写） */}
-						<AgentHeader agentContext={state.agentContext} active={headerActive} />
+						{toolsModuleActive ? null : (
+							<AgentHeader agentContext={state.agentContext} active={headerActive} />
+						)}
 
 						<box
 							flexDirection="column"
 							flexGrow={1}
 							flexShrink={1}
 							minHeight={1}
-							borderStyle={state.focus === 'view' ? borderStyles.active : borderStyles.inactive}
-							borderColor={state.focus === 'view' ? borderColors.active : borderColors.inactive}
-							customBorderChars={state.focus === 'view' ? activeBorderChars : undefined}
+							borderStyle={effectiveFocus === 'view' ? borderStyles.active : borderStyles.inactive}
+							borderColor={effectiveFocus === 'view' ? borderColors.active : borderColors.inactive}
+							customBorderChars={effectiveFocus === 'view' ? activeBorderChars : undefined}
 							paddingX={1}
 						>
 							{/* 内容视图区域 */}
@@ -409,7 +420,7 @@ export default function App({ initialThemeMode }: AppProps) {
 									agentContext={state.agentContext}
 									viewportHeight={contentViewportHeight}
 									contentWidth={contentWidth}
-									active={state.focus === 'view'}
+									active={effectiveFocus === 'view'}
 									skillsViewServices={skillsViewServices}
 									skillsCache={skillsCache}
 									toolsViewServices={toolsViewServices}
@@ -648,9 +659,8 @@ function updateDialogContent(screen: UpdateScreen): { readonly title: string; re
 				title: '发现新版本',
 				body: (
 					<box flexDirection="column">
-						<text fg={PRIMARY} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>发现新版本</text>
-						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  当前 v${CCQ_VERSION}`}</text>
-						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  最新 v${screen.version}`}</text>
+						<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  当前 v${CCQ_VERSION}`}</text>
+						<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  最新 v${screen.version}`}</text>
 					</box>
 				),
 				hint: 'Enter 更新  Esc 取消'
@@ -787,7 +797,7 @@ function ModuleContent({
 		case 'config':
 			return <ConfigView agentContext={agentContext} active={active} viewportHeight={viewportHeight} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} syntaxStyle={syntaxStyle} />;
 		case 'tools':
-			return <ToolsView services={toolsViewServices} cache={toolsCache} agentContext={agentContext} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} contentWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} />;
+			return <ToolsView services={toolsViewServices} cache={toolsCache} agentContext={agentContext} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} contentWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
 		default:
 			// 兜底：显示模块信息
 			const item = menuItems.find(menuItem => menuItem.id === moduleId);

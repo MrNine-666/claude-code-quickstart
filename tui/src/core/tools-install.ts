@@ -7,9 +7,13 @@ import {codeGraphInstallCommands, ccgWorkflowInstallCommands} from './tools-life
 import {hasCodeGraphIntegration, hasCodexCcgWorkflowMode, readCodexCcgWorkflowVersion} from './tools-integrations.js';
 import {refreshNpmGlobalBinPath} from './npm-path.js';
 
-// 工具安装 core：检测 + 安装 6 个进阶工具（Ccline / CcgWorkflow / OpenSpec / CodeGraph / CodexCli / AntigravityCli）。
+// 工具安装 core：受管 agent/工具的 registry（单一真理源）+ 安装原语（内部实现层）。
+// 与 tools-manage.ts（门面/编排层）同属一个逻辑模块「tools 域」，仅按体量分文件（避免 1200 行巨文件）。
+// registry 收编全部平级 agent 与工具（ClaudeCode 与 CodexCli/AntigravityCli 平权，不再特殊化）：
+//   ClaudeCode / CodexCli / AntigravityCli 为主 agent，其余为伴随/三方工具。
 // 全部经 core/exec.ts 的 execCommand spawn 外部命令（HC-TUI-NODE-ONLY），不调 PS/zsh 步骤函数。
 // 安装命令矩阵对齐 installer 步骤（design TDR-5）：
+//   ClaudeCode   npm install -g @anthropic-ai/claude-code + 检测确认
 //   Ccline       npm install -g @cometix/ccline + settings.json statusLine（仅补缺失）
 //   CcgWorkflow  npx ccg-workflow@latest init --skip-prompt --skip-mcp + mcpServers 快照保护
 //   OpenSpec/CodexCli  npm install -g
@@ -19,11 +23,11 @@ import {refreshNpmGlobalBinPath} from './npm-path.js';
 
 type JsonObject = Record<string, unknown>;
 
-export type ToolId = 'Ccline' | 'CcgWorkflow' | 'OpenSpec' | 'CodeGraph' | 'CodexCli' | 'AntigravityCli';
+export type ToolId = 'ClaudeCode' | 'Ccline' | 'CcgWorkflow' | 'OpenSpec' | 'CodeGraph' | 'CodexCli' | 'AntigravityCli';
 
 export type ToolInstallKind = 'npm' | 'ccg-init' | 'shell-script';
 
-/** 单个工具静态定义。 */
+/** 单个受管 agent/工具静态定义（registry 单一真理源）。 */
 export type ToolDefinition = {
 	readonly id: ToolId;
 	readonly name: string;
@@ -31,8 +35,9 @@ export type ToolDefinition = {
 	readonly kind: ToolInstallKind;
 	readonly command: string; // 检测用命令
 	readonly versionArgs: readonly string[];
-	readonly npmPackage?: string; // kind === 'npm'
-	readonly optional: boolean;
+	readonly npmPackage?: string; // kind === 'npm'（CcgWorkflow 虽为 ccg-init，仍标注 npm 引擎包名供 update 派生）
+	readonly docsUrl?: string; // 官方文档 / 仓库地址（卡片描述可跳转，OSC-8 超链接）
+	readonly isBase: boolean; // 基础 agent（ClaudeCode=true，卸载附危险警告）
 };
 
 /** 工具检测状态（供列表展示）。 */
@@ -50,67 +55,91 @@ export type ToolInstallOutcome = {
 	readonly error?: string;
 };
 
+/** 安装依赖注入缝（供测试 mock exec，默认走真实 execCommand）。
+ *  registry 收编 ClaudeCode 后，原 ClaudeCode 专属的注入能力下沉为全工具通用。 */
+export type InstallToolDeps = {
+	readonly exec?: typeof execCommand;
+};
+
 const INSTALL_TIMEOUT_MS = 300000;
 const DETECT_TIMEOUT_MS = 5000;
 
 export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 	{
+		id: 'ClaudeCode',
+		name: 'Claude Code',
+		description: 'Anthropic官方CLI编码智能体',
+		kind: 'npm',
+		command: 'claude',
+		versionArgs: ['--version'],
+		npmPackage: '@anthropic-ai/claude-code',
+		docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview',
+		isBase: true
+	},
+	{
 		id: 'Ccline',
 		name: 'CCometixLine',
-		description: 'Claude Code 状态栏增强（npm + patch + statusLine）',
+		description: 'Claude Code 状态栏增强',
 		kind: 'npm',
 		command: 'ccline',
 		versionArgs: ['--version'],
 		npmPackage: '@cometix/ccline',
-		optional: false
+		docsUrl: 'https://github.com/Haleclipse/CCometixLine',
+		isBase: false
 	},
 	{
 		id: 'CcgWorkflow',
 		name: 'CCG Workflow',
-		description: 'Commands / Agents / Hooks 工作流（npx init 全套）',
+		description: '多模型协作工作流',
 		kind: 'ccg-init',
 		command: 'codeagent-wrapper',
 		versionArgs: ['--version'],
-		optional: false
+		npmPackage: 'ccg-workflow',
+		docsUrl: 'https://github.com/fengshao1227/ccg-workflow',
+		isBase: false
 	},
 	{
 		id: 'OpenSpec',
 		name: 'OpenSpec CLI',
-		description: '规范驱动开发工具（npm 全局）',
+		description: '规范驱动开发工具',
 		kind: 'npm',
 		command: 'openspec',
 		versionArgs: ['--version'],
 		npmPackage: '@fission-ai/openspec',
-		optional: false
+		docsUrl: 'https://github.com/Fission-AI/OpenSpec',
+		isBase: false
 	},
 	{
 		id: 'CodeGraph',
 		name: 'CodeGraph',
-		description: '本地代码知识图谱（调用链/影响范围检索，npm 全局）',
+		description: '本地代码知识图谱',
 		kind: 'npm',
 		command: 'codegraph',
 		versionArgs: ['--version'],
 		npmPackage: '@colbymchenry/codegraph',
-		optional: false
+		docsUrl: 'https://github.com/colbymchenry/codegraph',
+		isBase: false
 	},
 	{
 		id: 'CodexCli',
 		name: 'Codex CLI',
-		description: 'OpenAI Codex CLI（可选，多模型协作）',
+		description: 'OpenAI官方CLI编码智能体',
 		kind: 'npm',
 		command: 'codex',
 		versionArgs: ['--version'],
 		npmPackage: '@openai/codex',
-		optional: true
+		docsUrl: 'https://developers.openai.com/codex/cli',
+		isBase: false
 	},
 	{
 		id: 'AntigravityCli',
 		name: 'Antigravity CLI',
-		description: 'Google Antigravity CLI（可选，平台 shell 脚本）',
+		description: 'Google官方CLI编码智能体',
 		kind: 'shell-script',
 		command: 'agy',
 		versionArgs: ['--version'],
-		optional: true
+		docsUrl: 'https://antigravity.google/docs/cli',
+		isBase: false
 	}
 ];
 

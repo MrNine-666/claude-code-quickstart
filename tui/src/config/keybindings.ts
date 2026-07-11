@@ -209,10 +209,22 @@ export const TOOLS_COMMANDS = {
 	DOWN: 'tools:down',
 	LEFT: 'tools:left',
 	RIGHT: 'tools:right',
-	INSTALL_OR_UPDATE: 'tools:install-or-update',
+	// i：安装当前项（仅非 inject 未安装项）；单义键，取代原多义 Enter
+	INSTALL: 'tools:install',
+	// m：管理开关（仅 inject 类 CodeGraph / CcgWorkflow，打开注入开关 Modal）；单义键，取代原多义 Enter
+	MANAGE_INJECT: 'tools:manage-inject',
+	// u：更新当前项（含 inject 类共享 CLI）
+	UPDATE_ONE: 'tools:update-one',
 	UPDATE_ALL: 'tools:update-all',
+	// d：全量卸载（inject 类 = CLI + 全部注入）
 	UNINSTALL: 'tools:uninstall',
-	REFRESH: 'tools:refresh'
+	REFRESH: 'tools:refresh',
+	// o：用系统默认浏览器打开当前卡片的 docsUrl（官方文档 / GitHub），终端不支持 OSC-8 点击时的键盘等价入口
+	OPEN_DOCS: 'tools:open-docs',
+	// 开关管理 Modal：空格切换草稿开/关，Enter 统一应用
+	INJECT_TARGET_TOGGLE: 'tools:inject-target-toggle',
+	INJECT_TARGET_CONFIRM: 'tools:inject-target-confirm',
+	INJECT_TARGET_CANCEL: 'tools:inject-target-cancel'
 } as const;
 
 export const toolsBindings: Binding[] = commandBindings({
@@ -220,10 +232,16 @@ export const toolsBindings: Binding[] = commandBindings({
 	[TOOLS_COMMANDS.DOWN]: 'down',
 	[TOOLS_COMMANDS.LEFT]: 'left',
 	[TOOLS_COMMANDS.RIGHT]: 'right',
-	[TOOLS_COMMANDS.INSTALL_OR_UPDATE]: 'enter',
+	[TOOLS_COMMANDS.INSTALL]: 'i',
+	[TOOLS_COMMANDS.MANAGE_INJECT]: 'm',
+	[TOOLS_COMMANDS.UPDATE_ONE]: 'u',
 	[TOOLS_COMMANDS.UPDATE_ALL]: 'a',
 	[TOOLS_COMMANDS.UNINSTALL]: 'd',
-	[TOOLS_COMMANDS.REFRESH]: 'r'
+	[TOOLS_COMMANDS.REFRESH]: 'r',
+	[TOOLS_COMMANDS.OPEN_DOCS]: 'o',
+	[TOOLS_COMMANDS.INJECT_TARGET_TOGGLE]: 'space',
+	[TOOLS_COMMANDS.INJECT_TARGET_CONFIRM]: 'enter',
+	[TOOLS_COMMANDS.INJECT_TARGET_CANCEL]: 'escape'
 });
 
 // ------------------------------------------------------------

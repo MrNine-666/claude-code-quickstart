@@ -5,10 +5,15 @@ import {
 	isComponentVisible,
 	visibleComponentDefinitions,
 	filterVisibleComponents,
+	projectSharedToolComponents,
 	TOOL_GROUP_ORDER
 } from '../src/core/tools-manage.ts';
 
 // Task 1.5 → Phase 3：工具分组与可见性（design D3/PBT-3），断言真实 COMPONENT_META。
+// 本文件覆盖两条并存的 API：
+//   1) legacy filterVisibleComponents / visibleComponentDefinitions —— 按 agentContext 过滤（CLI/门禁兼容路径）；
+//   2) shared list projectSharedToolComponents —— Tools UI 主路径，不按上下文过滤，Ccline 常显。
+// 双态独立/显式 target 的更强不变量见 verify-tools-shared-projection.mjs。
 
 // ── 分组归属（唯一真理源 = COMPONENT_META）──────────────────────────────────
 assert.equal(COMPONENT_META.ClaudeCode.group, 'agent', 'ClaudeCode 属 agent 组');
@@ -72,4 +77,12 @@ const cxFilted = filterVisibleComponents(runtime, 'cx').map(c => c.id);
 assert.deepEqual(ccFiltered, ['ClaudeCode', 'CodexCli', 'Ccline', 'CcgWorkflow'], 'Claude Code 过滤保留 Ccline，并按分组展示顺序排序');
 assert.deepEqual(cxFilted, ['ClaudeCode', 'CodexCli', 'CcgWorkflow'], 'Codex 过滤掉 Ccline，并按分组展示顺序排序');
 
-console.log('[PASS] 1.5/3.1/3.2/3.3 工具分组与可见性 resolver：ClaudeCode/CodexCli 常显 + Ccline 仅 Claude Code + 分组顺序展示');
+console.log('[PASS] 1.5/3.1/3.2/3.3 legacy filterVisibleComponents（仅兼容门禁）：ClaudeCode/CodexCli 常显 + Ccline 仅 Claude Code + 分组顺序展示');
+
+// ── shared list（Tools UI 主路径）：不按 agentContext 过滤，Ccline 常显 ──────────
+// 与 legacy filterVisibleComponents 区分：projectSharedToolComponents 是 Tools UI 主模型，
+// 双 Header 下列表全集恒定；不变量细节见 verify-tools-shared-projection.mjs。
+const sharedIds = projectSharedToolComponents([]).map(c => c.id);
+assert.ok(sharedIds.includes('Ccline'), 'shared list 常显 Ccline（不随 agentContext 过滤）');
+assert.equal(sharedIds.length, COMPONENT_DEFINITIONS.length, 'shared list 展示组件全集');
+console.log('[PASS] 6.2 shared list 与 legacy filter API 拆分：共享列表含 Ccline 且不按上下文过滤');

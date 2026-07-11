@@ -65,7 +65,6 @@ for (const def of COMPONENT_DEFINITIONS) {
 const claude = COMPONENT_DEFINITIONS.find(c => c.id === 'ClaudeCode');
 assert.equal(claude.isBase, true, 'ClaudeCode isBase=true（基础组件，卸载附危险警告）');
 assert.equal(claude.npmPackage, '@anthropic-ai/claude-code', 'ClaudeCode npm 包名');
-assert.equal(claude.optional, false, 'ClaudeCode 非可选');
 assert.equal(COMPONENT_DEFINITIONS.filter(c => c.isBase).length, 1, '仅 ClaudeCode 为 isBase');
 console.log('[PASS] COMPONENT_DEFINITIONS 7 组件齐备 + isBase 语义 (11.4/11.6)');
 

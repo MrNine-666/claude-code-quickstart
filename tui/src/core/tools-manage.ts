@@ -22,7 +22,8 @@ import {
 	type LifecycleCommand
 } from './tools-lifecycle.js';
 import {hasUpdate} from './semver.js';
-import {hasCodeGraphIntegration, hasCodexCcgWorkflowMode, readCodexCcgWorkflowVersion} from './tools-integrations.js';
+import {hasCodeGraphIntegration, hasClaudeCodeGraphIntegration, hasCodexCodeGraphIntegration, hasClaudeCcgWorkflowMode, hasCodexCcgWorkflowMode, readCodexCcgWorkflowVersion} from './tools-integrations.js';
+
 
 // tools-manage core：工具管理单一真理源（design TDR-11）。
 // 融合 tools-install.ts（6 工具安装定义）与 update.ts（CLI 组件检测/快照/应用），
@@ -43,8 +44,8 @@ export type ComponentDefinition = {
 	readonly command: string; // 检测用命令
 	readonly versionArgs: readonly string[];
 	readonly npmPackage?: string; // kind === 'npm' 远程版本查询用
+	readonly docsUrl?: string; // 官方文档 / 仓库地址（卡片描述可跳转）
 	readonly isBase: boolean; // ClaudeCode=true（卸载附危险警告）
-	readonly optional: boolean;
 };
 
 /** 受管组件运行时状态（检测填充静态定义 + 版本/更新字段）。 */
@@ -78,13 +79,13 @@ const DETECT_TIMEOUT_MS = 5000;
 const CLAUDE_CODE_DEFINITION: ComponentDefinition = {
 	id: 'ClaudeCode',
 	name: 'Claude Code',
-	description: 'Anthropic 官方 Claude Code CLI（基础组件，npm 全局）',
+	description: 'Anthropic官方CLI编码智能体',
 	kind: 'npm',
 	command: 'claude',
 	versionArgs: ['--version'],
 	npmPackage: '@anthropic-ai/claude-code',
-	isBase: true,
-	optional: false
+	docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview',
+	isBase: true
 };
 
 /**
@@ -96,34 +97,42 @@ export const COMPONENT_DEFINITIONS: readonly ComponentDefinition[] = [
 	...TOOL_DEFINITIONS.map(tool => ({...tool, isBase: false}))
 ];
 
-// ── 分组与可见性（Phase 3，design D3 / spec codex-tool-lifecycle）─────────────────
+// ── 分组与可见性 / 共享投影（shared-resource-injection-ui）────────────────────
 // group: agent = 主 Agent（Claude Code / Codex 两上下文常显）；
 //        companion = 仅 Claude Code（Ccline）；tool = 两上下文通用（OpenSpec/CcgWorkflow/CodeGraph）。
-// 可见性矩阵冻结于 verify-tools-context.mjs（PBT-3），此处为唯一真理源。
+// sharingKind: Tools 共享列表呈现分类（inject 双态 / 全局 CLI / Agent 独占）。
+// Tools UI 主路径 = projectSharedToolComponents；filterVisibleComponents 仅兼容 legacy 门禁。
 
 export type ToolGroup = 'agent' | 'companion' | 'tool';
+
+/** 共享列表呈现分类（COMPONENT_META 单一事实源）。 */
+export type ResourceSharingKind =
+	| 'shared-cli-per-agent-inject'
+	| 'fully-shared-no-inject'
+	| 'agent-exclusive';
 
 export type ToolGroupDisplayMeta = {
 	readonly label: string;
 	readonly description: string;
 };
 
-/** 组件分组 + 可见上下文元数据（可见性 resolver 单一真理源；key 顺序即组内展示顺序）。 */
+/** 组件分组 + 可见上下文 + 共享分类（key 顺序即组内展示顺序）。 */
 export type ComponentMeta = {
 	readonly group: ToolGroup;
 	readonly contexts: readonly AgentContext[];
+	readonly sharingKind: ResourceSharingKind;
 };
 
 const BOTH_CONTEXTS: readonly AgentContext[] = ['cc', 'cx'];
 
 export const COMPONENT_META: Readonly<Record<ComponentId, ComponentMeta>> = {
-	ClaudeCode: {group: 'agent', contexts: BOTH_CONTEXTS},
-	CodexCli: {group: 'agent', contexts: BOTH_CONTEXTS},
-	AntigravityCli: {group: 'agent', contexts: BOTH_CONTEXTS},
-	Ccline: {group: 'companion', contexts: ['cc']},
-	OpenSpec: {group: 'tool', contexts: BOTH_CONTEXTS},
-	CcgWorkflow: {group: 'tool', contexts: BOTH_CONTEXTS},
-	CodeGraph: {group: 'tool', contexts: BOTH_CONTEXTS}
+	ClaudeCode: {group: 'agent', contexts: BOTH_CONTEXTS, sharingKind: 'agent-exclusive'},
+	CodexCli: {group: 'agent', contexts: BOTH_CONTEXTS, sharingKind: 'agent-exclusive'},
+	AntigravityCli: {group: 'agent', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
+	Ccline: {group: 'companion', contexts: ['cc'], sharingKind: 'agent-exclusive'},
+	OpenSpec: {group: 'tool', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
+	CcgWorkflow: {group: 'tool', contexts: BOTH_CONTEXTS, sharingKind: 'shared-cli-per-agent-inject'},
+	CodeGraph: {group: 'tool', contexts: BOTH_CONTEXTS, sharingKind: 'shared-cli-per-agent-inject'}
 };
 
 /** 分组展示顺序（agent → companion → tool）。 */
@@ -139,6 +148,26 @@ export type ToolGroupSection<T extends {readonly id: ComponentId}> = {
 	readonly group: ToolGroup;
 	readonly label: string;
 	readonly components: readonly T[];
+};
+
+/** 单侧 inject 快照（仅 shared-cli-per-agent-inject）。 */
+export type AgentInjectSnapshot = {
+	readonly context: AgentContext;
+	readonly integrated: boolean;
+	readonly version?: string;
+	readonly statusHint?: string;
+};
+
+/**
+ * Tools 共享列表投影项：在 ManagedComponent 上叠加 sharingKind + 双侧 inject。
+ * CcgWorkflow 不伪造全局 sharedInstalled（无真·共享 CLI）；CodeGraph sharedInstalled = CLI 可用。
+ */
+export type SharedManagedComponent = ManagedComponent & {
+	readonly sharingKind: ResourceSharingKind;
+	readonly applicableContexts: readonly AgentContext[];
+	readonly sharedInstalled: boolean;
+	readonly sharedVersion: string;
+	readonly injectByAgent?: Readonly<Record<AgentContext, AgentInjectSnapshot>>;
 };
 
 const COMPONENT_DISPLAY_ORDER = Object.keys(COMPONENT_META) as ComponentId[];
@@ -189,7 +218,11 @@ export function visibleComponentDefinitions(context: AgentContext): readonly Com
 	return sortComponentsByToolGroup(COMPONENT_DEFINITIONS.filter(def => isComponentVisible(def.id, context)));
 }
 
-/** 按 agentContext 过滤可见运行时组件（供 ToolsView 消费），并对齐分组展示顺序。 */
+/**
+ * @deprecated Tools UI 主路径请用 projectSharedToolComponents。
+ * 保留供 verify-tools-context / verify-tools-manage 等 legacy 门禁与 CLI 兼容路径。
+ * 按 agentContext 过滤可见运行时组件，并对齐分组展示顺序。
+ */
 export function filterVisibleComponents(
 	components: readonly ManagedComponent[],
 	context: AgentContext
@@ -202,8 +235,98 @@ export function filterVisibleComponents(
 }
 
 /**
+ * Tools 共享列表投影：不按 Header agentContext 过滤；始终返回 COMPONENT_DEFINITIONS 全集顺序。
+ * inject 类附 injectByAgent 双侧快照；对侧状态互不塌缩。
+ */
+export function projectSharedToolComponents(
+	detected: readonly ManagedComponent[]
+): readonly SharedManagedComponent[] {
+	const byId = new Map(detected.map(component => [component.id, component]));
+	const projected = COMPONENT_DEFINITIONS.map(def => {
+		const base = byId.get(def.id) ?? {
+			...def,
+			installed: false,
+			currentVersion: '',
+			latestVersion: '',
+			hasUpdate: null as boolean | null
+		};
+		return projectOneSharedComponent(base);
+	});
+	return sortComponentsByToolGroup(projected);
+}
+
+function projectOneSharedComponent(component: ManagedComponent): SharedManagedComponent {
+	const meta = COMPONENT_META[component.id];
+	const sharingKind = meta.sharingKind;
+	const applicableContexts = meta.contexts;
+
+	if (sharingKind === 'shared-cli-per-agent-inject') {
+		if (component.id === 'CodeGraph') {
+			const injectByAgent = {
+				cc: {
+					context: 'cc' as const,
+					integrated: hasClaudeCodeGraphIntegration()
+				},
+				cx: {
+					context: 'cx' as const,
+					integrated: hasCodexCodeGraphIntegration()
+				}
+			};
+			return {
+				...component,
+				sharingKind,
+				applicableContexts,
+				// CodeGraph shared body = CLI 可用（detect 的 installed 来自 codegraph --version）
+				sharedInstalled: component.installed,
+				sharedVersion: component.currentVersion,
+				injectByAgent
+			};
+		}
+
+		// CcgWorkflow：不伪造全局 sharedInstalled；双侧 Mode 即 inject 快照
+		const ccIntegrated = hasClaudeCcgWorkflowMode();
+		const cxVersion = readCodexCcgWorkflowVersion();
+		const cxIntegrated = hasCodexCcgWorkflowMode();
+		const injectByAgent = {
+			cc: {
+				context: 'cc' as const,
+				integrated: ccIntegrated,
+				version: ccIntegrated ? component.currentVersion || undefined : undefined
+			},
+			cx: {
+				context: 'cx' as const,
+				integrated: cxIntegrated,
+				version: cxIntegrated ? (cxVersion || undefined) : undefined
+			}
+		};
+		return {
+			...component,
+			sharingKind,
+			applicableContexts,
+			sharedInstalled: false,
+			sharedVersion: '',
+			injectByAgent
+		};
+	}
+
+	return {
+		...component,
+		sharingKind,
+		applicableContexts,
+		sharedInstalled: component.installed,
+		sharedVersion: component.currentVersion
+	};
+}
+
+/** 是否为可双侧 inject 的共享组件。 */
+export function isInjectableComponent(id: ComponentId): boolean {
+	return COMPONENT_META[id].sharingKind === 'shared-cli-per-agent-inject';
+}
+
+/**
  * Tools 组在两个 Header 下都可见，但 CcgWorkflow / CodeGraph 的“已安装”语义是 per-Agent 集成。
  * Codex 下必须看 ~/.codex 的真实落盘信号，不能把 Claude Code 或全局 CLI 状态直接复用过来。
+ * 仅供 filterVisibleComponents（legacy）使用。
  */
 function withContextInstallState(component: ManagedComponent, context: AgentContext): ManagedComponent {
 	if (component.id === 'CodeGraph') {
@@ -249,12 +372,28 @@ function withAgentIntegration(component: ManagedComponent, integrated: boolean, 
 }
 
 /**
- * 卸载影响说明（3.11）：按组件 + agentContext 返回真实影响范围文案，供确认弹窗展示。
- * CodeGraph 默认卸载只解除当前 Agent 集成（不卸 npm、不删 .codegraph/）；
- * CcgWorkflow Codex 只删 CCG-managed 文件（不删 config.toml）；CodexCli 卸载后 `ccq cx` 不可用。
+ * 卸载影响说明：
+ * - inject 类 + fullUninstall：CLI + 全部注入
+ * - inject 类 + 单侧 target：仅解除该 Agent 注入（Enter eject 路径）
+ * - 其它：全局卸载语义
  */
-export function uninstallImpactNotice(id: ComponentId, context: AgentContext): string {
+export function uninstallImpactNotice(
+	id: ComponentId,
+	context: AgentContext,
+	options: {readonly fullUninstall?: boolean} = {}
+): string {
 	const agentLabel = context === 'cx' ? 'Codex' : 'Claude Code';
+	if (options.fullUninstall && isInjectableComponent(id)) {
+		switch (id) {
+			case 'CodeGraph':
+				return '将解除 Claude Code 与 Codex 的 CodeGraph 注入，并卸载共享 codegraph CLI；不删除项目 .codegraph/ 索引。';
+			case 'CcgWorkflow':
+				return '将通过官方命令卸载已安装的 Claude Code / Codex Mode；~/.codex/config.toml 由官方命令处理，ccq 不直接删除。';
+			default:
+				return '将卸载该组件及其全部 Agent 注入。';
+		}
+	}
+
 	switch (id) {
 		case 'ClaudeCode':
 			return '将 npm 全局卸载 Claude Code，破坏整个 Claude Code 环境。';
@@ -406,15 +545,18 @@ export type ComponentUninstallOutcome = {
 export type UninstallComponentDeps = {
 	readonly exec?: typeof execCommand;
 	readonly createSnapshotFn?: () => string;
-	// 当前 Agent 上下文（design D4/D5）：CodeGraph 默认卸载只解除当前 Agent 集成；
-	// CcgWorkflow Codex 卸载只删 CCG-managed 文件、绝不删 config.toml。默认 Claude Code。
+	// 单侧 eject 目标（Enter 路径）：CodeGraph/CcgWorkflow 默认只解除该 Agent 集成。
 	readonly agentContext?: AgentContext;
+	// d 全量卸载：inject 类解除两侧注入 + 共享 CLI/包；与 agentContext 互斥优先 fullUninstall。
+	readonly fullUninstall?: boolean;
 };
 
 /**
  * 卸载单个组件（统一入口）。
  * 11.15 snapshot-before-write：任何破坏性写前先 createSnapshot，快照失败立即中止（exec 零调用，P-13）。
- * 按 kind 分发：npm → npm uninstall -g（Ccline 附 statusLine 还原）；ccg-init → 深度 fs 清理；shell-script → agy 探测。
+ * inject 类：
+ *   - fullUninstall=true → 两侧 eject + 卸共享体（d 路径）
+ *   - 否则 → 仅解除 deps.agentContext 一侧（Enter eject）
  */
 export async function uninstallComponent(
 	id: ComponentId,
@@ -440,28 +582,32 @@ export async function uninstallComponent(
 	const exec = deps.exec ?? execCommand;
 	const context: AgentContext = deps.agentContext ?? 'cc';
 	try {
-		switch (definition.kind) {
-			case 'npm':
-				if (definition.id === 'CodeGraph') {
-					await uninstallCodeGraph(context, exec, onProgress);
+		if (deps.fullUninstall && isInjectableComponent(id)) {
+			await fullUninstallInjectable(id, exec, onProgress);
+		} else {
+			switch (definition.kind) {
+				case 'npm':
+					if (definition.id === 'CodeGraph') {
+						await uninstallCodeGraph(context, exec, onProgress);
+						break;
+					}
+
+					await uninstallNpmPackage(definition, exec, onProgress);
+					if (definition.id === 'Ccline') {
+						restoreCclineStatusLine(onProgress);
+					}
+
 					break;
-				}
-
-				await uninstallNpmPackage(definition, exec, onProgress);
-				if (definition.id === 'Ccline') {
-					restoreCclineStatusLine(onProgress);
-				}
-
-				break;
-			case 'ccg-init':
-				// design D5：CcgWorkflow 安装/卸载统一走官方非交互命令。
-				// Claude Code → `npx ccg-workflow uninstall`；Codex → `npx ccg-workflow codex-mode uninstall`。
-				// config.toml/AGENTS.md 等文件边界由官方命令负责，ccq 不再手写 fs 删除。
-				await runLifecycleCommands(ccgWorkflowUninstallCommands(context), exec, 'CcgWorkflow', onProgress);
-				break;
-			case 'shell-script':
-				await uninstallAntigravity(onProgress);
-				break;
+				case 'ccg-init':
+					// design D5：CcgWorkflow 安装/卸载统一走官方非交互命令。
+					// Claude Code → `npx ccg-workflow uninstall`；Codex → `npx ccg-workflow codex-mode uninstall`。
+					// config.toml/AGENTS.md 等文件边界由官方命令负责，ccq 不再手写 fs 删除。
+					await runLifecycleCommands(ccgWorkflowUninstallCommands(context), exec, 'CcgWorkflow', onProgress);
+					break;
+				case 'shell-script':
+					await uninstallAntigravity(onProgress);
+					break;
+			}
 		}
 
 		onProgress?.({level: 'success', message: `${definition.name} 已卸载`, componentId: id});
@@ -471,6 +617,62 @@ export async function uninstallComponent(
 		onProgress?.({level: 'danger', message: `${definition.name} 卸载失败: ${message}`, componentId: id});
 		return {id, success: false, error: message};
 	}
+}
+
+/** inject 类全量卸载：两侧注入 + 共享体。 */
+async function fullUninstallInjectable(
+	id: ComponentId,
+	exec: typeof execCommand,
+	onProgress?: ProgressCallback
+): Promise<void> {
+	if (id === 'CodeGraph') {
+		// 全量：尽量解除两侧注入（已注入才跑；探测失败时仍继续卸 CLI）
+		if (hasCodeGraphIntegration('cc')) {
+			await runLifecycleCommands(codeGraphUninstallCommands('cc'), exec, 'CodeGraph', onProgress);
+		}
+		if (hasCodeGraphIntegration('cx')) {
+			await runLifecycleCommands(codeGraphUninstallCommands('cx'), exec, 'CodeGraph', onProgress);
+		}
+		await runLifecycleCommands(codeGraphRemoveCliCommands(), exec, 'CodeGraph', onProgress);
+		return;
+	}
+
+	if (id === 'CcgWorkflow') {
+		if (hasClaudeCcgWorkflowMode()) {
+			await runLifecycleCommands(ccgWorkflowUninstallCommands('cc'), exec, 'CcgWorkflow', onProgress);
+		}
+		if (hasCodexCcgWorkflowMode()) {
+			await runLifecycleCommands(ccgWorkflowUninstallCommands('cx'), exec, 'CcgWorkflow', onProgress);
+		}
+	}
+}
+
+/** 单侧 inject：显式 target，禁止依赖 Header。 */
+export async function injectComponent(
+	id: ComponentId,
+	target: AgentContext,
+	onProgress?: ProgressCallback,
+	deps: InstallComponentDeps = {}
+): Promise<ComponentInstallOutcome> {
+	if (!isInjectableComponent(id)) {
+		return {id, success: false, error: `${id} 不支持 per-agent 注入`};
+	}
+
+	return installComponent(id, onProgress, {...deps, agentContext: target});
+}
+
+/** 单侧 eject：显式 target。 */
+export async function ejectComponent(
+	id: ComponentId,
+	target: AgentContext,
+	onProgress?: ProgressCallback,
+	deps: UninstallComponentDeps = {}
+): Promise<ComponentUninstallOutcome> {
+	if (!isInjectableComponent(id)) {
+		return {id, success: false, error: `${id} 不支持 per-agent 解除注入`};
+	}
+
+	return uninstallComponent(id, onProgress, {...deps, agentContext: target, fullUninstall: false});
 }
 
 async function uninstallCodeGraph(
