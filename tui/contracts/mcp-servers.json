@@ -54,6 +54,14 @@
       "Url": "https://mcp.context7.com/mcp",
       "CredentialType": "none",
       "Note": "官方推荐 remote endpoint；如需更高频次/私有库，可自行添加 CONTEXT7_API_KEY header",
+      "OptionalHeaders": [
+        {
+          "HeaderName": "CONTEXT7_API_KEY",
+          "Label": "Context7 API Key（可选，提高频次/私有库）",
+          "Secret": true,
+          "Url": "https://context7.com/dashboard"
+        }
+      ],
       "Category": "Documentation",
       "Priority": 1,
       "Recommended": true
@@ -109,6 +117,14 @@
       "Url": "https://mcp.exa.ai/mcp",
       "CredentialType": "none",
       "Note": "官方推荐 remote endpoint；如需更高频次，可自行添加 x-api-key header（获取地址 https://dashboard.exa.ai/api-keys）",
+      "OptionalHeaders": [
+        {
+          "HeaderName": "x-api-key",
+          "Label": "Exa API Key（可选，提高频次）",
+          "Secret": true,
+          "Url": "https://dashboard.exa.ai/api-keys"
+        }
+      ],
       "Category": "Search",
       "Priority": 6,
       "Recommended": true

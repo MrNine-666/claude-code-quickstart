@@ -21,6 +21,18 @@ export type McpCredentialField = {
 	readonly Url?: string;
 };
 
+/**
+ * 可选 HTTP header 凭据（如 context7/exa 官方 remote 的可选 API key）。
+ * 与 McpCredentialField 区分：可选 header 语义上永不 Required，走 config.headers（cc）/ http_headers（cx），
+ * 不参与 buildMcpConfig 的 required 凭据校验，避免污染 CredentialType: none 的匿名可用语义。
+ */
+export type McpHeaderField = {
+	readonly HeaderName: string;
+	readonly Label?: string;
+	readonly Secret?: boolean;
+	readonly Url?: string;
+};
+
 export type McpServerDefinition = {
 	readonly Name?: string;
 	readonly Description?: string;
@@ -37,6 +49,7 @@ export type McpServerDefinition = {
 	readonly TokenArg?: string;
 	readonly TokenLabel?: string;
 	readonly TokenUrl?: string;
+	readonly OptionalHeaders?: readonly McpHeaderField[];
 	readonly EnvFileFields?: readonly McpCredentialField[];
 	readonly Category?: string;
 	readonly Priority?: number;

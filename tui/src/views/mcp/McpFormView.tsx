@@ -5,20 +5,23 @@ import {FormPanel, firstEditableIndex, nextEditableIndex} from '../../components
 import {handleTextareaEditKeys, handleTextareaIndentKey} from '../../components/editor/textarea-edit-keys.js';
 import type {FormField} from '../../components/form/field-types.js';
 import {getDefinition, saveMcpServer} from '../../services/mcp-service.js';
-import {getMcpTemplateJson, listBuiltinMcpOptions, parseMcpJsonFormat} from '../../core/mcp-form.js';
+import {getMcpTemplateJson, getMcpTemplateToml, listBuiltinMcpOptions, parseMcpJsonFormat, parseMcpTomlFormat, readMcpServersTableId, rewriteMcpServersTableId} from '../../core/mcp-form.js';
 import {borderColors, colors} from '../../theme/index.js';
 import type {AgentContext} from '../../state/manage-state.js';
 
-// McpFormView：MCP 表单屏（JSON 即真源范式，复用 FormPanel 与供应商表单同构）
-// - add：模板（radio，←/→ 或 Tab 切换；选内置即带出 JSON + Server ID + 凭据提示）+ Server ID（可填）+ JSON 编辑区
-// - edit：Server ID 只读（标题展示）+ JSON 编辑区（加载现有 config）
-// - 焦点：字段区 ↑/↓ 切换（FormPanel 统一），JSON textarea 第一行 ↑ / 最后行 ↓ 切字段
-// - 保存按编辑语义触发（解析 JSON 落盘），Esc 取消
+// McpFormView：MCP 表单屏（配置即真源范式，复用 FormPanel 与供应商表单同构）
+// - add：模板（radio，←/→ 或 Tab 切换；选内置即带出配置 + Server ID + 凭据提示）+ Server ID（可填）+ 配置编辑区
+// - edit：Server ID 只读（标题展示）+ 配置编辑区（加载现有 config）
+// - cc（Claude）用 JSON 编辑；cx（Codex）用 TOML 编辑，正文带 [mcp_servers.<id>] table 头（与真实 config.toml 一致）
+// - 焦点：字段区 ↑/↓ 切换（FormPanel 统一），textarea 第一行 ↑ / 最后行 ↓ 切字段
+// - 保存按编辑语义触发（解析配置落盘），Esc 取消
 // 键位与供应商表单完全一致（复用 FormPanel + textarea-edit-keys），footer 已声明 ↑/↓ 字段 · ←/→ 选项。
 
-// 「自定义」模板占位值（对应空白 JSON）。
+// 「自定义」模板占位值（对应空白配置）。
 const CUSTOM_TEMPLATE = '';
+// 自定义空白模板：cc 用 JSON 空对象，cx 用空 TOML（交由解析器报「需 command/url」）。
 const BLANK_JSON = '{}\n';
+const BLANK_TOML = '';
 
 export type McpFormViewProps = {
 	readonly mode: 'add' | 'edit';
@@ -38,6 +41,8 @@ export function McpFormView({mode, serverId, initialJson, agentContext = 'cc', a
 	const templateOptions = useRef([{value: CUSTOM_TEMPLATE, label: '自定义'}, ...listBuiltinMcpOptions()]).current;
 
 	const isAdd = mode === 'add';
+	// cx（Codex）用 TOML 语法编辑（模板/校验/文案/空白模板），cc（Claude）用 JSON。
+	const isToml = agentContext === 'cx';
 
 	// 字段定义（结构稳定；实时值经 values 注入，不嵌进字段，避免每次输入重建数组）。
 	const fields: FormField[] = isAdd
@@ -68,13 +73,24 @@ export function McpFormView({mode, serverId, initialJson, agentContext = 'cc', a
 	const jsonFocused = focusedIndex === fields.length;
 	const fieldFocused = !jsonFocused;
 
-	// 应用模板：自定义给空白；内置带出 JSON + Server ID + 凭据提示。
+	// 应用模板：自定义给空白；内置带出配置文本 + Server ID + 凭据提示。cx 走 TOML 模板，cc 走 JSON。
 	function applyTemplate(id: string): void {
 		setTemplateId(id);
 		if (id === CUSTOM_TEMPLATE) {
 			setServerIdText('');
-			setJsonText(BLANK_JSON);
+			setJsonText(isToml ? BLANK_TOML : BLANK_JSON);
 			setCredHint(undefined);
+			return;
+		}
+
+		if (isToml) {
+			const tpl = getMcpTemplateToml(id);
+			if (tpl) {
+				setServerIdText(id);
+				setJsonText(tpl.toml);
+				setCredHint(tpl.credHint);
+			}
+
 			return;
 		}
 
@@ -121,19 +137,31 @@ export function McpFormView({mode, serverId, initialJson, agentContext = 'cc', a
 		}
 	}
 
-	// 文本字段输入（Server ID）。
+	// 文本字段输入（Server ID）。cx 模式下 Server ID → 同步改写 TOML 的 [mcp_servers.<id>] table 头，
+	// 保持字段与配置正文里的 id 一致（双向联动的「字段 → TOML」方向）。
 	function handleFieldChange(id: string, value: string): void {
 		if (id === 'id') {
 			setServerIdText(value);
+			if (isToml) {
+				setJsonText((prev) => rewriteMcpServersTableId(prev, value));
+			}
 		}
 
 		setErrors([]);
 	}
 
-	// JSON 区编辑：JSON 即真源，更新文本 + 实时校验格式（对齐供应商表单：编辑即提示，无需等保存）。
+	// 编辑区：配置即真源，更新文本 + 实时校验格式（cc 校验 JSON，cx 校验 TOML；对齐供应商表单：编辑即提示，无需等保存）。
+	// cx add 模式：从 TOML 的 [mcp_servers.<id>] table 头反向回填 Server ID 字段（双向联动的「TOML → 字段」方向）。
 	function handleJsonChange(content: string): void {
 		setJsonText(content);
-		const format = parseMcpJsonFormat(content);
+		if (isToml && isAdd) {
+			const tableId = readMcpServersTableId(content);
+			if (tableId !== undefined && tableId !== serverIdText) {
+				setServerIdText(tableId);
+			}
+		}
+
+		const format = isToml ? parseMcpTomlFormat(content) : parseMcpJsonFormat(content);
 		setErrors(format.ok ? [] : [format.error]);
 	}
 
@@ -234,10 +262,10 @@ export function McpFormView({mode, serverId, initialJson, agentContext = 'cc', a
 				</box>
 			) : null}
 
-			{/* JSON 编辑区（真源）*/}
+			{/* 配置编辑区（真源）*/}
 			<box flexDirection="column">
 				<text fg={jsonFocused ? colors.primary : colors.text} attributes={jsonFocused ? TextAttributes.BOLD : 0}>
-					{`${jsonFocused ? '› ' : '  '}配置 JSON（直接编辑，保存时以此为准）`}
+					{`${jsonFocused ? '› ' : '  '}配置 ${isToml ? 'TOML' : 'JSON'}（直接编辑，保存时以此为准）`}
 				</text>
 				<box height={jsonHeight} borderStyle="rounded" borderColor={jsonFocused ? borderColors.active : borderColors.inactive}>
 					<textarea

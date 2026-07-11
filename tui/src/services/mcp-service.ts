@@ -13,7 +13,7 @@ import {
 } from '../core/mcp.js';
 import {definitionHash} from '../core/mcp-vault.js';
 import {type McpConfigEntry} from '../core/mcp-config-builder.js';
-import {parseMcpFormInput} from '../core/mcp-form.js';
+import {parseMcpFormInput, parseMcpFormInputToml} from '../core/mcp-form.js';
 import {loadMcpContract, type McpServerDefinition} from '../core/mcp-contract.js';
 
 // MCP service：TUI 视图唯一入口。enable/disable/remove 后统一落盘（HC-MCP-RULES-OFF：不再同步 rules 文件）。
@@ -76,9 +76,12 @@ export function removeMcpServer(serverId: string, confirmed: boolean, agentConte
 
 // ── 保存（JSON 即真源，统一落盘） ──────────────────────────────────────────────
 
-/** 从表单 JSON 解析配置并落盘。credentials 取自 config.env（vault 备份用）。 */
-export function saveMcpServer(serverId: string, json: string, agentContext: AgentContext = 'cc'): McpServiceResult {
-	const parsed = parseMcpFormInput(serverId, json);
+/**
+ * 从表单文本解析配置并落盘。cc 用 JSON 解析器，cx 用 TOML 解析器（Codex 心智）。
+ * credentials 取自 config.env / headers / http_headers（vault 备份用）。
+ */
+export function saveMcpServer(serverId: string, text: string, agentContext: AgentContext = 'cc'): McpServiceResult {
+	const parsed = agentContext === 'cx' ? parseMcpFormInputToml(serverId, text) : parseMcpFormInput(serverId, text);
 	if (!parsed.ok) {
 		return {ok: false, error: parsed.error};
 	}
@@ -94,8 +97,9 @@ export function saveMcpServer(serverId: string, json: string, agentContext: Agen
 	}
 }
 
+/** 收集需备份到 vault 的凭据：env（stdio）+ headers（cc http）+ http_headers（cx http）。 */
 function extractEnvCredentials(config: McpConfigEntry): Record<string, string> {
-	return config.env ?? {};
+	return {...config.env, ...config.headers, ...config.http_headers};
 }
 
 /** 编辑内置 MCP 时保留 definitionHash 以维持 drift 检测；自定义 MCP 返回空串。 */

@@ -10,6 +10,12 @@ export type McpConfigEntry = {
 	env?: Record<string, string>;
 	type?: string;
 	url?: string;
+	// http 类可选凭据 header（如 context7 的 CONTEXT7_API_KEY、exa 的 x-api-key）。
+	// cc 写 .claude.json mcpServers[id].headers；cx 用 Codex 原生 http_headers（见下）。
+	headers?: Record<string, string>;
+	// Codex 原生 http header 字段（config.toml [mcp_servers.<id>.http_headers]）。
+	// cx TOML 编辑路径直接使用；toCodexMcpConfig 白名单透传。
+	http_headers?: Record<string, string>;
 };
 
 export type BuildMcpConfigOk = {

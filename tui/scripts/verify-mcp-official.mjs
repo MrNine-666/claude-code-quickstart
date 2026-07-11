@@ -29,7 +29,17 @@ const exa = servers.exa;
 assert.equal(exa.McpType, 'http', 'Exa 默认走官方 remote HTTP');
 assert.equal(exa.Url, 'https://mcp.exa.ai/mcp', 'Exa 使用官方 endpoint');
 assert.equal(exa.CredentialType, 'none', 'Exa 匿名可用，API key 可选不强制');
-console.log('[PASS] Exa / Context7 默认官方 remote HTTP endpoint');
+
+// ── 1b. OptionalHeaders 契约声明（可选 API key 走 HTTP header） ───────────────
+assert.ok(Array.isArray(context7.OptionalHeaders) && context7.OptionalHeaders.length === 1, 'Context7 声明 1 个 OptionalHeaders');
+assert.equal(context7.OptionalHeaders[0].HeaderName, 'CONTEXT7_API_KEY', 'Context7 可选 header 名 CONTEXT7_API_KEY');
+assert.ok(Array.isArray(exa.OptionalHeaders) && exa.OptionalHeaders.length === 1, 'Exa 声明 1 个 OptionalHeaders');
+assert.equal(exa.OptionalHeaders[0].HeaderName, 'x-api-key', 'Exa 可选 header 名 x-api-key');
+
+// 其它 http MCP（deepwiki/figma）不应有 OptionalHeaders（仅 context7/exa 加占位）
+assert.equal(servers.deepwiki.OptionalHeaders, undefined, 'deepwiki 不加 OptionalHeaders（不在本期范围）');
+assert.equal(servers.figma.OptionalHeaders, undefined, 'figma 不加 OptionalHeaders（不在本期范围）');
+console.log('[PASS] OptionalHeaders 仅 context7/exa 声明（CONTEXT7_API_KEY / x-api-key）');
 
 // ── 2. stdio 官方工具保持不变 ────────────────────────────────────────────────
 for (const [id, expectedArg] of [

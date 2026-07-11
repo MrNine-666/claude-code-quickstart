@@ -21,7 +21,7 @@ import {
 	removeMcpServer
 } from '../../services/mcp-service.js';
 import type {McpServerStatus, McpStatusRow} from '../../core/mcp.js';
-import {configToJson} from '../../core/mcp-form.js';
+import {configToJson, configToToml} from '../../core/mcp-form.js';
 import {McpFormView} from './McpFormView.js';
 
 // MCP TUI 视图（OpenTUI 适配）：
@@ -124,7 +124,7 @@ export default function McpView({agentContext = 'cc', active, viewportHeight = 1
 			<McpFormView
 				mode="add"
 				serverId=""
-				initialJson={configToJson(null)}
+				initialJson={agentContext === 'cx' ? configToToml(null) : configToJson(null)}
 				agentContext={agentContext}
 				active={active}
 				contentHeight={viewportHeight - 2}
@@ -202,7 +202,8 @@ export default function McpView({agentContext = 'cc', active, viewportHeight = 1
 					}
 
 					const detail = loadMcpDetail(current.Id, agentContext);
-					setScreen({kind: 'edit', serverId: current.Id, initialJson: configToJson(detail.config)});
+					const initialText = agentContext === 'cx' ? configToToml(detail.config, current.Id) : configToJson(detail.config);
+					setScreen({kind: 'edit', serverId: current.Id, initialJson: initialText});
 				}}
 				onDelete={() => {
 					if (current) {
