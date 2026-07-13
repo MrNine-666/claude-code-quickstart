@@ -4,6 +4,7 @@ import {dirname, join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {resetMcpContractCache} from '../src/core/mcp-contract.ts';
 import {
+	computeSharedStatus,
 	computeStatus,
 	disableServer,
 	enableServer,
@@ -11,6 +12,12 @@ import {
 	persistMcpServer,
 	removeServer
 } from '../src/core/mcp.ts';
+import {
+	addSharedMcpServer,
+	applyMcpToggleTargets,
+	removeSharedMcpServer,
+	saveEditedMcpServer
+} from '../src/services/mcp-service.ts';
 import {loadVault} from '../src/core/mcp-vault.ts';
 
 // MCP 双 Agent 文件事实源。
@@ -125,3 +132,76 @@ assert.equal(/experimental_bearer_token|sk-[A-Za-z0-9_-]+/.test(vaultText), fals
 console.log('[PASS] 7.6 vault 职责边界：备份 MCP config/credentials/hash，不保存 Codex API key');
 
 console.log('[PASS] 7.1-7.8 MCP 双 Agent 文件事实源门禁全部通过');
+
+// ── Section 13.2：共享双侧 service 层门禁（add 只写 vault / Enter 双侧批量 / edit 同步已开启侧 / d 全量删除） ──
+// 隔离干净起点：清空两侧 runtime 与 vault，避免上文残留 ctx7/manual 干扰断言。
+writeJson(claudeJsonPath, {mcpServers: {}});
+writeJson(settingsPath, {permissions: {allow: []}});
+writeFileSync(join(codexHome, 'config.toml'), '', 'utf8');
+writeJson(join(root, '.ccq', 'mcp-meta.json'), {
+	schemaVersion: 1,
+	createdAt: '2026-07-12T00:00:00.000Z',
+	updatedAt: '2026-07-12T00:00:00.000Z',
+	servers: {}
+});
+
+function sharedRow(id) {
+	return computeSharedStatus().find(item => item.Id === id);
+}
+
+// add = 只写 vault 共享定义，不开启任何侧（Section 11.2）。
+const addResult = addSharedMcpServer('shared7', JSON.stringify({type: 'http', url: 'https://shared7.example'}), 'cc');
+assert.equal(addResult.ok, true, 'addSharedMcpServer 成功');
+assert.equal(loadVault().servers.shared7?.config?.url, 'https://shared7.example', 'add 写入 vault 共享定义体');
+const afterAdd = sharedRow('shared7');
+assert.ok(afterAdd, 'add 后 shared7 出现在共享列表（vault-only）');
+assert.equal(afterAdd.injectByAgent.cc.active, false, 'add 后 cc 未开启（只写 vault 不激活）');
+assert.equal(afterAdd.injectByAgent.cx.active, false, 'add 后 cx 未开启（只写 vault 不激活）');
+assert.equal(afterAdd.hasDefinition, true, 'add 后 hasDefinition=true');
+assert.equal(JSON.parse(readFileSync(claudeJsonPath, 'utf8')).mcpServers.shared7, undefined, 'add 不写 .claude.json');
+assert.equal(/\[mcp_servers\.shared7\]/.test(readCodexConfig()), false, 'add 不写 config.toml');
+console.log('[PASS] 13.2 add 只写 vault 共享定义，不开启任何侧');
+
+// Enter 双侧批量开关（Section 9.1）：草稿 {cc:true, cx:true} 对比实时态差异，只对变化侧写。
+const toggleBoth = applyMcpToggleTargets('shared7', {cc: true, cx: true});
+assert.equal(toggleBoth.ok, true, 'applyMcpToggleTargets 双侧开启成功');
+const afterToggle = sharedRow('shared7');
+assert.equal(afterToggle.injectByAgent.cc.active, true, '批量开启后 cc 激活');
+assert.equal(afterToggle.injectByAgent.cx.active, true, '批量开启后 cx 激活');
+assert.ok(JSON.parse(readFileSync(claudeJsonPath, 'utf8')).mcpServers.shared7, '批量开启写入 .claude.json');
+assert.match(readCodexConfig(), /\[mcp_servers\.shared7\]/, '批量开启写入 config.toml');
+console.log('[PASS] 13.2 Enter 双侧 checkbox 批量提交（未变侧不写，只对差异侧生效）');
+
+// edit = 写 vault + 同步所有当前已开启侧（Section 9.3）。两侧都开启 → 双写。
+const editResult = saveEditedMcpServer('shared7', JSON.stringify({type: 'http', url: 'https://shared7-v2.example'}), 'cc');
+assert.equal(editResult.ok, true, 'saveEditedMcpServer 成功');
+assert.equal(loadVault().servers.shared7.config.url, 'https://shared7-v2.example', 'edit 更新 vault 共享定义');
+assert.equal(JSON.parse(readFileSync(claudeJsonPath, 'utf8')).mcpServers.shared7.url, 'https://shared7-v2.example', 'edit 同步已开启的 cc 侧');
+assert.match(readCodexConfig(), /url\s*=\s*"https:\/\/shared7-v2\.example"/, 'edit 同步已开启的 cx 侧');
+console.log('[PASS] 13.2 edit 写 vault + 同步所有已开启侧');
+
+// edit 不开启未开启侧：先禁用 cx，再 edit → cx 保持未开启。
+assert.equal(applyMcpToggleTargets('shared7', {cc: true, cx: false}).ok, true, 'cx 单侧禁用成功');
+assert.equal(sharedRow('shared7').injectByAgent.cx.active, false, 'cx 已禁用');
+assert.equal(saveEditedMcpServer('shared7', JSON.stringify({type: 'http', url: 'https://shared7-v3.example'}), 'cc').ok, true, 'edit 成功');
+assert.equal(sharedRow('shared7').injectByAgent.cx.active, false, 'edit 不开启未开启的 cx 侧');
+assert.equal(loadVault().servers.shared7.config.url, 'https://shared7-v3.example', 'edit 仍更新 vault 共享定义');
+console.log('[PASS] 13.2 edit 不开启未开启侧（仅同步已开启侧）');
+
+// Codex 单侧禁用写 enabled=false 不删块（Section 8/11）。
+assert.match(readCodexConfig(), /\[mcp_servers\.shared7\]/, 'Codex 禁用后块仍在');
+assert.match(readCodexConfig(), /enabled\s*=\s*false/, 'Codex 禁用写 enabled=false 而非删除');
+console.log('[PASS] 13.2 Codex 禁用写 enabled=false 不删块');
+
+// d 全量删除（Section 11.3）：两侧 runtime + vault 定义 + settings permission，需确认。
+assert.equal(removeSharedMcpServer('shared7', false).ok, false, 'd 未确认返回失败（NeedConfirmation）');
+const removeResult = removeSharedMcpServer('shared7', true);
+assert.equal(removeResult.ok, true, 'd 确认后全量删除成功');
+assert.equal(sharedRow('shared7'), undefined, 'd 后 shared7 从共享列表消失');
+assert.equal(JSON.parse(readFileSync(claudeJsonPath, 'utf8')).mcpServers.shared7, undefined, 'd 删除 .claude.json 条目');
+assert.equal(/\[mcp_servers\.shared7\]/.test(readCodexConfig()), false, 'd 删除 config.toml 块');
+assert.equal(loadVault().servers.shared7, undefined, 'd 删除 vault 共享定义');
+assert.equal(readFileSync(settingsPath, 'utf8').includes('mcp__shared7'), false, 'd 清理 settings permission');
+console.log('[PASS] 13.2 d 全量删除：两侧 runtime + vault 定义 + settings permission');
+
+console.log('[PASS] 13.2 MCP 共享双侧 service 层门禁全部通过');

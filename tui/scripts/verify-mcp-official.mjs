@@ -68,7 +68,8 @@ const codexHttp = toCodexMcpConfig({type: 'http', url: 'https://mcp.exa.ai/mcp'}
 assert.equal(codexHttp.type, undefined, 'Codex HTTP MCP 不含 type');
 assert.equal(codexHttp.url, 'https://mcp.exa.ai/mcp', 'Codex HTTP MCP 保留 url');
 
-// Codex 支持字段应透传（bearer_token_env_var / http_headers / startup_timeout_sec / enabled）
+// 透传式（黑名单）：只去 type + headers→http_headers 归一化，其余 Codex 合法字段全透传。
+// cwd / env_vars / enabled_tools 等官方字段不再被白名单丢弃（回归「配置即真源」）。
 const codexHttpFull = toCodexMcpConfig({
 	type: 'http',
 	url: 'https://mcp.context7.com/mcp',
@@ -76,15 +77,17 @@ const codexHttpFull = toCodexMcpConfig({
 	http_headers: {'X-Extra': 'v'},
 	startup_timeout_sec: 30,
 	enabled: false,
-	unknown_field: 'drop-me'
+	enabled_tools: ['a', 'b'],
+	env_http_headers: {H: 'ENV_VAR'}
 });
-assert.equal(codexHttpFull.type, undefined, 'Codex HTTP full 不含 type');
+assert.equal(codexHttpFull.type, undefined, 'Codex HTTP full 去 type');
 assert.equal(codexHttpFull.bearer_token_env_var, 'CONTEXT7_API_KEY', 'Codex 保留 bearer_token_env_var');
 assert.deepEqual(codexHttpFull.http_headers, {'X-Extra': 'v'}, 'Codex 保留 http_headers');
 assert.equal(codexHttpFull.startup_timeout_sec, 30, 'Codex 保留 startup_timeout_sec');
 assert.equal(codexHttpFull.enabled, false, 'Codex 保留 enabled 语义');
-assert.equal('unknown_field' in codexHttpFull, false, 'Codex schema 丢弃不支持字段');
-console.log('[PASS] Codex HTTP schema 转换：去 type + 白名单过滤');
+assert.deepEqual(codexHttpFull.enabled_tools, ['a', 'b'], 'Codex 透传 enabled_tools（官方字段）');
+assert.deepEqual(codexHttpFull.env_http_headers, {H: 'ENV_VAR'}, 'Codex 透传 env_http_headers（官方字段）');
+console.log('[PASS] Codex HTTP schema 转换：去 type + headers→http_headers + 透传官方字段');
 
 // ── 5. Codex schema 转换：stdio 去 type，保留 command/args/env ─────────────────
 const codexStdio = toCodexMcpConfig({type: 'stdio', command: 'npx', args: ['-y', 'x'], env: {K: 'v'}});

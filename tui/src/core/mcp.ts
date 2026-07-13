@@ -27,6 +27,24 @@ export type McpStatusRow = {
 
 export type McpActionResult = {Success: boolean; ServerId: string; Status: string};
 
+// ── 双侧聚合投影（shared-resource-injection-ui Section 8） ─────────────────────
+
+/** 单侧开关态：active=开启（运行时激活）；disabled=物理禁用块（Codex enabled=false）或 Claude 侧关闭。 */
+export type McpAgentInjectState = {readonly active: boolean; readonly disabled: boolean};
+
+/**
+ * 共享聚合行：一 Server ID 一行，双侧开关态独立不塌缩。
+ * hasDefinition = vault 是否有共享定义体（config），供跨侧开启时复用；vault 定义 ≠ 激活态。
+ */
+export type McpSharedRow = {
+	readonly Id: string;
+	readonly Name: string;
+	readonly McpType: string;
+	readonly HasCredentials: boolean;
+	readonly hasDefinition: boolean;
+	readonly injectByAgent: Readonly<Record<AgentContext, McpAgentInjectState>>;
+};
+
 const STATUS_PRIORITY: Record<McpServerStatus, number> = {
 	Custom: 0,
 	Active: 1,
@@ -210,6 +228,96 @@ export function computeStatus(agentContext: AgentContext = 'cc'): McpStatusRow[]
 	return results;
 }
 
+/**
+ * 双侧聚合投影（Section 8）：一 Server ID 一行，cc/cx 开关态各自实时从 runtime 文件派生，互不塌缩。
+ *
+ * 与 computeStatus 的关键区别：**纯读投影，绝不物化 vault → runtime**（computeStatus 会把 vault-only
+ * 的 Codex 条目补写进 config.toml，违反「add 只写 vault、投影不改写 runtime」约束）。
+ * 这里仅把两侧现有 runtime 配置**备份**进 vault 作共享定义体（供跨侧开启复用），不反向物化。
+ *
+ * 列表全集 = vault 定义 ∪ ~/.claude.json mcpServers ∪ ~/.codex config.toml [mcp_servers]，按 Id 去重。
+ * 激活态只从 runtime 派生（对齐 HC-3 / mcp-multitool）：vault 有定义 ≠ 开启。
+ */
+export function computeSharedStatus(): readonly McpSharedRow[] {
+	const claudeServers = readClaudeJson().mcpServers ?? {};
+	const codexServers = readCodexMcpServers();
+	const contractServers = loadMcpContract().servers;
+
+	// 两侧现有 runtime 配置备份进 vault（共享定义源），不反向物化 vault → runtime。
+	backupRuntimeToVault(claudeServers, codexServers, contractServers);
+
+	const vault = loadVault();
+	const metaServers = vault.servers ?? {};
+
+	const allIds = new Set<string>([
+		...Object.keys(claudeServers),
+		...Object.keys(codexServers),
+		...Object.keys(metaServers)
+	]);
+
+	const rows: McpSharedRow[] = [];
+	for (const id of allIds) {
+		const claudeConfig = claudeServers[id];
+		const codexConfig = codexServers[id];
+		const inClaude = Object.prototype.hasOwnProperty.call(claudeServers, id);
+		const inCodex = Object.prototype.hasOwnProperty.call(codexServers, id);
+		const metaEntry = metaServers[id];
+
+		// cc：存在于 .claude.json 即开启；否则关闭（vault 有备份也不算开启）。
+		const cc: McpAgentInjectState = {active: inClaude, disabled: !inClaude};
+		// cx：存在且 enabled!==false 为开启；enabled===false 为物理禁用块（保留，归禁用）。
+		const cxDisabledBlock = inCodex && isCodexServerDisabled(codexConfig);
+		const cx: McpAgentInjectState = {active: inCodex && !cxDisabledBlock, disabled: !inCodex || cxDisabledBlock};
+
+		const def = contractServers[id];
+		const name = def?.Name || id;
+		const mcpType = def?.McpType || (typeof (claudeConfig ?? codexConfig)?.type === 'string' ? String((claudeConfig ?? codexConfig)!.type) : '');
+		const hasCredentials = def
+			? Boolean(def.CredentialType && def.CredentialType !== 'none')
+			: Boolean(metaEntry?.credentials);
+		const hasDefinition = Boolean(metaEntry?.config);
+
+		rows.push({Id: id, Name: name, McpType: mcpType, HasCredentials: hasCredentials, hasDefinition, injectByAgent: {cc, cx}});
+	}
+
+	rows.sort((a, b) => a.Name.localeCompare(b.Name));
+	return rows;
+}
+
+/**
+ * 把两侧现有 runtime 配置备份进 vault 作共享定义源（纯备份，不反向物化）。
+ * - 存前剥离 `enabled`：vault 存纯定义体，开关态由 runtime 派生（与 persistSharedDefinition 对齐；
+ *   否则 Codex 的 `enabled:false` 会随 enableClaudeServer 原样泄漏进 .claude.json）。
+ * - 同 ID 双侧都存在时 **Claude 优先**：cc 方言更规范（保留 type/headers，可经 toCodexMcpConfig 降级到
+ *   Codex；反向无法从 Codex 形状恢复 type/headers），故用 cc 定义体作共享源。
+ */
+function backupRuntimeToVault(
+	claudeServers: Record<string, Record<string, unknown>>,
+	codexServers: Record<string, Record<string, unknown>>,
+	contractServers: Record<string, McpServerDefinition>
+): void {
+	withVaultLock(() => {
+		const meta = loadVault();
+		let changed = false;
+
+		// Claude 优先：先展开 codex，再用 claude 覆盖（后展开胜出）。
+		for (const [id, config] of Object.entries({...codexServers, ...claudeServers})) {
+			if (!config || typeof config !== 'object' || Array.isArray(config)) {
+				continue;
+			}
+
+			const {enabled: _enabled, ...pureConfig} = config;
+			void _enabled;
+			backupRuntimeMcpToVault(meta, id, pureConfig, contractServers);
+			changed = true;
+		}
+
+		if (changed) {
+			saveVault(meta);
+		}
+	});
+}
+
 // ── 详情 ─────────────────────────────────────────────────────────────────
 
 export type McpServerDetail = {
@@ -282,28 +390,32 @@ export function syncCredentials(): SyncCredentialsResult {
 					continue;
 				}
 
-				const env = config.env as Record<string, string> | undefined;
-				const cjHasEnv = Boolean(env && Object.keys(env).length > 0);
+				// 凭据桶随 config 类型：http 类凭据在 headers，stdio 在 env。
+				// 统一按类型选桶，避免对 http 类（如 context7）凭空造出与 headers 重复的 env。
+				const isHttp = config.type === 'http' || typeof config.url === 'string';
+				const bucketKey = isHttp ? 'headers' : 'env';
+				const bucket = config[bucketKey] as Record<string, string> | undefined;
+				const cjHasCred = Boolean(bucket && Object.keys(bucket).length > 0);
 				const vaultEntry = meta.servers[id];
 				const vaultValues = (vaultEntry?.credentials as {values?: Record<string, string>} | undefined)?.values;
 				const vaultHasValues = Boolean(vaultValues && Object.keys(vaultValues).length > 0);
 
-				// 场景 A: .claude.json 有 env, vault 无 → 备份到 vault
-				if (cjHasEnv && !vaultHasValues) {
+				// 场景 A: .claude.json 有凭据, vault 无 → 备份到 vault
+				if (cjHasCred && !vaultHasValues) {
 					if (!meta.servers[id]) {
 						meta.servers[id] = {};
 					}
 
-					meta.servers[id]!.credentials = {values: env};
+					meta.servers[id]!.credentials = {values: bucket};
 					meta.servers[id]!.updatedAt = new Date().toISOString();
 					vaultChanged = true;
 					result.SyncedCount++;
 					result.Details.push(`vault-backup::${id}`);
 				}
 
-				// 场景 B: vault 有 credentials, .claude.json env 缺失 → 恢复（仅限内置 MCP）
-				if (!cjHasEnv && vaultHasValues && Object.prototype.hasOwnProperty.call(contractServers, id)) {
-					config.env = vaultValues;
+				// 场景 B: vault 有 credentials, .claude.json 对应桶缺失 → 恢复到对应桶（仅限内置 MCP）
+				if (!cjHasCred && vaultHasValues && Object.prototype.hasOwnProperty.call(contractServers, id)) {
+					config[bucketKey] = vaultValues;
 					cjChanged = true;
 					result.SyncedCount++;
 					result.Details.push(`claude-restore::${id}`);
@@ -468,11 +580,15 @@ function enableClaudeServer(serverId: string): McpActionResult {
 		const credentials = normalizeCredentials(vaultEntry);
 		let serverConfig = vaultEntry.config ?? null;
 		if (serverConfig && Object.keys(credentials).length > 0) {
-			if (!serverConfig.env) {
-				serverConfig.env = {};
+			// 凭据按 config 类型回填对应桶：http 类进 headers（凭据本在 header），stdio 进 env。
+			// 无条件回填 env 会让 http 类 MCP（如 context7，凭据在 headers）凭空多出与 headers 重复的 env。
+			const isHttp = serverConfig.type === 'http' || typeof serverConfig.url === 'string';
+			const bucket = isHttp ? 'headers' : 'env';
+			if (!serverConfig[bucket]) {
+				serverConfig[bucket] = {};
 			}
 
-			Object.assign(serverConfig.env as Record<string, string>, credentials);
+			Object.assign(serverConfig[bucket] as Record<string, string>, credentials);
 		}
 
 		if (!serverConfig) {
@@ -643,6 +759,101 @@ function persistClaudeMcpServer(
 		saveVault(meta);
 
 		return {Success: true, ServerId: serverId, Status: 'Active'};
+	});
+}
+
+// ── 共享定义层（add 只写 vault / edit 同步已开启侧 / d 全量删除，Section 9） ──────
+
+/**
+ * 只写 vault 共享定义体，不物化到任何 runtime（Section 9.3 add 路径）。
+ * config 归一化去掉 Codex 的 enabled 标记（vault 存纯定义体，开关态由 runtime 派生）。
+ */
+export function persistSharedDefinition(
+	serverId: string,
+	config: Record<string, unknown>,
+	credentials: Record<string, string>,
+	definitionHashValue: string
+): McpActionResult {
+	return withVaultLock(() => {
+		const {enabled: _enabled, ...nextConfig} = config;
+		void _enabled;
+		const meta = loadVault();
+		backupMcpToVault(meta, serverId, nextConfig, credentials, meta.servers[serverId]?.permissions ?? [], definitionHashValue);
+		saveVault(meta);
+		return {Success: true, ServerId: serverId, Status: 'Saved'};
+	});
+}
+
+/**
+ * 编辑保存（Section 9.3）：写 vault 共享定义 + 同步到所有**当前已开启**侧。
+ * - cc 已开启（.claude.json 存在）→ 覆盖写 .claude.json；未开启不碰。
+ * - cx 已开启（config.toml 存在且非 enabled=false）→ 覆盖写 config.toml；禁用/不存在不碰。
+ * - 均未开启：只写 vault。
+ * 未开启侧一律不开启（对齐 spec「edit SHALL NOT enable a side that was not previously 开启」）。
+ */
+export function syncSharedDefinition(
+	serverId: string,
+	config: Record<string, unknown>,
+	credentials: Record<string, string>,
+	definitionHashValue: string
+): McpActionResult {
+	persistSharedDefinition(serverId, config, credentials, definitionHashValue);
+
+	const claudeActive = Boolean(readClaudeJson().mcpServers?.[serverId]);
+	const codexConfig = readCodexMcpServers()[serverId];
+	const codexActive = Boolean(codexConfig) && !isCodexServerDisabled(codexConfig);
+
+	if (claudeActive) {
+		persistClaudeMcpServer(serverId, config, credentials, definitionHashValue);
+	}
+
+	if (codexActive) {
+		persistCodexMcpServer(serverId, config, credentials, definitionHashValue);
+	}
+
+	return {Success: true, ServerId: serverId, Status: 'Saved'};
+}
+
+/**
+ * 全量删除（Section 9.4 / d 键）：两侧 runtime 移除 + 删 vault 定义 + 清 settings permission。
+ * 对齐 spec「d SHALL perform a full destructive delete across both sides and the vault definition」。
+ */
+export function removeSharedServer(serverId: string, confirmed = false): McpActionResult {
+	if (!confirmed) {
+		return {Success: false, ServerId: serverId, Status: 'NeedConfirmation'};
+	}
+
+	return withVaultLock(() => {
+		// Claude：移除 .claude.json + settings permission。
+		const claudeJson = readClaudeJson();
+		if (claudeJson.mcpServers?.[serverId]) {
+			delete claudeJson.mcpServers[serverId];
+			writeJsonAtomic(claudeJsonPath(), claudeJson);
+		}
+
+		const settings = readSettings();
+		const perms = settings.permissions as {allow?: string[]} | undefined;
+		if (perms?.allow) {
+			const mcpPerm = `mcp__${serverId}`;
+			if (perms.allow.includes(mcpPerm)) {
+				perms.allow = perms.allow.filter(p => p !== mcpPerm);
+				writeJsonAtomic(settingsPath(), settings);
+			}
+		}
+
+		// Codex：删除 [mcp_servers.<id>] table（含 enabled=false 禁用块）。
+		if (readCodexMcpServers()[serverId]) {
+			deleteCodexMcpServer(serverId);
+		}
+
+		// vault：删共享定义。
+		const meta = loadVault();
+		if (meta.servers[serverId]) {
+			delete meta.servers[serverId];
+			saveVault(meta);
+		}
+
+		return {Success: true, ServerId: serverId, Status: 'Removed'};
 	});
 }
 

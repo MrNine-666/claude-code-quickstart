@@ -4,24 +4,22 @@ import {useKeyboard, useRenderer} from '@opentui/react';
 import {FormPanel, firstEditableIndex, nextEditableIndex} from '../../components/form/FormPanel.js';
 import {handleTextareaEditKeys, handleTextareaIndentKey} from '../../components/editor/textarea-edit-keys.js';
 import type {FormField} from '../../components/form/field-types.js';
-import {getDefinition, saveMcpServer} from '../../services/mcp-service.js';
-import {getMcpTemplateJson, getMcpTemplateToml, listBuiltinMcpOptions, parseMcpJsonFormat, parseMcpTomlFormat, readMcpServersTableId, rewriteMcpServersTableId} from '../../core/mcp-form.js';
+import {addSharedMcpServer, getDefinition, saveEditedMcpServer} from '../../services/mcp-service.js';
+import {getMcpTemplateJson, listBuiltinMcpOptions, parseMcpJsonFormat} from '../../core/mcp-form.js';
 import {borderColors, colors} from '../../theme/index.js';
-import type {AgentContext} from '../../state/manage-state.js';
 
 // McpFormView：MCP 表单屏（配置即真源范式，复用 FormPanel 与供应商表单同构）
 // - add：模板（radio，←/→ 或 Tab 切换；选内置即带出配置 + Server ID + 凭据提示）+ Server ID（可填）+ 配置编辑区
 // - edit：Server ID 只读（标题展示）+ 配置编辑区（加载现有 config）
-// - cc（Claude）用 JSON 编辑；cx（Codex）用 TOML 编辑，正文带 [mcp_servers.<id>] table 头（与真实 config.toml 一致）
+// - 统一 JSON 编辑方言（c/Claude 语义：type + headers）；vault 存 JSON 定义体，codex 落盘由 toCodexMcpConfig 降级到 TOML
 // - 焦点：字段区 ↑/↓ 切换（FormPanel 统一），textarea 第一行 ↑ / 最后行 ↓ 切字段
 // - 保存按编辑语义触发（解析配置落盘），Esc 取消
 // 键位与供应商表单完全一致（复用 FormPanel + textarea-edit-keys），footer 已声明 ↑/↓ 字段 · ←/→ 选项。
 
 // 「自定义」模板占位值（对应空白配置）。
 const CUSTOM_TEMPLATE = '';
-// 自定义空白模板：cc 用 JSON 空对象，cx 用空 TOML（交由解析器报「需 command/url」）。
+// 自定义空白模板：JSON 空对象（交由解析器报「需 command/url」）。
 const BLANK_JSON = '{}\n';
-const BLANK_TOML = '';
 
 export type McpFormViewProps = {
 	readonly mode: 'add' | 'edit';
@@ -29,20 +27,16 @@ export type McpFormViewProps = {
 	readonly serverId: string;
 	// 初始 JSON：edit=现有 config，add=空白。
 	readonly initialJson: string;
-	readonly agentContext?: AgentContext;
 	readonly active: boolean;
-	readonly contentHeight?: number;
 	readonly onSaved: (message: string) => void;
 	readonly onCancel: () => void;
 };
 
-export function McpFormView({mode, serverId, initialJson, agentContext = 'cc', active, contentHeight = 16, onSaved, onCancel}: McpFormViewProps) {
+export function McpFormView({mode, serverId, initialJson, active, onSaved, onCancel}: McpFormViewProps) {
 	// 模板选项：自定义（空白）+ 内置 MCP 列表。useRef 固定一次构造，避免重渲染重建。
 	const templateOptions = useRef([{value: CUSTOM_TEMPLATE, label: '自定义'}, ...listBuiltinMcpOptions()]).current;
 
 	const isAdd = mode === 'add';
-	// cx（Codex）用 TOML 语法编辑（模板/校验/文案/空白模板），cc（Claude）用 JSON。
-	const isToml = agentContext === 'cx';
 
 	// 字段定义（结构稳定；实时值经 values 注入，不嵌进字段，避免每次输入重建数组）。
 	const fields: FormField[] = isAdd
@@ -73,24 +67,13 @@ export function McpFormView({mode, serverId, initialJson, agentContext = 'cc', a
 	const jsonFocused = focusedIndex === fields.length;
 	const fieldFocused = !jsonFocused;
 
-	// 应用模板：自定义给空白；内置带出配置文本 + Server ID + 凭据提示。cx 走 TOML 模板，cc 走 JSON。
+	// 应用模板：自定义给空白 JSON；内置带出配置文本 + Server ID + 凭据提示。
 	function applyTemplate(id: string): void {
 		setTemplateId(id);
 		if (id === CUSTOM_TEMPLATE) {
 			setServerIdText('');
-			setJsonText(isToml ? BLANK_TOML : BLANK_JSON);
+			setJsonText(BLANK_JSON);
 			setCredHint(undefined);
-			return;
-		}
-
-		if (isToml) {
-			const tpl = getMcpTemplateToml(id);
-			if (tpl) {
-				setServerIdText(id);
-				setJsonText(tpl.toml);
-				setCredHint(tpl.credHint);
-			}
-
 			return;
 		}
 
@@ -137,31 +120,19 @@ export function McpFormView({mode, serverId, initialJson, agentContext = 'cc', a
 		}
 	}
 
-	// 文本字段输入（Server ID）。cx 模式下 Server ID → 同步改写 TOML 的 [mcp_servers.<id>] table 头，
-	// 保持字段与配置正文里的 id 一致（双向联动的「字段 → TOML」方向）。
+	// 文本字段输入（Server ID）。
 	function handleFieldChange(id: string, value: string): void {
 		if (id === 'id') {
 			setServerIdText(value);
-			if (isToml) {
-				setJsonText((prev) => rewriteMcpServersTableId(prev, value));
-			}
 		}
 
 		setErrors([]);
 	}
 
-	// 编辑区：配置即真源，更新文本 + 实时校验格式（cc 校验 JSON，cx 校验 TOML；对齐供应商表单：编辑即提示，无需等保存）。
-	// cx add 模式：从 TOML 的 [mcp_servers.<id>] table 头反向回填 Server ID 字段（双向联动的「TOML → 字段」方向）。
+	// 编辑区：配置即真源，更新文本 + 实时校验 JSON 格式（对齐供应商表单：编辑即提示，无需等保存）。
 	function handleJsonChange(content: string): void {
 		setJsonText(content);
-		if (isToml && isAdd) {
-			const tableId = readMcpServersTableId(content);
-			if (tableId !== undefined && tableId !== serverIdText) {
-				setServerIdText(tableId);
-			}
-		}
-
-		const format = isToml ? parseMcpTomlFormat(content) : parseMcpJsonFormat(content);
+		const format = parseMcpJsonFormat(content);
 		setErrors(format.ok ? [] : [format.error]);
 	}
 
@@ -227,7 +198,8 @@ export function McpFormView({mode, serverId, initialJson, agentContext = 'cc', a
 
 	function handleSubmit(): void {
 		const id = (isAdd ? serverIdText : serverId).trim();
-		const result = saveMcpServer(id, jsonText, agentContext);
+		// add：仅写 vault 共享定义，不开启任何侧；edit：写 vault + 同步已开启侧。
+		const result = isAdd ? addSharedMcpServer(id, jsonText) : saveEditedMcpServer(id, jsonText);
 		if (!result.ok) {
 			setErrors([result.error]);
 			return;
@@ -236,44 +208,45 @@ export function McpFormView({mode, serverId, initialJson, agentContext = 'cc', a
 		onSaved(`已保存 MCP Server ${id}`);
 	}
 
-	const jsonHeight = Math.max(5, contentHeight - (isAdd ? 10 : 7));
 	const title = isAdd ? '新增 MCP Server' : `编辑 ${serverId}`;
 
 	return (
-		<box flexDirection="column">
-			<FormPanel
-				title={title}
-				fields={fields}
-				values={values}
-				focusedIndex={fieldFocused ? focusedIndex : -1}
-				active={active && fieldFocused}
-				errors={undefined}
-				onMoveFocus={handleMoveFocus}
-				onSelectChange={handleSelectChange}
-				onFieldChange={handleFieldChange}
-				onSubmit={handleSubmit}
-				onCancel={onCancel}
-			/>
+		<box flexDirection="column" flexGrow={1} minHeight={0}>
+			<box flexShrink={0}>
+				<FormPanel
+					title={title}
+					fields={fields}
+					values={values}
+					focusedIndex={fieldFocused ? focusedIndex : -1}
+					active={active && fieldFocused}
+					errors={undefined}
+					onMoveFocus={handleMoveFocus}
+					onSelectChange={handleSelectChange}
+					onFieldChange={handleFieldChange}
+					onSubmit={handleSubmit}
+					onCancel={onCancel}
+				/>
+			</box>
 
 			{/* 凭据获取提示（选内置模板带出 / edit env-file 提示）*/}
 			{credHint ? (
-				<box marginBottom={1}>
+				<box marginBottom={1} flexShrink={0}>
 					<text fg={colors.muted} attributes={TextAttributes.DIM}>{`凭据获取：${credHint}`}</text>
 				</box>
 			) : null}
 
 			{/* 配置编辑区（真源）*/}
-			<box flexDirection="column">
-				<text fg={jsonFocused ? colors.primary : colors.text} attributes={jsonFocused ? TextAttributes.BOLD : 0}>
-					{`${jsonFocused ? '› ' : '  '}配置 ${isToml ? 'TOML' : 'JSON'}（直接编辑，保存时以此为准）`}
+			<box flexDirection="column" flexGrow={1} minHeight={0}>
+				<text flexShrink={0} fg={jsonFocused ? colors.primary : colors.text} attributes={jsonFocused ? TextAttributes.BOLD : 0}>
+					{`${jsonFocused ? '› ' : '  '}配置 JSON（直接编辑，保存时以此为准）`}
 				</text>
-				<box height={jsonHeight} borderStyle="rounded" borderColor={jsonFocused ? borderColors.active : borderColors.inactive}>
+				<box flexGrow={1} minHeight={0} borderStyle="rounded" borderColor={jsonFocused ? borderColors.active : borderColors.inactive}>
 					<textarea
 						ref={textareaRef}
 						initialValue={jsonText}
 						focused={active && jsonFocused}
 						wrapMode="word"
-						style={{flexGrow: 1}}
+						style={{flexGrow: 1, minHeight: 0}}
 						textColor={colors.inputText}
 						focusedTextColor={colors.inputFocusedText}
 						cursorColor={colors.inputCursor}
@@ -286,7 +259,7 @@ export function McpFormView({mode, serverId, initialJson, agentContext = 'cc', a
 			</box>
 
 			{errors.length > 0 ? (
-				<box marginTop={1}>
+				<box marginTop={1} flexShrink={0}>
 					<text fg={colors.danger}>{errors.join('；')}</text>
 				</box>
 			) : null}

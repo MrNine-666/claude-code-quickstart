@@ -14,8 +14,11 @@ export type McpConfigEntry = {
 	// cc 写 .claude.json mcpServers[id].headers；cx 用 Codex 原生 http_headers（见下）。
 	headers?: Record<string, string>;
 	// Codex 原生 http header 字段（config.toml [mcp_servers.<id>.http_headers]）。
-	// cx TOML 编辑路径直接使用；toCodexMcpConfig 白名单透传。
+	// cx TOML 编辑路径直接使用；toCodexMcpConfig 透传。
 	http_headers?: Record<string, string>;
+	// JSON 即真源：表单直编的任意其它字段（Codex 的 cwd/env_vars/startup_timeout_sec/
+	// enabled_tools 等，或 Claude 未来字段）原样透传，不被解析层白名单静默丢弃。
+	[key: string]: unknown;
 };
 
 export type BuildMcpConfigOk = {

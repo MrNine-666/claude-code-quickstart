@@ -1,87 +1,61 @@
 import React, {useEffect, useMemo, useState} from 'react';
+import {TextAttributes} from '@opentui/core';
 import {useKeyboard} from '@opentui/react';
 import {
 	Modal,
 	ScrollList,
-	StatusDot,
 	ViewHeader,
 	ListEmptyState,
 	toast,
-	type ScrollListItem,
-	type StatusDotKind
+	type ScrollListItem
 } from '../../components/index.js';
 import {colors} from '../../theme/index.js';
-import {AGENT_CONTEXT_LABELS, type AgentContext} from '../../state/manage-state.js';
+import {AGENT_CONTEXT_LABELS, AGENT_CONTEXT_ORDER, type AgentContext} from '../../state/manage-state.js';
 import {clampMove} from '../../core/list-utils.js';
 import {
-	disableMcpServer,
-	enableMcpServer,
+	applyMcpToggleTargets,
 	loadMcpDetail,
-	loadMcpStatus,
-	removeMcpServer
+	loadSharedMcpStatus,
+	removeSharedMcpServer
 } from '../../services/mcp-service.js';
-import type {McpServerStatus, McpStatusRow} from '../../core/mcp.js';
-import {configToJson, configToToml} from '../../core/mcp-form.js';
+import type {McpAgentInjectState, McpSharedRow} from '../../core/mcp.js';
+import {configToJson} from '../../core/mcp-form.js';
 import {McpFormView} from './McpFormView.js';
 
-// MCP TUI 视图（OpenTUI 适配）：
-// - 列表屏：仅展示已安装（过滤 Missing），行只留状态圆点 + Id
-// - Enter 切换状态（Active/Custom↔Disabled），A 新增，E 编辑，D 删除（无独立详情屏）
-// - 表单屏：复用 McpFormView（模板 + Server ID + JSON 编辑）
-// - 操作结果统一走 banner，不离开列表（除表单屏）
+// MCP TUI 视图（shared-resource-injection-ui Section 10-11）：
+// - 共享双侧列表：一行一 Server ID，行内双态徽章（Claude Code ●|○ + Codex ●|○），不按 Header 过滤
+// - Enter 打开开关目标 Modal（复用 ToolsView InjectTargetModal 范式）：↑/↓ 选侧、空格切草稿、Enter 应用差异、Esc 取消
+// - a 新增（仅写 vault 共享定义，不开启任何侧）；e 编辑（写 vault + 同步已开启侧）；d 全量删除（两侧 + vault 定义）
+// - 面向用户文案统一「开启 / 禁用」，不出现「注入」；开关态每次实时读 runtime 文件派生
+
+// 开关目标 Modal 宽度：对齐 ToolsView INJECT_MODAL_WIDTH，容纳 hint 单行不换行。
+const TOGGLE_MODAL_WIDTH = 56;
 
 export type McpViewProps = {
-	// 当前 Agent 上下文；Phase 7 会据此切换 MCP 文件事实源。
-	readonly agentContext?: AgentContext;
-	// 本视图是否获得右侧内容区焦点（focus === 'view'）。
 	readonly active: boolean;
-	// content 区可视行数（焦点驱动滚动）。
-	readonly viewportHeight?: number;
-	readonly viewportWidth?: number;
-	// 上报当前子模式给 App footer。
 	readonly onSubModeChange?: (subMode: string) => void;
-	// 在列表屏按 Esc/← 时请求退回左侧导航。
 	readonly onExitToNav: () => void;
-	// 在列表顶部按 ↑ 时请求进入 Agent Header。
-	readonly onExitToHeader?: () => void;
 };
 
 type McpScreen =
 	| {readonly kind: 'list'}
 	| {readonly kind: 'add'}
 	| {readonly kind: 'edit'; readonly serverId: string; readonly initialJson: string}
+	| {readonly kind: 'select-toggle-target'; readonly serverId: string}
 	| {readonly kind: 'confirm-remove'; readonly serverId: string};
 
-function statusKind(status: McpServerStatus): StatusDotKind {
-	switch (status) {
-		case 'Active':
-		case 'Custom':
-			return 'latest';
-		case 'Disabled':
-			return 'notInstalled';
-		default:
-			return 'unknown';
-	}
-}
-
-export default function McpView({agentContext = 'cc', active, viewportHeight = 16, viewportWidth = 52, onSubModeChange, onExitToNav, onExitToHeader}: McpViewProps) {
-	const [rows, setRows] = useState<McpStatusRow[]>(() => loadMcpStatus(agentContext));
+export default function McpView({active, onSubModeChange, onExitToNav}: McpViewProps) {
+	const [rows, setRows] = useState<readonly McpSharedRow[]>(() => loadSharedMcpStatus());
 	const [selected, setSelected] = useState(0);
 	const [screen, setScreen] = useState<McpScreen>({kind: 'list'});
+	// 开关 Modal 草稿：进入时以各侧实时开关态预置；空格切换、Enter 应用前不落盘。
+	const [toggleDraft, setToggleDraft] = useState<Record<AgentContext, boolean>>({cc: false, cx: false});
+	const [toggleIndex, setToggleIndex] = useState(0);
 
-	// 仅展示已安装过的（过滤 Missing：契约里有但用户从未配置的）。
-	const visibleRows = useMemo(() => rows.filter((row) => row.Status !== 'Missing'), [rows]);
-	const safeSelected = visibleRows.length === 0 ? 0 : Math.min(selected, visibleRows.length - 1);
-	const current = visibleRows[safeSelected] ?? null;
+	const safeSelected = rows.length === 0 ? 0 : Math.min(selected, rows.length - 1);
+	const current = rows[safeSelected] ?? null;
 
-	// Agent 上下文切换时立即刷新状态表；不要依赖 content 焦点，否则 Header 切换后内容会滞后。
-	useEffect(() => {
-		setRows(loadMcpStatus(agentContext));
-		setSelected(0);
-		setScreen({kind: 'list'});
-	}, [agentContext]);
-
-	// 上报当前子模式给 App footer：表单屏统一 'form'，空列表 'empty'，否则用 screen.kind。
+	// 上报当前子模式给 App footer。
 	useEffect(() => {
 		if (!active) {
 			return;
@@ -90,29 +64,40 @@ export default function McpView({agentContext = 'cc', active, viewportHeight = 1
 		const subMode =
 			screen.kind === 'add' || screen.kind === 'edit'
 				? 'form'
-				: screen.kind === 'list' && visibleRows.length === 0
+				: screen.kind === 'list' && rows.length === 0
 					? 'empty'
 					: screen.kind;
 		onSubModeChange?.(subMode);
-	}, [active, screen.kind, visibleRows.length, onSubModeChange]);
+	}, [active, screen.kind, rows.length, onSubModeChange]);
 
 	function refresh(): void {
-		const next = loadMcpStatus(agentContext);
-		const visibleCount = next.filter((row) => row.Status !== 'Missing').length;
+		const next = loadSharedMcpStatus();
 		setRows(next);
-		setSelected((prev) => Math.min(prev, Math.max(0, visibleCount - 1)));
+		setSelected((prev) => Math.min(prev, Math.max(0, next.length - 1)));
 	}
 
-	function toggleCurrent(): void {
+	function openToggleModal(): void {
 		if (!current) {
 			return;
 		}
 
-		const willDisable = current.Status !== 'Disabled';
-		const result = willDisable ? disableMcpServer(current.Id, agentContext) : enableMcpServer(current.Id, agentContext);
+		// 草稿预置各侧当前实时开关态（active=开启）。
+		setToggleDraft({cc: current.injectByAgent.cc.active, cx: current.injectByAgent.cx.active});
+		setToggleIndex(0);
+		setScreen({kind: 'select-toggle-target', serverId: current.Id});
+	}
+
+	function applyToggle(): void {
+		if (screen.kind !== 'select-toggle-target') {
+			return;
+		}
+
+		const serverId = screen.serverId;
+		const result = applyMcpToggleTargets(serverId, toggleDraft);
 		refresh();
+		setScreen({kind: 'list'});
 		if (result.ok) {
-			toast.success(`已${willDisable ? '禁用' : '启用'} ${current.Id}`);
+			toast.success(`已更新 ${serverId} 开关`);
 		} else {
 			toast.error(result.error);
 		}
@@ -124,10 +109,8 @@ export default function McpView({agentContext = 'cc', active, viewportHeight = 1
 			<McpFormView
 				mode="add"
 				serverId=""
-				initialJson={agentContext === 'cx' ? configToToml(null) : configToJson(null)}
-				agentContext={agentContext}
+				initialJson={configToJson(null)}
 				active={active}
-				contentHeight={viewportHeight - 2}
 				onCancel={() => setScreen({kind: 'list'})}
 				onSaved={(message) => {
 					refresh();
@@ -144,9 +127,7 @@ export default function McpView({agentContext = 'cc', active, viewportHeight = 1
 				mode="edit"
 				serverId={screen.serverId}
 				initialJson={screen.initialJson}
-				agentContext={agentContext}
 				active={active}
-				contentHeight={viewportHeight - 2}
 				onCancel={() => setScreen({kind: 'list'})}
 				onSaved={(message) => {
 					refresh();
@@ -157,33 +138,41 @@ export default function McpView({agentContext = 'cc', active, viewportHeight = 1
 		);
 	}
 
-	// 列表屏
-	const items: ScrollListItem[] = visibleRows.map((row) => ({
+	// 列表屏：一行一 Server ID，行内双态徽章。
+	const items: ScrollListItem[] = rows.map((row) => ({
 		key: row.Id,
 		title: row.Id,
-		leading: <StatusDot kind={statusKind(row.Status)} />
+		body: <DualStateBadges cc={row.injectByAgent.cc} cx={row.injectByAgent.cx} />,
+		multiLine: true
 	}));
 
 	return (
-		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title="MCP Server 管理" subtitle={`维护 ${AGENT_CONTEXT_LABELS[agentContext]} 可用的 MCP Server 连接`} />
+		<box flexDirection="column" flexGrow={1} minHeight={0}>
+			<ViewHeader title="MCP Server 管理" subtitle="共享维护 Claude Code 与 Codex 两侧的 MCP Server 连接" />
 
-			{visibleRows.length === 0 ? (
+			{rows.length === 0 ? (
 				<ListEmptyState message="暂无 MCP Server" />
 			) : (
-				<ScrollList items={items} cursor={safeSelected} viewportHeight={viewportHeight} reservedRows={3} active={active} stretch />
+				<ScrollList items={items} cursor={safeSelected} active={active} />
 			)}
+
+			{screen.kind === 'select-toggle-target' && current ? (
+				<ToggleTargetModal
+					name={current.Id}
+					draft={toggleDraft}
+					focusedIndex={toggleIndex}
+				/>
+			) : null}
 
 			{screen.kind === 'confirm-remove' && current ? (
 				<Modal
 					active
-					title="确认删除 MCP Server"
+					title="全量删除 MCP Server"
 					hint="Enter 确认  Esc 取消"
 					tone="danger"
-					viewportWidth={viewportWidth}
-					viewportHeight={viewportHeight}
+					width={TOGGLE_MODAL_WIDTH}
 				>
-					<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`即将删除 MCP Server ${current.Id}，此操作不可撤销。`}</text>
+					<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`即将删除 ${current.Id}：移除 Claude Code 与 Codex 两侧配置及共享定义，此操作不可撤销。`}</text>
 				</Modal>
 			) : null}
 
@@ -191,19 +180,17 @@ export default function McpView({agentContext = 'cc', active, viewportHeight = 1
 				active={active && screen.kind === 'list'}
 				hasCurrent={current !== null}
 				atTop={safeSelected === 0}
-				onMove={(delta) => setSelected((prev) => clampMove(prev, delta, visibleRows.length))}
-				onToggle={toggleCurrent}
-				onAdd={() => {
-					setScreen({kind: 'add'});
-				}}
+				onMove={(delta) => setSelected((prev) => clampMove(prev, delta, rows.length))}
+				onToggle={openToggleModal}
+				onAdd={() => setScreen({kind: 'add'})}
 				onEdit={() => {
 					if (!current) {
 						return;
 					}
 
-					const detail = loadMcpDetail(current.Id, agentContext);
-					const initialText = agentContext === 'cx' ? configToToml(detail.config, current.Id) : configToJson(detail.config);
-					setScreen({kind: 'edit', serverId: current.Id, initialJson: initialText});
+					// 编辑回显：统一 c JSON 方言（优先 .claude.json，回落 vault 共享定义体，均为 c 方言）。
+					const detail = loadMcpDetail(current.Id);
+					setScreen({kind: 'edit', serverId: current.Id, initialJson: configToJson(detail.config)});
 				}}
 				onDelete={() => {
 					if (current) {
@@ -211,7 +198,17 @@ export default function McpView({agentContext = 'cc', active, viewportHeight = 1
 					}
 				}}
 				onExit={onExitToNav}
-				onExitToHeader={onExitToHeader}
+			/>
+
+			<ToggleModalInput
+				active={active && screen.kind === 'select-toggle-target'}
+				onNav={(delta) => setToggleIndex((prev) => (prev + delta + AGENT_CONTEXT_ORDER.length) % AGENT_CONTEXT_ORDER.length)}
+				onToggle={() => {
+					const ctx = AGENT_CONTEXT_ORDER[toggleIndex] ?? 'cc';
+					setToggleDraft((prev) => ({...prev, [ctx]: !prev[ctx]}));
+				}}
+				onApply={applyToggle}
+				onCancel={() => setScreen({kind: 'list'})}
 			/>
 
 			<ConfirmInput
@@ -223,17 +220,77 @@ export default function McpView({agentContext = 'cc', active, viewportHeight = 1
 						return;
 					}
 
-					const result = removeMcpServer(current.Id, true, agentContext);
+					const serverId = current.Id;
+					const result = removeSharedMcpServer(serverId, true);
 					refresh();
+					setScreen({kind: 'list'});
 					if (result.ok) {
-						toast.success(`已删除 MCP Server ${current.Id}`);
+						toast.success(`已删除 MCP Server ${serverId}`);
 					} else {
 						toast.error(result.error);
 					}
-					setScreen({kind: 'list'});
 				}}
 			/>
 		</box>
+	);
+}
+
+// ── 行内双态徽章：开启=success ●，禁用/未开启=muted ○（全称标签，禁 cc/cx 缩写） ──
+function DualStateBadges({cc, cx}: {readonly cc: McpAgentInjectState; readonly cx: McpAgentInjectState}) {
+	return (
+		<box flexDirection="row" height={1} overflow="hidden">
+			<StateBadge label={AGENT_CONTEXT_LABELS.cc} active={cc.active} />
+			<text fg={colors.muted}>{'  '}</text>
+			<StateBadge label={AGENT_CONTEXT_LABELS.cx} active={cx.active} />
+		</box>
+	);
+}
+
+function StateBadge({label, active}: {readonly label: string; readonly active: boolean}) {
+	return (
+		<text fg={active ? colors.success : colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+			{`${active ? '●' : '○'} ${label}`}
+		</text>
+	);
+}
+
+// ── 开关目标 Modal：↑/↓ 选 Claude Code / Codex，空格切草稿开/关，Enter 应用差异，Esc 取消 ──
+// 照搬 ToolsView InjectTargetModal 范式（M9）：左 › <Agent 全称> focused 高亮 flexGrow，右状态标签右对齐。
+function ToggleTargetModal({
+	name,
+	draft,
+	focusedIndex
+}: {
+	readonly name: string;
+	readonly draft: Record<AgentContext, boolean>;
+	readonly focusedIndex: number;
+}) {
+	const selected = AGENT_CONTEXT_ORDER[focusedIndex] ?? 'cc';
+	return (
+		<Modal
+			active
+			title={`管理开关：${name}`}
+			hint="↑/↓ 选择  空格 切换开/关  Enter 应用  Esc 取消"
+			width={TOGGLE_MODAL_WIDTH}
+		>
+			<box flexDirection="column">
+				{AGENT_CONTEXT_ORDER.map((ctx) => {
+					const enabled = Boolean(draft[ctx]);
+					const focused = ctx === selected;
+					const stateLabel = enabled ? '● 已开启' : '○ 已禁用';
+					return (
+						<box key={ctx} flexDirection="row">
+							<text fg={focused ? colors.primary : colors.muted} attributes={focused ? TextAttributes.BOLD : 0} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} flexGrow={1}>
+								{`${focused ? '›' : ' '} ${AGENT_CONTEXT_LABELS[ctx]} `}
+							</text>
+							<text fg={enabled ? colors.success : colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} flexShrink={0}>
+								{stateLabel}
+							</text>
+						</box>
+					);
+				})}
+			</box>
+		</Modal>
 	);
 }
 
@@ -248,8 +305,7 @@ function ListInput({
 	onAdd,
 	onEdit,
 	onDelete,
-	onExit,
-	onExitToHeader
+	onExit
 }: {
 	readonly active: boolean;
 	readonly hasCurrent: boolean;
@@ -260,7 +316,6 @@ function ListInput({
 	readonly onEdit: () => void;
 	readonly onDelete: () => void;
 	readonly onExit: () => void;
-	readonly onExitToHeader?: () => void;
 }) {
 	useKeyboard((keyEvent) => {
 		if (!active) {
@@ -270,11 +325,11 @@ function ListInput({
 		switch (keyEvent.name.toLowerCase()) {
 			case 'up':
 			case 'arrowup':
-				if (atTop && onExitToHeader) {
-					onExitToHeader();
-				} else {
+				// MCP 隐藏 Header：顶行 ↑ 停在首项（no-op），不退回 header。
+				if (!atTop) {
 					onMove(-1);
 				}
+
 				break;
 			case 'down':
 			case 'arrowdown':
@@ -307,6 +362,41 @@ function ListInput({
 				}
 
 				break;
+		}
+	});
+
+	return null;
+}
+
+function ToggleModalInput({
+	active,
+	onNav,
+	onToggle,
+	onApply,
+	onCancel
+}: {
+	readonly active: boolean;
+	readonly onNav: (delta: number) => void;
+	readonly onToggle: () => void;
+	readonly onApply: () => void;
+	readonly onCancel: () => void;
+}) {
+	useKeyboard((keyEvent) => {
+		if (!active) {
+			return;
+		}
+
+		const k = keyEvent.name.toLowerCase();
+		if (k === 'up' || k === 'arrowup') {
+			onNav(-1);
+		} else if (k === 'down' || k === 'arrowdown') {
+			onNav(1);
+		} else if (k === 'space' || keyEvent.name === ' ') {
+			onToggle();
+		} else if (k === 'enter' || k === 'return') {
+			onApply();
+		} else if (k === 'escape') {
+			onCancel();
 		}
 	});
 
