@@ -3,6 +3,7 @@
 .claude/
 .antigravitycli/
 .ccg/
+.agents/
 openspec/
 
 # ─── 构建产物（由本地构建或 GitHub Actions 自动生成）───
