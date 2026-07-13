@@ -1,5 +1,5 @@
 import type {AgentContext} from '../state/manage-state.js';
-import {skillsAgentOf} from './skills.js';
+import {skillsAgentOf, type SkillsCliAgent} from './skills.js';
 import {execCommand, removeAnsiSequences, type ProgressCallback, type ExecResult} from './exec.js';
 
 // Skills 操作服务：install / update / uninstall，进度通过 onProgress(event) 上报，
@@ -50,6 +50,16 @@ function normalizeAgentAndExec(agentOrExec: AgentContext | SkillsExecFn | undefi
 	return typeof agentOrExec === 'function'
 		? {agentContext: 'cc', exec: agentOrExec}
 		: {agentContext: agentOrExec ?? 'cc', exec: exec ?? execCommand};
+}
+
+/** 解析卸载目标：AgentContext → `claude-code`/`codex` 单侧；`'*'` → 全 Agent 全量删。 */
+function normalizeRemoveTarget(agentOrExec: AgentContext | '*' | SkillsExecFn | undefined, exec: SkillsExecFn | undefined): {agentTarget: SkillsCliAgent | '*'; exec: SkillsExecFn} {
+	if (typeof agentOrExec === 'function') {
+		return {agentTarget: skillsAgentOf('cc'), exec: agentOrExec};
+	}
+
+	const target = agentOrExec ?? 'cc';
+	return {agentTarget: target === '*' ? '*' : skillsAgentOf(target), exec: exec ?? execCommand};
 }
 
 export async function installSkill(
@@ -124,19 +134,27 @@ export async function updateSkills(
 	}
 }
 
-/** 卸载 Skills（`skills remove`）。 */
+/**
+ * 卸载 Skills（`skills remove`）。
+ *
+ * agent 目标（shared-resource-injection-ui Section 17.4）：
+ * - AgentContext（'cc'/'cx'）：`--agent claude-code`/`--agent codex`，单侧撤销（Claude Code 删 symlink，本体若他方仍用由 CLI 保留）。
+ * - `'*'`：`--agent '*'`，从所有 Agent 全量卸载（一次清 symlink + canonical 本体），供 d 键全量删除复用。
+ *
+ * 物理删除全部由官方 CLI 负责，ccq 绝不自删文件（skills-multitool 硬约束）。
+ */
 export async function uninstallSkills(
 	skillNames: readonly string[],
 	onProgress?: ProgressCallback,
-	agentOrExec?: AgentContext | SkillsExecFn,
+	agentOrExec?: AgentContext | '*' | SkillsExecFn,
 	execArg?: SkillsExecFn
 ): Promise<SkillsActionResult> {
 	if (skillNames.length === 0) {
 		return {success: false, error: '未选择要卸载的 Skill'};
 	}
 
-	const {agentContext, exec} = normalizeAgentAndExec(agentOrExec, execArg);
-	const args = ['--yes', 'skills', 'remove', ...skillNames, '-g', '--agent', skillsAgentOf(agentContext), '--yes'];
+	const {agentTarget, exec} = normalizeRemoveTarget(agentOrExec, execArg);
+	const args = ['--yes', 'skills', 'remove', ...skillNames, '-g', '--agent', agentTarget, '--yes'];
 	emit(onProgress, {level: 'info', message: `正在卸载: ${skillNames.join(', ')}`});
 
 	try {

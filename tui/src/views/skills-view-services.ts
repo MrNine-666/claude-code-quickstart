@@ -1,27 +1,25 @@
-import type {AgentContext} from '../state/manage-state.js';
-import type {SkillsExecFn} from '../core/skills-actions.js';
 import {
-	installSearchResult,
+	installResultToTargets,
 	searchSkillCatalogue,
-	uninstallSelected,
-	updateAllSkills
+	toggleClaudeInstall,
+	uninstallSkillAllAgents,
+	updateAllSkillsBothSides
 } from '../services/skills-service.js';
 import {createSkillsDetectionRunner, runSkillsDetection} from '../services/view-detection.js';
 import type {SkillsViewServices} from './SkillsView.js';
 
-// Skills 视图默认 service 装配：连接 service 真实实现。
-// agentContext 决定 skills CLI 的 --agent 参数（claude-code / codex）；切换 Header 时
-// App 重建 services，使检测与 install/update/uninstall 全部走当前 Agent。
-// 测试与 fallback 可传入自定义实现替换（保持组件与具体 IO 解耦）。
-export function createSkillsViewServices(agentContext: AgentContext = 'cc'): SkillsViewServices {
+// Skills 视图默认 service 装配（shared-resource-injection-ui Section 17-18）：连接双侧共享 service 实现。
+// 检测走无 `--agent` 全量扫（一次 list 得双侧态），与 agentContext 解耦；install 目标由 Modal 显式选，
+// 不再按 Header agentContext 建 service key。测试与 fallback 可传入自定义实现替换（组件与具体 IO 解耦）。
+export function createSkillsViewServices(): SkillsViewServices {
 	return {
 		searchSkills: query => searchSkillCatalogue(query),
-		installResult: (result, onProgress, exec) => installSearchResult(result, onProgress, agentContext, exec),
-		updateAll: (onProgress, exec) => updateAllSkills(onProgress, agentContext, exec),
-		uninstall: (names, onProgress, exec) => uninstallSelected(names, onProgress, agentContext, exec),
+		installToTargets: (result, targets, onProgress) => installResultToTargets(result, targets, onProgress),
+		toggleClaude: (name, install, onProgress) => toggleClaudeInstall(name, install, onProgress),
+		updateBothSides: onProgress => updateAllSkillsBothSides(onProgress),
+		uninstallAllAgents: (name, onProgress) => uninstallSkillAllAgents(name, onProgress),
 		createDetectionRunner: onChange => createSkillsDetectionRunner(onChange),
-		// runDetection 与 install/update/uninstall 一致透传 exec，使 detection 路径同样可注入 mock（可测性）。
-		// useDetectionCache 只调 runDetection(runner) 不传第二参，加可选 exec 协变安全、零破坏。
-		runDetection: (runner, exec) => runSkillsDetection(runner, agentContext, exec)
+		// detection 走无 --agent 全量扫（一次 list 得双侧态），默认真实 exec。
+		runDetection: runner => runSkillsDetection(runner)
 	};
 }

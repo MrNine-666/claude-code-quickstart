@@ -2,22 +2,26 @@ import React, {useEffect, useReducer} from 'react';
 import {TextAttributes} from '@opentui/core';
 import {useKeyboard} from '@opentui/react';
 import type {KeyEvent} from '@opentui/core';
-import {ActionHint, Checkbox, ErrorPanel, ListEmptyState, ListLoadingState, Modal, ProgressLog, ScrollList, Spinner, ViewHeader, toast} from '../components/index.js';
+import {ErrorPanel, ListEmptyState, ListLoadingState, Modal, ProgressLog, ScrollList, ViewHeader, toast} from '../components/index.js';
 import {borderColors, colors} from '../theme/index.js';
 import type {DetectionState} from '../services/async-detection.js';
 import type {DetectionCache} from '../hooks/use-detection-cache.js';
 import type {InstalledSkill, SearchSkillResult} from '../core/skills.js';
+import {projectSharedSkills} from '../core/skills.js';
 import type {ProgressCallback} from '../core/exec.js';
-import {AGENT_CONTEXT_LABELS, type AgentContext} from '../state/manage-state.js';
+import type {SkillsSideResult} from '../services/skills-service.js';
+import {AGENT_CONTEXT_LABELS, AGENT_CONTEXT_ORDER, type AgentContext} from '../state/manage-state.js';
 import {hasShortcutModifier} from '../utils/keyboard.js';
 import {
 	createInitialSkillsViewState,
 	displaySkillName,
 	filteredInstalled,
 	reduceSkillsViewState,
+	selectedInstalled,
 	selectedResult,
 	shouldRunSearch,
 	uninstallTargets,
+	type InstallDraft,
 	type SkillsViewAction,
 	type SkillsViewState,
 	type SkillsViewMode
@@ -25,56 +29,57 @@ import {
 
 type Dispatch = React.Dispatch<SkillsViewAction>;
 
-// Skills 视图（OpenTUI 适配）：扁平安装架构。
-// 列表页：顶部本地过滤框（模糊查询已装）+ 已装列表；u 更新全部 / d 卸载单条 / r 刷新。
-// 安装页：远程搜索框 + 扁平 skill 列表；Enter 触发确认弹窗。
-// 列表页 `a` → 安装页；Esc 回退（安装页→列表页→导航）。
-// 确认弹窗统一使用绝对定位 Modal 居中覆盖，不挤占列表布局。
-// 检测缓存提升到 App 层：已安装检测由 cache 注入，切走再切回不重跑；r 键刷新。
+// Skills 视图（OpenTUI 适配）：共享本体 + 双侧注入架构（shared-resource-injection-ui Section 18）。
+// 列表页：本地过滤框 + 共享列表（一行一 skill name + Claude Code/Codex 双态徽章）；
+//   Enter 管理安装（切 Claude Code symlink）/ u 更新两侧 / d 全量卸载（所有 Agent）/ r 刷新。
+// 安装页：远程搜索框 + 扁平 skill 列表；Enter 弹安装目标 Modal（Codex 只读恒勾）。
+// Modal（安装目标 / 管理安装 / 全量卸载确认）统一绝对定位居中覆盖，不挤占列表布局。
+// Header 隐藏（app.tsx AGENT_HEADER_HIDDEN_MODULES）：检测走双侧聚合（一次 skills list -g --json 无 --agent），
+// 不按 agentContext 过滤；顶行 ↑ no-op（不退 header）。检测缓存提升到 App 层：切走再切回不重跑；r 刷新。
+
+// 安装目标 / 管理安装 / 卸载确认 Modal 宽度：对齐 Tools/MCP，容纳 hint 单行不换行。
+const SKILLS_MODAL_WIDTH = 56;
 
 export type SkillsViewServices = {
 	readonly searchSkills: (
 		query: string
 	) => Promise<{ok: true; results: readonly SearchSkillResult[]} | {ok: false; error: string; rawSummary?: string}>;
-	readonly installResult: (result: SearchSkillResult, onProgress?: ProgressCallback, exec?: import('../core/skills-actions.js').SkillsExecFn) => Promise<{success: boolean; error?: string}>;
-	readonly updateAll: (onProgress?: ProgressCallback, exec?: import('../core/skills-actions.js').SkillsExecFn) => Promise<{success: boolean; error?: string; noChange?: boolean}>;
-	readonly uninstall: (names: readonly string[], onProgress?: ProgressCallback, exec?: import('../core/skills-actions.js').SkillsExecFn) => Promise<{success: boolean; error?: string}>;
+	// 多目标安装（安装目标 Modal 提交）：按选中侧逐侧调用，per-side 结果聚合。
+	readonly installToTargets: (result: SearchSkillResult, targets: readonly AgentContext[], onProgress?: ProgressCallback) => Promise<readonly SkillsSideResult[]>;
+	// 切换 Claude Code 安装（管理安装 Modal 提交）：install=建 symlink / 卸载=删 symlink。
+	readonly toggleClaude: (name: string, install: boolean, onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string}>;
+	// 更新两侧（u）：cc/cx 各更新一次。
+	readonly updateBothSides: (onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string; noChange?: boolean}>;
+	// 全量卸载（d）：单条 skills remove --agent '*' 从所有 Agent 删。
+	readonly uninstallAllAgents: (name: string, onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string}>;
 	readonly createDetectionRunner: (
 		onChange: import('../services/detection-runner.js').DetectionStateSink<InstalledSkill[]>
 	) => import('../services/detection-runner.js').DetectionRunner<InstalledSkill[]>;
-	readonly runDetection: (runner: import('../services/detection-runner.js').DetectionRunner<InstalledSkill[]>, exec?: import('../core/skills-actions.js').SkillsExecFn) => Promise<unknown>;
+	readonly runDetection: (runner: import('../services/detection-runner.js').DetectionRunner<InstalledSkill[]>) => Promise<unknown>;
 };
 
 export type SkillsViewProps = {
 	readonly services: SkillsViewServices;
 	readonly cache: DetectionCache<InstalledSkill[]>;
-	readonly agentContext?: AgentContext;
 	readonly active?: boolean;
-	readonly viewportHeight?: number;
-	readonly viewportWidth?: number;
 	readonly onSubModeChange?: (subMode: string) => void;
 	readonly onExitToNav?: () => void;
-	readonly onExitToHeader?: () => void;
 };
 
 export function SkillsView({
 	services,
 	cache,
-	agentContext = 'cc',
 	active = true,
-	viewportHeight = 16,
-	viewportWidth = 52,
 	onSubModeChange,
-	onExitToNav,
-	onExitToHeader
+	onExitToNav
 }: SkillsViewProps) {
 	const [view, dispatch] = useReducer(reduceSkillsViewState, createInitialSkillsViewState());
 	const detection = cache.state;
 
-	// 缓存检测成功时把已安装列表灌入视图 reducer。
+	// 缓存检测成功时投影为双侧共享行灌入视图 reducer（一次 list 派生 Claude Code / Codex 双态）。
 	useEffect(() => {
 		if (detection.status === 'success') {
-			dispatch({type: 'installed-loaded', installed: detection.result ?? []});
+			dispatch({type: 'installed-loaded', installed: projectSharedSkills(detection.result ?? [])});
 		}
 	}, [detection.status, detection.result]);
 
@@ -91,26 +96,24 @@ export function SkillsView({
 			return;
 		}
 
-		handleKey(keyEvent, view, dispatch, services, cache, onExitToNav, onExitToHeader);
+		handleKey(keyEvent, view, dispatch, services, cache, onExitToNav);
 	});
 
-	// 确认态使用绝对定位 Modal，不再为确认框预留列表行数。
-	const confirmActive = isConfirmMode(view.mode);
-	const confirmRows = 0;
-	const stretchLists = true;
-
 	return (
-		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title="Skills 技能管理" subtitle={`搜索、安装、更新和卸载 ${AGENT_CONTEXT_LABELS[agentContext]} Skills`} />
+		<box flexDirection="column" flexGrow={1} minHeight={0}>
+			<ViewHeader title="Skills 技能管理" subtitle="共享维护 Claude Code 与 Codex 两侧的 Skills（搜索、安装、更新、卸载）" />
 			{renderDetectionNotice(detection.status)}
-			{renderPage(view, detection, viewportHeight, confirmRows, stretchLists, active)}
+			{renderPage(view, detection, active)}
 			{view.busyAction ? <ProgressLog title="执行进度" messages={view.progress} /> : null}
 			{view.errorText ? (
 				<box marginTop={1}>
 					<ErrorPanel message={view.errorText} />
 				</box>
 			) : null}
-			{confirmActive ? renderConfirm(view, viewportWidth, viewportHeight, agentContext) : null}
+			{view.mode === 'select-install-target' || view.mode === 'manage-inject' ? (
+				<InstallTargetModal view={view} />
+			) : null}
+			{view.mode === 'confirm-uninstall' ? renderConfirm(view) : null}
 		</box>
 	);
 }
@@ -123,20 +126,25 @@ function handleKey(
 	dispatch: Dispatch,
 	services: SkillsViewServices,
 	cache: DetectionCache<InstalledSkill[]>,
-	onExitToNav?: () => void,
-	onExitToHeader?: () => void
+	onExitToNav?: () => void
 ): void {
 	// busy 进行中：忽略一切输入
 	if (view.mode === 'busy') {
 		return;
 	}
 
-	// 确认弹层：Enter 确认 / Esc 取消
-	if (view.mode === 'confirm-install' || view.mode === 'confirm-uninstall') {
+	// 安装目标 / 管理安装 Modal：↑/↓ 选侧、空格切草稿（仅 Claude Code）、Enter 提交、Esc 取消
+	if (view.mode === 'select-install-target' || view.mode === 'manage-inject') {
+		handleTargetModalKey(keyEvent, view, dispatch, services, cache);
+		return;
+	}
+
+	// 全量卸载确认：Enter 确认 / Esc 取消
+	if (view.mode === 'confirm-uninstall') {
 		const mapped = mapActionKey(keyEvent.name);
 		if (mapped === 'enter') {
 			dispatch({type: 'confirm'});
-			runConfirmedAction(view, services, dispatch, cache);
+			runConfirmedUninstall(view, services, dispatch, cache);
 		} else if (mapped === 'escape') {
 			dispatch({type: 'cancel'});
 		}
@@ -145,12 +153,50 @@ function handleKey(
 	}
 
 	if (view.mode === 'install') {
-		handleInstallKey(keyEvent, view, dispatch, services, onExitToHeader);
+		handleInstallKey(keyEvent, view, dispatch, services);
 		return;
 	}
 
 	// mode === 'list'
-	handleListKey(keyEvent, view, dispatch, services, cache, onExitToNav, onExitToHeader);
+	handleListKey(keyEvent, view, dispatch, services, cache, onExitToNav);
+}
+
+/** 安装目标 / 管理安装 Modal 按键：复用 Tools InjectTargetModal 范式。 */
+function handleTargetModalKey(
+	keyEvent: KeyEvent,
+	view: SkillsViewState,
+	dispatch: Dispatch,
+	services: SkillsViewServices,
+	cache: DetectionCache<InstalledSkill[]>
+): void {
+	const k = keyEvent.name.toLowerCase();
+	if (k === 'up' || k === 'arrowup') {
+		dispatch({type: 'install-target-nav', delta: -1});
+		return;
+	}
+
+	if (k === 'down' || k === 'arrowdown') {
+		dispatch({type: 'install-target-nav', delta: 1});
+		return;
+	}
+
+	if (k === 'space' || keyEvent.name === ' ') {
+		dispatch({type: 'install-target-toggle'});
+		return;
+	}
+
+	if (k === 'escape') {
+		dispatch({type: 'cancel'});
+		return;
+	}
+
+	if (k === 'enter' || k === 'return') {
+		if (view.mode === 'select-install-target') {
+			runInstallToTargets(view, services, dispatch, cache);
+		} else {
+			runManageInject(view, services, dispatch, cache);
+		}
+	}
 }
 
 /** 列表页按键：过滤框聚焦态 vs 浏览态。 */
@@ -160,8 +206,7 @@ function handleListKey(
 	dispatch: Dispatch,
 	services: SkillsViewServices,
 	cache: DetectionCache<InstalledSkill[]>,
-	onExitToNav?: () => void,
-	onExitToHeader?: () => void
+	onExitToNav?: () => void
 ): void {
 	const name = keyEvent.name;
 
@@ -207,17 +252,20 @@ function handleListKey(
 	const mapped = mapActionKey(name);
 	switch (mapped) {
 		case 'up':
-			if (view.installedIndex === 0 && onExitToHeader) {
-				onExitToHeader();
-			} else {
-				dispatch({type: 'nav-up'});
-			}
+			// Skills 隐藏 Header：顶行 ↑ 停在首项（no-op），不退回 header。
+			dispatch({type: 'nav-up'});
 			return;
 		case 'down':
 			dispatch({type: 'nav-down'});
 			return;
 		case 'tab':
 			dispatch({type: 'filter-focus'});
+			return;
+		case 'enter':
+			// 列表行 Enter → 管理安装 Modal（切 Claude Code symlink / Codex 只读随本体）。
+			if (selectedInstalled(view)) {
+				dispatch({type: 'manage-inject'});
+			}
 			return;
 		case 'install':
 			dispatch({type: 'open-install'});
@@ -236,7 +284,7 @@ function handleListKey(
 }
 
 /** 安装页按键：搜索框聚焦态 vs skill 浏览态。 */
-function handleInstallKey(keyEvent: KeyEvent, view: SkillsViewState, dispatch: Dispatch, services: SkillsViewServices, onExitToHeader?: () => void): void {
+function handleInstallKey(keyEvent: KeyEvent, view: SkillsViewState, dispatch: Dispatch, services: SkillsViewServices): void {
 	const name = keyEvent.name;
 
 	// 搜索框聚焦：字符输入 / Enter 提交搜索 / Tab 失焦 / Esc 回列表页
@@ -279,13 +327,12 @@ function handleInstallKey(keyEvent: KeyEvent, view: SkillsViewState, dispatch: D
 		return;
 	}
 
-	// skill 浏览态：Enter 触发确认弹窗 / Tab 回搜索框 / Esc 回列表页
+	// skill 浏览态：Enter 弹安装目标 Modal / Tab 回搜索框 / Esc 回列表页
 	const mapped = mapActionKey(name);
 	switch (mapped) {
 		case 'up':
-			if (view.resultIndex === 0 && onExitToHeader) {
-				onExitToHeader();
-			} else {
+			// Skills 隐藏 Header：顶行 ↑ 停在首项（no-op），不退回 header。
+			if (view.resultIndex > 0) {
 				dispatch({type: 'nav-up'});
 			}
 			return;
@@ -384,48 +431,89 @@ function runSearch(query: string, services: SkillsViewServices, dispatch: Dispat
 	});
 }
 
-function runConfirmedAction(
+/** 安装目标 Modal 提交（select-install-target Enter）：按草稿选中侧多目标安装。cx 恒 true。 */
+function runInstallToTargets(
 	view: SkillsViewState,
 	services: SkillsViewServices,
 	dispatch: Dispatch,
 	cache: DetectionCache<InstalledSkill[]>
 ): void {
-	if (view.mode === 'confirm-install') {
-		const skill = selectedResult(view);
-		if (!skill) {
-			dispatch({type: 'action-failed', error: '没有可安装的 skill'});
-			return;
-		}
-
-		void services.installResult(skill, progressSink(dispatch)).then((res) => {
-			if (res.success) {
-				toast.success(`已安装 ${skill.name}`);
-				dispatch({type: 'action-done'});
-				cache.refresh();
-			} else {
-				dispatch({type: 'action-failed', error: res.error ?? '安装失败'});
-			}
-		});
+	const skill = selectedResult(view);
+	if (!skill) {
+		dispatch({type: 'action-failed', error: '没有可安装的 skill'});
 		return;
 	}
 
-	if (view.mode === 'confirm-uninstall') {
-		const names = uninstallTargets(view);
-		if (names.length === 0) {
-			dispatch({type: 'action-failed', error: '没有选中要卸载的 skill'});
-			return;
+	const targets = AGENT_CONTEXT_ORDER.filter(ctx => view.installDraft[ctx]);
+	dispatch({type: 'confirm'});
+	void services.installToTargets(skill, targets, progressSink(dispatch)).then((sides) => {
+		const failed = sides.filter(side => !side.result.success);
+		if (failed.length === 0) {
+			toast.success(`已安装 ${skill.name}`);
+			dispatch({type: 'action-done'});
+			cache.refresh();
+		} else {
+			const detail = failed.map(side => `${AGENT_CONTEXT_LABELS[side.agentContext]}: ${side.result.error ?? '安装失败'}`).join('；');
+			dispatch({type: 'action-failed', error: detail});
 		}
+	});
+}
 
-		void services.uninstall(names, progressSink(dispatch)).then((res) => {
-			if (res.success) {
-				toast.success(`已卸载 ${names.join(', ')}`);
-				dispatch({type: 'action-uninstall-done', names});
-				cache.refresh();
-			} else {
-				dispatch({type: 'action-failed', error: res.error ?? '卸载失败'});
-			}
-		});
+/** 管理安装 Modal 提交（manage-inject Enter）：按 Claude Code 草稿 diff 建/删 symlink（Codex 只读不动）。 */
+function runManageInject(
+	view: SkillsViewState,
+	services: SkillsViewServices,
+	dispatch: Dispatch,
+	cache: DetectionCache<InstalledSkill[]>
+): void {
+	const current = selectedInstalled(view);
+	if (!current) {
+		dispatch({type: 'cancel'});
+		return;
 	}
+
+	const desired = view.installDraft.cc;
+	if (desired === current.claudeInjected) {
+		toast.info('未改变 Claude Code 安装状态');
+		dispatch({type: 'cancel'});
+		return;
+	}
+
+	dispatch({type: 'confirm'});
+	void services.toggleClaude(current.name, desired, progressSink(dispatch)).then((res) => {
+		if (res.success) {
+			toast.success(`${current.name} · Claude Code 已${desired ? '安装' : '卸载'}`);
+			dispatch({type: 'action-done'});
+			cache.refresh();
+		} else {
+			dispatch({type: 'action-failed', error: res.error ?? '操作失败'});
+		}
+	});
+}
+
+/** 全量卸载确认（confirm-uninstall Enter）：单条 skills remove --agent '*' 从所有 Agent 删。 */
+function runConfirmedUninstall(
+	view: SkillsViewState,
+	services: SkillsViewServices,
+	dispatch: Dispatch,
+	cache: DetectionCache<InstalledSkill[]>
+): void {
+	const names = uninstallTargets(view);
+	if (names.length === 0) {
+		dispatch({type: 'action-failed', error: '没有选中要卸载的 skill'});
+		return;
+	}
+
+	const name = names[0]!;
+	void services.uninstallAllAgents(name, progressSink(dispatch)).then((res) => {
+		if (res.success) {
+			toast.success(`已从所有 Agent 卸载 ${name}`);
+			dispatch({type: 'action-uninstall-done', names});
+			cache.refresh();
+		} else {
+			dispatch({type: 'action-failed', error: res.error ?? '卸载失败'});
+		}
+	});
 }
 
 function runUpdateIfReady(view: SkillsViewState, services: SkillsViewServices, dispatch: Dispatch): void {
@@ -433,9 +521,9 @@ function runUpdateIfReady(view: SkillsViewState, services: SkillsViewServices, d
 		return;
 	}
 
-	void services.updateAll(progressSink(dispatch)).then((res) => {
+	void services.updateBothSides(progressSink(dispatch)).then((res) => {
 		if (res.success) {
-			toast.success(res.noChange ? '所有 skill 已是最新版本' : '已更新所有 skill');
+			toast.success(res.noChange ? '两侧 skill 均已是最新版本' : '已更新两侧 skill');
 			dispatch({type: 'action-done'});
 		} else {
 			dispatch({type: 'action-failed', error: res.error ?? '更新失败'});
@@ -445,17 +533,13 @@ function runUpdateIfReady(view: SkillsViewState, services: SkillsViewServices, d
 
 // ── 渲染 ───────────────────────────────────────────────────────────────────
 
-function isConfirmMode(mode: SkillsViewMode): boolean {
-	return mode === 'confirm-install' || mode === 'confirm-uninstall';
-}
-
-/** 当前应渲染的页（确认/执行时保持原页显示，仅叠加底部确认框/进度）。 */
+/** 当前应渲染的页（Modal/执行时保持原页显示，仅叠加 Modal/进度）。 */
 function pageOf(mode: SkillsViewMode, busyAction?: 'install' | 'update' | 'uninstall'): 'list' | 'install' {
-	if (mode === 'install' || mode === 'confirm-install') {
+	// 安装页及其安装目标 Modal 停留安装页；busy(install) 保留安装页 + 进度。
+	if (mode === 'install' || mode === 'select-install-target') {
 		return 'install';
 	}
 
-	// busy(install) 保留安装页 + 进度；busy(update/uninstall) 回列表页
 	if (mode === 'busy' && busyAction === 'install') {
 		return 'install';
 	}
@@ -491,82 +575,118 @@ function renderDetectionNotice(status: DetectionState<InstalledSkill[]>['status'
 	return null;
 }
 
-/** 底部确认框（confirm-install 单个 skill / confirm-uninstall 单条）。 */
-function renderConfirm(view: SkillsViewState, viewportWidth: number, viewportHeight: number, agentContext: AgentContext): React.ReactNode {
-	if (view.mode === 'confirm-install') {
-		const skill = selectedResult(view);
-		const skillName = skill ? displaySkillName(skill.name) : '';
-		const source = skill?.source ?? '';
-		return (
-			<Modal active title="确认安装 Skill" hint="Enter 确认  Esc 取消" viewportWidth={viewportWidth} viewportHeight={viewportHeight}>
-				<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{skill ? `即将安装 ${skillName} (${source})` : '无可用结果'}</text>
-			</Modal>
-		);
-	}
-
+/** 全量卸载确认框（confirm-uninstall）：从所有 Agent 卸载（移除 symlink 与共享本体）。 */
+function renderConfirm(view: SkillsViewState): React.ReactNode {
 	const names = uninstallTargets(view);
-	// Codex 直接读共享目录 ~/.agents/skills：若该 Skill 仍被其他 Agent 引用，canonical 文件保留，Codex 仍可见。
-	const codexHint = agentContext === 'cx' ? '（Codex 直读共享目录，若其他 Agent 仍引用则文件保留、Codex 仍可见）' : '';
 	return (
-		<Modal active title="确认卸载 Skill" hint="Enter 确认  Esc 取消" tone="danger" viewportWidth={viewportWidth} viewportHeight={viewportHeight}>
-			<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{names.length > 0 ? `即将卸载：${names.join(', ')}` : '无卸载目标'}</text>
-			{codexHint ? <text fg={colors.muted}>{codexHint}</text> : null}
+		<Modal active title="确认卸载 Skill" hint="Enter 确认  Esc 取消" tone="danger" width={SKILLS_MODAL_WIDTH}>
+			<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+				{names.length > 0 ? `即将从所有 Agent 卸载 ${names.join(', ')}：移除 Claude Code symlink 与共享本体，此操作不可撤销。` : '无卸载目标'}
+			</text>
 		</Modal>
+	);
+}
+
+// ── 安装目标 / 管理安装 Modal：↑/↓ 选侧，空格切草稿（仅 Claude Code），Enter 提交，Esc 取消 ──
+// 复用 Tools InjectTargetModal 范式：左 › <Agent 全称> focused 高亮 flexGrow，右状态标签右对齐。
+// Codex 只读恒勾（装了必写本体、直读即可用，无法不装）；仅 Claude Code 可切。文案统一「安装/卸载」。
+function InstallTargetModal({view}: {readonly view: SkillsViewState}) {
+	const isManage = view.mode === 'manage-inject';
+	const name = isManage ? selectedInstalled(view)?.name ?? '' : displaySkillName(selectedResult(view)?.name ?? '');
+	const title = isManage ? `管理安装：${name}` : `选择安装目标：${name}`;
+	const selected = AGENT_CONTEXT_ORDER[view.targetIndex] ?? 'cc';
+	return (
+		<Modal active title={title} hint="↑/↓ 选择  空格 切换安装/卸载  Enter 应用  Esc 取消" width={SKILLS_MODAL_WIDTH}>
+			<box flexDirection="column">
+				{AGENT_CONTEXT_ORDER.map((ctx) => {
+					const checked = Boolean(view.installDraft[ctx]);
+					const focused = ctx === selected;
+					// Codex 只读随本体：管理态显「已安装（随本体）/未安装」，安装态显「安装」恒勾。
+					const readonly = ctx === 'cx';
+					const stateLabel = readonly
+						? (isManage ? (checked ? '● 已安装（随本体）' : '○ 未安装') : '● 安装')
+						: (checked ? '● 安装' : '○ 不安装');
+					return (
+						<box key={ctx} flexDirection="row">
+							<text fg={focused ? colors.primary : colors.muted} attributes={focused ? TextAttributes.BOLD : 0} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} flexGrow={1}>
+								{`${focused ? '›' : ' '} ${AGENT_CONTEXT_LABELS[ctx]}${readonly ? '（只读）' : ''} `}
+							</text>
+							<text fg={checked ? colors.success : colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} flexShrink={0}>
+								{stateLabel}
+							</text>
+						</box>
+					);
+				})}
+			</box>
+		</Modal>
+	);
+}
+
+// ── 行内双态徽章：已安装=success ●，未安装=muted ○（全称标签，禁 cc/cx 缩写） ──
+// Claude Code = 可切 symlink 安装态；Codex = 只读镜像共享本体（codexAvailable），跟随本体不可单独切。
+function DualStateBadges({claudeInjected, codexAvailable}: {readonly claudeInjected: boolean; readonly codexAvailable: boolean}) {
+	return (
+		<box flexDirection="row" height={1} overflow="hidden">
+			<StateBadge label={AGENT_CONTEXT_LABELS.cc} installed={claudeInjected} />
+			<text fg={colors.muted}>{'  '}</text>
+			<StateBadge label={AGENT_CONTEXT_LABELS.cx} installed={codexAvailable} />
+		</box>
+	);
+}
+
+function StateBadge({label, installed}: {readonly label: string; readonly installed: boolean}) {
+	return (
+		<text fg={installed ? colors.success : colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+			{`${installed ? '●' : '○'} ${label}`}
+		</text>
 	);
 }
 
 function renderPage(
 	view: SkillsViewState,
 	detection: DetectionState<InstalledSkill[]>,
-	viewportHeight: number,
-	confirmRows: number,
-	stretchLists: boolean,
 	active: boolean
 ): React.ReactNode {
 	const page = pageOf(view.mode, view.busyAction);
 	if (page === 'install') {
-		return renderInstallPage(view, viewportHeight, confirmRows, stretchLists, active);
+		return renderInstallPage(view, active);
 	}
 
 	// 列表页（默认）。detection 未就绪时由 detectionNotice 占位，body 留空。
 	if (detection.status === 'success') {
-		return renderListPage(view, viewportHeight, confirmRows, stretchLists, active);
+		return renderListPage(view, active);
 	}
 
 	return null;
 }
 
 /** 列表页：顶部本地过滤框 + 已装列表（过滤后）。 */
-function renderListPage(view: SkillsViewState, viewportHeight: number, confirmRows: number, stretchLists: boolean, active: boolean): React.ReactNode {
+function renderListPage(view: SkillsViewState, active: boolean): React.ReactNode {
 	const filtered = filteredInstalled(view);
 	const items = filtered.map((skill) => ({
 		key: skill.name,
-		title: skill.name
+		title: skill.name,
+		body: <DualStateBadges claudeInjected={skill.claudeInjected} codexAvailable={skill.codexAvailable} />,
+		multiLine: true
 	}));
 
 	return (
-		<box flexDirection="column" flexGrow={stretchLists ? 1 : 0}>
+		<box flexDirection="column" flexGrow={1} minHeight={0}>
 			<InputBox label="过滤" value={view.filterText} focused={active && view.filterFocused} placeholder="输入关键词模糊筛选已装 skill" />
 			{filtered.length === 0 ? (
 				<ListEmptyState
 					message={view.installed.length === 0 ? '暂无已安装 skill' : '没有匹配的已装 skill'}
 					hint={view.installed.length === 0 ? {label: '按 a 进入安装页搜索安装', enabled: true} : undefined}
 				/>
-			) : stretchLists ? (
-				<box marginTop={1} flexGrow={1}>
-					<ScrollList items={items} cursor={view.installedIndex} viewportHeight={viewportHeight} reservedRows={6 + confirmRows} active={active} stretch />
-				</box>
 			) : (
-				<box marginTop={1}>
-					<ScrollList items={items} cursor={view.installedIndex} viewportHeight={viewportHeight} reservedRows={6 + confirmRows} active={active} />
-				</box>
+				<ScrollList items={items} cursor={view.installedIndex} active={active} />
 			)}
 		</box>
 	);
 }
 
 /** 安装页：远程搜索框 + 扁平 skill 列表 + 表头。 */
-function renderInstallPage(view: SkillsViewState, viewportHeight: number, confirmRows: number, stretchLists: boolean, active: boolean): React.ReactNode {
+function renderInstallPage(view: SkillsViewState, active: boolean): React.ReactNode {
 	const items = view.results.map((skill) => {
 		// 解析 skill 名称：owner/repo@skill 格式，提取 @ 后的 skill 名（复用 displaySkillName）
 		const skillName = displaySkillName(skill.name);
@@ -595,18 +715,15 @@ function renderInstallPage(view: SkillsViewState, viewportHeight: number, confir
 	) : undefined;
 
 	return (
-		<box flexDirection="column" flexGrow={stretchLists ? 1 : 0}>
+		<box flexDirection="column" flexGrow={1}>
 			<InputBox label="搜索" value={view.query} focused={active && view.queryFocused} placeholder="输入关键词搜索 skills.sh" />
 			{view.searching ? (
 				<ListLoadingState message="正在搜索..." />
 			) : items.length > 0 ? (
-				<box marginTop={1} flexGrow={stretchLists ? 1 : 0} flexDirection="column">
+				<box marginTop={1} flexGrow={1} flexDirection="column">
 					<ScrollList
 						items={items}
 						cursor={view.resultIndex}
-						viewportHeight={viewportHeight}
-						reservedRows={7 + confirmRows}
-						stretch={stretchLists}
 						header={header}
 						active={active}
 					/>
@@ -651,7 +768,6 @@ function InputBox({
 				borderStyle="rounded"
 				borderColor={focused ? borderColors.active : borderColors.inactive}
 				backgroundColor={focused ? colors.focusedBackground : undefined}
-				paddingX={1}
 				flexGrow={1}
 			>
 				<text fg={colors.muted}>{label}：</text>

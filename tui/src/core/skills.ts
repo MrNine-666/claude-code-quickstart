@@ -18,6 +18,18 @@ export function skillsAgentOf(agentContext: AgentContext): SkillsCliAgent {
 	}
 }
 
+// skills list --json 的 agents 字段用 displayName 标识 skill 所在 agent 目录。
+// 共享投影只关心 Claude Code / Codex 两侧；其它 universal agent（Cline/Cursor 等）displayName 忽略。
+export const SKILL_AGENT_DISPLAY_TO_CONTEXT: Readonly<Record<string, AgentContext>> = {
+	'Claude Code': 'cc',
+	Codex: 'cx'
+};
+
+/** 某 skill 是否在给定 agent 上（按 agents displayName 判定）。纯函数，供投影与门禁复用。 */
+export function skillInstalledOn(skill: InstalledSkill, agentContext: AgentContext): boolean {
+	return skill.agents.some(display => SKILL_AGENT_DISPLAY_TO_CONTEXT[display] === agentContext);
+}
+
 function normalizeAgentAndExec(agentOrExec: AgentContext | ExecFn | undefined, exec: ExecFn | undefined): {agentContext: AgentContext; exec: ExecFn} {
 	return typeof agentOrExec === 'function'
 		? {agentContext: 'cc', exec: agentOrExec}
@@ -47,14 +59,26 @@ export type SkillsSearchOutcome =
 	| {readonly ok: false; readonly error: string; readonly rawSummary?: string};
 
 /**
- * 获取已安装的 Skills（`npx skills list -g --agent claude-code --json`）。
- * 用 `--agent` 长选项而非 `-a`：`-a` 在 `--json` 模式下会把所有 agent 的 skills 都查出来，
- * `--agent` 才能正确限定到 claude-code（实测结论）。
+ * 获取已安装的 Skills（`npx skills list -g [--agent <侧>] --json`）。
+ *
+ * 双模式（shared-resource-injection-ui Section 16.1）：
+ * - **显式传 AgentContext（'cc'/'cx'）**：带 `--agent <侧>` 单侧过滤（旧主路径，供 agent-aware 检测复用）。
+ * - **无参 / 仅传 exec / undefined agent**：**不带 `--agent`** 全量扫所有 agent 目录，一次调用即得每条 skill 的
+ *   `agents` 字段（含 Claude Code / Codex displayName），供 `projectSharedSkills` 派生双侧态。
+ *   实测：`--agent` 在 `--json` 模式下过滤语义不可靠，不带才是全量扫目录的正解。
+ *
  * 返回 Promise，支持后台并发执行（design D13）。
  */
 export async function getInstalledSkills(agentOrExec?: AgentContext | ExecFn, execArg?: ExecFn): Promise<InstalledSkill[]> {
-	const {agentContext, exec} = normalizeAgentAndExec(agentOrExec, execArg);
-	const args = ['--yes', 'skills', 'list', '-g', '--agent', skillsAgentOf(agentContext), '--json'];
+	// 区分「显式单侧」与「全量扫」：仅当首参为 AgentContext 字符串才带 --agent。
+	const explicitAgent = typeof agentOrExec === 'string' ? agentOrExec : undefined;
+	const exec = typeof agentOrExec === 'function' ? agentOrExec : execArg ?? execCommand;
+	const args = ['--yes', 'skills', 'list', '-g'];
+	if (explicitAgent) {
+		args.push('--agent', skillsAgentOf(explicitAgent));
+	}
+
+	args.push('--json');
 
 	try {
 		const {code, stdout} = await exec('npx', args, {timeout: LIST_TIMEOUT_MS});
@@ -83,6 +107,41 @@ export async function getInstalledSkills(agentOrExec?: AgentContext | ExecFn, ex
 	} catch {
 		return [];
 	}
+}
+
+// ── 共享本体 + 注入投影（shared-resource-injection-ui Section 16.3） ─────────────
+
+/**
+ * 共享投影行：一 skill name 一行，双侧态从单次 `skills list -g --json` 的 agents 字段派生。
+ * - sharedInstalled：canonical 共享本体存在（agents 含 Codex；codex=universal 直读本体）。
+ * - claudeInjected：Claude Code symlink 存在（agents 含 Claude Code）。
+ * - codexAvailable：恒等于 sharedInstalled（codex 直读本体，无独立开关）。
+ */
+export type SkillSharedRow = {
+	readonly name: string;
+	readonly path: string;
+	readonly scope: string;
+	readonly sharedInstalled: boolean;
+	readonly claudeInjected: boolean;
+	readonly codexAvailable: boolean;
+};
+
+/**
+ * 把不带 `--agent` 的 `getInstalledSkills()` 结果投影为一行一 skill 的双侧共享行。
+ * codexAvailable === sharedInstalled（codex 直读本体）；非 Claude Code/Codex displayName 忽略。
+ */
+export function projectSharedSkills(installed: readonly InstalledSkill[]): readonly SkillSharedRow[] {
+	return installed.map(skill => {
+		const sharedInstalled = skillInstalledOn(skill, 'cx');
+		return {
+			name: skill.name,
+			path: skill.path,
+			scope: skill.scope,
+			sharedInstalled,
+			claudeInjected: skillInstalledOn(skill, 'cc'),
+			codexAvailable: sharedInstalled
+		};
+	});
 }
 
 // ── 搜索（skills find） ─────────────────────────────────────────────────────

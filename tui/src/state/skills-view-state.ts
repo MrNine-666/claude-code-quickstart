@@ -1,21 +1,29 @@
-import type {InstalledSkill, SearchSkillResult} from '../core/skills.js';
+import type {SearchSkillResult, SkillSharedRow} from '../core/skills.js';
+import {AGENT_CONTEXT_ORDER, type AgentContext} from './manage-state.js';
 
-// Skills 视图纯状态机（design D11/D13；spec skills-tui）。
-// 扁平安装架构：列表页（本地过滤 + 已装管理）/ 安装页（扁平 skill 列表 + 搜索）。
-// 只负责 UI 模式/光标/本地过滤/远程查询的有界迁移，副作用（CLI 调用）由组件层执行后回填。
-// 已安装检测状态由 view-detection runner 单独管理，组件以 props/state 注入，不混入此处。
+// Skills 视图纯状态机（design D11/D13；spec skills-tui / skills-multitool / skills-tui 共享投影）。
+// 共享本体 + 双侧注入架构：列表页数据源为 SkillSharedRow（双态徽章）；安装页选目标 Modal（Codex 只读恒勾）。
+// 只负责 UI 模式/光标/本地过滤/远程查询/安装草稿的有界迁移，副作用（CLI 调用）由组件层执行后回填。
+// 已安装检测状态由 view-detection runner 单独管理（无 --agent 全量扫），组件以 props/state 注入，不混入此处。
 
 export type SkillsViewMode =
-	| 'list' // 列表页：本地过滤 + 已装列表浏览
+	| 'list' // 列表页：本地过滤 + 已装双态列表浏览
 	| 'install' // 安装页：远程搜索框 + 扁平 skill 列表（默认 TOP 20）
-	| 'confirm-install' // 安装确认（单个 skill）
-	| 'confirm-uninstall' // 卸载确认（单条）
+	| 'select-install-target' // 安装目标 Modal（安装页选中 skill 后 Enter）：Claude Code 可切 / Codex 只读恒勾
+	| 'manage-inject' // 管理安装 Modal（列表行 Enter）：切 Claude Code symlink / Codex 只读随本体
+	| 'confirm-uninstall' // 全量卸载确认（单条，两侧 + 本体）
 	| 'busy'; // 安装/更新/卸载进行中（远程搜索走 inline，不进 busy）
+
+// 安装/管理草稿：双侧勾选态。Codex 恒 true（只读，装了必写本体、直读即可用，无法不装）；仅 Claude Code 可切。
+export type InstallDraft = Readonly<Record<AgentContext, boolean>>;
+
+// 安装页默认草稿：两侧都装（cc symlink + cx 本体）。
+const DEFAULT_INSTALL_DRAFT: InstallDraft = {cc: true, cx: true};
 
 export type SkillsViewState = {
 	readonly mode: SkillsViewMode;
-	// 列表页
-	readonly installed: readonly InstalledSkill[];
+	// 列表页（共享投影行，一行一 skill name）
+	readonly installed: readonly SkillSharedRow[];
 	readonly installedIndex: number; // 索引 filteredInstalled（过滤后视图）
 	readonly filterText: string; // 本地过滤词（大小写不敏感包含匹配 name）
 	readonly filterFocused: boolean; // 本地过滤框是否聚焦（Tab 切换；失焦时 u/d/r 快捷键生效）
@@ -25,6 +33,9 @@ export type SkillsViewState = {
 	readonly results: readonly SearchSkillResult[]; // 扁平 skill 列表（搜索结果）
 	readonly resultIndex: number; // 安装页光标
 	readonly searching: boolean; // 远程搜索进行中（inline，不切 busy）
+	// 目标 / 管理 Modal（select-install-target / manage-inject 共用）
+	readonly installDraft: InstallDraft; // 双侧草稿（cx 恒 true）
+	readonly targetIndex: number; // Modal 内选中侧索引（loop）
 	// 共用
 	readonly errorText?: string;
 	readonly progress: readonly string[];
@@ -32,7 +43,7 @@ export type SkillsViewState = {
 };
 
 export type SkillsViewAction =
-	| {readonly type: 'installed-loaded'; readonly installed: readonly InstalledSkill[]}
+	| {readonly type: 'installed-loaded'; readonly installed: readonly SkillSharedRow[]}
 	| {readonly type: 'nav-up'}
 	| {readonly type: 'nav-down'}
 	| {readonly type: 'open-install'} // 列表页 `a` → 安装页（触发自动加载热门）
@@ -46,7 +57,10 @@ export type SkillsViewAction =
 	| {readonly type: 'submit-search'} // 搜索框 Enter → 远程搜索（inline searching）
 	| {readonly type: 'search-done'; readonly results: readonly SearchSkillResult[]}
 	| {readonly type: 'search-failed'; readonly error: string; readonly rawSummary?: string}
-	| {readonly type: 'select-skill'} // 安装页 Enter → confirm-install
+	| {readonly type: 'select-skill'} // 安装页 Enter → select-install-target Modal
+	| {readonly type: 'manage-inject'} // 列表行 Enter → manage-inject Modal
+	| {readonly type: 'install-target-nav'; readonly delta: number} // Modal ↑/↓ 选侧（loop）
+	| {readonly type: 'install-target-toggle'} // Modal 空格切草稿（仅 cc 可切，cx no-op）
 	| {readonly type: 'request-update'}
 	| {readonly type: 'request-uninstall'}
 	| {readonly type: 'confirm'}
@@ -68,12 +82,14 @@ export function createInitialSkillsViewState(): SkillsViewState {
 		results: [],
 		resultIndex: 0,
 		searching: false,
+		installDraft: DEFAULT_INSTALL_DRAFT,
+		targetIndex: 0,
 		progress: []
 	};
 }
 
 /** 按 filterText 过滤已装列表（大小写不敏感包含匹配 name）。纯函数，列表页与派生共用。 */
-export function filterInstalled(installed: readonly InstalledSkill[], filterText: string): readonly InstalledSkill[] {
+export function filterInstalled(installed: readonly SkillSharedRow[], filterText: string): readonly SkillSharedRow[] {
 	const q = filterText.trim().toLowerCase();
 	if (!q) {
 		return installed;
@@ -83,7 +99,7 @@ export function filterInstalled(installed: readonly InstalledSkill[], filterText
 }
 
 /** 列表页当前可见的已装列表（过滤后）。 */
-export function filteredInstalled(state: SkillsViewState): readonly InstalledSkill[] {
+export function filteredInstalled(state: SkillsViewState): readonly SkillSharedRow[] {
 	return filterInstalled(state.installed, state.filterText);
 }
 
@@ -98,7 +114,7 @@ export function canManageInstalled(state: SkillsViewState): boolean {
 }
 
 /** 列表页当前光标已装 skill（基于过滤后视图）。 */
-export function selectedInstalled(state: SkillsViewState): InstalledSkill | undefined {
+export function selectedInstalled(state: SkillsViewState): SkillSharedRow | undefined {
 	return filteredInstalled(state)[state.installedIndex];
 }
 
@@ -194,7 +210,54 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				return {...state, errorText: '没有可选的 skill'};
 			}
 
-			return {...state, mode: 'confirm-install', errorText: undefined};
+			// 安装页 Enter → 安装目标 Modal，草稿预置两侧勾选（cx 恒 true 只读）。
+			return {...state, mode: 'select-install-target', installDraft: DEFAULT_INSTALL_DRAFT, targetIndex: 0, errorText: undefined};
+		}
+
+		case 'manage-inject': {
+			if (state.mode !== 'list') {
+				return state;
+			}
+
+			// 列表行 Enter → 管理安装 Modal，草稿预置当前安装态（cc=claudeInjected；cx 只读，如实随本体 codexAvailable）。
+			// 注意：安装场景（select-install-target）cx 恒 true（装必写本体）；管理场景 cx 须如实反映当前本体态，
+			// 否则仅装 Claude Code 侧（codexAvailable=false）的 skill 会在列表显「○ 未安装」而 Modal 显「● 已安装」自相矛盾。
+			const current = selectedInstalled(state);
+			if (!current) {
+				return {...state, errorText: '当前没有可管理的 Skill'};
+			}
+
+			return {
+				...state,
+				mode: 'manage-inject',
+				installDraft: {cc: current.claudeInjected, cx: current.codexAvailable},
+				targetIndex: 0,
+				errorText: undefined
+			};
+		}
+
+		case 'install-target-nav': {
+			if (state.mode !== 'select-install-target' && state.mode !== 'manage-inject') {
+				return state;
+			}
+
+			// ↑/↓ 选侧首尾相接（loop）。
+			const count = AGENT_CONTEXT_ORDER.length;
+			return {...state, targetIndex: (state.targetIndex + action.delta + count) % count};
+		}
+
+		case 'install-target-toggle': {
+			if (state.mode !== 'select-install-target' && state.mode !== 'manage-inject') {
+				return state;
+			}
+
+			// 仅 Claude Code（cc）可切；Codex（cx）只读恒 true，toggle 为 no-op。
+			const target = AGENT_CONTEXT_ORDER[state.targetIndex] ?? 'cc';
+			if (target === 'cx') {
+				return state;
+			}
+
+			return {...state, installDraft: {...state.installDraft, [target]: !state.installDraft[target]}};
 		}
 
 		case 'request-update':
@@ -210,7 +273,8 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 		}
 
 		case 'confirm':
-			if (state.mode === 'confirm-install') {
+			// select-install-target / manage-inject 的提交由组件层执行（按草稿 diff），reducer 只切 busy。
+			if (state.mode === 'select-install-target' || state.mode === 'manage-inject') {
 				return {...state, mode: 'busy', busyAction: 'install', progress: [], errorText: undefined};
 			}
 
@@ -267,9 +331,12 @@ function navigate(state: SkillsViewState, delta: number): SkillsViewState {
 
 function cancel(state: SkillsViewState): SkillsViewState {
 	switch (state.mode) {
-		case 'confirm-install':
-			// 回安装页（保留搜索结果）
+		case 'select-install-target':
+			// 安装目标 Modal Esc → 回安装页（保留搜索结果）
 			return {...state, mode: 'install'};
+		case 'manage-inject':
+			// 管理安装 Modal Esc → 回列表页，无写盘
+			return {...state, mode: 'list'};
 		case 'confirm-uninstall':
 			return {...state, mode: 'list'};
 		case 'install':

@@ -10,8 +10,13 @@ import {
 } from '../src/core/skills.ts';
 import {installSkill, installMultipleSkills, updateSkills, uninstallSkills} from '../src/core/skills-actions.ts';
 import {createSkillsDetectionRunner, runSkillsDetection} from '../src/services/view-detection.ts';
-import {skillNameFromSearchResult} from '../src/services/skills-service.ts';
-import {createSkillsViewServices} from '../src/views/skills-view-services.ts';
+import {
+	skillNameFromSearchResult,
+	installResultToTargets,
+	toggleClaudeInstall,
+	updateAllSkillsBothSides,
+	uninstallSkillAllAgents
+} from '../src/services/skills-service.ts';
 import {
 	createInitialSkillsViewState,
 	reduceSkillsViewState,
@@ -291,7 +296,11 @@ import {
 	console.log('[PASS] 7.10 异步检测进行中不重复触发，loading → success/error 正确迁移');
 }
 
-// ── 视图状态机有界性 + 扁平架构单选/确认/cancel 不变量 ──────────────────────
+// ── 视图状态机有界性 + 共享投影 + 安装目标/管理安装 Modal 不变量 ──────────────
+// 共享行 fixture：一行一 skill name，携带 sharedInstalled/claudeInjected/codexAvailable。
+function sharedRow(name, {claude = true, codex = true} = {}) {
+	return {name, path: '', scope: 'g', sharedInstalled: codex, claudeInjected: claude, codexAvailable: codex};
+}
 {
 	const actions = [
 		{type: 'nav-up'},
@@ -308,6 +317,9 @@ import {
 		{type: 'search-done', results: [{name: 'org/a@r1', source: 'org/a', description: 'd'}]},
 		{type: 'search-failed', error: 'boom', rawSummary: 's'},
 		{type: 'select-skill'},
+		{type: 'manage-inject'},
+		{type: 'install-target-nav', delta: 1},
+		{type: 'install-target-toggle'},
 		{type: 'request-update'},
 		{type: 'request-uninstall'},
 		{type: 'confirm'},
@@ -320,13 +332,10 @@ import {
 	let state = createInitialSkillsViewState();
 	state = reduceSkillsViewState(state, {
 		type: 'installed-loaded',
-		installed: [
-			{name: 'apple', path: '', scope: 'g', agents: []},
-			{name: 'banana', path: '', scope: 'g', agents: []}
-		]
+		installed: [sharedRow('apple'), sharedRow('banana')]
 	});
 
-	const modes = new Set(['list', 'install', 'confirm-install', 'confirm-uninstall', 'busy']);
+	const modes = new Set(['list', 'install', 'select-install-target', 'manage-inject', 'confirm-uninstall', 'busy']);
 	for (let i = 0; i < 600; i++) {
 		const action = actions[(i * 13 + 5) % actions.length];
 		state = reduceSkillsViewState(state, action);
@@ -336,13 +345,16 @@ import {
 			`installedIndex 越界: ${state.installedIndex}`
 		);
 		assert.ok(state.resultIndex >= 0 && state.resultIndex < Math.max(state.results.length, 1), `resultIndex 越界: ${state.resultIndex}`);
+		assert.ok(state.targetIndex >= 0 && state.targetIndex < 2, `targetIndex 越界: ${state.targetIndex}`);
+		// cx 恒 true（只读，投影/草稿不塌缩为 false）
+		assert.equal(state.installDraft.cx, true, 'installDraft.cx 恒 true（Codex 只读恒勾）');
 		assert.ok(state.progress.length <= 8, `progress 未裁剪: ${state.progress.length}`);
 	}
 
-	// 扁平安装全链路：open-install → search → select-skill → confirm-install → busy → done
+	// 安装全链路：open-install → search → select-skill → select-install-target → confirm → busy → done
 	const base = reduceSkillsViewState(createInitialSkillsViewState(), {
 		type: 'installed-loaded',
-		installed: [{name: 'apple', path: '', scope: 'g', agents: []}]
+		installed: [sharedRow('apple')]
 	});
 	const installPage = reduceSkillsViewState(base, {type: 'open-install'});
 	assert.equal(installPage.mode, 'install');
@@ -364,21 +376,34 @@ import {
 	assert.equal(searched.queryFocused, false, '搜索完成后焦点切到 skill 列表');
 	assert.equal(selectedResult(searched)?.name, 'org/a@x', '默认光标首个 skill');
 
-	// select-skill：无光标项拦截 / 有项进 confirm-install
+	// select-skill：无光标项拦截 / 有项进 select-install-target（草稿两侧勾选）
 	const emptyResults = reduceSkillsViewState(installPage, {type: 'search-done', results: []});
 	const emptySelect = reduceSkillsViewState(emptyResults, {type: 'select-skill'});
 	assert.equal(emptySelect.mode, 'install', '无可选 skill 时 select-skill 留在 install');
 	assert.ok(emptySelect.errorText, '无可选 skill 应提示');
 	const selected = reduceSkillsViewState(searched, {type: 'select-skill'});
-	assert.equal(selected.mode, 'confirm-install', 'select-skill 进 confirm-install');
-	assert.equal(selectedResult(selected)?.name, 'org/a@x', 'confirm-install 仍指向当前光标 skill');
+	assert.equal(selected.mode, 'select-install-target', 'select-skill 进安装目标 Modal');
+	assert.equal(selected.installDraft.cc, true, '安装草稿默认 Claude Code 勾选');
+	assert.equal(selected.installDraft.cx, true, '安装草稿默认 Codex 勾选');
+	assert.equal(selectedResult(selected)?.name, 'org/a@x', '安装目标仍指向当前光标 skill');
 
-	// confirm-install：confirm → busy(install) / cancel → 回安装页（保留搜索结果）
+	// 安装目标 Modal：↑/↓ loop 选侧、空格仅切 Claude Code（Codex no-op）
+	const navToCodex = reduceSkillsViewState(selected, {type: 'install-target-nav', delta: 1});
+	assert.equal(navToCodex.targetIndex, 1, 'nav 到 Codex 侧');
+	const toggleCodex = reduceSkillsViewState(navToCodex, {type: 'install-target-toggle'});
+	assert.equal(toggleCodex.installDraft.cx, true, '空格切 Codex 为 no-op（恒 true）');
+	const navLoop = reduceSkillsViewState(navToCodex, {type: 'install-target-nav', delta: 1});
+	assert.equal(navLoop.targetIndex, 0, 'nav 首尾相接 loop 回 Claude Code');
+	const toggleClaudeOff = reduceSkillsViewState(navLoop, {type: 'install-target-toggle'});
+	assert.equal(toggleClaudeOff.installDraft.cc, false, '空格切 Claude Code 生效（可取消）');
+	assert.equal(toggleClaudeOff.installDraft.cx, true, '切 Claude Code 不影响 Codex 恒勾');
+
+	// confirm → busy(install) / cancel → 回安装页（保留搜索结果）
 	const installBusy = reduceSkillsViewState(selected, {type: 'confirm'});
-	assert.equal(installBusy.mode, 'busy', 'confirm-install confirm 进 busy');
+	assert.equal(installBusy.mode, 'busy', 'select-install-target confirm 进 busy');
 	assert.equal(installBusy.busyAction, 'install', 'busyAction=install');
 	const backToInstall = reduceSkillsViewState(selected, {type: 'cancel'});
-	assert.equal(backToInstall.mode, 'install', 'confirm-install cancel 回安装页');
+	assert.equal(backToInstall.mode, 'install', '安装目标 Modal cancel 回安装页');
 	assert.equal(backToInstall.results.length, 3, 'cancel 保留搜索结果');
 
 	// 安装页 cancel 回列表页（放弃搜索词/结果）
@@ -392,14 +417,24 @@ import {
 	const reqUpdate = reduceSkillsViewState(noInstalled, {type: 'request-update'});
 	assert.equal(reqUpdate.mode, 'list', '无已安装时 update 不进入 busy');
 
-	// 卸载：request-uninstall → confirm-uninstall → busy(uninstall)
-	// 双项列表验证光标跟随与卸载确认
+	// 管理安装 Modal（列表行 Enter）：草稿预置当前安装态，cx 只读恒勾
+	const mixedList = reduceSkillsViewState(createInitialSkillsViewState(), {
+		type: 'installed-loaded',
+		installed: [sharedRow('apple', {claude: false, codex: true}), sharedRow('banana')]
+	});
+	const manage = reduceSkillsViewState(mixedList, {type: 'manage-inject'});
+	assert.equal(manage.mode, 'manage-inject', '列表行 Enter 进管理安装 Modal');
+	assert.equal(manage.installDraft.cc, false, '管理草稿预置 Claude Code 当前态（apple 未注入）');
+	assert.equal(manage.installDraft.cx, true, '管理草稿 Codex 只读恒勾');
+	const manageCancel = reduceSkillsViewState(manage, {type: 'cancel'});
+	assert.equal(manageCancel.mode, 'list', '管理安装 Modal cancel 回列表页');
+	const manageConfirm = reduceSkillsViewState(manage, {type: 'confirm'});
+	assert.equal(manageConfirm.mode, 'busy', '管理安装 confirm 进 busy');
+
+	// 卸载：request-uninstall → confirm-uninstall → busy(uninstall)（全量，无单侧）
 	const twoInstalled = reduceSkillsViewState(createInitialSkillsViewState(), {
 		type: 'installed-loaded',
-		installed: [
-			{name: 'apple', path: '', scope: 'g', agents: []},
-			{name: 'banana', path: '', scope: 'g', agents: []}
-		]
+		installed: [sharedRow('apple'), sharedRow('banana')]
 	});
 	const cursorDown = reduceSkillsViewState(twoInstalled, {type: 'nav-down'});
 	assert.equal(selectedInstalled(cursorDown)?.name, 'banana', '光标下移到 banana');
@@ -423,7 +458,7 @@ import {
 	const uninstallFailed = reduceSkillsViewState(uninstallBusy, {type: 'action-failed', error: 'boom'});
 	assert.equal(uninstallFailed.mode, 'list', 'uninstall 失败回列表页');
 
-	console.log('[PASS] Skills 视图状态机有界 + 扁平安装/卸载/confirm/cancel/action 不变量');
+	console.log('[PASS] Skills 视图状态机有界 + 共享投影 + 安装目标/管理安装 Modal（Codex 只读恒勾）不变量');
 }
 
 // ── displaySkillName 派生：owner/repo@skill 只取 @ 后 skill 名，避免 confirm 弹窗与列表重复 owner/repo ──
@@ -516,53 +551,86 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 	});
 	assert.equal(updateArgs[0][updateArgs[0].indexOf('--agent') + 1], 'codex', 'cx update --agent=codex');
 
-	// 8.3 service 装配：createSkillsViewServices(cx) 的 install/update/uninstall 走 codex
-	const cxServices = createSkillsViewServices('cx');
-	const svcInstallArgs = [];
-	await cxServices.installResult(
+	console.log('[PASS] 8.1-8.5 Skills 核心 action 按显式 agentContext 注入 --agent（list/install/update/uninstall）');
+}
+
+// ── Section 17/19.4：双侧共享 service（多目标安装 / 全量删 --agent '*' / 单侧 --agent claude-code） ──
+{
+	// installResultToTargets：按选中侧逐侧调，cc→claude-code / cx→codex，per-side 结果聚合。
+	const bothArgs = [];
+	const bothSides = await installResultToTargets(
 		{name: 'org/repo@x', source: 'org/repo', description: ''},
+		['cc', 'cx'],
 		undefined,
 		async (_cmd, args) => {
-			svcInstallArgs.push(args);
+			bothArgs.push(args);
 			return {code: 0, stdout: '', stderr: ''};
 		}
 	);
-	assert.equal(svcInstallArgs[0][svcInstallArgs[0].indexOf('--agent') + 1], 'codex', 'cx services.installResult --agent=codex');
+	assert.equal(bothArgs.length, 2, '选中两侧应各调一次 install');
+	const agentOf = args => args[args.indexOf('--agent') + 1];
+	assert.deepEqual(bothArgs.map(agentOf).sort(), ['claude-code', 'codex'], 'cc→claude-code / cx→codex 各建一次');
+	assert.equal(bothSides.every(s => s.result.success), true, '两侧成功聚合');
 
-	const svcUpdateArgs = [];
-	await cxServices.updateAll(undefined, async (_cmd, args) => {
-		svcUpdateArgs.push(args);
-		return {code: 0, stdout: 'all skills up to date', stderr: ''};
-	});
-	assert.equal(svcUpdateArgs[0][svcUpdateArgs[0].indexOf('--agent') + 1], 'codex', 'cx services.updateAll --agent=codex');
+	// 单侧安装（仅 cc）：不调 codex。
+	const ccOnlyArgs = [];
+	await installResultToTargets(
+		{name: 'org/repo@x', source: 'org/repo', description: ''},
+		['cc'],
+		undefined,
+		async (_cmd, args) => {
+			ccOnlyArgs.push(args);
+			return {code: 0, stdout: '', stderr: ''};
+		}
+	);
+	assert.equal(ccOnlyArgs.length, 1, '仅选 cc 只调一次');
+	assert.equal(agentOf(ccOnlyArgs[0]), 'claude-code', '仅 cc 走 --agent claude-code');
 
-	const svcUninstallArgs = [];
-	await cxServices.uninstall(['skill-a'], undefined, async (_cmd, args) => {
-		svcUninstallArgs.push(args);
+	// per-side 失败隔离：cx 失败不影响 cc 成功聚合。
+	const mixedSides = await installResultToTargets(
+		{name: 'org/repo@x', source: 'org/repo', description: ''},
+		['cc', 'cx'],
+		undefined,
+		async (_cmd, args) => (agentOf(args) === 'codex' ? {code: 1, stdout: '', stderr: 'boom'} : {code: 0, stdout: '', stderr: ''})
+	);
+	assert.equal(mixedSides.find(s => s.agentContext === 'cc').result.success, true, 'cc 侧成功');
+	assert.equal(mixedSides.find(s => s.agentContext === 'cx').result.success, false, 'cx 侧失败但不中断 cc');
+
+	// toggleClaudeInstall(true) → add --agent claude-code；(false) → remove --agent claude-code（单侧撤销）。
+	const addArgs = [];
+	await toggleClaudeInstall('org/repo@x', true, undefined, async (_cmd, args) => {
+		addArgs.push(args);
 		return {code: 0, stdout: '', stderr: ''};
 	});
-	assert.equal(svcUninstallArgs[0][svcUninstallArgs[0].indexOf('--agent') + 1], 'codex', 'cx services.uninstall --agent=codex');
+	assert.equal(addArgs[0].includes('add'), true, 'toggleClaudeInstall(true) 走 add');
+	assert.equal(agentOf(addArgs[0]), 'claude-code', 'install 建 symlink 走 --agent claude-code');
 
-	// 8.3 runDetection 经 service 装配也带 agentContext
-	const detArgs = [];
-	const detRunner = cxServices.createDetectionRunner(() => {});
-	await cxServices.runDetection(detRunner, async (_cmd, args) => {
-		detArgs.push(args);
-		return {code: 0, stdout: '[]', stderr: ''};
+	const removeArgs = [];
+	await toggleClaudeInstall('org/repo@x', false, undefined, async (_cmd, args) => {
+		removeArgs.push(args);
+		return {code: 0, stdout: '', stderr: ''};
 	});
-	assert.equal(detArgs[0][detArgs[0].indexOf('--agent') + 1], 'codex', 'cx services.runDetection --agent=codex');
-	// 8.4 cc 仍走 claude-code（零破坏）
-	const ccServices = createSkillsViewServices('cc');
-	const ccArgs = [];
-	await ccServices.installResult(
-		{name: 'org/repo@x', source: 'org/repo', description: ''},
-		undefined,
-		async (_cmd, args) => {
-			ccArgs.push(args);
-			return {code: 0, stdout: '', stderr: ''};
-		}
-	);
-	assert.equal(ccArgs[0][ccArgs[0].indexOf('--agent') + 1], 'claude-code', 'cc services.installResult --agent=claude-code');
+	assert.equal(removeArgs[0].includes('remove'), true, 'toggleClaudeInstall(false) 走 remove');
+	assert.equal(agentOf(removeArgs[0]), 'claude-code', '单侧撤销走 --agent claude-code');
 
-	console.log('[PASS] 8.1-8.5 Skills agentContext 参数化：list/install/update/uninstall/detection 均按上下文注入 --agent');
+	// updateAllSkillsBothSides：cc + cx 各更新一次。
+	const updBothArgs = [];
+	await updateAllSkillsBothSides(undefined, async (_cmd, args) => {
+		updBothArgs.push(args);
+		return {code: 0, stdout: 'all skills up to date', stderr: ''};
+	});
+	assert.equal(updBothArgs.length, 2, '更新两侧各调一次');
+	assert.deepEqual(updBothArgs.map(agentOf).sort(), ['claude-code', 'codex'], 'update 两侧 --agent 覆盖 cc/cx');
+
+	// uninstallSkillAllAgents：单条 skills remove --agent '*'（非挨个 agent）。
+	const delArgs = [];
+	await uninstallSkillAllAgents('org/repo@x', undefined, async (_cmd, args) => {
+		delArgs.push(args);
+		return {code: 0, stdout: '', stderr: ''};
+	});
+	assert.equal(delArgs.length, 1, '全量删只调一次（非挨个 agent）');
+	assert.equal(delArgs[0].includes('remove'), true, '全量删走 remove');
+	assert.equal(agentOf(delArgs[0]), '*', "全量删走单条 --agent '*'");
+
+	console.log("[PASS] 17/19.4 双侧共享 service：多目标安装 per-side、单侧撤销 --agent claude-code、全量删单条 --agent '*'");
 }
