@@ -10,8 +10,7 @@ import {
 	type ApplyUpdatesDeps,
 	type ApplyUpdatesResult
 } from './update.js';
-import {installTool, TOOL_DEFINITIONS, type ToolId} from './tools-install.js';
-import {refreshNpmGlobalBinPath} from './npm-path.js';
+import {installTool, TOOL_DEFINITIONS, type ToolId, type ToolDefinition} from './tools-install.js';
 import {atomicWrite} from './fs-utils.js';
 import {resolveHome, settingsPath} from './paths.js';
 import type {AgentContext} from '../state/manage-state.js';
@@ -25,28 +24,20 @@ import {hasUpdate} from './semver.js';
 import {hasCodeGraphIntegration, hasClaudeCodeGraphIntegration, hasCodexCodeGraphIntegration, hasClaudeCcgWorkflowMode, hasCodexCcgWorkflowMode, readCodexCcgWorkflowVersion} from './tools-integrations.js';
 
 
-// tools-manage core：工具管理单一真理源（design TDR-11）。
-// 融合 tools-install.ts（6 工具安装定义）与 update.ts（CLI 组件检测/快照/应用），
-// 新增 ClaudeCode 纳入受管（isBase=true），消除 TOOL_DEFINITIONS 与 NPM_COMPONENT_MAP/COMMAND_COMPONENTS 重复。
+// tools-manage core：tools 域的门面/编排层（design TDR-11）。
+// 与 tools-install.ts（registry + 安装原语）同属一个逻辑模块「tools 域」，仅按体量分文件。
+// registry 单一真理源在 tools-install.TOOL_DEFINITIONS（已收编 ClaudeCode，与其余 agent 平权），
+// 本层直接复用，不再单独硬编码 ClaudeCode。
 // 检测不聚合 Skills/MCP（11.7）—— Skills/MCP 更新各归各家视图。
 // 安装路径复用 tools-install.installTool（11.8），更新路径复用 update.applyUpdates（11.9）。
 
-export type ComponentId = 'ClaudeCode' | ToolId;
+// ComponentId / ComponentDefinition = registry 类型别名（下游 20+ 处引用零改动）。
+export type ComponentId = ToolId;
 
-export type ComponentKind = 'npm' | 'ccg-init' | 'shell-script';
+export type ComponentKind = ToolDefinition['kind'];
 
-/** 受管组件静态定义（融合 ToolDefinition + isBase + UpdateComponent 静态字段）。 */
-export type ComponentDefinition = {
-	readonly id: ComponentId;
-	readonly name: string;
-	readonly description: string;
-	readonly kind: ComponentKind;
-	readonly command: string; // 检测用命令
-	readonly versionArgs: readonly string[];
-	readonly npmPackage?: string; // kind === 'npm' 远程版本查询用
-	readonly docsUrl?: string; // 官方文档 / 仓库地址（卡片描述可跳转）
-	readonly isBase: boolean; // ClaudeCode=true（卸载附危险警告）
-};
+/** 受管组件静态定义（= registry ToolDefinition）。 */
+export type ComponentDefinition = ToolDefinition;
 
 /** 受管组件运行时状态（检测填充静态定义 + 版本/更新字段）。 */
 export type ManagedComponent = ComponentDefinition & {
@@ -57,7 +48,7 @@ export type ManagedComponent = ComponentDefinition & {
 	readonly statusHint?: string;
 };
 
-/** 单组件安装结果（对齐 ToolInstallOutcome 结构，id 扩展为 ComponentId）。 */
+/** 单组件安装结果（对齐 ToolInstallOutcome 结构）。 */
 export type ComponentInstallOutcome = {
 	readonly id: ComponentId;
 	readonly success: boolean;
@@ -65,7 +56,7 @@ export type ComponentInstallOutcome = {
 	readonly error?: string;
 };
 
-/** 安装依赖注入（仅 ClaudeCode 分支生效，供测试 mock exec；6 工具经 installTool 不支持注入）。 */
+/** 安装依赖注入（供测试 mock exec；统一透传 installTool，含 ClaudeCode）。 */
 export type InstallComponentDeps = {
 	readonly exec?: typeof execCommand;
 	// 当前 Agent 上下文（design D4/D5）：CodeGraph 接入目标与 CcgWorkflow Codex 引导按此分支，默认 Claude Code。
@@ -73,29 +64,12 @@ export type InstallComponentDeps = {
 };
 
 const INSTALL_TIMEOUT_MS = 300000;
-const DETECT_TIMEOUT_MS = 5000;
-
-// ClaudeCode 定义（Phase 6 的 TOOL_DEFINITIONS 不含，tools-manage 新增）。
-const CLAUDE_CODE_DEFINITION: ComponentDefinition = {
-	id: 'ClaudeCode',
-	name: 'Claude Code',
-	description: 'Anthropic官方CLI编码智能体',
-	kind: 'npm',
-	command: 'claude',
-	versionArgs: ['--version'],
-	npmPackage: '@anthropic-ai/claude-code',
-	docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview',
-	isBase: true
-};
 
 /**
- * 全部受管组件定义（7 项）：ClaudeCode + 6 工具。
- * 6 工具复用 tools-install.TOOL_DEFINITIONS（DRY，单一真理源），叠加 isBase=false。
+ * 全部受管组件定义（7 项）：ClaudeCode + 6 工具，直接复用 registry（DRY，单一真理源）。
+ * 顺序即 TOOL_DEFINITIONS 顺序（ClaudeCode 首位）；分组展示顺序由 sortComponentsByToolGroup 决定。
  */
-export const COMPONENT_DEFINITIONS: readonly ComponentDefinition[] = [
-	CLAUDE_CODE_DEFINITION,
-	...TOOL_DEFINITIONS.map(tool => ({...tool, isBase: false}))
-];
+export const COMPONENT_DEFINITIONS: readonly ComponentDefinition[] = TOOL_DEFINITIONS;
 
 // ── 分组与可见性 / 共享投影（shared-resource-injection-ui）────────────────────
 // group: agent = 主 Agent（Claude Code / Codex 两上下文常显）；
@@ -377,34 +351,28 @@ function withAgentIntegration(component: ManagedComponent, integrated: boolean, 
  * - inject 类 + 单侧 target：仅解除该 Agent 注入（Enter eject 路径）
  * - 其它：全局卸载语义
  */
+// 卸载影响提示：inject 类恒全量卸载（fullUninstall=true），走 isInjectableComponent 分支；
+// 非 inject 组件走下方 switch（按 id 定制，无 per-Agent 语义，不需要 agentContext）。
 export function uninstallImpactNotice(
 	id: ComponentId,
-	context: AgentContext,
 	options: {readonly fullUninstall?: boolean} = {}
 ): string {
-	const agentLabel = context === 'cx' ? 'Codex' : 'Claude Code';
 	if (options.fullUninstall && isInjectableComponent(id)) {
 		switch (id) {
 			case 'CodeGraph':
-				return '将解除 Claude Code 与 Codex 的 CodeGraph 注入，并卸载共享 codegraph CLI；不删除项目 .codegraph/ 索引。';
+				return '将从 Claude Code 与 Codex 卸载 CodeGraph，并卸载共享 codegraph CLI。';
 			case 'CcgWorkflow':
-				return '将通过官方命令卸载已安装的 Claude Code / Codex Mode；~/.codex/config.toml 由官方命令处理，ccq 不直接删除。';
+				return '将卸载已安装的 Claude Code / Codex Mode。';
 			default:
-				return '将卸载该组件及其全部 Agent 注入。';
+				return '将卸载该组件及其在全部 Agent 的安装。';
 		}
 	}
 
 	switch (id) {
 		case 'ClaudeCode':
-			return '将 npm 全局卸载 Claude Code，破坏整个 Claude Code 环境。';
+			return '将卸载 Claude Code，相关配置和数据不会删除。';
 		case 'CodexCli':
-			return '将 npm 全局卸载 Codex CLI；卸载后 `ccq cx` 在重新安装前不可用。';
-		case 'CodeGraph':
-			return `仅解除 ${agentLabel} 的 CodeGraph 集成（codegraph uninstall），不卸载 npm CLI、不删除项目 .codegraph/ 索引。`;
-		case 'CcgWorkflow':
-			return context === 'cx'
-				? '将通过官方命令 `npx ccg-workflow codex-mode uninstall` 卸载 Codex Mode；~/.codex/config.toml 由官方命令处理，ccq 不直接删除。'
-				: '将通过官方命令 `npx ccg-workflow uninstall` 卸载 CCG Workflow；CCG-managed 文件/hooks 由官方命令清理。';
+			return '将卸载 Codex CLI，相关配置和数据不会删除。';
 		default:
 			return '确认卸载此组件？此操作不可撤销。';
 	}
@@ -422,14 +390,10 @@ function friendlyError(text: string, fallback: string): string {
 	return fallback;
 }
 
-function parseVersion(text: string): string {
-	return text.trim().match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?/)?.[0] ?? text.trim();
-}
-
 /**
  * 检测全部受管组件（7 项），不聚合 Skills/MCP（11.7）。
  * 复用 update.checkCliToolUpdates（返回正好 7 个 CLI 组件：ClaudeCode/Ccline/CcgWorkflow/CodexCli/OpenSpec/CodeGraph + AntigravityCli），
- * join COMPONENT_DEFINITIONS 静态字段（description/kind/command/isBase 等）。
+ * join COMPONENT_DEFINITIONS 静态字段（description/kind/command 等）。
  */
 export async function detectComponents(onProgress?: ProgressCallback, forceRefresh = false): Promise<ManagedComponent[]> {
 	onProgress?.({level: 'info', message: '正在检测组件状态与远程版本...'});
@@ -454,49 +418,20 @@ export async function detectComponents(onProgress?: ProgressCallback, forceRefre
 }
 
 /**
- * 安装单个组件（11.6 ClaudeCode 新增 / 11.8 五工具复用 installTool）。
- * ClaudeCode 走 npm install -g + 检测确认，支持 deps.exec 注入供测试；
- * 6 工具复用 tools-install.installTool（含 CcgWorkflow npx init / Antigravity shell 脚本），不重写。
+ * 安装单个组件：统一委派 registry 的 installTool（ClaudeCode 与其余 agent 平权，无特判）。
+ * agentContext 决定 CodeGraph 接入目标（claude|codex）与 CcgWorkflow Codex 引导分支；
+ * deps.exec 下沉为 installTool 通用注入缝（供测试 mock，含 ClaudeCode npm install + 检测确认）。
  */
 export async function installComponent(
 	id: ComponentId,
 	onProgress?: ProgressCallback,
 	deps: InstallComponentDeps = {}
 ): Promise<ComponentInstallOutcome> {
-	const definition = COMPONENT_DEFINITIONS.find(item => item.id === id);
-	if (!definition) {
+	if (!COMPONENT_DEFINITIONS.some(item => item.id === id)) {
 		return {id, success: false, error: '未知组件'};
 	}
 
-	try {
-		if (id === 'ClaudeCode') {
-			const exec = deps.exec ?? execCommand;
-			onProgress?.({level: 'info', message: 'npm install -g @anthropic-ai/claude-code', componentId: 'ClaudeCode'});
-			const result = await exec('npm', ['install', '-g', '@anthropic-ai/claude-code'], {timeout: INSTALL_TIMEOUT_MS});
-			if (result.code !== 0) {
-				throw new Error(friendlyError(result.stderr || result.stdout, `npm install 失败 (exit ${result.code})`));
-			}
-
-			await refreshNpmGlobalBinPath(onProgress, 'ClaudeCode', exec);
-			const check = await exec('claude', ['--version'], {timeout: DETECT_TIMEOUT_MS});
-			if (check.code === 0) {
-				const version = parseVersion(check.stdout || check.stderr || '');
-				onProgress?.({level: 'success', message: `Claude Code 安装成功${version ? ` (${version})` : ''}`, componentId: 'ClaudeCode'});
-				return {id: 'ClaudeCode', success: true, version};
-			}
-
-			onProgress?.({level: 'warning', message: 'Claude Code 安装完成但命令暂不可用（可能需重启终端）', componentId: 'ClaudeCode'});
-			return {id: 'ClaudeCode', success: false, error: '安装后命令不可用'};
-		}
-
-		// 6 工具复用 tools-install.installTool（11.8，不重写 Phase 6 已实现逻辑）
-		// agentContext 决定 CodeGraph 接入目标（claude|codex）与 CcgWorkflow Codex 引导分支。
-		return installTool(id, onProgress, deps.agentContext ?? 'cc');
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		onProgress?.({level: 'danger', message: `${definition.name} 安装失败: ${message}`, componentId: id});
-		return {id, success: false, error: message};
-	}
+	return installTool(id, onProgress, deps.agentContext ?? 'cc', {exec: deps.exec});
 }
 
 /** ManagedComponent → UpdateComponent 映射（applyUpdates 按 type 分发）。
@@ -655,7 +590,7 @@ export async function injectComponent(
 	deps: InstallComponentDeps = {}
 ): Promise<ComponentInstallOutcome> {
 	if (!isInjectableComponent(id)) {
-		return {id, success: false, error: `${id} 不支持 per-agent 注入`};
+		return {id, success: false, error: `${id} 不支持 per-agent 安装`};
 	}
 
 	return installComponent(id, onProgress, {...deps, agentContext: target});
@@ -669,7 +604,7 @@ export async function ejectComponent(
 	deps: UninstallComponentDeps = {}
 ): Promise<ComponentUninstallOutcome> {
 	if (!isInjectableComponent(id)) {
-		return {id, success: false, error: `${id} 不支持 per-agent 解除注入`};
+		return {id, success: false, error: `${id} 不支持 per-agent 卸载`};
 	}
 
 	return uninstallComponent(id, onProgress, {...deps, agentContext: target, fullUninstall: false});

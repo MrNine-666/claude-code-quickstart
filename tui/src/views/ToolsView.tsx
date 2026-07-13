@@ -7,7 +7,7 @@ import type {ProgressCallback} from '../core/exec.js';
 import type { DetectionState } from '../services/async-detection.js';
 import type { DetectionCache } from '../hooks/use-detection-cache.js';
 import type { DetectionRunner, DetectionRunOptions, DetectionStateSink } from '../services/detection-runner.js';
-import type { ComponentId, ComponentInstallOutcome, ComponentUninstallOutcome, ManagedComponent, SharedManagedComponent } from '../core/tools-manage.js';
+import type { AgentInjectSnapshot, ComponentId, ComponentInstallOutcome, ComponentUninstallOutcome, ManagedComponent, SharedManagedComponent } from '../core/tools-manage.js';
 import type { ApplyUpdatesResult } from '../core/update.js';
 import {
 	createInitialToolsViewState,
@@ -28,6 +28,7 @@ import {
 import {groupComponentsByToolGroup, isInjectableComponent, projectSharedToolComponents, uninstallImpactNotice} from '../core/tools-manage.js';
 import {openUrl} from '../core/open-url.js';
 import {AGENT_CONTEXT_LABELS, AGENT_CONTEXT_ORDER, type AgentContext} from '../state/manage-state.js';
+import {semverCompare} from '../core/semver.js';
 
 type Dispatch = React.Dispatch<ToolsViewAction>;
 
@@ -60,16 +61,13 @@ export type ToolsViewServices = {
 export type ToolsViewProps = {
 	readonly services: ToolsViewServices;
 	readonly cache: DetectionCache<ManagedComponent[]>;
-	readonly agentContext: AgentContext;
 	readonly active?: boolean;
-	readonly viewportHeight?: number;
-	readonly viewportWidth?: number;
 	readonly contentWidth?: number;
 	readonly onSubModeChange?: (subMode: string) => void;
 	readonly onExitToNav?: () => void;
 };
 
-export function ToolsView({ services: rawServices, cache, agentContext, active = true, viewportHeight = 16, viewportWidth = 52, contentWidth, onSubModeChange, onExitToNav }: ToolsViewProps) {
+export function ToolsView({ services: rawServices, cache, active = true, contentWidth, onSubModeChange, onExitToNav }: ToolsViewProps) {
 	const [view, dispatch] = useReducer(reduceToolsViewState, undefined, createInitialToolsViewState);
 	const detection = cache.state;
 
@@ -140,8 +138,8 @@ export function ToolsView({ services: rawServices, cache, agentContext, active =
 			return;
 		}
 
-		// grid 模式选中第一个时，← 直接退回左侧导航（行首边界快捷返回，与 Esc 等效）。
-		if (view.mode === 'grid' && (key === 'left' || key === 'arrowleft') && view.cursor === 0 && onExitToNav) {
+		// grid 模式：光标停在所属分组首项时，← 退回左侧导航（各分组 grid 相对独立，行首边界快捷返回，与 Esc 等效）。
+		if (view.mode === 'grid' && (key === 'left' || key === 'arrowleft') && view.cursor === (cursorGroupBounds(view)?.start ?? 0) && onExitToNav) {
 			onExitToNav();
 			return;
 		}
@@ -171,8 +169,8 @@ export function ToolsView({ services: rawServices, cache, agentContext, active =
 			{detection.status !== 'loading' && detection.status !== 'idle' ? renderGrid(view, scrollRef, active) : null}
 			{activeProgressTasks(view).length > 0 ? <ActiveProgressTasks tasks={activeProgressTasks(view)} /> : null}
 			{view.errorText ? <ErrorPanel message={view.errorText} /> : null}
-			{view.mode === 'confirm-uninstall' ? <UninstallConfirm view={view} dispatch={dispatch} services={services} cache={cache} active={active} agentContext={agentContext} viewportWidth={viewportWidth} viewportHeight={viewportHeight} /> : null}
-			{view.mode === 'select-inject-target' ? <InjectTargetModal view={view} viewportWidth={viewportWidth} viewportHeight={viewportHeight} /> : null}
+			{view.mode === 'confirm-uninstall' ? <UninstallConfirm view={view} dispatch={dispatch} services={services} cache={cache} active={active} /> : null}
+			{view.mode === 'select-inject-target' ? <InjectTargetModal view={view} /> : null}
 		</box>
 	);
 }
@@ -207,13 +205,20 @@ function handleGridKey(
 		return;
 	}
 
+	// 左右键在所属分组内移动，不跨组：分组首项 ← 由 useKeyboard 拦截返回菜单，分组末项 → 停住。
+	const bounds = cursorGroupBounds(view);
+
 	if (k === 'left' || k === 'arrowleft') {
-		dispatch({ type: 'nav', delta: -1 });
+		if (!bounds || view.cursor > bounds.start) {
+			dispatch({ type: 'nav', delta: -1 });
+		}
 		return;
 	}
 
 	if (k === 'right' || k === 'arrowright') {
-		dispatch({ type: 'nav', delta: 1 });
+		if (!bounds || view.cursor < bounds.end) {
+			dispatch({ type: 'nav', delta: 1 });
+		}
 		return;
 	}
 
@@ -358,7 +363,7 @@ function manageInjectCurrent(view: ToolsViewState, dispatch: Dispatch): void {
 	}
 
 	if (!isInjectableComponent(component.id)) {
-		toast.info(`${component.name} 无注入开关`);
+		toast.info(`${component.name} 无安装开关`);
 		return;
 	}
 
@@ -444,7 +449,7 @@ async function runInjectChanges(
 		}
 
 		nextInject = { ...nextInject, [ctx]: { context: ctx, integrated: desired } };
-		toast.success(`${component.name} · ${label} 已${desired ? '开启' : '关闭'}`);
+		toast.success(`${component.name} · ${label} 已${desired ? '安装' : '卸载'}`);
 	}
 
 	return nextInject as SharedManagedComponent['injectByAgent'];
@@ -549,19 +554,13 @@ function UninstallConfirm({
 	dispatch,
 	services,
 	cache,
-	active,
-	agentContext,
-	viewportWidth,
-	viewportHeight
+	active
 }: {
 	readonly view: ToolsViewState;
 	readonly dispatch: Dispatch;
 	readonly services: ToolsViewServices;
 	readonly cache: DetectionCache<ManagedComponent[]>;
 	readonly active: boolean;
-	readonly agentContext: AgentContext;
-	readonly viewportWidth: number;
-	readonly viewportHeight: number;
 }) {
 	const target = view.components.find((item) => item.id === view.uninstallTarget);
 	if (!target) {
@@ -592,18 +591,11 @@ function UninstallConfirm({
 			title={`卸载确认：${target.name}`}
 			hint="Enter 确认  Esc 取消"
 			tone="danger"
-			viewportWidth={viewportWidth}
-			viewportHeight={viewportHeight}
 			width={INJECT_MODAL_WIDTH}
 		>
 			<box flexDirection="column">
-				{target.isBase ? (
-					<text fg={colors.danger} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-						危险：这是基础组件，卸载将破坏整个 Claude Code 环境！
-					</text>
-				) : null}
-				{/* inject 类：全量卸载文案（CLI + 全部注入）；非 inject：既有全局卸载文案。agentContext 仅用于非 inject 分支。 */}
-				<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{uninstallImpactNotice(target.id, agentContext, {fullUninstall})}</text>
+				{/* inject 类：全量卸载文案（CLI + 全部注入）；非 inject：既有全局卸载文案（按组件 id 区分，不依赖 Header 上下文）。 */}
+				<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{uninstallImpactNotice(target.id, {fullUninstall})}</text>
 			</box>
 		</Modal>
 	);
@@ -644,13 +636,9 @@ function runUninstall(
 // ── 开关管理 Modal：↑/↓ 选 Claude Code / Codex，空格切换草稿开/关，Enter 统一应用，Esc 取消 ──
 
 function InjectTargetModal({
-	view,
-	viewportWidth,
-	viewportHeight
+	view
 }: {
 	readonly view: ToolsViewState;
-	readonly viewportWidth: number;
-	readonly viewportHeight: number;
 }) {
 	const shared = cursorComponent(view) as SharedManagedComponent | undefined;
 	const selected = injectTargetContext(view);
@@ -660,22 +648,23 @@ function InjectTargetModal({
 		<Modal
 			active
 			title={`管理开关：${shared?.name ?? ''}`}
-			hint="↑/↓ 选择  空格 切换开/关  Enter 应用  Esc 取消"
-			viewportWidth={viewportWidth}
-			viewportHeight={viewportHeight}
+			hint="↑/↓ 选择  空格 切换装/卸  Enter 应用  Esc 取消"
 			width={INJECT_MODAL_WIDTH}
 		>
 			<box flexDirection="column">
 				{AGENT_CONTEXT_ORDER.map((ctx) => {
 					const enabled = Boolean(draft?.[ctx]);
 					const focused = ctx === selected;
+					// 每侧实际版本（已注入且版本可读时展示）：CcgWorkflow cc/cx 可不同版本，Modal 逐侧精确呈现。
+					const version = shared?.injectByAgent?.[ctx]?.version;
+					const stateLabel = enabled ? (version ? `● 已安装 ${version}` : '● 已安装') : '○ 卸载';
 					return (
 						<box key={ctx} flexDirection="row">
 							<text fg={focused ? colors.primary : colors.muted} attributes={focused ? TextAttributes.BOLD : 0} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} flexGrow={1}>
 								{`${focused ? '›' : ' '} ${AGENT_CONTEXT_LABELS[ctx]} `}
 							</text>
 							<text fg={enabled ? colors.success : colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} flexShrink={0}>
-								{enabled ? '● 开启' : '○ 关闭'}
+								{stateLabel}
 							</text>
 						</box>
 					);
@@ -700,6 +689,23 @@ function toolCardId(component: ManagedComponent, index: number): string {
 }
 
 type GridRow = readonly number[];
+
+/**
+ * 当前光标所属分组在扁平 view.components 中的首/末索引。
+ * 各分组 grid 相对独立：左键停在分组首项（由调用方转为「返回菜单」），右键停在分组末项，横向不跨组。
+ */
+function cursorGroupBounds(view: ToolsViewState): {readonly start: number; readonly end: number} | null {
+	for (const section of groupComponentsByToolGroup(view.components)) {
+		const indices = section.components
+			.map(component => view.components.findIndex(item => item.id === component.id))
+			.filter(index => index >= 0);
+		if (indices.length > 0 && indices.includes(view.cursor)) {
+			return {start: Math.min(...indices), end: Math.max(...indices)};
+		}
+	}
+
+	return null;
+}
 
 function groupedGridRows(view: ToolsViewState, columns: number): readonly GridRow[] {
 	return groupComponentsByToolGroup(view.components).flatMap(section => {
@@ -745,7 +751,7 @@ function renderGrid(view: ToolsViewState, scrollRef: React.RefObject<ScrollBoxRe
 	// 每组采用「分组 label + 该组 grid」；状态机仍使用扁平 view.components，避免改写光标/生命周期逻辑。
 	// 外层用 ThemedScrollbox 承载溢出区域，键盘导航时 scrollChildIntoView 保证焦点卡片可见。
 	return (
-		<ThemedScrollbox ref={scrollRef} style={{flexGrow: 1}} viewportCulling scrollY scrollX={false}>
+		<ThemedScrollbox ref={scrollRef} style={{flexGrow: 1, marginTop: 1}} viewportCulling scrollY scrollX={false}>
 			<box flexDirection="column">
 				{sections.map(section => (
 					<box key={section.group} flexDirection="column" marginBottom={1}>
@@ -771,11 +777,7 @@ function renderGrid(view: ToolsViewState, scrollRef: React.RefObject<ScrollBoxRe
 	);
 }
 
-// 卡高统一：title 行（含右上角状态/版本）+ body（inject 类 2 行：描述链接 + 双态徽章；非 inject 1 行描述）+ 边框 2。
-// inject 类 body 增至 2 行，minHeight 由 4→5 使 flexWrap 行内所有卡片等高。
-const CARD_MIN_HEIGHT = 5;
-
-// 管理开关 / 卸载确认 Modal 宽度：容纳最长 hint「↑/↓ 选择  空格 切换开/关  Enter 应用  Esc 取消」单行不换行。
+// 管理开关 / 卸载确认 Modal 宽度：容纳最长 hint「↑/↓ 选择  空格 切换装/卸  Enter 应用  Esc 取消」单行不换行。
 const INJECT_MODAL_WIDTH = 56;
 
 function ToolCard({
@@ -787,10 +789,13 @@ function ToolCard({
 	readonly focused: boolean;
 	readonly status: ComponentItemStatus;
 }) {
-	// 状态 + 版本移到标题行右上角；CcgWorkflow 除外（两侧版本可不同，随各侧徽章走）。
+	// 状态点在标题行右上角展示。CcgWorkflow 例外：两侧安装态已由卡片内 cc/cx 双态徽章行完整呈现，
+	// 右上角再放聚合点属冗余（且两侧版本可不同易误导），故隐藏；CodeGraph 是真·共享 CLI，右上角保留版本/更新态。
 	const titleRight = component.id === 'CcgWorkflow' ? undefined : <StatusRight dot={dotKindFor(component, status)} />;
+	// 卡片不固定高度：multiLine 让 body 按实际行数自然撑开（标题行 + 空行 + 描述 [+ 徽章行]），
+	// inject 类比非 inject 高一行，同行按各自内容高度渲染，不再用 minHeight 强行拉平。
 	return (
-		<Card title={component.name} titleRight={titleRight} focused={focused} width={CARD_WIDTH} minHeight={CARD_MIN_HEIGHT}>
+		<Card title={component.name} titleRight={titleRight} focused={focused} width={CARD_WIDTH} multiLine>
 			<CardBody component={component} />
 		</Card>
 	);
@@ -808,24 +813,29 @@ function CardBody({ component }: { readonly component: SharedManagedComponent })
 	if (component.sharingKind === 'shared-cli-per-agent-inject') {
 		// 版本按侧独立展示：CcgWorkflow 两侧独立安装、可不同版本（cc=~/.claude/.ccg，cx=~/.codex/.ccg-version），
 		// 故版本随各侧徽章走。CodeGraph 是真·共享 CLI，injectByAgent 无 version 字段，徽章不显版本（版本在右上角）。
+		// inject 类用 cc/cx 双态徽章行替换标题下的空行（直接呈现两侧安装态），描述紧随徽章之下。
 		return (
 			<box flexDirection="column">
-				<box height={1} overflow="hidden">
-					<DocsLink text={component.description} url={component.docsUrl} />
-				</box>
 				<box flexDirection="row" height={1} overflow="hidden">
 					<InjectBadge label={AGENT_CONTEXT_LABELS.cc} injected={Boolean(component.injectByAgent?.cc?.integrated)} version={component.injectByAgent?.cc?.version} />
 					<text fg={colors.muted}>{'  '}</text>
 					<InjectBadge label={AGENT_CONTEXT_LABELS.cx} injected={Boolean(component.injectByAgent?.cx?.integrated)} version={component.injectByAgent?.cx?.version} />
+				</box>
+				<box height={1} overflow="hidden">
+					<DocsLink text={component.description} url={component.docsUrl} />
 				</box>
 			</box>
 		);
 	}
 
 	// 非 inject（Agent 组 / statusLine / OpenSpec）：描述作为可点击链接跳官方文档 / GitHub。
+	// 描述与标题行之间空一行分隔（spacer）。
 	return (
-		<box height={1} overflow="hidden">
-			<DocsLink text={component.description} url={component.docsUrl} />
+		<box flexDirection="column">
+			<box height={1} />
+			<box height={1} overflow="hidden">
+				<DocsLink text={component.description} url={component.docsUrl} />
+			</box>
 		</box>
 	);
 }
@@ -933,14 +943,31 @@ function injectSharedDot(component: SharedManagedComponent): { kind: StatusDotKi
 	}
 
 	// CcgWorkflow：无全局共享 CLI，cc/cx 各自独立安装、版本可不同。
-	// 行 1 只表达「已安装/未安装 + 是否有更新」共享层状态；per-side 版本放行 2 双态徽章，避免两侧版本冲突时误导。
+	// 行 1 状态点取两侧较旧版本对外展示（保守口径，避免误以为整体已是最新）；
+	// per-side 精确版本仍在管理开关 Modal 与行 2 双态徽章按侧展示。
 	if (!anyInjected) {
 		return { kind: 'notInstalled', label: '未安装' };
 	}
+	const olderVersion = olderInjectedVersion(component);
 	if (component.hasUpdate === true) {
-		return { kind: 'updatable', label: '有更新' };
+		return { kind: 'updatable', label: olderVersion ? `${olderVersion} 有更新` : '有更新' };
 	}
-	return { kind: 'latest', label: '已安装' };
+	return { kind: 'latest', label: olderVersion || '已安装' };
+}
+
+// CcgWorkflow 状态点版本口径：取 cc/cx 两侧已注入版本中较旧的一个（保守展示）。
+// 仅一侧有版本时返回该版本；两侧皆无版本（已注入但版本文件不可读）返回空串由调用方兜底文案。
+function olderInjectedVersion(component: SharedManagedComponent): string {
+	const versions = AGENT_CONTEXT_ORDER
+		.map(ctx => component.injectByAgent?.[ctx])
+		.filter((snapshot): snapshot is AgentInjectSnapshot => Boolean(snapshot?.integrated && snapshot.version))
+		.map(snapshot => snapshot.version as string);
+
+	if (versions.length === 0) {
+		return '';
+	}
+
+	return versions.reduce((older, current) => (semverCompare(current, older) < 0 ? current : older));
 }
 
 // ── 工具 ─────────────────────────────────────────────────────────────────────

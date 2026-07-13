@@ -5,7 +5,7 @@ import {join} from 'node:path';
 
 // Phase 11B tools-manage core 门禁：工具管理单一真理源（design TDR-11）。
 // 覆盖：
-// - COMPONENT_DEFINITIONS 7 组件齐备（ClaudeCode + 6 工具）+ 顺序 + isBase 语义（11.4/11.6）
+// - COMPONENT_DEFINITIONS 7 组件齐备（ClaudeCode + 6 工具）+ 顺序（11.4/11.6）
 // - detectComponents 返回 7 项且不聚合 Skills/MCP（11.5/11.7）
 // - CcgWorkflow 版本取自 config.toml（复用 update.ts 检测，单一真理源）
 // - installComponent('ClaudeCode') 走 npm install + 检测确认（11.6/11.8，deps.exec 注入 mock）
@@ -60,13 +60,10 @@ for (const def of COMPONENT_DEFINITIONS) {
 	assert.ok(def.name && def.description, `${def.id} 有 name + description`);
 	assert.ok(def.command && def.versionArgs.length > 0, `${def.id} 有检测命令`);
 	assert.ok(def.kind, `${def.id} 有 kind`);
-	assert.equal(typeof def.isBase, 'boolean', `${def.id} isBase 为布尔`);
 }
 const claude = COMPONENT_DEFINITIONS.find(c => c.id === 'ClaudeCode');
-assert.equal(claude.isBase, true, 'ClaudeCode isBase=true（基础组件，卸载附危险警告）');
 assert.equal(claude.npmPackage, '@anthropic-ai/claude-code', 'ClaudeCode npm 包名');
-assert.equal(COMPONENT_DEFINITIONS.filter(c => c.isBase).length, 1, '仅 ClaudeCode 为 isBase');
-console.log('[PASS] COMPONENT_DEFINITIONS 7 组件齐备 + isBase 语义 (11.4/11.6)');
+console.log('[PASS] COMPONENT_DEFINITIONS 7 组件齐备 (11.4/11.6)');
 
 // ── 工具管理分组事实源：Agent / statusLine / 三方工具 ─────────────────────────
 assert.deepEqual(TOOL_GROUP_ORDER, ['agent', 'companion', 'tool'], '工具管理分组顺序为 agent → companion → tool');
@@ -89,11 +86,12 @@ assert.equal(codexDef.npmPackage, '@openai/codex', 'CodexCli npm 包名为 @open
 assert.equal(codexDef.command, 'codex', 'CodexCli 检测命令为 codex');
 assert.deepEqual(codexDef.versionArgs, ['--version'], 'CodexCli 版本检测参数为 --version');
 assert.equal(codexDef.kind, 'npm', 'CodexCli 安装 kind 为 npm');
-// update.ts 的 NPM_COMPONENT_MAP / COMMAND_COMPONENTS 同源
+// update.ts 的 NPM_COMPONENT_MAP / COMMAND_COMPONENTS 派生自 registry（DRY，单一真理源）：
+// 不再硬编码逐条映射，而是从 TOOL_DEFINITIONS 计算，故此处断言其派生表达式而非字面量。
 const updateSource = readFileSync(new URL('../src/core/update.ts', import.meta.url), 'utf8');
-assert.match(updateSource, /CodexCli:\s*'@openai\/codex'/, 'update.ts NPM_COMPONENT_MAP CodexCli = @openai/codex');
-assert.match(updateSource, /CodexCli:\s*\{\s*command:\s*'codex'/, 'update.ts COMMAND_COMPONENTS CodexCli command = codex');
-console.log('[PASS] 1.1 CodexCli 使用 @openai/codex 与 codex --version');
+assert.match(updateSource, /NPM_COMPONENT_MAP[^\n]*=\s*Object\.fromEntries\(\s*\n?\s*TOOL_DEFINITIONS\.filter\(def => def\.npmPackage\)/, 'update.ts NPM_COMPONENT_MAP 派生自 registry 的 npmPackage');
+assert.match(updateSource, /COMMAND_COMPONENTS[^\n]*=\s*Object\.fromEntries\(\s*\n?\s*TOOL_DEFINITIONS\.map\(def => \[def\.id, \{command: def\.command/, 'update.ts COMMAND_COMPONENTS 派生自 registry 的 command/versionArgs');
+console.log('[PASS] 1.1 CodexCli 使用 @openai/codex 与 codex --version（maps 派生自 registry）');
 
 // ── r 手动刷新必须绕过 npm 远程版本缓存，避免 latest 卡在旧缓存（如 Claude Code 1.0.199）──
 const toolsViewSource = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');

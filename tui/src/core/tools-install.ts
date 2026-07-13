@@ -37,7 +37,6 @@ export type ToolDefinition = {
 	readonly versionArgs: readonly string[];
 	readonly npmPackage?: string; // kind === 'npm'（CcgWorkflow 虽为 ccg-init，仍标注 npm 引擎包名供 update 派生）
 	readonly docsUrl?: string; // 官方文档 / 仓库地址（卡片描述可跳转，OSC-8 超链接）
-	readonly isBase: boolean; // 基础 agent（ClaudeCode=true，卸载附危险警告）
 };
 
 /** 工具检测状态（供列表展示）。 */
@@ -73,8 +72,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		command: 'claude',
 		versionArgs: ['--version'],
 		npmPackage: '@anthropic-ai/claude-code',
-		docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview',
-		isBase: true
+		docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview'
 	},
 	{
 		id: 'Ccline',
@@ -84,8 +82,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		command: 'ccline',
 		versionArgs: ['--version'],
 		npmPackage: '@cometix/ccline',
-		docsUrl: 'https://github.com/Haleclipse/CCometixLine',
-		isBase: false
+		docsUrl: 'https://github.com/Haleclipse/CCometixLine'
 	},
 	{
 		id: 'CcgWorkflow',
@@ -95,8 +92,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		command: 'codeagent-wrapper',
 		versionArgs: ['--version'],
 		npmPackage: 'ccg-workflow',
-		docsUrl: 'https://github.com/fengshao1227/ccg-workflow',
-		isBase: false
+		docsUrl: 'https://github.com/fengshao1227/ccg-workflow'
 	},
 	{
 		id: 'OpenSpec',
@@ -106,8 +102,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		command: 'openspec',
 		versionArgs: ['--version'],
 		npmPackage: '@fission-ai/openspec',
-		docsUrl: 'https://github.com/Fission-AI/OpenSpec',
-		isBase: false
+		docsUrl: 'https://github.com/Fission-AI/OpenSpec'
 	},
 	{
 		id: 'CodeGraph',
@@ -117,8 +112,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		command: 'codegraph',
 		versionArgs: ['--version'],
 		npmPackage: '@colbymchenry/codegraph',
-		docsUrl: 'https://github.com/colbymchenry/codegraph',
-		isBase: false
+		docsUrl: 'https://github.com/colbymchenry/codegraph'
 	},
 	{
 		id: 'CodexCli',
@@ -128,8 +122,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		command: 'codex',
 		versionArgs: ['--version'],
 		npmPackage: '@openai/codex',
-		docsUrl: 'https://developers.openai.com/codex/cli',
-		isBase: false
+		docsUrl: 'https://developers.openai.com/codex/cli'
 	},
 	{
 		id: 'AntigravityCli',
@@ -138,8 +131,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		kind: 'shell-script',
 		command: 'agy',
 		versionArgs: ['--version'],
-		docsUrl: 'https://antigravity.google/docs/cli',
-		isBase: false
+		docsUrl: 'https://antigravity.google/docs/cli'
 	}
 ];
 
@@ -292,7 +284,7 @@ export function readMcpSnapshot(): string | null {
 }
 
 /** CcgWorkflow 安装：Claude Code init + mcpServers 快照保护；Codex Mode 走官方非交互命令。 */
-async function installCcgWorkflow(context: AgentContext, onProgress?: ProgressCallback): Promise<string | undefined> {
+async function installCcgWorkflow(context: AgentContext, onProgress?: ProgressCallback, exec: typeof execCommand = execCommand): Promise<string | undefined> {
 	// mcpServers 快照仅适用于 Claude Code init 路径；Codex Mode 不应触碰 ~/.claude.json。
 	const mcpBefore = context === 'cc' ? readMcpSnapshot() : null;
 	const [command] = ccgWorkflowInstallCommands(context, claudeDir());
@@ -301,7 +293,7 @@ async function installCcgWorkflow(context: AgentContext, onProgress?: ProgressCa
 	}
 
 	onProgress?.({level: 'info', message: `${command.cmd} ${command.args.join(' ')}（远程下载，请稍候）`, componentId: 'CcgWorkflow'});
-	const result = await execCommand(command.cmd, [...command.args], {timeout: INSTALL_TIMEOUT_MS});
+	const result = await exec(command.cmd, [...command.args], {timeout: INSTALL_TIMEOUT_MS});
 	if (result.code !== 0) {
 		const label = context === 'cx' ? 'Codex Mode 安装失败' : 'CCG Workflow 初始化失败';
 		throw new Error(friendlyError(result.stderr || result.stdout, `${label} (exit ${result.code})`));
@@ -340,11 +332,11 @@ export function restoreMcpSnapshot(snapshot: string, onProgress?: ProgressCallba
 }
 
 /** AntigravityCli 安装：平台 shell 脚本（Win irm|iex / mac curl|bash）。 */
-async function installAntigravity(onProgress?: ProgressCallback): Promise<void> {
+async function installAntigravity(onProgress?: ProgressCallback, exec: typeof execCommand = execCommand): Promise<void> {
 	onProgress?.({level: 'info', message: '执行 Antigravity 官方安装脚本（远程下载）', componentId: 'AntigravityCli'});
 
 	if (process.platform === 'win32') {
-		const result = await execCommand(
+		const result = await exec(
 			'powershell',
 			['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', 'irm https://antigravity.google/cli/install.ps1 | iex'],
 			{timeout: INSTALL_TIMEOUT_MS}
@@ -356,41 +348,75 @@ async function installAntigravity(onProgress?: ProgressCallback): Promise<void> 
 		return;
 	}
 
-	const result = await execCommand('bash', ['-c', 'curl -fsSL https://antigravity.google/cli/install.sh | bash'], {timeout: INSTALL_TIMEOUT_MS});
+	const result = await exec('bash', ['-c', 'curl -fsSL https://antigravity.google/cli/install.sh | bash'], {timeout: INSTALL_TIMEOUT_MS});
 	if (result.code !== 0) {
 		throw new Error(friendlyError(result.stderr || result.stdout, `Antigravity 安装失败 (exit ${result.code})`));
 	}
 }
 
+/** ClaudeCode 安装：npm install -g @anthropic-ai/claude-code + 刷新 PATH + 检测确认。
+ *  原下沉自 tools-manage.installComponent 的 ClaudeCode 专属分支（registry 平权后统一进 installTool）。 */
+async function installClaudeCode(
+	definition: ToolDefinition,
+	onProgress?: ProgressCallback,
+	exec: typeof execCommand = execCommand
+): Promise<string> {
+	onProgress?.({level: 'info', message: `npm install -g ${definition.npmPackage}`, componentId: definition.id});
+	const result = await exec('npm', ['install', '-g', definition.npmPackage!], {timeout: INSTALL_TIMEOUT_MS});
+	if (result.code !== 0) {
+		throw new Error(friendlyError(result.stderr || result.stdout, `npm install 失败 (exit ${result.code})`));
+	}
+
+	await refreshNpmGlobalBinPath(onProgress, definition.id, exec);
+	const check = await exec(definition.command, [...definition.versionArgs], {timeout: DETECT_TIMEOUT_MS});
+	if (check.code !== 0) {
+		throw new Error('安装后命令不可用');
+	}
+
+	return parseVersion(check.stdout || check.stderr || '');
+}
+
 /** 安装单个工具（按 kind 分发 + 后置处理 + 检测确认）。
- *  context 默认 'cc'（Claude Code）保持向后兼容；CodeGraph 接入目标与 CcgWorkflow Codex 引导按 context 分支。 */
-export async function installTool(id: ToolId, onProgress?: ProgressCallback, context: AgentContext = 'cc'): Promise<ToolInstallOutcome> {
+ *  context 默认 'cc'（Claude Code）保持向后兼容；CodeGraph 接入目标与 CcgWorkflow Codex 引导按 context 分支。
+ *  deps.exec 注入缝供测试 mock（ClaudeCode 走 deps.exec，其余 kind 默认真实 execCommand）。 */
+export async function installTool(
+	id: ToolId,
+	onProgress?: ProgressCallback,
+	context: AgentContext = 'cc',
+	deps: InstallToolDeps = {}
+): Promise<ToolInstallOutcome> {
 	const definition = TOOL_DEFINITIONS.find(item => item.id === id);
 	if (!definition) {
 		return {id, success: false, error: '未知工具'};
 	}
 
+	const exec = deps.exec ?? execCommand;
 	try {
 		let installedVersion: string | undefined;
 		switch (definition.kind) {
 			case 'npm':
-				if (definition.id === 'CodeGraph') {
-					await ensureCodeGraphCli(definition, onProgress);
-					await postInstallCodeGraph(context, onProgress);
+				if (definition.id === 'ClaudeCode') {
+					installedVersion = await installClaudeCode(definition, onProgress, exec);
 					break;
 				}
 
-				await installNpmPackage(definition, onProgress);
+				if (definition.id === 'CodeGraph') {
+					await ensureCodeGraphCli(definition, onProgress, exec);
+					await postInstallCodeGraph(context, onProgress, exec);
+					break;
+				}
+
+				await installNpmPackage(definition, onProgress, exec);
 				if (definition.id === 'Ccline') {
 					await postInstallCcline(onProgress);
 				}
 
 				break;
 			case 'ccg-init':
-				installedVersion = await installCcgWorkflow(context, onProgress);
+				installedVersion = await installCcgWorkflow(context, onProgress, exec);
 				break;
 			case 'shell-script':
-				await installAntigravity(onProgress);
+				await installAntigravity(onProgress, exec);
 				break;
 		}
 
@@ -401,7 +427,13 @@ export async function installTool(id: ToolId, onProgress?: ProgressCallback, con
 			return {id, success: true, version: installedVersion};
 		}
 
-		const status = await detectTool(definition);
+		// ClaudeCode 已在 installClaudeCode 内检测确认并产出版本，无需再 detectTool。
+		if (definition.id === 'ClaudeCode') {
+			onProgress?.({level: 'success', message: `${definition.name} 安装成功${installedVersion ? ` (${installedVersion})` : ''}`, componentId: id});
+			return {id, success: true, version: installedVersion};
+		}
+
+		const status = await detectTool(definition, exec);
 		if (status.installed) {
 			onProgress?.({level: 'success', message: `${definition.name} 安装成功${status.version ? ` (${status.version})` : ''}`, componentId: id});
 			return {id, success: true, version: status.version};
