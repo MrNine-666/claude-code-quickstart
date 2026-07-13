@@ -38,14 +38,13 @@ type Focus = 'editor' | 'recommend';
 export type ConfigViewProps = {
 	readonly agentContext: AgentContext;
 	readonly active: boolean;
-	readonly viewportHeight?: number;
 	readonly onSubModeChange?: (subMode: string) => void;
 	readonly onExitToNav: () => void;
 	readonly onExitToHeader?: () => void;
 	readonly syntaxStyle?: import('@opentui/core').SyntaxStyle | null;
 };
 
-export function ConfigView({ agentContext, active, viewportHeight = 16, onSubModeChange, onExitToNav, onExitToHeader, syntaxStyle = null }: ConfigViewProps) {
+export function ConfigView({ agentContext, active, onSubModeChange, onExitToNav, onExitToHeader, syntaxStyle = null }: ConfigViewProps) {
 	const target: ConfigTarget = agentContext;
 	const isCodex = target === 'cx';
 	const recommendationContent = useMemo(() => loadRecommendationAnnotated(target) ?? '', [target]);
@@ -96,9 +95,6 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 	const editorActive = mode === 'edit' && active && (panel === 'editor' || focus === 'editor');
 	const textareaFocused = mode === 'edit' && focus === 'editor';
 	const tabMode = panel === 'split' ? 'cycle-focus' : 'indent';
-	// 编辑态保留全局 ViewHeader：右侧内容区固定高，先扣除标题行，避免编辑器 flex 抢占导致标题被裁剪。
-	const bodyViewportHeight = Math.max(1, viewportHeight - 2);
-	const editorViewportHeight = bodyViewportHeight;
 
 	// ── 操作 ──
 	const refreshView = (): void => {
@@ -243,7 +239,7 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 					right={<text fg={colors.warning} attributes={TextAttributes.DIM}>{isCodex ? '已排除供应商/MCP配置' : '已排除供应商配置'}</text>}
 				/>
 				{hasContent ? (
-					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
+					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active}>
 						<ThemedScrollbox ref={viewScrollRef} style={{flexGrow: 1}}>
 							<CodePreview content={previewContent} filetype={isCodex ? 'text' : 'json'} />
 						</ThemedScrollbox>
@@ -277,7 +273,6 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 			textareaFocused={textareaFocused}
 			escapeMode="bubble"
 			previewEnabled={false}
-			viewportHeight={editorViewportHeight}
 			onContentChange={handleContentChange}
 			onCycleFocus={() => cycleFocus()}
 			onSave={handleSave}
@@ -292,19 +287,18 @@ export function ConfigView({ agentContext, active, viewportHeight = 16, onSubMod
 				subtitle={isCodex ? '查看、补全与编辑 ~/.codex/config.toml' : '查看、补全与编辑 ~/.claude/settings.json'}
 				right={<text fg={colors.warning} attributes={TextAttributes.DIM}>{isCodex ? '已排除供应商/MCP配置' : '已排除供应商配置'}</text>}
 			/>
-			<box flexDirection="row" flexGrow={1} height={bodyViewportHeight} columnGap={showRecommend ? 1 : 0}>
+			<box flexDirection="row" flexGrow={1} minHeight={0} border={false} gap={1} marginTop={1}>
 				{showRecommend ? (
 					<box key='recommend-panel' flexDirection="column" flexGrow={1} flexBasis={0} minWidth={0}>
-						<text fg={colors.primary} attributes={TextAttributes.BOLD}>推荐配置</text>
+						<text flexShrink={0} fg={colors.primary} attributes={TextAttributes.BOLD}>推荐配置</text>
 						<box
 							flexGrow={1}
-							flexBasis={0}
+							minWidth={0}
 							minHeight={0}
 							borderStyle="rounded"
 							borderColor={focus === 'recommend' ? borderColors.active : borderColors.inactive}
-							paddingX={1}
 						>
-							<ThemedScrollbox ref={recommendScrollRef} style={{flexGrow: 1, minHeight: 0}}>
+							<ThemedScrollbox ref={recommendScrollRef} style={{flexGrow: 1, minWidth: 0, minHeight: 0}}>
 								<CodePreview content={recommendationContent} filetype={isCodex ? 'text' : 'jsonc'} />
 							</ThemedScrollbox>
 						</box>

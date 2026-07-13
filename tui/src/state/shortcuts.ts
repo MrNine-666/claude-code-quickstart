@@ -149,8 +149,18 @@ function mcpShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		return manualShortcuts([{key: '↑/↓', label: '字段'}, {key: '←/→', label: '选项'}, {key: formatShortcutKey(editingShortcutKey('s')), label: '保存'}, {key: 'Esc', label: '取消'}]);
 	}
 
+	if (subMode === 'select-toggle-target') {
+		return buildShortcuts([
+			{command: MCP_COMMANDS.LIST_UP, label: '选择'},
+			{command: MCP_COMMANDS.LIST_DOWN, label: '选择'},
+			{command: MCP_COMMANDS.TOGGLE_TARGET_TOGGLE, label: '切换开/关'},
+			{command: MCP_COMMANDS.TOGGLE_TARGET_CONFIRM, label: '应用'},
+			{command: MCP_COMMANDS.TOGGLE_TARGET_CANCEL, label: '取消'}
+		]);
+	}
+
 	if (subMode === 'confirm-remove') {
-		return manualShortcuts([{key: 'Enter', label: '确认删除'}, {key: 'Esc', label: '取消'}]);
+		return manualShortcuts([{key: 'Enter', label: '确认全量删除'}, {key: 'Esc', label: '取消'}]);
 	}
 
 	if (subMode === 'empty') {
@@ -164,53 +174,57 @@ function mcpShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	return buildShortcuts([
 		{command: MCP_COMMANDS.LIST_UP, label: '选择'},
 		{command: MCP_COMMANDS.LIST_DOWN, label: '选择'},
-		{command: MCP_COMMANDS.TOGGLE, label: '切换状态'},
+		{command: MCP_COMMANDS.MANAGE_TOGGLE, label: '管理开关'},
 		{command: MCP_COMMANDS.ADD, label: '新增'},
 		{command: MCP_COMMANDS.EDIT, label: '编辑'},
-		{command: MCP_COMMANDS.DELETE, label: '删除'},
+		{command: MCP_COMMANDS.DELETE, label: '全量删除'},
 		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
 		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
 	]);
 }
 
 function skillsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
-	if (subMode === 'confirm-install' || subMode === 'confirm-uninstall') {
-		return manualShortcuts([{key: 'Enter', label: '确认'}, {key: 'Esc', label: '取消'}]);
+	// 安装目标 / 管理安装 Modal：↑/↓ 选侧、空格切换安装/卸载（仅 Claude Code）、Enter 应用、Esc 取消
+	if (subMode === 'select-install-target' || subMode === 'manage-inject') {
+		return buildShortcuts([
+			{command: SKILLS_COMMANDS.LIST_UP, label: '选择'},
+			{command: SKILLS_COMMANDS.LIST_DOWN, label: '选择'},
+			{command: SKILLS_COMMANDS.TARGET_TOGGLE, label: '切换安装/卸载'},
+			{command: SKILLS_COMMANDS.TARGET_CONFIRM, label: '应用'},
+			{command: SKILLS_COMMANDS.TARGET_CANCEL, label: '取消'}
+		]);
+	}
+
+	if (subMode === 'confirm-uninstall') {
+		return manualShortcuts([{key: 'Enter', label: '确认卸载（所有 Agent）'}, {key: 'Esc', label: '取消'}]);
 	}
 
 	if (subMode === 'busy') {
 		return manualShortcuts([{key: '请稍候', label: '执行中'}]);
 	}
 
-	// 安装页：搜索框 + 扁平 skill 列表（skills find 结果直接展示，按 Enter 触发安装确认）
+	// 安装页：搜索框 + 扁平 skill 列表；选中 skill Enter 弹安装目标 Modal
+	// 键位全部从 keybinding registry 派生（Tab/↑↓ 复用 TOGGLE_FOCUS/LIST_*，Enter=SELECT_TARGET，Esc=返回菜单），
+	// 不硬编码字面量（skills-tui R6：footer SHALL advertise the install-target action sourced from the keybinding registry）。
 	if (subMode === 'install') {
-		return manualShortcuts([
-			{key: 'Tab', label: '搜索框/列表'},
-			{key: '↑/↓', label: '选择 skill'},
-			{key: 'Enter', label: '安装 skill'},
-			{key: 'Esc', label: '返回列表页'}
+		return buildShortcuts([
+			{command: SKILLS_COMMANDS.TOGGLE_FOCUS, label: '搜索框/列表'},
+			{command: SKILLS_COMMANDS.LIST_UP, label: '选择 skill'},
+			{command: SKILLS_COMMANDS.LIST_DOWN, label: '选择 skill'},
+			{command: SKILLS_COMMANDS.SELECT_TARGET, label: '选择安装目标'},
+			{command: SKILLS_COMMANDS.TARGET_CANCEL, label: '返回列表页'}
 		]);
 	}
 
-	// 安装页·子级：某 repo 下 skill 多选（需求③，暂未实现）
-	if (subMode === 'install-pick') {
-		return manualShortcuts([
-			{key: 'A', label: '全选/取消'},
-			{key: 'Space', label: '选中/取消'},
-			{key: '↑/↓', label: '选择'},
-			{key: 'Enter', label: '安装选中'},
-			{key: 'Esc', label: '返回 repo 列表'}
-		]);
-	}
-
-	// 列表页（默认）：本地过滤 + 已装管理
+	// 列表页（默认）：本地过滤 + 双侧管理（Enter 管理安装 / u 更新两侧 / d 全量卸载）
 	return buildShortcuts([
 		{command: SKILLS_COMMANDS.TOGGLE_FOCUS, label: '过滤框/列表'},
 		{command: SKILLS_COMMANDS.LIST_UP, label: '选择'},
 		{command: SKILLS_COMMANDS.LIST_DOWN, label: '选择'},
+		{command: SKILLS_COMMANDS.MANAGE_INSTALL, label: '管理安装'},
 		{command: SKILLS_COMMANDS.INSTALL, label: '安装页'},
-		{command: SKILLS_COMMANDS.UPDATE_ALL, label: '更新全部'},
-		{command: SKILLS_COMMANDS.UNINSTALL, label: '卸载'},
+		{command: SKILLS_COMMANDS.UPDATE_ALL, label: '更新两侧'},
+		{command: SKILLS_COMMANDS.UNINSTALL, label: '卸载两侧'},
 		{command: SKILLS_COMMANDS.REFRESH, label: '刷新'},
 		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
 		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}

@@ -95,10 +95,16 @@ export const providerBindings: Binding[] = commandBindings({
 export const MCP_COMMANDS = {
 	LIST_UP: 'mcp:list-up',
 	LIST_DOWN: 'mcp:list-down',
-	TOGGLE: 'mcp:toggle',
+	// enter：打开开关目标 Modal（管理开关），取代原「切换状态」单侧语义
+	MANAGE_TOGGLE: 'mcp:manage-toggle',
 	ADD: 'mcp:add',
 	EDIT: 'mcp:edit',
+	// d：全量删除（两侧 runtime + 共享定义），取代原「删除单 server」
 	DELETE: 'mcp:delete',
+	// 开关目标 Modal：空格切换草稿开/关，Enter 统一应用差异，Esc 取消
+	TOGGLE_TARGET_TOGGLE: 'mcp:toggle-target-toggle',
+	TOGGLE_TARGET_CONFIRM: 'mcp:toggle-target-confirm',
+	TOGGLE_TARGET_CANCEL: 'mcp:toggle-target-cancel',
 	// form 子模式
 	FORM_SAVE: 'mcp:form-save',
 	FORM_CANCEL: 'mcp:form-cancel'
@@ -107,10 +113,14 @@ export const MCP_COMMANDS = {
 export const mcpBindings: Binding[] = commandBindings({
 	[MCP_COMMANDS.LIST_UP]: 'up',
 	[MCP_COMMANDS.LIST_DOWN]: 'down',
-	[MCP_COMMANDS.TOGGLE]: 'enter',
+	[MCP_COMMANDS.MANAGE_TOGGLE]: 'enter',
 	[MCP_COMMANDS.ADD]: 'a',
 	[MCP_COMMANDS.EDIT]: 'e',
 	[MCP_COMMANDS.DELETE]: 'd',
+	// 开关目标 Modal（与 list 复用按键，靠视图子模式控制生效时机）
+	[MCP_COMMANDS.TOGGLE_TARGET_TOGGLE]: 'space',
+	[MCP_COMMANDS.TOGGLE_TARGET_CONFIRM]: 'enter',
+	[MCP_COMMANDS.TOGGLE_TARGET_CANCEL]: 'escape',
 	// form 子模式（与 list 复用按键，靠视图焦点/子模式控制生效时机）
 	[MCP_COMMANDS.FORM_SAVE]: editingShortcutKey('s'),
 	[MCP_COMMANDS.FORM_CANCEL]: 'escape'
@@ -124,9 +134,16 @@ export const SKILLS_COMMANDS = {
 	LIST_DOWN: 'skills:list-down',
 	TOGGLE_FOCUS: 'skills:toggle-focus',
 	INSTALL: 'skills:install',
+	// enter：列表行 → 管理安装 Modal（切 Claude Code symlink）；安装页 → 安装目标 Modal
+	MANAGE_INSTALL: 'skills:manage-install',
+	SELECT_TARGET: 'skills:select-target',
 	UPDATE_ALL: 'skills:update-all',
 	UNINSTALL: 'skills:uninstall',
-	REFRESH: 'skills:refresh'
+	REFRESH: 'skills:refresh',
+	// 安装目标 / 管理安装 Modal：空格切草稿（仅 Claude Code），Enter 应用，Esc 取消
+	TARGET_TOGGLE: 'skills:target-toggle',
+	TARGET_CONFIRM: 'skills:target-confirm',
+	TARGET_CANCEL: 'skills:target-cancel'
 } as const;
 
 export const skillsBindings: Binding[] = commandBindings({
@@ -134,9 +151,15 @@ export const skillsBindings: Binding[] = commandBindings({
 	[SKILLS_COMMANDS.LIST_DOWN]: 'down',
 	[SKILLS_COMMANDS.TOGGLE_FOCUS]: 'tab',
 	[SKILLS_COMMANDS.INSTALL]: 'a',
+	[SKILLS_COMMANDS.MANAGE_INSTALL]: 'enter',
+	[SKILLS_COMMANDS.SELECT_TARGET]: 'enter',
 	[SKILLS_COMMANDS.UPDATE_ALL]: 'u',
 	[SKILLS_COMMANDS.UNINSTALL]: 'd',
-	[SKILLS_COMMANDS.REFRESH]: 'r'
+	[SKILLS_COMMANDS.REFRESH]: 'r',
+	// 目标 / 管理 Modal（与 list 复用按键，靠视图子模式控制生效时机）
+	[SKILLS_COMMANDS.TARGET_TOGGLE]: 'space',
+	[SKILLS_COMMANDS.TARGET_CONFIRM]: 'enter',
+	[SKILLS_COMMANDS.TARGET_CANCEL]: 'escape'
 });
 
 // ------------------------------------------------------------

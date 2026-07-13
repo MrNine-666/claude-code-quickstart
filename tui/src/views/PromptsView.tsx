@@ -35,14 +35,13 @@ type Confirm = 'none';
 export type PromptsViewProps = {
 	readonly agentContext: AgentContext;
 	readonly active: boolean;
-	readonly viewportHeight?: number;
 	readonly onSubModeChange?: (subMode: string) => void;
 	readonly onExitToNav: () => void;
 	readonly onExitToHeader?: () => void;
 	readonly syntaxStyle?: import('@opentui/core').SyntaxStyle | null;
 };
 
-export function PromptsView({ agentContext, active, viewportHeight = 16, onSubModeChange, onExitToNav, onExitToHeader, syntaxStyle = null }: PromptsViewProps) {
+export function PromptsView({ agentContext, active, onSubModeChange, onExitToNav, onExitToHeader, syntaxStyle = null }: PromptsViewProps) {
 	const target: PromptsTarget = agentContext;
 	const isCodex = target === 'cx';
 	const recommendationContent = useMemo(() => assembleRulesRecommendation(target) ?? '', [target]);
@@ -94,9 +93,6 @@ export function PromptsView({ agentContext, active, viewportHeight = 16, onSubMo
 	const editorActive = mode === 'edit' && active && confirm === 'none' && (panel === 'editor' || focus === 'editor');
 	const textareaFocused = mode === 'edit' && confirm === 'none' && focus === 'editor';
 	const tabMode = panel === 'split' ? 'cycle-focus' : 'indent';
-	// 编辑态保留全局 ViewHeader：右侧内容区固定高，先扣除标题行，避免编辑器 flex 抢占导致标题被裁剪。
-	const bodyViewportHeight = Math.max(1, viewportHeight - 2);
-	const editorViewportHeight = bodyViewportHeight;
 
 	// ── 操作 ──
 	const refreshView = (): void => {
@@ -238,7 +234,7 @@ export function PromptsView({ agentContext, active, viewportHeight = 16, onSubMo
 			<box flexDirection="column" flexGrow={1}>
 				<ViewHeader title='全局规则管理' subtitle={isCodex ? '查看、导入与编辑 ~/.codex/AGENTS.md' : '查看、导入与编辑 ~/.claude/CLAUDE.md'} />
 				{hasContent ? (
-					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active} paddingX={1}>
+					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active}>
 						<ThemedScrollbox ref={viewScrollRef} style={{flexGrow: 1}}>
 							<CodePreview content={viewContent} filetype="markdown" />
 						</ThemedScrollbox>
@@ -271,7 +267,6 @@ export function PromptsView({ agentContext, active, viewportHeight = 16, onSubMo
 			textareaFocused={textareaFocused}
 			escapeMode="bubble"
 			previewEnabled={false}
-			viewportHeight={editorViewportHeight}
 			onContentChange={handleContentChange}
 			onCycleFocus={() => cycleFocus()}
 			onSave={handleSave}
@@ -282,19 +277,18 @@ export function PromptsView({ agentContext, active, viewportHeight = 16, onSubMo
 	return (
 		<box flexDirection="column" flexGrow={1}>
 			<ViewHeader title='全局规则管理' subtitle={isCodex ? '查看、导入与编辑 ~/.codex/AGENTS.md' : '查看、导入与编辑 ~/.claude/CLAUDE.md'} />
-			<box flexDirection="row" flexGrow={1} height={bodyViewportHeight} columnGap={showRecommend ? 1 : 0}>
+			<box flexDirection="row" flexGrow={1} minHeight={0} border={false} gap={1} marginTop={1}>
 				{showRecommend ? (
 					<box key='recommend-panel' flexDirection="column" flexGrow={1} flexBasis={0} minWidth={0}>
-						<text fg={colors.primary} attributes={TextAttributes.BOLD}>推荐规则</text>
+						<text flexShrink={0} fg={colors.primary} attributes={TextAttributes.BOLD}>推荐规则</text>
 						<box
 							flexGrow={1}
-							flexBasis={0}
+							minWidth={0}
 							minHeight={0}
 							borderStyle="rounded"
 							borderColor={focus === 'recommend' ? borderColors.active : borderColors.inactive}
-							paddingX={1}
 						>
-							<ThemedScrollbox ref={recommendScrollRef} style={{flexGrow: 1, minHeight: 0}}>
+							<ThemedScrollbox ref={recommendScrollRef} style={{flexGrow: 1, minWidth: 0, minHeight: 0}}>
 								<CodePreview content={recommendationContent} filetype="markdown" />
 							</ThemedScrollbox>
 						</box>

@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { TextAttributes, type ScrollBoxRenderable } from '@opentui/core';
+import React from 'react';
+import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 import { colors } from '../../theme/index.js';
 import { isEditingModifier } from '../../utils/keyboard.js';
@@ -16,7 +16,7 @@ import type { FormField } from './field-types.js';
 // - radio/select 字段用 ←/→ 或 Tab/Shift+Tab 切换选项（上下键已让给字段切换）
 // - 保存按编辑语义：macOS Cmd+S，其他平台 Ctrl+S；Esc 取消
 // - 纯展示 + 回调：字段联动由父组件处理
-// - contentHeight 传入时字段区单独滚动；不传时输出纯字段流，由外层统一滚动。
+// - 输出纯字段流，由外层统一滚动（provider-form / McpFormView 各自的 scrollbox 承载）。
 
 export type FormPanelProps = {
 	readonly title: string;
@@ -26,7 +26,6 @@ export type FormPanelProps = {
 	readonly focusedIndex: number;
 	readonly active: boolean;
 	readonly errors?: readonly string[];
-	readonly contentHeight?: number;
 	readonly onMoveFocus: (direction: 1 | -1) => void;
 	readonly onSelectChange: (id: string, direction: 1 | -1) => void;
 	readonly onFieldChange: (id: string, value: string) => void;
@@ -76,25 +75,12 @@ export function FormPanel({
 	focusedIndex,
 	active,
 	errors,
-	contentHeight,
 	onMoveFocus,
 	onSelectChange,
 	onFieldChange,
 	onSubmit,
 	onCancel
 }: FormPanelProps) {
-	const scrollRef = useRef<ScrollBoxRenderable>(null);
-	const focusedField = focusedIndex >= 0 && focusedIndex < fields.length ? fields[focusedIndex] : null;
-	const focusedFieldId = focusedField ? fieldNodeId(focusedField, focusedIndex) : null;
-
-	useEffect(() => {
-		if (!scrollRef.current || !focusedFieldId) {
-			return;
-		}
-
-		scrollRef.current.scrollChildIntoView(focusedFieldId);
-	}, [focusedFieldId]);
-
 	useKeyboard((keyEvent) => {
 		if (!active) {
 			return;
@@ -230,23 +216,9 @@ export function FormPanel({
 				</text>
 			</box>
 
-			{typeof contentHeight === 'number' ? (
-				<scrollbox
-					ref={scrollRef}
-					height={Math.max(1, contentHeight)}
-					width="100%"
-					viewportCulling
-					scrollY
-					scrollX={false}
-					verticalScrollbarOptions={{showArrows: true}}
-				>
-					{fieldNodes}
-				</scrollbox>
-			) : (
-				<box flexDirection="column">
-					{fieldNodes}
-				</box>
-			)}
+			<box flexDirection="column">
+				{fieldNodes}
+			</box>
 
 			{errors && errors.length > 0 ? (
 				<box marginTop={1}>

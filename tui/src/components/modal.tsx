@@ -9,8 +9,6 @@ export type ModalProps = {
 	readonly title: string;
 	readonly hint?: string;
 	readonly tone?: ModalTone;
-	readonly viewportWidth: number;
-	readonly viewportHeight: number;
 	readonly width?: number;
 	readonly children: React.ReactNode;
 };
@@ -21,8 +19,6 @@ export function Modal({
 	title,
 	hint,
 	tone = 'default',
-	viewportWidth,
-	viewportHeight,
 	width = DEFAULT_MODAL_WIDTH,
 	children
 }: ModalProps) {
@@ -37,8 +33,8 @@ export function Modal({
 			position="absolute"
 			left={0}
 			top={0}
-			width={viewportWidth}
-			height={viewportHeight}
+			width="100%"
+			height="100%"
 			zIndex={100}
 			flexDirection="column"
 			justifyContent="center"

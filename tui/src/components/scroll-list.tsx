@@ -28,20 +28,12 @@ export type ScrollListItem = {
 export type ScrollListProps = {
 	readonly items: readonly ScrollListItem[];
 	readonly cursor: number;
-	readonly viewportHeight: number;
-	// ScrollList 之外（同一 content 区内）已占用的行数：标题、副标题、notice 等。
-	readonly reservedRows?: number;
-	// 拉伸模式：由父容器 flex 分配高度，避免继续用 viewportHeight 手算列表高度。
-	readonly stretch?: boolean;
 	readonly emptyText?: string;
 	// 可选表头（渲染在列表上方）
 	readonly header?: React.ReactNode;
 	// 列表是否拥有内容焦点；失焦时保留 cursor 位置但不显示卡片 focused 高亮。
 	readonly active?: boolean;
 };
-
-// 底部 (n/total) 计数占 1 行。
-const COUNT_ROWS = 1;
 
 function itemId(item: ScrollListItem, index: number): string {
 	return `scroll-list-item-${index}-${item.key}`;
@@ -50,9 +42,6 @@ function itemId(item: ScrollListItem, index: number): string {
 export function ScrollList({
 	items,
 	cursor,
-	viewportHeight,
-	reservedRows = 0,
-	stretch = false,
 	emptyText = '暂无数据',
 	header,
 	active = true
@@ -60,8 +49,6 @@ export function ScrollList({
 	const ref = useRef<ScrollBoxRenderable>(null);
 	const safeCursor = items.length === 0 ? 0 : Math.min(Math.max(cursor, 0), items.length - 1);
 	const activeItemId = items[safeCursor] ? itemId(items[safeCursor], safeCursor) : null;
-	const scrollHeight = Math.max(1, viewportHeight - reservedRows - COUNT_ROWS);
-	const scrollboxHeight = stretch ? undefined : scrollHeight;
 	const renderedItems = useMemo(
 		() => items.map((item, index) => ({item, index, id: itemId(item, index)})),
 		[items]
@@ -80,12 +67,11 @@ export function ScrollList({
 	}
 
 	return (
-		<box flexDirection="column" flexGrow={stretch ? 1 : 0}>
+		<box flexDirection="column" flexGrow={1} minHeight={0}>
 			{header}
 			<ThemedScrollbox
 				ref={ref}
-				height={scrollboxHeight}
-				style={stretch ? {flexGrow: 1} : undefined}
+				style={{flexGrow: 1, minHeight: 0}}
 				viewportCulling
 				scrollY
 				scrollX={false}
@@ -107,7 +93,7 @@ export function ScrollList({
 					</box>
 				))}
 			</ThemedScrollbox>
-			<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`(${safeCursor + 1}/${items.length})`}</text>
+			<text flexShrink={0} fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`(${safeCursor + 1}/${items.length})`}</text>
 		</box>
 	);
 }

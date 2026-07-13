@@ -16,7 +16,7 @@ import {
 	type ManageState
 } from './state/manage-state.js';
 import { navShortcuts, viewShortcuts, updateButtonShortcuts, headerShortcuts } from './state/shortcuts.js';
-import { Modal, ShortcutBar, Spinner, ToastViewport, toast, shortcutBarRows, type Shortcut, type StatusDotKind } from './components/index.js';
+import { Modal, ShortcutBar, Spinner, ToastViewport, toast, type Shortcut, type StatusDotKind } from './components/index.js';
 import { colors, borderColors, borderStyles, activeBorderChars, PRIMARY, getTheme, setActiveTheme, type AppThemeMode, type ThemePalette } from './theme/index.js';
 import { CCQ_LOGO } from './theme/logo.js';
 import { CCQ_VERSION } from './version.js';
@@ -35,10 +35,10 @@ import { createToolsViewServices } from './views/tools-view-services.js';
 
 // logo 每行 13 列宽（块面风格），侧边栏内宽 = SIDEBAR_WIDTH - 2(边框) - 2(paddingX) = 20，菜单标签充裕。
 const SIDEBAR_WIDTH = 24;
-// 右侧内容区内部滚动高度估算：实际布局由 flex column 自动分配，估算值仅传给子视图。
-const RIGHT_CARD_FRAME_ROWS = 2;
-const AGENT_HEADER_ROWS = 3;
-const CONTENT_DIVIDER_ROWS = 1;
+
+// 隐藏 Agent Header 的模块（shared-resource-injection-ui D3/M3）：Tools 与 MCP 用共享双侧列表，
+// 不按 Header 单一 agentContext 过滤，故进入这两个模块隐藏 Header；其余模块 Header 常显。
+const AGENT_HEADER_HIDDEN_MODULES = new Set<ManageModuleId>(['tools', 'mcp', 'skills']);
 
 // 是否运行在 Bun --compile 单文件可执行产物中。
 // 源码模式下 import.meta.dirname 是真实磁盘目录（existsSync=true）；
@@ -127,9 +127,9 @@ export default function App({ initialThemeMode }: AppProps) {
 		}
 	}, [state.selectedIndex]);
 
-	// Tools 模块不渲染 Header：残留 header 焦点强制回 view。
+	// Tools / MCP 模块不渲染 Header：残留 header 焦点强制回 view。
 	useEffect(() => {
-		if (displayMenuId === 'tools' && state.focus === 'header') {
+		if (AGENT_HEADER_HIDDEN_MODULES.has(displayMenuId) && state.focus === 'header') {
 			setState(current => ({...current, focus: 'view'}));
 		}
 	}, [displayMenuId, state.focus]);
@@ -156,9 +156,9 @@ export default function App({ initialThemeMode }: AppProps) {
 		};
 	}, [theme]);
 
-	// Skills 视图：services + cache（检测已安装 skills）。agentContext 参与 service key，
-	// Header 切换后重建检测 runner，确保 list/install/update/uninstall 指向当前 Agent。
-	const skillsViewServices = useMemo(() => createSkillsViewServices(state.agentContext), [state.agentContext]);
+	// Skills 视图：services + cache（检测已安装 skills）。共享本体+双侧投影后检测与 agentContext 无关
+	// （一次 skills list -g --json 无 --agent 得双侧态），故 services 不随 Header 重建、cache 不重跑。
+	const skillsViewServices = useMemo(() => createSkillsViewServices(), []);
 	const skillsCache = useDetectionCache(skillsViewServices);
 
 	// Tools 视图：services + cache（检测已安装工具）
@@ -299,18 +299,14 @@ export default function App({ initialThemeMode }: AppProps) {
 		setState(current => reduceManageState(current, keyName));
 	}, !ownsViewInput);
 
-	const toolsModuleActive = displayMenuId === 'tools';
-	const effectiveFocus = toolsModuleActive && state.focus === 'header' ? 'view' : state.focus;
+	// 共享双侧模块（Tools / MCP）隐藏 Header：残留 header 焦点强制回 view，Header 不渲染。
+	const hideAgentHeader = AGENT_HEADER_HIDDEN_MODULES.has(displayMenuId);
+	const effectiveFocus = hideAgentHeader && state.focus === 'header' ? 'view' : state.focus;
 	const navActive = effectiveFocus === 'nav';
-	const headerActive = effectiveFocus === 'header' && !toolsModuleActive;
+	const headerActive = effectiveFocus === 'header' && !hideAgentHeader;
 
 	const sidebarInnerWidth = SIDEBAR_WIDTH - 4;
 	const activeFooterShortcuts = footerShortcuts(effectiveFocus, state.selectedIndex === menuItems.length, displayMenuId, viewSubMode);
-	const footerRows = shortcutBarRows(activeFooterShortcuts, contentWidth);
-	// Tools 隐藏 Header 时不预留 Header 行。
-	const headerRows = toolsModuleActive ? 0 : AGENT_HEADER_ROWS;
-	const rightReservedRows = RIGHT_CARD_FRAME_ROWS + headerRows + CONTENT_DIVIDER_ROWS + footerRows;
-	const contentViewportHeight = Math.max(1, terminalHeight - rightReservedRows);
 
 	// 双卡片双层布局：
 	// 左卡片 = Logo（纯色） + 下划线分隔 + menu
@@ -399,7 +395,7 @@ export default function App({ initialThemeMode }: AppProps) {
 
 					{/* 右侧区域：Header 独立固定行，content 卡片占满剩余空间 */}
 					<box flexDirection="column" flexGrow={1} minWidth={0}>
-						{toolsModuleActive ? null : (
+						{hideAgentHeader ? null : (
 							<AgentHeader agentContext={state.agentContext} active={headerActive} />
 						)}
 
@@ -418,7 +414,6 @@ export default function App({ initialThemeMode }: AppProps) {
 								<ModuleContent
 									moduleId={displayMenuId}
 									agentContext={state.agentContext}
-									viewportHeight={contentViewportHeight}
 									contentWidth={contentWidth}
 									active={effectiveFocus === 'view'}
 									skillsViewServices={skillsViewServices}
@@ -449,8 +444,6 @@ export default function App({ initialThemeMode }: AppProps) {
 			<UpdateDialog
 				active={updateDialogOpen}
 				screen={updateScreen}
-				viewportWidth={terminalWidth}
-				viewportHeight={terminalHeight}
 				onClose={() => setUpdateDialogOpen(false)}
 				onUpdate={(version, downloadUrl) => void runUpdate(version, downloadUrl)}
 				onApplyUpdate={(version) => void applyDownloadedUpdate(version)}
@@ -589,8 +582,6 @@ function updateButtonLabel(status: UpdateStatus): string {
 function UpdateDialog({
 	active,
 	screen,
-	viewportWidth,
-	viewportHeight,
 	onClose,
 	onUpdate,
 	onApplyUpdate,
@@ -599,8 +590,6 @@ function UpdateDialog({
 }: {
 	readonly active: boolean;
 	readonly screen: UpdateScreen;
-	readonly viewportWidth: number;
-	readonly viewportHeight: number;
 	readonly onClose: () => void;
 	readonly onUpdate: (version: string, downloadUrl: string) => void;
 	readonly onApplyUpdate: (version: string) => void;
@@ -646,7 +635,7 @@ function UpdateDialog({
 
 	const content = updateDialogContent(screen);
 	return (
-		<Modal active={active} title={content.title} hint={content.hint} viewportWidth={viewportWidth} viewportHeight={viewportHeight}>
+		<Modal active={active} title={content.title} hint={content.hint}>
 			{content.body}
 		</Modal>
 	);
@@ -756,7 +745,6 @@ function footerShortcuts(
 function ModuleContent({
 	moduleId,
 	agentContext,
-	viewportHeight,
 	contentWidth,
 	active,
 	skillsViewServices,
@@ -770,7 +758,6 @@ function ModuleContent({
 }: {
 	readonly moduleId: string;
 	readonly agentContext: AgentContext;
-	readonly viewportHeight: number;
 	readonly contentWidth: number;
 	readonly active: boolean;
 	readonly skillsViewServices: ReturnType<typeof createSkillsViewServices>;
@@ -787,17 +774,17 @@ function ModuleContent({
 	// 根据 moduleId 渲染对应的视图组件
 	switch (moduleId) {
 		case 'provider':
-			return <ProviderView agentContext={agentContext} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} />;
+			return <ProviderView agentContext={agentContext} active={active} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} />;
 		case 'mcp':
-			return <McpView agentContext={agentContext} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} />;
+			return <McpView active={active} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
 		case 'skills':
-			return <SkillsView services={skillsViewServices} cache={skillsCache} agentContext={agentContext} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} />;
+			return <SkillsView services={skillsViewServices} cache={skillsCache} active={active} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
 		case 'prompts':
-			return <PromptsView agentContext={agentContext} active={active} viewportHeight={viewportHeight} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} syntaxStyle={syntaxStyle} />;
+			return <PromptsView agentContext={agentContext} active={active} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} syntaxStyle={syntaxStyle} />;
 		case 'config':
-			return <ConfigView agentContext={agentContext} active={active} viewportHeight={viewportHeight} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} syntaxStyle={syntaxStyle} />;
+			return <ConfigView agentContext={agentContext} active={active} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} syntaxStyle={syntaxStyle} />;
 		case 'tools':
-			return <ToolsView services={toolsViewServices} cache={toolsCache} agentContext={agentContext} active={active} viewportHeight={viewportHeight} viewportWidth={contentWidth} contentWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
+			return <ToolsView services={toolsViewServices} cache={toolsCache} active={active} contentWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
 		default:
 			// 兜底：显示模块信息
 			const item = menuItems.find(menuItem => menuItem.id === moduleId);

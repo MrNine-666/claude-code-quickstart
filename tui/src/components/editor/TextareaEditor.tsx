@@ -60,9 +60,6 @@ export type TextareaEditorProps = {
 	// 是否启用 Ctrl+P 预览模式（默认 true）。false 时禁用预览
 	// （如全局规则页保存后已回只读展示，编辑器内无需重复预览）。
 	readonly previewEnabled?: boolean;
-	// 编辑器组件总高度（含标题行）。传入时根容器用固定高度约束 textarea 视口，
-	// 避免内容行数超出边框（不传则 flexGrow 填满父容器，向后兼容）。
-	readonly viewportHeight?: number;
 };
 
 /** filetype → CodeRenderable 的 filetype 字符串（markdown/text 不走 code 预览）。 */
@@ -93,8 +90,7 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 	onCycleFocus,
 	escapeMode = 'cancel',
 	textareaFocused,
-	previewEnabled = true,
-	viewportHeight
+	previewEnabled = true
 }, ref) {
 	const taRef = useRef<TextareaRenderable>(null);
 	const renderer = useRenderer();
@@ -230,7 +226,7 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 					</text>
 				</box>
 
-				<box flexGrow={1} flexBasis={0} minHeight={0} borderStyle="rounded" borderColor={borderColors.active}>
+				<box flexGrow={1} minHeight={0} borderStyle="rounded" borderColor={borderColors.active}>
 					{filetype === 'markdown' ? (
 						<scrollbox style={{ flexGrow: 1 }}>
 							<markdown content={previewContent} syntaxStyle={syntaxStyle} />
@@ -260,20 +256,20 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 	}
 
 	// ── 编辑模式渲染 ──
-	// 边框 box 必须显式 flexDirection="column"：opentui box 默认主轴是 row，唯一子节点 textarea
-	// 处于横向主轴时，flexGrow/flexBasis/minHeight 全作用到交叉轴（宽度）、对高度失效，textarea 高度
-	// 由 native measureFunc 上报的内容全高经交叉轴 stretch 撑起，超出固定 height 容器、顶破下边框。
-	// 改为 column 后 textarea 落在纵向主轴，flexGrow={1} flexBasis={0} 才真正把高度按容器分配，
-	// 超出行数交给 textarea 自身滚动（光标跟随）。minWidth/minHeight={0} 保留：放开两轴收缩下限。
+	// 统一 flex 标准：根 box flexGrow={1} 填满父容器，标题行 flexShrink={0} 稳定占 1 行，
+	// 边框 box flexGrow={1} minHeight={0} 吃满剩余高度、超出行数由 textarea 自身滚动（光标跟随）。
+	// 横向：textarea native measure 把最长逻辑行宽当 min-content，flex 默认不收缩到 min-content
+	// 以下，会逐层把边框撑破右边框外、连带挤乱同层推荐栏滚动条 x 位置。minWidth 不向下传导，根 box /
+	// 边框 box / textarea 三层各自声明 minWidth={0}，让宽度按父容器分配、内容超出时由 textarea 自身换行。
 	return (
-		<box flexDirection="column" flexGrow={viewportHeight === undefined ? 1 : 0} height={viewportHeight} minWidth={0}>
-			<box>
+		<box flexDirection="column" flexGrow={1} minWidth={0}>
+			<box flexShrink={0}>
 				<text fg={colors.primary} attributes={TextAttributes.BOLD}>
 					{title}
 				</text>
 			</box>
 
-			<box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} minWidth={0} borderStyle="rounded" borderColor={active ? borderColors.active : borderColors.inactive}>
+			<box flexGrow={1} minWidth={0} minHeight={0} borderStyle="rounded" borderColor={active ? borderColors.active : borderColors.inactive}>
 				<textarea
 					ref={taRef}
 					initialValue={initialContent}
@@ -285,7 +281,7 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 					selectionFg={colors.selectionFg}
 					onContentChange={onContentChange ? () => onContentChange() : undefined}
 					onKeyDown={handleEditorKey}
-					style={{ flexGrow: 1, flexBasis: 0, minWidth: 0, minHeight: 0 }}
+					style={{ flexGrow: 1, minWidth: 0, minHeight: 0 }}
 				/>
 			</box>
 
