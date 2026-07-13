@@ -34,33 +34,66 @@ for (let i = 0; i < 20; i++) {
 
 console.log('[PASS] 1.4 agentContext 骨架：默认 Claude Code + 6 菜单顺序恒定 + Header 全称标签');
 
-// ── Tools 隐藏 Header：agentContext 不被进出 Tools 改写（Task 2.4/6.3）────────────
-// app.tsx 用 displayMenuId==='tools' 决定不渲染 AgentHeader，并把残留 header 焦点强制回 view；
-// 全局 agentContext 仅由 Header 的 switchAgentContext 改，Tools 路径不触碰它。
+// ── Tools / MCP 隐藏 Header：agentContext 不被进出这两个模块改写（Task 2.4/6.3 + 10.2/13.3）──
+// app.tsx 用 AGENT_HEADER_HIDDEN_MODULES（含 tools + mcp）决定不渲染 AgentHeader，并把残留 header 焦点强制回 view；
+// 全局 agentContext 仅由 Header 的 switchAgentContext 改，Tools / MCP 路径不触碰它。
 const appSource = readFileSync(new URL('../src/app.tsx', import.meta.url), 'utf8');
 
 assert.match(
 	appSource,
-	/toolsModuleActive\s*\?\s*null\s*:\s*\(\s*<AgentHeader/,
-	'Tools 模块（toolsModuleActive）不渲染 AgentHeader'
+	/AGENT_HEADER_HIDDEN_MODULES\s*=\s*new Set<ManageModuleId>\(\[\s*'tools',\s*'mcp',\s*'skills'\s*\]\)/,
+	'AGENT_HEADER_HIDDEN_MODULES 含 tools + mcp + skills（共享双侧模块隐藏 Header）'
 );
 assert.match(
 	appSource,
-	/displayMenuId === 'tools' && state\.focus === 'header'/,
-	'Tools 模块残留 header 焦点应强制回 view（焦点机跳过 header）'
+	/hideAgentHeader\s*\?\s*null\s*:\s*\(\s*<AgentHeader/,
+	'隐藏 Header 模块（hideAgentHeader）不渲染 AgentHeader'
+);
+assert.match(
+	appSource,
+	/AGENT_HEADER_HIDDEN_MODULES\.has\(displayMenuId\) && state\.focus === 'header'/,
+	'隐藏 Header 模块残留 header 焦点应强制回 view（焦点机跳过 header）'
 );
 assert.doesNotMatch(
 	appSource,
-	/case 'tools':[\s\S]{0,400}onExitToHeader=\{/,
+	/<ToolsView[^>]*onExitToHeader=\{/,
 	'ToolsView 调用不得再传 onExitToHeader（Tools 无 Header，顶行 ↑ 停首项）'
 );
+assert.doesNotMatch(
+	appSource,
+	/<McpView[^>]*onExitToHeader=\{/,
+	'McpView 调用不得再传 onExitToHeader（MCP 无 Header，顶行 ↑ 停首项）'
+);
+assert.doesNotMatch(
+	appSource,
+	/<SkillsView[^>]*onExitToHeader=\{/,
+	'SkillsView 调用不得再传 onExitToHeader（Skills 无 Header，顶行 ↑ 停首项）'
+);
+// Skills 检测与 agentContext 解耦：services 装配不再按 state.agentContext 建 key。
+assert.doesNotMatch(
+	appSource,
+	/createSkillsViewServices\(state\.agentContext\)/,
+	'skillsViewServices 不得再按 state.agentContext 建 service key（检测与 agentContext 解耦）'
+);
 
-// ToolsView 顶行 ↑ 不再退回 header：不引用 onExitToHeader。
+// ToolsView / McpView / SkillsView 顶行 ↑ 不再退回 header：不引用 onExitToHeader。
 const toolsViewSource = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
+const mcpViewSource = readFileSync(new URL('../src/views/mcp/McpView.tsx', import.meta.url), 'utf8');
+const skillsViewSource = readFileSync(new URL('../src/views/SkillsView.tsx', import.meta.url), 'utf8');
 assert.doesNotMatch(
 	toolsViewSource,
 	/onExitToHeader/,
 	'ToolsView 不得引用 onExitToHeader（顶行 ↑ 停首项，不进 header）'
 );
+assert.doesNotMatch(
+	mcpViewSource,
+	/onExitToHeader/,
+	'McpView 不得引用 onExitToHeader（顶行 ↑ 停首项，不进 header）'
+);
+assert.doesNotMatch(
+	skillsViewSource,
+	/onExitToHeader/,
+	'SkillsView 不得引用 onExitToHeader（顶行 ↑ 停首项，不进 header）'
+);
 
-console.log('[PASS] 2.4/6.3 Tools 隐藏 Header：agentContext 保留 + 焦点机跳过 header + 顶行 ↑ 不进 header');
+console.log('[PASS] 2.4/6.3/13.3/19.5 Tools / MCP / Skills 隐藏 Header：agentContext 保留 + 焦点机跳过 header + 顶行 ↑ 不进 header');

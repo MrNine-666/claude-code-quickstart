@@ -124,17 +124,25 @@ assert.equal(escState.focus, 'nav', 'nav 下孤立 Esc 不应挂起或越界');
 
 console.log(`[PASS] Manage TUI 状态机 PBT 门禁通过（${seeds.length} 种子 × ${stepsPerSeed} 轮 = ${totalSteps} 步随机序列）`);
 
-// ── Tools 隐藏 Header（shared-resource-injection-ui Task 2.1/2.2/2.3）───────────
-// Header 隐藏与顶行 ↑ 停首项在 App 层/ToolsView 落地（reducer 与菜单无关），断言源码契约：
-//   1) app.tsx：displayMenuId==='tools' 不渲染 AgentHeader，且 header 焦点被 coerce 回 view；
-//   2) ToolsView：顶行 ↑ 不再调用 onExitToHeader（已移除该 prop）。
+// ── Tools / MCP 隐藏 Header（shared-resource-injection-ui Task 2.1/2.2/2.3 + 10.2/10.3）──
+// Header 隐藏与顶行 ↑ 停首项在 App 层/视图落地（reducer 与菜单无关），断言源码契约：
+//   1) app.tsx：hideAgentHeader（HIDDEN_MODULES 含 tools + mcp）不渲染 AgentHeader，且 header 焦点被 coerce 回 view；
+//   2) ToolsView / McpView：顶行 ↑ 不再调用 onExitToHeader（已移除该 prop）。
 const {readFileSync} = await import('node:fs');
 const appSrc = readFileSync(new URL('../src/app.tsx', import.meta.url), 'utf8');
 const toolsSrc = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
+const mcpSrc = readFileSync(new URL('../src/views/mcp/McpView.tsx', import.meta.url), 'utf8');
+const skillsSrc = readFileSync(new URL('../src/views/SkillsView.tsx', import.meta.url), 'utf8');
 
-assert.match(appSrc, /toolsModuleActive\s*\?\s*null\s*:\s*\(\s*<AgentHeader/, 'Tools 模块不渲染 AgentHeader');
-assert.match(appSrc, /displayMenuId === 'tools' && state\.focus === 'header'/, 'Tools 下 header 焦点被 coerce 回 view');
-assert.match(appSrc, /toolsModuleActive\s*\?\s*0\s*:\s*AGENT_HEADER_ROWS/, 'Tools 隐藏 Header 时不预留 Header 行');
+assert.match(appSrc, /AGENT_HEADER_HIDDEN_MODULES\s*=\s*new Set<ManageModuleId>\(\[\s*'tools',\s*'mcp',\s*'skills'\s*\]\)/, 'HIDDEN_MODULES 含 tools + mcp + skills');
+assert.match(appSrc, /hideAgentHeader\s*\?\s*null\s*:\s*\(\s*<AgentHeader/, '隐藏 Header 模块不渲染 AgentHeader');
+assert.match(appSrc, /AGENT_HEADER_HIDDEN_MODULES\.has\(displayMenuId\) && state\.focus === 'header'/, '隐藏 Header 模块下 header 焦点被 coerce 回 view');
+// 隐藏 Header 不占布局行由 flex 自适应天然保证（hideAgentHeader ? null : <AgentHeader> 不渲染即不占位），
+// 无需再断言 reserved-rows 算高（flex-height-unify 已移除 AGENT_HEADER_ROWS 等算高常量）。
 assert.doesNotMatch(toolsSrc, /onExitToHeader/, 'ToolsView 不得再引用 onExitToHeader（顶行 ↑ 停首项，不进 header）');
+assert.doesNotMatch(mcpSrc, /onExitToHeader/, 'McpView 不得再引用 onExitToHeader（顶行 ↑ 停首项，不进 header）');
+assert.doesNotMatch(skillsSrc, /onExitToHeader/, 'SkillsView 不得再引用 onExitToHeader（顶行 ↑ 停首项，不进 header）');
 assert.doesNotMatch(appSrc, /<ToolsView[^>]*onExitToHeader/, 'app.tsx 渲染 ToolsView 时不得再传 onExitToHeader');
-console.log('[PASS] Tools 模块隐藏 Agent Header + 顶行 ↑ 停首项（不进 header）');
+assert.doesNotMatch(appSrc, /<McpView[^>]*onExitToHeader/, 'app.tsx 渲染 McpView 时不得再传 onExitToHeader');
+assert.doesNotMatch(appSrc, /<SkillsView[^>]*onExitToHeader/, 'app.tsx 渲染 SkillsView 时不得再传 onExitToHeader');
+console.log('[PASS] Tools / MCP / Skills 模块隐藏 Agent Header + 顶行 ↑ 停首项（不进 header）');
