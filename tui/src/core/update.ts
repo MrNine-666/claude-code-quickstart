@@ -8,7 +8,7 @@ import {claudeDir, claudeJsonPath, ccqDir, resolveHome, settingsPath, skillsDir}
 import {execCommand, type ProgressCallback} from './exec.js';
 import {refreshNpmGlobalBinPath} from './npm-path.js';
 import {hasUpdate} from './semver.js';
-import {installTool} from './tools-install.js';
+import {installTool, TOOL_DEFINITIONS} from './tools-install.js';
 import {codeGraphInstallCommands} from './tools-lifecycle.js';
 import {hasCodeGraphIntegration, installedCodeGraphContexts, hasClaudeCcgWorkflowMode, hasCodexCcgWorkflowMode} from './tools-integrations.js';
 import type {AgentContext} from '../state/manage-state.js';
@@ -44,26 +44,19 @@ export type UpdateComponent = {
 
 type NpmOutdated = Record<string, {latest?: string}>;
 
-const NPM_COMPONENT_MAP: Record<string, string> = {
-	ClaudeCode: '@anthropic-ai/claude-code',
-	Ccline: '@cometix/ccline',
-	CcgWorkflow: 'ccg-workflow',
-	CodexCli: '@openai/codex',
-	OpenSpec: '@fission-ai/openspec',
-	CodeGraph: '@colbymchenry/codegraph'
-};
+// id → npm 包名映射，派生自 registry（DRY，单一真理源 tools-install.TOOL_DEFINITIONS）：
+// 取所有标注 npmPackage 的组件（含 CcgWorkflow 的 ccg-workflow 引擎包；Antigravity 无 npmPackage 故排除）。
+const NPM_COMPONENT_MAP: Record<string, string> = Object.fromEntries(
+	TOOL_DEFINITIONS.filter(def => def.npmPackage).map(def => [def.id, def.npmPackage as string])
+);
 
-// CcgWorkflow 包名单一真理源（检测与 applyUpdates 特判共用），守卫锁定 package='ccg-workflow'
-const CCG_NPM_PACKAGE = 'ccg-workflow';
+// CcgWorkflow 包名单一真理源（检测与 applyUpdates 特判共用），派生自 registry，守卫锁定 package='ccg-workflow'
+const CCG_NPM_PACKAGE = NPM_COMPONENT_MAP['CcgWorkflow'] ?? 'ccg-workflow';
 
-const COMMAND_COMPONENTS: Record<string, {command: string; versionArgs: string[]}> = {
-	ClaudeCode: {command: 'claude', versionArgs: ['--version']},
-	Ccline: {command: 'ccline', versionArgs: ['--version']},
-	CodexCli: {command: 'codex', versionArgs: ['--version']},
-	OpenSpec: {command: 'openspec', versionArgs: ['--version']},
-	CodeGraph: {command: 'codegraph', versionArgs: ['--version']},
-	AntigravityCli: {command: 'agy', versionArgs: ['--version']}
-};
+// id → 检测命令映射，派生自 registry：全 registry 组件均含 command/versionArgs。
+const COMMAND_COMPONENTS: Record<string, {command: string; versionArgs: string[]}> = Object.fromEntries(
+	TOOL_DEFINITIONS.map(def => [def.id, {command: def.command, versionArgs: [...def.versionArgs]}])
+);
 
 function ensureDir(dirPath: string): void {
 	if (!existsSync(dirPath)) {
