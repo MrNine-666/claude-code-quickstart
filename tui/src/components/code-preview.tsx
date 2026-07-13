@@ -20,9 +20,12 @@ type JsonTokenType = 'key' | 'string' | 'number' | 'boolean' | 'punct' | 'space'
 type JsonToken = {readonly type: JsonTokenType; readonly text: string};
 
 export function CodePreview({content, filetype, showLineNumbers = true}: CodePreviewProps) {
-	// 末尾单个换行是文件标准结尾（POSIX），不应渲染成可见空行：split('\n') 会在尾部
-	// 产出空串（如 "a\n" → ["a", ""]），去掉这个由 trailing newline 产生的伪空行。
-	const rawLines = content.split('\n');
+	// 先归一化换行：Windows 读盘内容（如 ~/.claude/CLAUDE.md、settings.json）为 CRLF，
+	// 若只按 '\n' 拆行会让每行尾残留 '\r'，OpenTUI 把 '\r' 当额外换行渲染 → 行高翻倍。
+	// 用 /\r\n?|\n/ 一次吃掉 CRLF / CR / LF 三种风格（对齐推荐模板 readTemplateFile 的归一化）。
+	// 末尾单个换行是文件标准结尾（POSIX），不应渲染成可见空行：split 会在尾部产出空串
+	// （如 "a\n" → ["a", ""]），去掉这个由 trailing newline 产生的伪空行。
+	const rawLines = content.split(/\r\n?|\n/);
 	const lines = rawLines.length > 1 && rawLines[rawLines.length - 1] === '' ? rawLines.slice(0, -1) : rawLines;
 	const lineNumberWidth = Math.max(3, String(lines.length).length);
 	const markdownLines = filetype === 'markdown' ? tokenizeMarkdownLines(lines) : null;

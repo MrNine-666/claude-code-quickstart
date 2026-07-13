@@ -22,3 +22,4 @@
 | 2026-07-03 | 2663ef2e | (pending) | refactor(installer): 优先复用现有 Node.js 运行时 | 3 | 0 | medium |
 | 2026-07-03 | 992236ca | (pending) | feat(tui): 适配 macOS 快捷键显示与编辑语义 | 4 | 0 | medium |
 | 2026-07-03 | 4666af0d | (pending) | fix(tui): 优化工具和 Skills 操作完成状态 | 3 | 1 | medium |
+| 2026-07-13 | 0722b4e2 | (pending) | fix(tui): code-preview 归一化 CRLF 换行修复行高翻倍 | 1 | 1 | low |
