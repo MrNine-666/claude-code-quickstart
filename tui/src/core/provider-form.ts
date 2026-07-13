@@ -250,16 +250,21 @@ function pickNonManagedEnv(env: Record<string, string> | undefined): Record<stri
 export function providerValuesToProfile(values: ProviderFormValues): ProviderProfile {
 	const env: Record<string, string> = {};
 
+	// BASE_URL 与 AUTH_TOKEN 同策略：add 模式（providerType 存在）即使为空也以空串占位，
+	// 引导用户在 textarea 填写（自定义供应商无模板 baseUrl 时尤为需要）；edit 模式仅非空写入。
+	// BASE_URL 置于 AUTH_TOKEN 之上，符合先填地址后填密钥的输入顺序。
+	if (!isNullOrWhiteSpace(values.baseUrl)) {
+		env[BASE_URL_KEY] = values.baseUrl;
+	} else if (values.providerType !== undefined) {
+		env[BASE_URL_KEY] = '';
+	}
+
 	// add 模式（providerType 存在）AUTH_TOKEN 常显示：apiKey 未填时以空串占位，引导用户填写；
 	// edit 模式仅在非空时写入，避免污染既有 profile。
 	if (!isNullOrWhiteSpace(values.apiKey)) {
 		env[AUTH_TOKEN_KEY] = values.apiKey;
 	} else if (values.providerType !== undefined) {
 		env[AUTH_TOKEN_KEY] = '';
-	}
-
-	if (!isNullOrWhiteSpace(values.baseUrl)) {
-		env[BASE_URL_KEY] = values.baseUrl;
 	}
 
 	for (const key of MODEL_KEY_ORDER) {

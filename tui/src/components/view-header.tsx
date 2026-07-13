@@ -16,7 +16,7 @@ export type ViewHeaderProps = {
 
 export function ViewHeader({ title, subtitle, right }: ViewHeaderProps) {
 	return (
-		<box flexDirection="row" marginBottom={1}>
+		<box flexDirection="row" flexShrink={0}>
 			<text fg={colors.primary} attributes={TextAttributes.BOLD}>
 				{title}
 			</text>

@@ -65,9 +65,6 @@ export type ProviderViewProps = {
 	readonly agentContext: AgentContext;
 	// 本视图是否获得右侧内容区焦点（focus === 'view'）。
 	readonly active: boolean;
-	// content 区可视行数（焦点驱动滚动）。
-	readonly viewportHeight?: number;
-	readonly viewportWidth?: number;
 	// 上报当前子模式给 App footer。
 	readonly onSubModeChange?: (subMode: string) => void;
 	// 在列表屏按 Esc/← 时请求退回左侧导航。
@@ -79,8 +76,6 @@ export type ProviderViewProps = {
 export function ProviderView({
 	agentContext,
 	active,
-	viewportHeight = 16,
-	viewportWidth = 52,
 	onSubModeChange,
 	onExitToNav,
 	onExitToHeader
@@ -135,7 +130,6 @@ export function ProviderView({
 				<ProviderForm<CodexProviderFormInput, CodexProviderFormValues, CodexProviderFormModel>
 					model={model}
 					active={active}
-					contentHeight={viewportHeight - 2}
 					buildForm={buildCodexForm}
 					save={saveCodexProviderForm}
 					validate={(values) => validateCodexProviderForm(model.mode, values)}
@@ -155,7 +149,6 @@ export function ProviderView({
 			<ProviderForm
 				model={model}
 				active={active}
-				contentHeight={viewportHeight - 2}
 				buildForm={buildForm}
 				save={saveProviderForm}
 				validate={(values) => validateProviderForm(model.mode, values)}
@@ -179,7 +172,6 @@ export function ProviderView({
 				<ProviderForm<CodexProviderFormInput, CodexProviderFormValues, CodexProviderFormModel>
 					model={model}
 					active={active}
-					contentHeight={viewportHeight - 2}
 					buildForm={buildCodexForm}
 					save={(input, values) => saveCodexProviderForm({ ...input, profileKey: current.key, profile, rawToml }, values)}
 					validate={(values) => validateCodexProviderForm('edit', values)}
@@ -200,7 +192,6 @@ export function ProviderView({
 			<ProviderForm
 				model={model}
 				active={active}
-				contentHeight={viewportHeight - 2}
 				buildForm={buildForm}
 				save={(input, values) => saveProviderForm({ ...input, profileKey: current.key, profile }, values)}
 				validate={(values) => validateProviderForm('edit', values)}
@@ -241,8 +232,6 @@ export function ProviderView({
 				<ProviderTable
 					profiles={profiles}
 					selectedIndex={safeSelected}
-					viewportHeight={viewportHeight}
-					reservedRows={migrationFailed.length > 0 ? 6 : 3}
 					active={active}
 					summaryForProfile={(profile) => isCodex ? codexModelSummary(loadCodexProviderProfile(profile.profilePath)) : modelSummary(loadProviderProfile(profile.profilePath))}
 				/>
@@ -256,8 +245,6 @@ export function ProviderView({
 						: current.isActive ? '禁止删除活跃供应商' : '确认删除供应商'}
 					hint="Enter 确认  Esc 取消"
 					tone="danger"
-					viewportWidth={viewportWidth}
-					viewportHeight={viewportHeight}
 				>
 					<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 						{currentIsOfficial
@@ -348,15 +335,11 @@ export function ProviderView({
 function ProviderTable({
 	profiles,
 	selectedIndex,
-	viewportHeight,
-	reservedRows,
 	active,
 	summaryForProfile
 }: {
 	readonly profiles: readonly ProviderDisplayProfile[];
 	readonly selectedIndex: number;
-	readonly viewportHeight: number;
-	readonly reservedRows: number;
 	readonly active: boolean;
 	readonly summaryForProfile: (profile: ProviderDisplayProfile) => string;
 }) {
@@ -374,7 +357,7 @@ function ProviderTable({
 		)
 	}));
 
-	return <ScrollList items={items} cursor={selectedIndex} viewportHeight={viewportHeight} reservedRows={reservedRows} active={active} stretch />;
+	return <ScrollList items={items} cursor={selectedIndex} active={active} />;
 }
 
 // 左栏状态圆点：active 用更新页同款绿点（latest 表示当前生效），非活跃用弱化灰点；

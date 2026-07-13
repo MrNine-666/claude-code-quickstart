@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { TextAttributes, type KeyEvent, type ScrollBoxRenderable, type TextareaRenderable } from '@opentui/core';
 import { useKeyboard, useRenderer } from '@opentui/react';
 import { FormPanel, firstEditableIndex, nextEditableIndex } from '../components/form/FormPanel.js';
+import { ThemedScrollbox } from '../components/themed-scrollbox.js';
 import { handleTextareaEditKeys, handleTextareaIndentKey } from '../components/editor/textarea-edit-keys.js';
 import type { FormField } from '../components/form/field-types.js';
 import {
@@ -83,6 +84,12 @@ function recordToValues(record: Record<string, string>, fallback: ProviderFormVa
 
 const JSON_FIELD_ID = 'provider-form-textarea';
 
+// textarea 固定高度（含边框）。刻意例外：供应商字段多，textarea 若参与外层 scrollbox 的 flex 分配
+// 会被字段挤没；且滚动内容内的 textarea 必须有确定高度，否则 min-content 塌成 0。此处用静态常量
+// （非动态算高），不违反本次「禁止 height 算式」的核心诉求；整体字段区 + textarea 仍同在一个
+// scrollbox 内一起滚动。窄终端下若过高吃字段可视空间可微调此值。
+const TEXTAREA_HEIGHT = 12;
+
 const claudeProviderFormAdapter: ProviderFormAdapter<ProviderFormInput, ProviderFormValues, FormModelBase<ProviderFormValues> & ProviderFormModel> = {
 	textLabel: '最终 JSON（可编辑 env）',
 	title: (model) => model.mode === 'edit' ? '编辑供应商' : '添加供应商',
@@ -111,7 +118,6 @@ const claudeProviderFormAdapter: ProviderFormAdapter<ProviderFormInput, Provider
 export type ProviderFormProps<TInput = ProviderFormInput, TValues = ProviderFormValues, TModel extends FormModelBase<TValues> = FormModelBase<TValues>> = {
 	readonly model: TModel;
 	readonly active: boolean;
-	readonly contentHeight?: number;
 	readonly onCancel: () => void;
 	readonly onSaved: (message: string) => void;
 	readonly buildForm: (input: TInput) => TModel;
@@ -129,7 +135,6 @@ export type ProviderFormProps<TInput = ProviderFormInput, TValues = ProviderForm
 export function ProviderForm<TInput = ProviderFormInput, TValues = ProviderFormValues, TModel extends FormModelBase<TValues> = FormModelBase<TValues>>({
 	model,
 	active,
-	contentHeight = 16,
 	onCancel,
 	onSaved,
 	buildForm,
@@ -359,19 +364,13 @@ export function ProviderForm<TInput = ProviderFormInput, TValues = ProviderFormV
 
 	const title = formAdapter.title(model);
 	const textLabel = typeof formAdapter.textLabel === 'function' ? formAdapter.textLabel(baseValues) : formAdapter.textLabel;
-	const scrollHeight = Math.max(8, contentHeight - (errors.length > 0 ? 2 : 0));
-	const textHeight = Math.max(8, Math.floor(contentHeight * 0.45));
 
 	return (
-		<box flexDirection="column">
-			<scrollbox
+		<box flexDirection="column" flexGrow={1} minHeight={0}>
+			<ThemedScrollbox
 				ref={scrollRef}
-				height={scrollHeight}
-				width="100%"
+				style={{flexGrow: 1, minHeight: 0}}
 				viewportCulling
-				scrollY
-				scrollX={false}
-				verticalScrollbarOptions={{showArrows: true}}
 			>
 				<FormPanel
 					title={title}
@@ -391,7 +390,11 @@ export function ProviderForm<TInput = ProviderFormInput, TValues = ProviderFormV
 					<text fg={textFocused ? colors.primary : colors.text} attributes={textFocused ? TextAttributes.BOLD : 0}>
 						{textFocused ? '› ' : '  '}{textLabel}
 					</text>
-					<box height={textHeight} borderStyle="rounded" borderColor={textFocused ? borderColors.active : borderColors.inactive}>
+					{/* 刻意例外：本页字段区 + textarea 同在一个 scrollbox 内一起滚动（用户约束②），
+					    且供应商字段多、textarea 若参与 flex 分配会被挤没（用户约束①），故 textarea
+					    用静态常量高度 TEXTAREA_HEIGHT（非动态算高，不违反「禁止 height 算式」核心诉求）；
+					    滚动内容内 textarea 必须有确定高度，否则会塌成 0 高。 */}
+					<box height={TEXTAREA_HEIGHT} borderStyle="rounded" borderColor={textFocused ? borderColors.active : borderColors.inactive}>
 						<textarea
 							ref={textareaRef}
 							initialValue={text}
@@ -408,10 +411,10 @@ export function ProviderForm<TInput = ProviderFormInput, TValues = ProviderFormV
 						/>
 					</box>
 				</box>
-			</scrollbox>
+			</ThemedScrollbox>
 
 			{errors.length > 0 ? (
-				<box marginTop={1}>
+				<box marginTop={1} flexShrink={0}>
 					<text fg={colors.danger}>{errors.join('；')}</text>
 				</box>
 			) : null}
