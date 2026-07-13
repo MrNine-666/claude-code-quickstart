@@ -23,3 +23,4 @@
 | 2026-07-03 | 992236ca | (pending) | feat(tui): 适配 macOS 快捷键显示与编辑语义 | 4 | 0 | medium |
 | 2026-07-03 | 4666af0d | (pending) | fix(tui): 优化工具和 Skills 操作完成状态 | 3 | 1 | medium |
 | 2026-07-13 | 0722b4e2 | (pending) | fix(tui): code-preview 归一化 CRLF 换行修复行高翻倍 | 1 | 1 | low |
+| 2026-07-13 | 4098ee42 | (pending) | docs: 定位表述统一为 CLI Agent 并同步截图与供应商信息 | 4 | 0 | low |

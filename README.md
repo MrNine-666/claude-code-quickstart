@@ -1,14 +1,13 @@
 # Claude Code Quickstart (CCQ)
 
-Windows 与 macOS 双平台的 Claude Code 开发环境自动化安装器。
+Windows 与 macOS 双平台的 CLI Agent（Claude Code / Codex）开发环境自动化安装器。
 
-> 目标：把「装环境」变成「跑脚本」——Windows 基于 PowerShell 5.1 单运行时，macOS 基于 Homebrew / zsh / nvm，一条命令装好 Node.js / Git 与 `ccq` 管理控制台；Claude Code / Codex / 周边工具统一在 `ccq` 的「工具管理」中按需安装与维护，供应商 / 配置 / MCP / Skills 等也由 `ccq` 管理。
+> 目标：把「装环境」变成「跑脚本」——Windows 基于 PowerShell 5.1 单运行时，macOS 基于 Homebrew / zsh / nvm，一条命令装好 Node.js / Git 与 `ccq` 管理控制台；Claude Code / Codex 等 CLI Agent 与周边工具统一在 `ccq` 的「工具管理」中按需安装与维护，供应商 / 配置 / MCP / Skills 等也由 `ccq` 管理。
 
 ---
 
 ## 目录
 
-- [为什么用 CCQ](#为什么用-ccq)
 - [核心特性](#核心特性)
 - [系统要求](#系统要求)
 - [快速开始](#快速开始)
@@ -24,32 +23,17 @@ Windows 与 macOS 双平台的 Claude Code 开发环境自动化安装器。
 
 ---
 
-## 为什么用 CCQ
-
-搭 Claude Code 环境，经常会遇到这些问题：
-
-- Windows PowerShell 版本和编码问题
-- macOS Homebrew / zsh / nvm 初始化顺序问题
-- Node.js / npm / Git / CLI 工具安装顺序复杂
-- 第三方供应商配置分散
-- MCP Server 凭据重复录入
-- 组件升级后配置漂移
-
-CCQ 通过 Windows PS 5.1 单运行时脚本、macOS 原生入口与实时检测机制，把这些问题统一收敛到一个安装/管理入口。
-
----
-
 ## 核心特性
 
-- **双平台入口**：Windows 使用 PS 5.1 单运行时（前置检测内联 + Basic 直装，PS7 作为推荐组件非阻塞安装），macOS 使用 `curl ... | bash` 自动切换 zsh
-- **共享契约**：契约按「谁用归谁」拆分——`installer/contracts/`（install 链：步骤/构建/清理）与 `tui/contracts/`（TUI 链：供应商/MCP/ClaudeConfig/模板，**内嵌进 ccq 可执行文件**）
-- **实时检测**：每次运行都检测当前状态，已安装组件自动跳过
-- **Bootstrap-only 安装**：install 专注 Basic 两步（NodeJS / Git）+ `ccq` 下载/PATH；Claude Code / Codex / 周边工具统一由 `ccq`「工具管理」安装、更新与卸载
-- **单文件可执行 TUI**：OpenTUI + Bun 构建的 `ccq` 可执行文件，通过用户级 PATH 天然可达，提供 6 菜单（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）与 `Claude Code` / `Codex` 全称 Header
-- **供应商 Profile 化**：供应商配置持久化到 `~/.claude/providers/`
-- **MCP 凭据 Vault**：凭据持久化到 `~/.ccq/mcp-meta.json`
-- **整可执行文件热更新**：后台检查 GitHub Release 最新版本，强确认下载后原子替换 `~/.local/bin/ccq[.exe]`
-- **更新安全机制**：更新前自动快照备份，支持失败后回滚
+- **一键装好开发环境**：一条命令搞定 Windows / macOS 双平台的 Node.js / Git 与 `ccq` 管理控制台，已装组件实时检测自动跳过，无需手动处理版本、编码与初始化顺序
+- **Agent 与插件统一管理**：Claude Code / Codex 等 CLI Agent 与 Ccline / CcgWorkflow / OpenSpec / CodeGraph 等周边工具，都能在「工具管理」里快捷安装 / 更新 / 卸载
+- **终端一键启动控制台**：装好后在任意终端输入 `ccq` 即进入管理控制台，也可用 `ccq cc` / `ccq cx` 等子命令直接启动对应 Agent
+- **明暗主题自适应**：TUI 自动跟随终端明暗主题切换，深浅色终端都清晰顺眼
+- **供应商快捷配置**：内置智谱 GLM / MiniMax / Kimi / DeepSeek 等供应商模板，填个 Key 就能用；Codex 侧支持官方登录（`codex login`）与指定供应商启动
+- **配置与规则一键导入**：推荐的 `settings.json` 配置与全局规则（CLAUDE.md）可一键补全导入，只补缺失项、不覆盖你已有的设置
+- **MCP 多 Agent 开关**：内置 Context7 / DeepWiki / Playwright / Exa 等 MCP 模板，凭据录入一次持久保存，可按 Claude Code / Codex 分别启用或禁用
+- **Skills 快捷管理**：基于 `npx skills` 快捷搜索、安装、更新、卸载 Skills，并支持按 Claude Code / Codex 多 Agent 分别安装 / 卸载
+- **应用内自更新**：`ccq` 本体支持应用内检查更新，强确认后原子替换并可一键重启，更新前自动快照备份、失败可回滚
 
 ---
 
@@ -252,7 +236,7 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 - Claude Code Header 下：供应商 Profile 的新增 / 编辑 / 删除 / 切换 / 设置默认；配置写入 `~/.claude/settings.json` 的 `env`，Profile 保存到 `~/.claude/providers/`
 - Codex Header 下：管理 `$CODEX_HOME/<key>.config.toml`（默认 `~/.codex/<key>.config.toml`）官方 profile 文件；key 同时作为文件名、`--profile` 名、provider id 与默认显示名
 - Codex API key 直写 `[model_providers.<key>].experimental_bearer_token`，不进入 ccq vault、不由 `ccq cx` 注入 env；`official login` 类型通过 `codex login` 完成认证
-- 内置供应商：智谱 GLM（默认 GLM-5.2）、MiniMax（默认 MiniMax-M3）、Kimi Code（需 `sk-kimi-` 前缀 Key）、DeepSeek（默认 deepseek-v4-pro[1m]）、阿里云百炼（默认 `qwen3.7-plus`）、自定义供应商
+- 内置供应商：智谱 GLM（默认 glm-5.2）、MiniMax（默认 MiniMax-M3）、Kimi Coding Plan（预填 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`）、DeepSeek（默认 deepseek-v4-pro[1m]，预填 subagent/effort env）、自定义供应商
 
 ![供应商管理](./assets/screenshots/tui-providers.png)
 
@@ -268,7 +252,7 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 - Claude Code Header 下维护 `~/.claude/CLAUDE.md`；Codex Header 下维护 `CODEX_HOME/AGENTS.md`
 - 复用预览 / 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` 导入，Codex 推荐内容复用 Claude Code 推荐规则
 
-![全局规则管理](./assets/screenshots/tui-claudemd.png)
+![全局规则管理](./assets/screenshots/tui-prompt.png)
 
 ### 5) MCP
 
