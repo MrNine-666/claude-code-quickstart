@@ -15,7 +15,7 @@ export function createSkillsViewServices(): SkillsViewServices {
 	return {
 		searchSkills: query => searchSkillCatalogue(query),
 		installToTargets: (result, targets, onProgress) => installResultToTargets(result, targets, onProgress),
-		toggleClaude: (name, install, onProgress) => toggleClaudeInstall(name, install, onProgress),
+		toggleClaude: (skill, install, onProgress) => toggleClaudeInstall(skill, install, onProgress),
 		updateBothSides: onProgress => updateAllSkillsBothSides(onProgress),
 		uninstallAllAgents: (name, onProgress) => uninstallSkillAllAgents(name, onProgress),
 		createDetectionRunner: onChange => createSkillsDetectionRunner(onChange),

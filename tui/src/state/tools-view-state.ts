@@ -110,7 +110,7 @@ export function cursorComponent(state: ToolsViewState): ManagedComponent | undef
 
 export function updatableComponents(state: ToolsViewState): readonly ManagedComponent[] {
 	return state.components.filter(
-		component => component.hasUpdate === true && !PROGRESS_STATUSES.has(state.itemStatus[component.id] ?? 'idle')
+		component => component.installed && component.hasUpdate === true && !PROGRESS_STATUSES.has(state.itemStatus[component.id] ?? 'idle')
 	);
 }
 
@@ -172,13 +172,14 @@ function patchComponent(components: readonly ManagedComponent[], id: ComponentId
 	}
 
 	const beforeShared = before as SharedManagedComponent;
+	const hasPatchField = (field: keyof ComponentPatch): boolean => Object.prototype.hasOwnProperty.call(patch, field);
 	const patched = {
 		...beforeShared,
 		installed: patch.installed ?? beforeShared.installed,
 		currentVersion: patch.currentVersion ?? beforeShared.currentVersion,
 		latestVersion: patch.latestVersion ?? beforeShared.latestVersion,
-		hasUpdate: patch.hasUpdate ?? beforeShared.hasUpdate,
-		statusHint: patch.statusHint ?? beforeShared.statusHint,
+		hasUpdate: hasPatchField('hasUpdate') ? (patch.hasUpdate ?? null) : beforeShared.hasUpdate,
+		statusHint: hasPatchField('statusHint') ? patch.statusHint : beforeShared.statusHint,
 		sharedInstalled: patch.sharedInstalled ?? beforeShared.sharedInstalled,
 		sharedVersion: patch.sharedVersion ?? beforeShared.sharedVersion,
 		injectByAgent: patch.injectByAgent ?? beforeShared.injectByAgent
@@ -330,7 +331,7 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				uninstallTarget: undefined,
 				injectTargetIndex: 0,
 				injectDraft: undefined,
-				loaded: action.components !== undefined,
+				loaded: action.components !== undefined ? true : state.loaded,
 				components: action.components ?? state.components,
 				itemStatus: omit(state.itemStatus, action.id),
 				itemError: {...state.itemError, [action.id]: action.error},
@@ -369,7 +370,7 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				...state,
 				mode: 'grid',
 				busyAction: undefined,
-				loaded: action.components !== undefined,
+				loaded: action.components !== undefined ? true : state.loaded,
 				components: action.components ?? state.components,
 				itemStatus: {},
 				itemError: {},

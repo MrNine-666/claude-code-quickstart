@@ -23,7 +23,7 @@ import {refreshNpmGlobalBinPath} from './npm-path.js';
 
 type JsonObject = Record<string, unknown>;
 
-export type ToolId = 'ClaudeCode' | 'Ccline' | 'CcgWorkflow' | 'OpenSpec' | 'CodeGraph' | 'CodexCli' | 'AntigravityCli';
+export type ToolId = 'ClaudeCode' | 'Ccline' | 'CcgWorkflow' | 'OpenSpec' | 'Trellis' | 'CodeGraph' | 'CodexCli' | 'AntigravityCli';
 
 export type ToolInstallKind = 'npm' | 'ccg-init' | 'shell-script';
 
@@ -103,6 +103,16 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		versionArgs: ['--version'],
 		npmPackage: '@fission-ai/openspec',
 		docsUrl: 'https://github.com/Fission-AI/OpenSpec'
+	},
+	{
+		id: 'Trellis',
+		name: 'Trellis',
+		description: 'AI 工作流纪律框架',
+		kind: 'npm',
+		command: 'trellis',
+		versionArgs: ['--version'],
+		npmPackage: '@mindfoldhq/trellis',
+		docsUrl: 'https://docs.trytrellis.app/zh'
 	},
 	{
 		id: 'CodeGraph',

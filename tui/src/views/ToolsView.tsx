@@ -21,6 +21,7 @@ import {
 	initialInjectDraft,
 	CARD_WIDTH,
 	computeColumns,
+	type ComponentPatch,
 	type ComponentItemStatus,
 	type ToolsViewAction,
 	type ToolsViewState
@@ -31,6 +32,11 @@ import {AGENT_CONTEXT_LABELS, AGENT_CONTEXT_ORDER, type AgentContext} from '../s
 import {semverCompare} from '../core/semver.js';
 
 type Dispatch = React.Dispatch<ToolsViewAction>;
+
+export type InjectChangesResult = {
+	readonly patch: ComponentPatch;
+	readonly error?: string;
+};
 
 // 工具管理视图（Phase 4，OpenTUI 适配）：合并工具安装 + 检查更新为全生命周期菜单。
 // grid 卡片范式：flexWrap 布局 + StatusDot 彩色圆点 + 上下左右 2D 导航。
@@ -417,42 +423,88 @@ function applyInjectDraft(view: ToolsViewState, services: ToolsViewServices, dis
 		return;
 	}
 
-	dispatch({ type: 'item-start', id: component.id, action: 'install' });
+	dispatch({ type: 'item-start', id: component.id, action: injectChangesAction(changes) });
 	void runInjectChanges(component, changes, services, dispatch)
-		.then((nextInject) => {
-			dispatch({ type: 'item-patched', id: component.id, patch: { injectByAgent: nextInject } });
-			// 经共享投影重投影双侧，避免旧检测覆盖局部 patch。
+		.then((result) => {
+			dispatch({ type: 'item-patched', id: component.id, patch: result.patch });
+			if (result.error) {
+				dispatch({ type: 'item-failed', id: component.id, error: result.error });
+			}
+			// 无论全部成功还是部分失败，均刷新真实双侧状态。
 			cache.refresh();
 		})
 		.catch((error: unknown) => {
 			dispatch({ type: 'item-failed', id: component.id, error: errorMessage(error) });
+			cache.refresh();
 		});
 }
 
-// 顺序执行各侧开/关；任一侧失败即抛错中止（已成功侧的结果由后续 refresh 重投影兜底）。
-async function runInjectChanges(
+export function injectChangesAction(changes: readonly {readonly desired: boolean}[]): 'install' | 'uninstall' {
+	return changes.every(change => !change.desired) ? 'uninstall' : 'install';
+}
+
+function injectChangesPatch(
+	component: SharedManagedComponent,
+	injectByAgent: Readonly<Record<AgentContext, AgentInjectSnapshot>>,
+	codeGraphVersion: string
+): ComponentPatch {
+	if (component.id !== 'CodeGraph') {
+		return {injectByAgent};
+	}
+
+	// 逐 Agent 开关永不删除共享 codegraph CLI：安装任一侧会确保 CLI 就位，纯关闭（含关掉最后一侧）
+	// 均保留 CLI —— 移除 CLI 仅由整体卸载路径负责。因此乐观 patch 不得在关掉最后一侧时清空 CLI 状态，
+	// 否则会与磁盘真实态（CLI 仍在）冲突并造成一次错误闪烁。
+	const anyIntegrated = Object.values(injectByAgent).some(snapshot => snapshot.integrated);
+	const cliInstalled = component.sharedInstalled || anyIntegrated;
+	return {
+		injectByAgent,
+		installed: cliInstalled,
+		sharedInstalled: cliInstalled,
+		currentVersion: cliInstalled ? codeGraphVersion : '',
+		sharedVersion: cliInstalled ? codeGraphVersion : '',
+		...(cliInstalled ? {} : {latestVersion: '', hasUpdate: null})
+	};
+}
+
+// 顺序执行各侧开/关；失败时返回已完成侧的 patch，调用方据此对齐部分成功的磁盘状态。
+export async function runInjectChanges(
 	component: SharedManagedComponent,
 	changes: readonly {readonly ctx: AgentContext; readonly desired: boolean}[],
 	services: ToolsViewServices,
 	dispatch: Dispatch
-): Promise<SharedManagedComponent['injectByAgent']> {
-	let nextInject = { ...(component.injectByAgent ?? {}) } as Record<AgentContext, {context: AgentContext; integrated: boolean}>;
+): Promise<InjectChangesResult> {
+	let nextInject = { ...(component.injectByAgent ?? {}) } as Record<AgentContext, AgentInjectSnapshot>;
+	let codeGraphVersion = component.sharedVersion || component.currentVersion;
 
 	for (const { ctx, desired } of changes) {
 		const label = AGENT_CONTEXT_LABELS[ctx];
-		const outcome = desired
-			? await services.injectComponent(component.id, ctx, progressSink(dispatch, component.id))
-			: await services.ejectComponent(component.id, ctx, progressSink(dispatch, component.id));
-
-		if (!outcome.success) {
-			throw new Error(outcome.error ?? `${component.name} · ${label} 操作失败`);
+		let outcome: ComponentInstallOutcome | ComponentUninstallOutcome;
+		try {
+			outcome = desired
+				? await services.injectComponent(component.id, ctx, progressSink(dispatch, component.id))
+				: await services.ejectComponent(component.id, ctx, progressSink(dispatch, component.id));
+		} catch (error) {
+			return {patch: injectChangesPatch(component, nextInject, codeGraphVersion), error: errorMessage(error)};
 		}
 
-		nextInject = { ...nextInject, [ctx]: { context: ctx, integrated: desired } };
+		if (!outcome.success) {
+			return {
+				patch: injectChangesPatch(component, nextInject, codeGraphVersion),
+				error: outcome.error ?? `${component.name} · ${label} 操作失败`
+			};
+		}
+
+		const installedVersion = desired && 'version' in outcome ? outcome.version : undefined;
+		const version = component.id === 'CcgWorkflow' ? installedVersion : undefined;
+		nextInject = { ...nextInject, [ctx]: { context: ctx, integrated: desired, ...(version ? {version} : {}) } };
+		if (desired && component.id === 'CodeGraph') {
+			codeGraphVersion = installedVersion || codeGraphVersion;
+		}
 		toast.success(`${component.name} · ${label} 已${desired ? '安装' : '卸载'}`);
 	}
 
-	return nextInject as SharedManagedComponent['injectByAgent'];
+	return {patch: injectChangesPatch(component, nextInject, codeGraphVersion)};
 }
 
 // ── 安装（单项 / 批量，失败隔离） ─────────────────────────────────────────────
@@ -468,17 +520,30 @@ function installOne(component: ManagedComponent, services: ToolsViewServices, di
 		.then((outcome) => {
 			if (outcome.success) {
 				toast.success(`${component.name} 安装成功`);
-				// 就地 patch 单 item：装好后置为已安装、无更新；版本使用安装后检测结果，避免卡片短暂显示版本为空。
-				dispatch({type: 'item-patched', id: component.id, patch: {installed: true, hasUpdate: false, currentVersion: outcome.version ?? component.currentVersion, statusHint: undefined}});
+				dispatch({type: 'item-patched', id: component.id, patch: successfulInstallPatch(component, outcome.version)});
 				// 同步 App 层检测缓存，避免切换 Agent 后旧 detection.result 覆盖局部 patch。
 				cache.refresh();
 			} else {
 				dispatch({type: 'item-failed', id: component.id, error: outcome.error ?? `${component.name} 安装失败`});
+				cache.refresh();
 			}
 		})
 		.catch((error: unknown) => {
 			dispatch({type: 'item-failed', id: component.id, error: errorMessage(error)});
+			cache.refresh();
 		});
+}
+
+export function successfulInstallPatch(component: ManagedComponent, installedVersion?: string): ComponentPatch {
+	const currentVersion = installedVersion ?? component.currentVersion;
+	return {
+		installed: true,
+		hasUpdate: false,
+		currentVersion,
+		statusHint: undefined,
+		sharedInstalled: true,
+		sharedVersion: currentVersion
+	};
 }
 
 // ── 更新（单项 / 一键） ───────────────────────────────────────────────────────
@@ -491,27 +556,42 @@ function updateOne(component: ManagedComponent, services: ToolsViewServices, dis
 			const failed = result.updatedItems.some((item) => item.startsWith(`failed::${component.id}`));
 			if (failed) {
 				dispatch({type: 'item-failed', id: component.id, error: `${component.name} 更新失败`});
+				cache.refresh();
 				return;
 			}
 
 			toast.success(`${component.name} 已更新`);
-			// 就地 patch：缓存的 latestVersion 即新安装的目标版本，置为 currentVersion 并清掉 hasUpdate，不整页强刷。
-			dispatch({
-				type: 'item-patched',
-				id: component.id,
-				patch: {
-					installed: true,
-					hasUpdate: false,
-					currentVersion: component.latestVersion || component.currentVersion,
-					statusHint: undefined
-				}
-			});
+			dispatch({type: 'item-patched', id: component.id, patch: successfulUpdatePatch(component)});
 			// 同步 App 层检测缓存，避免切换 Agent 后旧 detection.result 覆盖局部 patch。
 			cache.refresh();
 		})
 		.catch((error: unknown) => {
 			dispatch({type: 'item-failed', id: component.id, error: errorMessage(error)});
+			cache.refresh();
 		});
+}
+
+export function successfulUpdatePatch(component: ManagedComponent): ComponentPatch {
+	const shared = component as SharedManagedComponent;
+	const currentVersion = component.latestVersion || component.currentVersion;
+	const patch: ComponentPatch = {
+		installed: true,
+		hasUpdate: false,
+		currentVersion,
+		statusHint: undefined
+	};
+
+	if (shared.id === 'CcgWorkflow' && shared.injectByAgent) {
+		return {
+			...patch,
+			injectByAgent: Object.fromEntries(AGENT_CONTEXT_ORDER.map(context => {
+				const snapshot = shared.injectByAgent?.[context] ?? {context, integrated: false};
+				return [context, snapshot.integrated ? {...snapshot, version: currentVersion} : snapshot];
+			})) as Readonly<Record<AgentContext, AgentInjectSnapshot>>
+		};
+	}
+
+	return {...patch, sharedInstalled: true, sharedVersion: currentVersion};
 }
 
 function updateAll(view: ToolsViewState, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
@@ -525,7 +605,7 @@ function updateAll(view: ToolsViewState, services: ToolsViewServices, dispatch: 
 	void services
 		.updateComponents(targets, progressSink(dispatch, targets[0]?.id ?? 'batch-update'))
 		.then(async (result) => {
-			const components = await services.detectComponents();
+			const components = projectSharedToolComponents(await services.detectComponents());
 			const failedIds = result.updatedItems.filter((item) => item.startsWith('failed::')).map((item) => item.split('::')[1]);
 			const updatedCount = targets.length - failedIds.length;
 			const summary =
@@ -542,8 +622,15 @@ function updateAll(view: ToolsViewState, services: ToolsViewServices, dispatch: 
 			cache.refresh();
 		})
 		.catch(async (error: unknown) => {
-			const components = await services.detectComponents().catch(() => []);
-			dispatch({ type: 'batch-failed', error: errorMessage(error), components });
+			let detected: readonly ManagedComponent[] | null = null;
+			try {
+				detected = await services.detectComponents();
+			} catch {
+				// 保留现有共享投影；下方 cache.refresh 会再次检测并展示原始错误。
+			}
+			const components = detected ? projectSharedToolComponents(detected) : undefined;
+			dispatch({ type: 'batch-failed', error: errorMessage(error), ...(components ? {components} : {}) });
+			cache.refresh();
 		});
 }
 
@@ -614,11 +701,7 @@ function runUninstall(
 		.then((outcome) => {
 			if (outcome.success) {
 				toast.success(`${component.name} 已卸载`);
-				// inject 类全量卸载后两侧 inject 与共享体均置空；非 inject 置为未安装。经 refresh 重投影恢复真实态。
-				const patch = fullUninstall
-					? {installed: false, hasUpdate: null, currentVersion: '', latestVersion: '', sharedInstalled: false, statusHint: undefined}
-					: {installed: false, hasUpdate: null, currentVersion: '', latestVersion: '', statusHint: undefined};
-				dispatch({type: 'item-patched', id: component.id, patch});
+				dispatch({type: 'item-patched', id: component.id, patch: uninstallSuccessPatch(component, fullUninstall)});
 				// 同步 App 层检测缓存，refresh 后经共享投影重投影双侧，禁止单上下文塌缩。
 				cache.refresh();
 			} else {
@@ -626,11 +709,36 @@ function runUninstall(
 					? `${outcome.error ?? '卸载失败'}\n${outcome.manualHint}`
 					: outcome.error ?? `${component.name} 卸载失败`;
 				dispatch({type: 'item-failed', id: component.id, error: message});
+				cache.refresh();
 			}
 		})
 		.catch((error: unknown) => {
 			dispatch({type: 'item-failed', id: component.id, error: errorMessage(error)});
+			cache.refresh();
 		});
+}
+
+export function uninstallSuccessPatch(component: ManagedComponent, fullUninstall: boolean): ComponentPatch {
+	const patch: ComponentPatch = {
+		installed: false,
+		hasUpdate: null,
+		currentVersion: '',
+		latestVersion: '',
+		statusHint: undefined,
+		sharedInstalled: false,
+		sharedVersion: ''
+	};
+	if (!fullUninstall || !isInjectableComponent(component.id)) {
+		return patch;
+	}
+
+	return {
+		...patch,
+		injectByAgent: {
+			cc: {context: 'cc', integrated: false},
+			cx: {context: 'cx', integrated: false}
+		}
+	};
 }
 
 // ── 开关管理 Modal：↑/↓ 选 Claude Code / Codex，空格切换草稿开/关，Enter 统一应用，Esc 取消 ──
@@ -791,7 +899,7 @@ function ToolCard({
 }) {
 	// 状态点在标题行右上角展示。CcgWorkflow 例外：两侧安装态已由卡片内 cc/cx 双态徽章行完整呈现，
 	// 右上角再放聚合点属冗余（且两侧版本可不同易误导），故隐藏；CodeGraph 是真·共享 CLI，右上角保留版本/更新态。
-	const titleRight = component.id === 'CcgWorkflow' ? undefined : <StatusRight dot={dotKindFor(component, status)} />;
+	const titleRight = component.id === 'CcgWorkflow' ? undefined : <StatusRight dot={toolStatusDot(component, status)} />;
 	// 卡片不固定高度：multiLine 让 body 按实际行数自然撑开（标题行 + 空行 + 描述 [+ 徽章行]），
 	// inject 类比非 inject 高一行，同行按各自内容高度渲染，不再用 minHeight 强行拉平。
 	return (
@@ -801,7 +909,7 @@ function ToolCard({
 	);
 }
 
-// 标题行右上角：状态圆点 + 版本（dotKindFor 的 label 已含版本/更新箭头）。
+// 标题行右上角：状态圆点 + 版本（toolStatusDot 的 label 已含版本/更新箭头）。
 function StatusRight({ dot }: { readonly dot: { readonly kind: StatusDotKind; readonly label: string } }) {
 	return <StatusDot kind={dot.kind} label={dot.label} />;
 }
@@ -892,7 +1000,7 @@ function ActiveProgressTasks({tasks}: {readonly tasks: ReturnType<typeof activeP
 }
 
 /** 把组件状态 + 执行态映射为圆点语义。执行态优先于版本态。 */
-function dotKindFor(component: SharedManagedComponent, status: ComponentItemStatus): { kind: StatusDotKind; label: string } {
+export function toolStatusDot(component: SharedManagedComponent, status: ComponentItemStatus): { kind: StatusDotKind; label: string } {
 	if (status === 'installing') {
 		return { kind: 'installing', label: '安装中' };
 	}
@@ -934,7 +1042,7 @@ function injectSharedDot(component: SharedManagedComponent): { kind: StatusDotKi
 
 	if (component.id === 'CodeGraph') {
 		if (!component.sharedInstalled) {
-			return anyInjected ? { kind: 'latest', label: 'CLI 已装' } : { kind: 'notInstalled', label: '未安装' };
+			return anyInjected ? { kind: 'failed', label: 'CLI 不可用' } : { kind: 'notInstalled', label: '未安装' };
 		}
 		if (component.hasUpdate === true) {
 			return { kind: 'updatable', label: `${component.currentVersion || '-'} → ${component.latestVersion || '-'}` };

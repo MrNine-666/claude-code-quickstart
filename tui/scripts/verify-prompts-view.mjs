@@ -74,9 +74,7 @@ try {
 	assert.doesNotMatch(promptsCoreSource, /adaptBaseRecommendationForCodex|replace\(/, 'Codex 推荐规则不得由 Claude 模板运行时替换生成');
 	assert.match(claudeRecommendation, /# Claude Code 增强配置/, 'Claude 推荐规则应包含 base 模板');
 	assert.match(claudeRecommendation, /Windows \/ PowerShell/, 'Claude Windows 推荐规则应拼接平台专用段');
-	assert.match(codexRecommendation, /# Codex AGENTS\.md 推荐规则/, 'Codex 推荐规则读取 codex-md.md 独立模板');
-	assert.match(codexRecommendation, /ccg-workflow/, 'Codex 推荐规则临时提示应建议使用 ccg-workflow');
-	assert.match(codexRecommendation, /AGENTS\.md/, 'Codex 推荐规则应使用 AGENTS.md 语境');
+	assert.match(codexRecommendation, /暂未内置推荐规则模板。/, 'Codex 推荐规则读取 codex-md.md 独立模板');
 	assert.doesNotMatch(codexRecommendation, /# Claude Code 增强配置/, 'Codex 推荐规则不得保留 Claude Code 标题');
 	assert.doesNotMatch(codexRecommendation, /Windows \/ PowerShell/, 'Codex 推荐规则不应包含 Claude Windows 平台专用段');
 	assert.doesNotMatch(codexRecommendation, /Claude Code|CLAUDE\.md|\.claude\/projects|Plan Mode/, 'Codex 推荐规则不得残留 Claude Code 专属语义');

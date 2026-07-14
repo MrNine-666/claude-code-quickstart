@@ -40,6 +40,7 @@ export type SkillsViewState = {
 	readonly errorText?: string;
 	readonly progress: readonly string[];
 	readonly busyAction?: 'install' | 'update' | 'uninstall';
+	readonly busyReturnMode?: 'list' | 'install'; // busy 结束后返回的底页（区分新装与管理安装）
 };
 
 export type SkillsViewAction =
@@ -262,7 +263,7 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 
 		case 'request-update':
 			return canManageInstalled(state)
-				? {...state, mode: 'busy', busyAction: 'update', progress: [], errorText: undefined}
+				? {...state, mode: 'busy', busyAction: 'update', busyReturnMode: 'list', progress: [], errorText: undefined}
 				: {...state, errorText: '没有可更新的 Skill'};
 
 		case 'request-uninstall': {
@@ -275,11 +276,18 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 		case 'confirm':
 			// select-install-target / manage-inject 的提交由组件层执行（按草稿 diff），reducer 只切 busy。
 			if (state.mode === 'select-install-target' || state.mode === 'manage-inject') {
-				return {...state, mode: 'busy', busyAction: 'install', progress: [], errorText: undefined};
+				return {
+					...state,
+					mode: 'busy',
+					busyAction: 'install',
+					busyReturnMode: state.mode === 'select-install-target' ? 'install' : 'list',
+					progress: [],
+					errorText: undefined
+				};
 			}
 
 			if (state.mode === 'confirm-uninstall') {
-				return {...state, mode: 'busy', busyAction: 'uninstall', progress: [], errorText: undefined};
+				return {...state, mode: 'busy', busyAction: 'uninstall', busyReturnMode: 'list', progress: [], errorText: undefined};
 			}
 
 			return state;
@@ -310,8 +318,9 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 		case 'action-failed':
 			return {
 				...state,
-				mode: state.busyAction === 'install' ? 'install' : 'list',
+				mode: state.busyReturnMode ?? 'list',
 				busyAction: undefined,
+				busyReturnMode: undefined,
 				errorText: action.error
 			};
 	}

@@ -43,14 +43,14 @@ const versionedOutcomes = await installMultipleTools(['CodexCli'], undefined, as
 assert.equal(versionedOutcomes[0].version, '0.142.5', '安装成功结果应保留 version 字段，供 UI patch 使用');
 console.log('[PASS] 安装结果保留版本号用于卡片局部更新');
 
-// ── registry 完整性：ClaudeCode 收编后 7 项齐备，ClaudeCode 首位与其余 agent 平权 ──────
+// ── registry 完整性：ClaudeCode 收编后 8 项齐备，ClaudeCode 首位与其余 agent 平权 ──────
 const ids = TOOL_DEFINITIONS.map(item => item.id);
-assert.deepEqual(ids, ['ClaudeCode', 'Ccline', 'CcgWorkflow', 'OpenSpec', 'CodeGraph', 'CodexCli', 'AntigravityCli'], '7 项 registry 齐备且顺序固定（ClaudeCode 首位）');
+assert.deepEqual(ids, ['ClaudeCode', 'Ccline', 'CcgWorkflow', 'OpenSpec', 'Trellis', 'CodeGraph', 'CodexCli', 'AntigravityCli'], '8 项 registry 齐备且顺序固定（ClaudeCode 首位）');
 for (const tool of TOOL_DEFINITIONS) {
 	assert.ok(tool.command && tool.versionArgs.length > 0, `${tool.id} 有检测命令`);
 	assert.ok(tool.kind, `${tool.id} 有安装 kind`);
 }
-console.log('[PASS] registry 完整性（ClaudeCode 收编后 7 项齐备，与其余 agent 平权）');
+console.log('[PASS] registry 完整性（ClaudeCode 收编后 8 项齐备，与其余 agent 平权）');
 
 // ── CodeGraph 安装后按 agentContext 接入当前 Agent（非交互，命令来自 lifecycle resolver）────
 const {codeGraphInstallCommands} = await import('../src/core/tools-lifecycle.ts');

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {
 	parseSkillsFindOutput,
 	parseSkillsListOutput,
@@ -28,6 +29,16 @@ import {
 	selectedInstalled,
 	displaySkillName
 } from '../src/state/skills-view-state.ts';
+
+// Skills 首次检测复用 Tools 的全局加载组件，避免各视图维护不同的 loading 布局与文案。
+{
+	const toolsViewSource = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
+	const skillsViewSource = readFileSync(new URL('../src/views/SkillsView.tsx', import.meta.url), 'utf8');
+	const sharedLoadingRender = 'return <ListLoadingState message="检测中..." />;';
+	assert.equal(toolsViewSource.includes(sharedLoadingRender), true, 'ToolsView 应使用共享全局 loading');
+	assert.equal(skillsViewSource.includes(sharedLoadingRender), true, 'SkillsView 应复用 ToolsView 的共享全局 loading');
+	assert.match(skillsViewSource, /将在所有 Agent 中卸载/, 'Skills 卸载 Modal 应明确影响所有 Agent');
+}
 
 // Phase 5 Skills TUI 门禁：parser fixture（7.4 / --list）、不依赖 catalogue（7.8）、
 // 进度 callback 不直接 console（7.9）、异步检测状态机（7.10）、视图状态机有界性（扁平安装架构）。
@@ -457,6 +468,8 @@ function sharedRow(name, {claude = true, codex = true} = {}) {
 	assert.ok(installFailed.errorText, 'action-failed 应携带 errorText');
 	const uninstallFailed = reduceSkillsViewState(uninstallBusy, {type: 'action-failed', error: 'boom'});
 	assert.equal(uninstallFailed.mode, 'list', 'uninstall 失败回列表页');
+	const manageFailed = reduceSkillsViewState(manageConfirm, {type: 'action-failed', error: 'boom'});
+	assert.equal(manageFailed.mode, 'list', 'manage-inject 失败回原列表页');
 
 	console.log('[PASS] Skills 视图状态机有界 + 共享投影 + 安装目标/管理安装 Modal（Codex 只读恒勾）不变量');
 }
@@ -522,7 +535,7 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 	});
 	assert.equal(repoArgs[0][repoArgs[0].indexOf('--agent') + 1], 'codex', 'cx listRepoSkills --agent=codex');
 
-	// install / installMultipleSkills / uninstall / update：cx → --agent codex
+	// install / installMultipleSkills / uninstall：cx → --agent codex；update 为全局单次且无 --agent
 	const installArgs = [];
 	await installSkill({source: 'org/repo', displayName: 'org/repo@x', skillName: 'x'}, undefined, 'cx', async (_cmd, args) => {
 		installArgs.push(args);
@@ -545,18 +558,21 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 	assert.equal(uninstallArgs[0][uninstallArgs[0].indexOf('--agent') + 1], 'codex', 'cx uninstall --agent=codex');
 
 	const updateArgs = [];
-	await updateSkills([], undefined, 'cx', async (_cmd, args) => {
+	await updateSkills([], undefined, async (_cmd, args) => {
 		updateArgs.push(args);
 		return {code: 0, stdout: 'all skills up to date', stderr: ''};
 	});
-	assert.equal(updateArgs[0][updateArgs[0].indexOf('--agent') + 1], 'codex', 'cx update --agent=codex');
+	assert.equal(updateArgs.length, 1, 'update 只执行一次');
+	assert.equal(updateArgs[0].includes('--agent'), false, 'update 不得传 --agent');
 
-	console.log('[PASS] 8.1-8.5 Skills 核心 action 按显式 agentContext 注入 --agent（list/install/update/uninstall）');
+	console.log('[PASS] 8.1-8.5 Skills 核心 action：list/install/uninstall 显式 agent，update 全局无 agent');
 }
 
-// ── Section 17/19.4：双侧共享 service（多目标安装 / 全量删 --agent '*' / 单侧 --agent claude-code） ──
+// ── Section 17/19.4：双侧共享 service（多目标安装 / 全量删省略 --agent / 单侧 --agent claude-code） ──
 {
-	// installResultToTargets：按选中侧逐侧调，cc→claude-code / cx→codex，per-side 结果聚合。
+	// installResultToTargets：含 cc → 一次调用同传 [claude-code, codex] 双 --agent 触发 symlink（非逐侧多次）。
+	const agentsOf = args => args.reduce((acc, a, i) => (a === '--agent' ? [...acc, args[i + 1]] : acc), []);
+	const agentOf = args => args[args.indexOf('--agent') + 1];
 	const bothArgs = [];
 	const bothSides = await installResultToTargets(
 		{name: 'org/repo@x', source: 'org/repo', description: ''},
@@ -567,12 +583,11 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 			return {code: 0, stdout: '', stderr: ''};
 		}
 	);
-	assert.equal(bothArgs.length, 2, '选中两侧应各调一次 install');
-	const agentOf = args => args[args.indexOf('--agent') + 1];
-	assert.deepEqual(bothArgs.map(agentOf).sort(), ['claude-code', 'codex'], 'cc→claude-code / cx→codex 各建一次');
-	assert.equal(bothSides.every(s => s.result.success), true, '两侧成功聚合');
+	assert.equal(bothArgs.length, 1, '含 cc 单次原子调用（非逐侧）');
+	assert.deepEqual(agentsOf(bothArgs[0]).sort(), ['claude-code', 'codex'], '单次调用同传双 --agent 触发 symlink');
+	assert.equal(bothSides.every(s => s.result.success), true, '结果映射回两 target 皆成功');
 
-	// 单侧安装（仅 cc）：不调 codex。
+	// 单侧安装（仅 cc）：含 cc 补 cx，仍一次双 agent 调用。
 	const ccOnlyArgs = [];
 	await installResultToTargets(
 		{name: 'org/repo@x', source: 'org/repo', description: ''},
@@ -583,46 +598,69 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 			return {code: 0, stdout: '', stderr: ''};
 		}
 	);
-	assert.equal(ccOnlyArgs.length, 1, '仅选 cc 只调一次');
-	assert.equal(agentOf(ccOnlyArgs[0]), 'claude-code', '仅 cc 走 --agent claude-code');
+	assert.equal(ccOnlyArgs.length, 1, '仅选 cc 也只调一次');
+	assert.deepEqual(agentsOf(ccOnlyArgs[0]).sort(), ['claude-code', 'codex'], '含 cc 补 cx，一次双 --agent');
 
-	// per-side 失败隔离：cx 失败不影响 cc 成功聚合。
+	// 仅 cx：单 agent 直落本体（universal，无 copy 问题）。
+	const cxOnlyArgs = [];
+	await installResultToTargets(
+		{name: 'org/repo@x', source: 'org/repo', description: ''},
+		['cx'],
+		undefined,
+		async (_cmd, args) => {
+			cxOnlyArgs.push(args);
+			return {code: 0, stdout: '', stderr: ''};
+		}
+	);
+	assert.equal(cxOnlyArgs.length, 1, '仅 cx 只调一次');
+	assert.deepEqual(agentsOf(cxOnlyArgs[0]), ['codex'], '仅 cx 单 --agent codex');
+
+	// 单次原子调用失败 → 各 side 皆标失败（per-side 失败隔离退化）。
 	const mixedSides = await installResultToTargets(
 		{name: 'org/repo@x', source: 'org/repo', description: ''},
 		['cc', 'cx'],
 		undefined,
-		async (_cmd, args) => (agentOf(args) === 'codex' ? {code: 1, stdout: '', stderr: 'boom'} : {code: 0, stdout: '', stderr: ''})
+		async () => ({code: 1, stdout: '', stderr: 'boom'})
 	);
-	assert.equal(mixedSides.find(s => s.agentContext === 'cc').result.success, true, 'cc 侧成功');
-	assert.equal(mixedSides.find(s => s.agentContext === 'cx').result.success, false, 'cx 侧失败但不中断 cc');
+	assert.equal(mixedSides.every(s => !s.result.success), true, '单次调用失败则各 side 皆失败');
 
-	// toggleClaudeInstall(true) → add --agent claude-code；(false) → remove --agent claude-code（单侧撤销）。
+	// toggleClaudeInstall(true) → 一次双 --agent（建 symlink）；(false) → remove --agent claude-code（单侧撤销）。
 	const addArgs = [];
-	await toggleClaudeInstall('org/repo@x', true, undefined, async (_cmd, args) => {
+	const installedRow = {
+		name: 'x', path: '', scope: 'global', source: 'org/repo', ref: 'main', skillName: 'x',
+		sharedInstalled: true, claudeInjected: false, codexAvailable: true
+	};
+	await toggleClaudeInstall(installedRow, true, undefined, async (_cmd, args) => {
 		addArgs.push(args);
 		return {code: 0, stdout: '', stderr: ''};
 	});
 	assert.equal(addArgs[0].includes('add'), true, 'toggleClaudeInstall(true) 走 add');
-	assert.equal(agentOf(addArgs[0]), 'claude-code', 'install 建 symlink 走 --agent claude-code');
+	assert.equal(addArgs[0].includes('org/repo#main'), true, '重注入使用 lock source + ref');
+	assert.equal(addArgs[0][addArgs[0].indexOf('--skill') + 1], 'x', '重注入使用 lock skillName');
+	assert.deepEqual(agentsOf(addArgs[0]).sort(), ['claude-code', 'codex'], 'install 建 symlink 传双 --agent');
+	const missingSource = await toggleClaudeInstall({...installedRow, source: undefined}, true);
+	assert.equal(missingSource.success, false, 'lock 缺 source 时拒绝把裸 name 当 source');
+	assert.match(missingSource.error ?? '', /重新搜索安装/, 'lock 缺 source 时给出可操作提示');
 
 	const removeArgs = [];
-	await toggleClaudeInstall('org/repo@x', false, undefined, async (_cmd, args) => {
+	await toggleClaudeInstall(installedRow, false, undefined, async (_cmd, args) => {
 		removeArgs.push(args);
 		return {code: 0, stdout: '', stderr: ''};
 	});
 	assert.equal(removeArgs[0].includes('remove'), true, 'toggleClaudeInstall(false) 走 remove');
 	assert.equal(agentOf(removeArgs[0]), 'claude-code', '单侧撤销走 --agent claude-code');
 
-	// updateAllSkillsBothSides：cc + cx 各更新一次。
+	// updateAllSkillsBothSides：CLI 的全局 update 本身覆盖所有 Agent，故只调一次且省略 --agent。
 	const updBothArgs = [];
 	await updateAllSkillsBothSides(undefined, async (_cmd, args) => {
 		updBothArgs.push(args);
 		return {code: 0, stdout: 'all skills up to date', stderr: ''};
 	});
-	assert.equal(updBothArgs.length, 2, '更新两侧各调一次');
-	assert.deepEqual(updBothArgs.map(agentOf).sort(), ['claude-code', 'codex'], 'update 两侧 --agent 覆盖 cc/cx');
+	assert.equal(updBothArgs.length, 1, '全局 update 只能调用一次');
+	assert.equal(updBothArgs[0].includes('--agent'), false, '全局 update 必须省略 --agent');
 
-	// uninstallSkillAllAgents：单条 skills remove --agent '*'（非挨个 agent）。
+	// uninstallSkillAllAgents：单条 skills remove（省略 --agent，CLI 默认全 agent + 清本体；非挨个 agent）。
+	// CLI 1.5.16 的 remove 不接受 --agent '*'（报 Invalid agents: * 并 exit 1），故全量删靠省略 --agent。
 	const delArgs = [];
 	await uninstallSkillAllAgents('org/repo@x', undefined, async (_cmd, args) => {
 		delArgs.push(args);
@@ -630,7 +668,7 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 	});
 	assert.equal(delArgs.length, 1, '全量删只调一次（非挨个 agent）');
 	assert.equal(delArgs[0].includes('remove'), true, '全量删走 remove');
-	assert.equal(agentOf(delArgs[0]), '*', "全量删走单条 --agent '*'");
+	assert.equal(delArgs[0].includes('--agent'), false, "全量删省略 --agent（不再传 '*'，避免 Invalid agents）");
 
-	console.log("[PASS] 17/19.4 双侧共享 service：多目标安装 per-side、单侧撤销 --agent claude-code、全量删单条 --agent '*'");
+	console.log("[PASS] 17/19.4 双侧共享 service：多目标安装 per-side、单侧撤销 --agent claude-code、全量删省略 --agent");
 }

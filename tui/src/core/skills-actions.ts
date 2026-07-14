@@ -21,7 +21,6 @@ export type InstallSkillInput = {
 	readonly source: string;
 	readonly displayName?: string;
 	readonly skillName?: string;
-	readonly copyMode?: boolean;
 };
 
 function emit(onProgress: ProgressCallback | undefined, event: Parameters<ProgressCallback>[0]): void {
@@ -35,7 +34,7 @@ export function getFriendlyError(exitCode: number, errorText: string, actionName
 	}
 
 	if (/EACCES|EPERM|permission|symlink/i.test(errorText)) {
-		return '文件权限或 symlink 创建失败，可在安装时启用 copy 模式';
+		return '文件权限或 symlink/copy 安装失败，请检查目标目录权限或启用 Windows 开发者模式';
 	}
 
 	if (/not found|No matching|404/i.test(errorText)) {
@@ -45,37 +44,57 @@ export function getFriendlyError(exitCode: number, errorText: string, actionName
 	return `Skills ${actionName}失败 (ExitCode: ${exitCode})`;
 }
 
-/** 安装单个 Skill（`skills add`）。 */
-function normalizeAgentAndExec(agentOrExec: AgentContext | SkillsExecFn | undefined, exec: SkillsExecFn | undefined): {agentContext: AgentContext; exec: SkillsExecFn} {
-	return typeof agentOrExec === 'function'
-		? {agentContext: 'cc', exec: agentOrExec}
-		: {agentContext: agentOrExec ?? 'cc', exec: exec ?? execCommand};
+/**
+ * 归一 agent 目标（单值或数组）+ exec 缝。
+ *
+ * install 路径按「谁用归谁」传 `[cc, cx]` 双 agent 触发 symlink（skills CLI 单一 skillsDir 会强制 copy，
+ * 双 agent 令 uniqueDirs.size==2 且不传 --copy → installMode 保持默认 symlink：本体落 `~/.agents/skills`，
+ * `~/.claude/skills` 建软链指向本体）。单值向后兼容。
+ */
+function normalizeAgentAndExec(
+	agentOrExec: AgentContext | readonly AgentContext[] | SkillsExecFn | undefined,
+	exec: SkillsExecFn | undefined
+): {agents: readonly AgentContext[]; exec: SkillsExecFn} {
+	if (typeof agentOrExec === 'function') {
+		return {agents: ['cc'], exec: agentOrExec};
+	}
+
+	const value = agentOrExec ?? 'cc';
+	const agents: readonly AgentContext[] = Array.isArray(value) ? value : [value as AgentContext];
+	return {agents, exec: exec ?? execCommand};
 }
 
-/** 解析卸载目标：AgentContext → `claude-code`/`codex` 单侧；`'*'` → 全 Agent 全量删。 */
-function normalizeRemoveTarget(agentOrExec: AgentContext | '*' | SkillsExecFn | undefined, exec: SkillsExecFn | undefined): {agentTarget: SkillsCliAgent | '*'; exec: SkillsExecFn} {
+/** 把 agent 列表展开为 `--agent <cli-name>` 参数序列（每个 agent 一个 `--agent`）。 */
+function agentArgs(agents: readonly AgentContext[]): string[] {
+	return agents.flatMap(agent => ['--agent', skillsAgentOf(agent)]);
+}
+
+/**
+ * 解析卸载目标：AgentContext → `claude-code`/`codex` 单侧；`'*'` → 全 Agent 全量删。
+ *
+ * 注意：skills CLI 1.5.16 的 `remove` **不接受 `--agent '*'`**（会报 `Invalid agents: *` 并 exit 1，
+ * 通配展开只在 `install` 路径实现）。全量删的正解是**完全不传 `--agent`**——CLI 此时默认
+ * `targetAgents = 所有 agent`，删完各侧投影后无人再用即清 canonical 本体。故 `'*'` → agentTarget=undefined。
+ */
+function normalizeRemoveTarget(agentOrExec: AgentContext | '*' | SkillsExecFn | undefined, exec: SkillsExecFn | undefined): {agentTarget: SkillsCliAgent | undefined; exec: SkillsExecFn} {
 	if (typeof agentOrExec === 'function') {
 		return {agentTarget: skillsAgentOf('cc'), exec: agentOrExec};
 	}
 
 	const target = agentOrExec ?? 'cc';
-	return {agentTarget: target === '*' ? '*' : skillsAgentOf(target), exec: exec ?? execCommand};
+	return {agentTarget: target === '*' ? undefined : skillsAgentOf(target), exec: exec ?? execCommand};
 }
 
 export async function installSkill(
 	input: InstallSkillInput,
 	onProgress?: ProgressCallback,
-	agentOrExec?: AgentContext | SkillsExecFn,
+	agentOrExec?: AgentContext | readonly AgentContext[] | SkillsExecFn,
 	execArg?: SkillsExecFn
 ): Promise<SkillsActionResult> {
-	const {agentContext, exec} = normalizeAgentAndExec(agentOrExec, execArg);
-	const args = ['--yes', 'skills', 'add', input.source, '--yes', '--agent', skillsAgentOf(agentContext), '-g'];
+	const {agents, exec} = normalizeAgentAndExec(agentOrExec, execArg);
+	const args = ['--yes', 'skills', 'add', input.source, '--yes', ...agentArgs(agents), '-g'];
 	if (input.skillName) {
 		args.push('--skill', input.skillName);
-	}
-
-	if (input.copyMode) {
-		args.push('--copy');
 	}
 
 	const label = input.displayName || input.source;
@@ -102,11 +121,10 @@ export async function installSkill(
 export async function updateSkills(
 	skillNames: readonly string[] = [],
 	onProgress?: ProgressCallback,
-	agentOrExec?: AgentContext | SkillsExecFn,
-	execArg?: SkillsExecFn
+	exec: SkillsExecFn = execCommand
 ): Promise<SkillsActionResult> {
-	const {agentContext, exec} = normalizeAgentAndExec(agentOrExec, execArg);
-	const args = ['--yes', 'skills', 'update', ...skillNames, '-g', '-y', '--agent', skillsAgentOf(agentContext)];
+	// 上游 update 只接受 scope/yes/skill names；它会按 lock 重装全部注入侧，不支持 --agent。
+	const args = ['--yes', 'skills', 'update', ...skillNames, '-g', '-y'];
 	emit(onProgress, {level: 'info', message: '正在更新 Skills...'});
 
 	try {
@@ -139,7 +157,8 @@ export async function updateSkills(
  *
  * agent 目标（shared-resource-injection-ui Section 17.4）：
  * - AgentContext（'cc'/'cx'）：`--agent claude-code`/`--agent codex`，单侧撤销（Claude Code 删 symlink，本体若他方仍用由 CLI 保留）。
- * - `'*'`：`--agent '*'`，从所有 Agent 全量卸载（一次清 symlink + canonical 本体），供 d 键全量删除复用。
+ * - `'*'`：**不带 `--agent`**（CLI 默认全 agent + 无人再用则清 canonical 本体），供 d 键全量删除复用。
+ *   注：CLI 1.5.16 的 `remove` 不接受 `--agent '*'`（报 `Invalid agents: *` 并 exit 1），故全量删靠省略 `--agent` 实现。
  *
  * 物理删除全部由官方 CLI 负责，ccq 绝不自删文件（skills-multitool 硬约束）。
  */
@@ -154,7 +173,13 @@ export async function uninstallSkills(
 	}
 
 	const {agentTarget, exec} = normalizeRemoveTarget(agentOrExec, execArg);
-	const args = ['--yes', 'skills', 'remove', ...skillNames, '-g', '--agent', agentTarget, '--yes'];
+	// agentTarget 为 undefined（全量删）时省略 --agent，CLI 默认覆盖全部 agent 并在无人再用时清 canonical 本体。
+	const args = ['--yes', 'skills', 'remove', ...skillNames, '-g'];
+	if (agentTarget) {
+		args.push('--agent', agentTarget);
+	}
+
+	args.push('--yes');
 	emit(onProgress, {level: 'info', message: `正在卸载: ${skillNames.join(', ')}`});
 
 	try {
@@ -181,15 +206,15 @@ export async function uninstallSkills(
 export async function installMultipleSkills(
 	input: {readonly source: string; readonly skillNames: readonly string[]; readonly displayName?: string},
 	onProgress?: ProgressCallback,
-	agentOrExec?: AgentContext | SkillsExecFn,
+	agentOrExec?: AgentContext | readonly AgentContext[] | SkillsExecFn,
 	execArg?: SkillsExecFn
 ): Promise<SkillsActionResult> {
 	if (input.skillNames.length === 0) {
 		return {success: false, error: '未选择要安装的 Skill'};
 	}
 
-	const {agentContext, exec} = normalizeAgentAndExec(agentOrExec, execArg);
-	const args = ['--yes', 'skills', 'add', input.source, '--yes', '--agent', skillsAgentOf(agentContext), '-g'];
+	const {agents, exec} = normalizeAgentAndExec(agentOrExec, execArg);
+	const args = ['--yes', 'skills', 'add', input.source, '--yes', ...agentArgs(agents), '-g'];
 	for (const name of input.skillNames) {
 		args.push('--skill', name);
 	}

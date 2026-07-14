@@ -312,8 +312,8 @@ async function buildAntigravityStatus(): Promise<UpdateComponent> {
 	};
 }
 
-// export 供 tools-manage.ts 的 detectComponents 复用：返回 7 个 CLI 组件
-// （ClaudeCode/Ccline/CcgWorkflow/CodexCli/OpenSpec/CodeGraph + AntigravityCli），不含 Skills/MCP。
+// export 供 tools-manage.ts 的 detectComponents 复用：返回 8 个 CLI 组件
+// （ClaudeCode/Ccline/CcgWorkflow/OpenSpec/Trellis/CodeGraph/CodexCli + AntigravityCli），不含 Skills/MCP。
 export async function checkCliToolUpdates(outdated: NpmOutdated, forceRefresh = false): Promise<UpdateComponent[]> {
 	await refreshNpmGlobalBinPath();
 	const latestByPackage = await resolveNpmViewLatest(Object.values(NPM_COMPONENT_MAP), forceRefresh);
@@ -861,30 +861,78 @@ function windowsUpdateHelperPath(targetPath: string): string {
 	return join(dirname(targetPath), `.ccq-update-${process.pid}.ps1`);
 }
 
+// Windows 更新 helper 脚本模板（单一真理源，运行时与 test-windows-helper 共用，DRY）。
+// 脚本内容全静态：所有可变参数（ParentPid/TempPath/TargetPath/WorkingDirectory）均由 spawn
+// 以 -Param 形式注入，脚本体内不做字符串插值，故无注入面。
+// 重试次数与间隔提为常量，供测试断言与运行时共用。
+export const WINDOWS_HELPER_COPY_MAX_ATTEMPTS = 20;
+export const WINDOWS_HELPER_COPY_INTERVAL_MS = 250;
+
+export function buildWindowsUpdateHelperScript(): string {
+	return [
+		'param(',
+		'  [int]$ParentPid,',
+		'  [string]$TempPath,',
+		'  [string]$TargetPath,',
+		'  [string]$WorkingDirectory',
+		')',
+		'$ErrorActionPreference = "Stop"',
+		// 诊断日志：Windows 自替换失败时（Copy-Item 撞镜像文件句柄）此前完全静默，
+		// 现落盘到 %TEMP%\ccq-update.log 以便定位。写日志本身 best-effort，不因日志失败中断更新。
+		'$logPath = Join-Path $env:TEMP "ccq-update.log"',
+		'function Write-UpdateLog($msg) {',
+		'  try { Add-Content -LiteralPath $logPath -Value ("[{0}] [pid {1}] {2}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"), $PID, $msg) -ErrorAction SilentlyContinue } catch {}',
+		'}',
+		'Write-UpdateLog "helper start: parent=$ParentPid temp=$TempPath target=$TargetPath"',
+		'Wait-Process -Id $ParentPid -ErrorAction SilentlyContinue',
+		'Write-UpdateLog "parent process exited"',
+		'$targetDir = Split-Path -Parent $TargetPath',
+		'if (-not (Test-Path -LiteralPath $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir | Out-Null }',
+		// Copy-Item 重试循环：Wait-Process 返回后 Windows 加载器对旧 exe 镜像句柄的释放会滞后，
+		// 立即 Copy-Item -Force 会撞“文件正被占用”。最多重试 20 次 × 250ms（~5s）等锁释放。
+		'$copied = $false',
+		`for ($i = 1; $i -le ${WINDOWS_HELPER_COPY_MAX_ATTEMPTS}; $i++) {`,
+		'  try {',
+		'    Copy-Item -LiteralPath $TempPath -Destination $TargetPath -Force',
+		'    $copied = $true',
+		'    Write-UpdateLog "copy succeeded on attempt $i"',
+		'    break',
+		'  } catch {',
+		'    Write-UpdateLog "copy attempt $i failed: $($_.Exception.Message)"',
+		`    Start-Sleep -Milliseconds ${WINDOWS_HELPER_COPY_INTERVAL_MS}`,
+		'  }',
+		'}',
+		// 拷贝失败：保留 TempPath 供后续重试（不删），仅清理 helper 自身后退出。
+		'if (-not $copied) {',
+		'  Write-UpdateLog "copy failed after all attempts, keeping temp file for retry"',
+		'  Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue',
+		'  exit 1',
+		'}',
+		// 大小校验：确认覆盖完整（避免拷了半截就重启旧/坏版本）。不一致则保留 tmp 退出。
+		'$tempSize = (Get-Item -LiteralPath $TempPath).Length',
+		'$targetSize = (Get-Item -LiteralPath $TargetPath).Length',
+		'if ($tempSize -ne $targetSize) {',
+		'  Write-UpdateLog "size mismatch temp=$tempSize target=$targetSize, keeping temp file"',
+		'  Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue',
+		'  exit 1',
+		'}',
+		'Write-UpdateLog "size verified: $targetSize bytes"',
+		'Remove-Item -LiteralPath $TempPath -Force -ErrorAction SilentlyContinue',
+		'if ($WorkingDirectory -and (Test-Path -LiteralPath $WorkingDirectory)) {',
+		'  Start-Process -FilePath $TargetPath -WorkingDirectory $WorkingDirectory',
+		'} else {',
+		'  Start-Process -FilePath $TargetPath',
+		'}',
+		'Write-UpdateLog "restarted ccq, cleaning up helper"',
+		'Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue',
+		''
+	].join('\r\n');
+}
+
 function startWindowsUpdateHelper(targetPath: string, tempPath: string): ApplySelfUpdateResult {
 	const helperPath = windowsUpdateHelperPath(targetPath);
 	try {
-		const script = [
-			'param(',
-			'  [int]$ParentPid,',
-			'  [string]$TempPath,',
-			'  [string]$TargetPath,',
-			'  [string]$WorkingDirectory',
-			')',
-			'$ErrorActionPreference = "Stop"',
-			'Wait-Process -Id $ParentPid -ErrorAction SilentlyContinue',
-			'$targetDir = Split-Path -Parent $TargetPath',
-			'if (-not (Test-Path -LiteralPath $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir | Out-Null }',
-			'Copy-Item -LiteralPath $TempPath -Destination $TargetPath -Force',
-			'Remove-Item -LiteralPath $TempPath -Force -ErrorAction SilentlyContinue',
-			'if ($WorkingDirectory -and (Test-Path -LiteralPath $WorkingDirectory)) {',
-			'  Start-Process -FilePath $TargetPath -WorkingDirectory $WorkingDirectory',
-			'} else {',
-			'  Start-Process -FilePath $TargetPath',
-			'}',
-			'Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue',
-			''
-		].join('\r\n');
+		const script = buildWindowsUpdateHelperScript();
 		writeFileSync(helperPath, script, 'utf8');
 
 		const child = spawn('powershell.exe', [

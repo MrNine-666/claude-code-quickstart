@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 // Layout shell 回归门禁：
 // - Agent Header 用 width="100%" 铺满右侧内容栏，禁止再用 contentWidth 写死宽度。
 // - active layout 边框使用“圆角转角 + 加粗单线边”的统一字符集。
-// - 自适应高度容器统一 flexGrow={1} + minHeight={0}，禁止 flexBasis 参与算高。
+// - split 横向列用 flexGrow={1} + flexBasis={0} 等分；纵向溢出用 minHeight={0} 收缩。
 
 const appSource = readFileSync(new URL('../src/app.tsx', import.meta.url), 'utf8');
 const themeSource = readFileSync(new URL('../src/theme/index.ts', import.meta.url), 'utf8');
@@ -42,25 +42,29 @@ assert.equal(
 	'侧边栏、content 卡片、AgentHeader 三个 layout active 边框都应使用 activeBorderChars'
 );
 
-// 统一 flex 标准（flex-height-unify）：自适应高度容器用 flexGrow={1} + minHeight={0}，
-// 禁止 flexBasis 参与算高。split 分栏左列（推荐边栏）边框内含 scrollbox + 可溢出内容时，
-// 靠 minHeight={0} 让内容在分配空间内收缩而非撑大父容器，标题的 marginBottom 不被挤没。
+// split 横向等分：推荐列/编辑列用 flexGrow={1} + flexBasis={0} + minWidth={0}；
+// 纵向溢出：推荐列内边框与 scrollbox 用 minHeight={0}，避免内容撑大父容器、挤掉标题 marginBottom。
 for (const [name, source] of [['ConfigView', configViewSource], ['PromptsView', promptsViewSource]]) {
 	assert.match(
 		source,
-		/flexGrow=\{1\}\s*\n\s*minHeight=\{0\}\s*\n\s*borderStyle="rounded"/,
-		`${name} split 左列推荐边框必须带 flexGrow={1} + minHeight={0}，避免溢出内容挤掉标题 marginBottom 导致边框错位`
-	);
-	assert.doesNotMatch(
-		source,
-		/flexBasis/,
-		`${name} 不得再使用 flexBasis：统一改用 flexGrow={1} + minHeight={0} 自适应高度`
+		/<box(?=[^>]*key='recommend-panel')(?=[^>]*flexGrow=\{1\})(?=[^>]*flexBasis=\{0\})(?=[^>]*minWidth=\{0\})[^>]*>/,
+		`${name} split 推荐列必须用 flexGrow={1} + flexBasis={0} + minWidth={0} 保持横向等分`
 	);
 	assert.match(
 		source,
-		/ThemedScrollbox[^>]*style=\{\{flexGrow: 1, minHeight: 0\}\}/,
+		/<box(?=[^>]*key='editor-panel')(?=[^>]*flexGrow=\{1\})(?=[^>]*flexBasis=\{0\})(?=[^>]*minWidth=\{0\})[^>]*>/,
+		`${name} split 编辑列必须用 flexGrow={1} + flexBasis={0} + minWidth={0} 保持横向等分`
+	);
+	assert.match(
+		source,
+		/<box(?=[^>]*flexGrow=\{1\})(?=[^>]*minHeight=\{0\})[^>]*borderStyle="rounded"/,
+		`${name} split 左列推荐边框必须带 flexGrow={1} + minHeight={0}，避免溢出内容挤掉标题 marginBottom 导致边框错位`
+	);
+	assert.match(
+		source,
+		/<ThemedScrollbox(?=[^>]*style=\{\{[^}]*flexGrow: 1)(?=[^>]*style=\{\{[^}]*minHeight: 0)[^>]*>/,
 		`${name} split 左列推荐 ThemedScrollbox 必须带 minHeight: 0，让内容在分配空间内收缩而非撑大父容器`
 	);
 }
 
-console.log('[PASS] layout shell：Header 宽度铺满 + active 加粗圆角边框 + split 溢出不挤 margin（统一 flexGrow+minHeight，无 flexBasis）');
+console.log('[PASS] layout shell：Header 宽度铺满 + active 加粗圆角边框 + split 横向等分与纵向溢出约束');

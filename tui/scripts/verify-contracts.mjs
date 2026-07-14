@@ -25,7 +25,7 @@ const claudeMdWindows = loadTextContract('templates/claude-md.platform-windows.m
 assert.ok(claudeMdWindows.includes('Windows / PowerShell'), 'claude-md.platform-windows.md 应加载为 Claude Windows 平台模板文本');
 
 const codexMd = loadTextContract('templates/codex-md.md');
-assert.ok(codexMd.includes('# Codex AGENTS.md 推荐规则'), 'codex-md.md 应加载为 Codex 独立模板文本');
+assert.ok(codexMd.includes('暂未内置推荐规则模板。'), 'codex-md.md 应加载为 Codex 独立模板文本');
 
 // install 链契约 steps.json 属 installer/contracts/，不应在 TUI 契约目录（边界保护）
 assert.throws(() => loadContract('steps.json'), /契约文件不存在/,

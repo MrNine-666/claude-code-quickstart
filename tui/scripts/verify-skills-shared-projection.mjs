@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import {mkdir, mkdtemp, rm, writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {
 	getInstalledSkills,
 	projectSharedSkills,
@@ -35,6 +38,80 @@ import {
 	assert.equal(ccArgs[0][ccArgs[0].indexOf('--agent') + 1], 'claude-code', 'cc → --agent claude-code');
 
 	console.log('[PASS] 19.3-1 getInstalledSkills：无 --agent 全量扫 / 显式单侧带 --agent');
+}
+
+// ── 1b) getInstalledSkills 严格区分空列表与检测失败，lock 只做 best-effort 增强 ──
+{
+	const execResult = result => async () => result;
+	await assert.rejects(
+		() => getInstalledSkills(execResult({code: 7, stdout: '', stderr: 'list failed'})),
+		/ExitCode:\s*7|list failed/,
+		'非零退出必须进入检测 error'
+	);
+	await assert.rejects(
+		() => getInstalledSkills(execResult({code: 0, stdout: '', stderr: ''})),
+		/JSON|Skills 列表检测失败/,
+		'空输出不得伪装成空列表'
+	);
+	await assert.rejects(
+		() => getInstalledSkills(execResult({code: 0, stdout: 'not-json', stderr: ''})),
+		/JSON|Skills 列表检测失败/,
+		'非 JSON 输出必须进入检测 error'
+	);
+	await assert.rejects(
+		() => getInstalledSkills(execResult({code: 0, stdout: '{}', stderr: ''})),
+		/JSON|Skills 列表检测失败/,
+		'JSON 顶层非数组也是协议错误'
+	);
+	assert.deepEqual(
+		await getInstalledSkills(execResult({code: 0, stdout: '[]', stderr: ''})),
+		[],
+		'合法 [] 才表示真正的空安装列表'
+	);
+
+	const originalCcqHome = process.env.CCQ_HOME;
+	const temporaryHome = await mkdtemp(join(tmpdir(), 'ccq-skills-lock-'));
+	const listOne = execResult({
+		code: 0,
+		stdout: JSON.stringify([{name: 'pdf', path: '/skills/pdf', scope: 'global', agents: ['Codex']}]),
+		stderr: ''
+	});
+	try {
+		process.env.CCQ_HOME = temporaryHome;
+
+		const [withoutLock] = await getInstalledSkills(listOne);
+		assert.equal(withoutLock.source, undefined, '缺失 lock 时仍返回 CLI 列表事实');
+
+		const agentsDir = join(temporaryHome, '.agents');
+		await mkdir(agentsDir, {recursive: true});
+		await writeFile(join(agentsDir, '.skill-lock.json'), '{broken', 'utf8');
+		const [withCorruptLock] = await getInstalledSkills(listOne);
+		assert.equal(withCorruptLock.source, undefined, '损坏 lock 只放弃增强，不得让列表检测失败');
+
+		await writeFile(
+			join(agentsDir, '.skill-lock.json'),
+			JSON.stringify({version: 3, skills: {pdf: {source: 'openai/skills', ref: 'v1'}}}),
+			'utf8'
+		);
+		const [enriched] = await getInstalledSkills(listOne);
+		assert.equal(enriched.source, 'openai/skills', 'lock source 应增强已安装行');
+		assert.equal(enriched.ref, 'v1', 'lock ref 应增强已安装行');
+		assert.equal(enriched.skillName, 'pdf', 'lock key 应作为重新安装的 --skill 值');
+
+		await writeFile(
+			join(agentsDir, '.skill-lock.json'),
+			JSON.stringify({version: 3, skills: {pdf: {source: 'openai/skills', sourceUrl: 'https://github.com/openai/skills.git', ref: 'v2'}}}),
+			'utf8'
+		);
+		const [withSourceUrl] = await getInstalledSkills(listOne);
+		assert.equal(withSourceUrl.source, 'https://github.com/openai/skills.git', 'sourceUrl 应优先于 source shorthand');
+	} finally {
+		if (originalCcqHome === undefined) delete process.env.CCQ_HOME;
+		else process.env.CCQ_HOME = originalCcqHome;
+		await rm(temporaryHome, {recursive: true, force: true});
+	}
+
+	console.log('[PASS] getInstalledSkills 严格错误传播 + 合法 [] + lock 缺失/损坏容错与 source/ref 增强');
 }
 
 // ── 2/3) projectSharedSkills 派生双侧态 + codexAvailable===sharedInstalled ─────

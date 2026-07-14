@@ -21,7 +21,7 @@ import {
 	type LifecycleCommand
 } from './tools-lifecycle.js';
 import {hasUpdate} from './semver.js';
-import {hasCodeGraphIntegration, hasClaudeCodeGraphIntegration, hasCodexCodeGraphIntegration, hasClaudeCcgWorkflowMode, hasCodexCcgWorkflowMode, readCodexCcgWorkflowVersion} from './tools-integrations.js';
+import {hasCodeGraphIntegration, hasClaudeCodeGraphIntegration, hasCodexCodeGraphIntegration, hasClaudeCcgWorkflowMode, hasCodexCcgWorkflowMode, readCodexCcgWorkflowVersion, removeCodeGraphIntegration} from './tools-integrations.js';
 
 
 // tools-manage core：tools 域的门面/编排层（design TDR-11）。
@@ -66,7 +66,7 @@ export type InstallComponentDeps = {
 const INSTALL_TIMEOUT_MS = 300000;
 
 /**
- * 全部受管组件定义（7 项）：ClaudeCode + 6 工具，直接复用 registry（DRY，单一真理源）。
+ * 全部受管组件定义（8 项）：ClaudeCode + 7 工具，直接复用 registry（DRY，单一真理源）。
  * 顺序即 TOOL_DEFINITIONS 顺序（ClaudeCode 首位）；分组展示顺序由 sortComponentsByToolGroup 决定。
  */
 export const COMPONENT_DEFINITIONS: readonly ComponentDefinition[] = TOOL_DEFINITIONS;
@@ -105,6 +105,7 @@ export const COMPONENT_META: Readonly<Record<ComponentId, ComponentMeta>> = {
 	AntigravityCli: {group: 'agent', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
 	Ccline: {group: 'companion', contexts: ['cc'], sharingKind: 'agent-exclusive'},
 	OpenSpec: {group: 'tool', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
+	Trellis: {group: 'tool', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
 	CcgWorkflow: {group: 'tool', contexts: BOTH_CONTEXTS, sharingKind: 'shared-cli-per-agent-inject'},
 	CodeGraph: {group: 'tool', contexts: BOTH_CONTEXTS, sharingKind: 'shared-cli-per-agent-inject'}
 };
@@ -273,8 +274,21 @@ function projectOneSharedComponent(component: ManagedComponent): SharedManagedCo
 				version: cxIntegrated ? (cxVersion || undefined) : undefined
 			}
 		};
+		const installedVersions = [
+			ccIntegrated ? component.currentVersion : '',
+			cxIntegrated ? cxVersion : ''
+		].filter(version => version !== '');
+		const installed = ccIntegrated || cxIntegrated;
+		const currentVersion = installedVersions[0] ?? '';
+		const latestVersion = component.latestVersion || currentVersion;
 		return {
 			...component,
+			installed,
+			currentVersion,
+			latestVersion,
+			hasUpdate: installed
+				? Boolean(latestVersion && installedVersions.some(version => hasUpdate(version, latestVersion)))
+				: null,
 			sharingKind,
 			applicableContexts,
 			sharedInstalled: false,
@@ -360,11 +374,11 @@ export function uninstallImpactNotice(
 	if (options.fullUninstall && isInjectableComponent(id)) {
 		switch (id) {
 			case 'CodeGraph':
-				return '将从 Claude Code 与 Codex 卸载 CodeGraph，并卸载共享 codegraph CLI。';
+				return '将在所有 Agent 中卸载 CodeGraph，并卸载共享 codegraph CLI。';
 			case 'CcgWorkflow':
-				return '将卸载已安装的 Claude Code / Codex Mode。';
+				return '将在所有 Agent 中卸载 CcgWorkflow，包括已安装的 Claude Code / Codex Mode。';
 			default:
-				return '将卸载该组件及其在全部 Agent 的安装。';
+				return '将在所有 Agent 中卸载该组件。';
 		}
 	}
 
@@ -391,8 +405,8 @@ function friendlyError(text: string, fallback: string): string {
 }
 
 /**
- * 检测全部受管组件（7 项），不聚合 Skills/MCP（11.7）。
- * 复用 update.checkCliToolUpdates（返回正好 7 个 CLI 组件：ClaudeCode/Ccline/CcgWorkflow/CodexCli/OpenSpec/CodeGraph + AntigravityCli），
+ * 检测全部受管组件（8 项），不聚合 Skills/MCP（11.7）。
+ * 复用 update.checkCliToolUpdates（返回正好 8 个 CLI 组件：ClaudeCode/Ccline/CcgWorkflow/OpenSpec/Trellis/CodeGraph/CodexCli + AntigravityCli），
  * join COMPONENT_DEFINITIONS 静态字段（description/kind/command 等）。
  */
 export async function detectComponents(onProgress?: ProgressCallback, forceRefresh = false): Promise<ManagedComponent[]> {
@@ -523,7 +537,7 @@ export async function uninstallComponent(
 			switch (definition.kind) {
 				case 'npm':
 					if (definition.id === 'CodeGraph') {
-						await uninstallCodeGraph(context, exec, onProgress);
+						await uninstallCodeGraph(context, onProgress);
 						break;
 					}
 
@@ -561,12 +575,14 @@ async function fullUninstallInjectable(
 	onProgress?: ProgressCallback
 ): Promise<void> {
 	if (id === 'CodeGraph') {
-		// 全量：尽量解除两侧注入（已注入才跑；探测失败时仍继续卸 CLI）
+		// 全量：先直删两侧集成配置（不走官方命令，避免其误删 CLI 打乱顺序），再统一 npm uninstall -g 移除 CLI。
 		if (hasCodeGraphIntegration('cc')) {
-			await runLifecycleCommands(codeGraphUninstallCommands('cc'), exec, 'CodeGraph', onProgress);
+			onProgress?.({level: 'info', message: '解除 Claude Code 的 CodeGraph 集成', componentId: 'CodeGraph'});
+			removeCodeGraphIntegration('cc');
 		}
 		if (hasCodeGraphIntegration('cx')) {
-			await runLifecycleCommands(codeGraphUninstallCommands('cx'), exec, 'CodeGraph', onProgress);
+			onProgress?.({level: 'info', message: '解除 Codex 的 CodeGraph 集成', componentId: 'CodeGraph'});
+			removeCodeGraphIntegration('cx');
 		}
 		await runLifecycleCommands(codeGraphRemoveCliCommands(), exec, 'CodeGraph', onProgress);
 		return;
@@ -612,16 +628,22 @@ export async function ejectComponent(
 
 async function uninstallCodeGraph(
 	context: AgentContext,
-	exec: typeof execCommand,
 	onProgress?: ProgressCallback
 ): Promise<void> {
-	await runLifecycleCommands(codeGraphUninstallCommands(context), exec, 'CodeGraph', onProgress);
-	if (hasCodeGraphIntegration('cc') || hasCodeGraphIntegration('cx')) {
-		onProgress?.({level: 'info', message: '仍有 Agent 接入 CodeGraph，保留共享 CLI', componentId: 'CodeGraph'});
-		return;
+	// 逐 Agent 关闭（Enter eject / inject 开关）只解除当前 Agent 集成，共享 codegraph CLI 永不在此路径移除。
+	// 关键：实测官方 `codegraph uninstall --target=xxx` 会连带卸掉共享 CLI（与其文档不符），
+	// 因此这里绝不调官方命令，改为直接删配置文件（见 removeCodeGraphIntegration），
+	// 只解除单侧 MCP 集成，绝不触碰 CLI。移除 CLI 仅由整体卸载（fullUninstall）路径负责。
+	const label = context === 'cx' ? 'Codex' : 'Claude Code';
+	onProgress?.({level: 'info', message: `解除 ${label} 的 CodeGraph 集成（直改配置，保留共享 CLI）`, componentId: 'CodeGraph'});
+	removeCodeGraphIntegration(context);
+	if (!hasCodeGraphIntegration('cc') && !hasCodeGraphIntegration('cx')) {
+		onProgress?.({
+			level: 'info',
+			message: '已解除全部 Agent 接入，共享 codegraph CLI 已保留（如需彻底移除请对 CodeGraph 执行整体卸载）',
+			componentId: 'CodeGraph'
+		});
 	}
-
-	await runLifecycleCommands(codeGraphRemoveCliCommands(), exec, 'CodeGraph', onProgress);
 }
 
 /** 11.10 npm 全局卸载（ClaudeCode / OpenSpec / CodexCli / Ccline）。 */

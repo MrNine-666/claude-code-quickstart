@@ -4,6 +4,8 @@
 .antigravitycli/
 .ccg/
 .agents/
+.trellis/
+.codex/
 openspec/
 
 # ─── 构建产物（由本地构建或 GitHub Actions 自动生成）───

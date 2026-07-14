@@ -39,7 +39,7 @@ assert.equal(isComponentVisible('Ccline', 'cc'), true, 'Ccline 在 Claude Code �
 assert.equal(isComponentVisible('Ccline', 'cx'), false, 'Ccline 不在 Codex 上下文显示');
 
 // CodeGraph/CcgWorkflow/OpenSpec 两上下文都显示（生命周期按上下文分支，可见性不受限）
-for (const id of ['OpenSpec', 'CcgWorkflow', 'CodeGraph']) {
+for (const id of ['OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph']) {
 	assert.equal(isComponentVisible(id, 'cc'), true, `${id} 在 Claude Code 上下文可见`);
 	assert.equal(isComponentVisible(id, 'cx'), true, `${id} 在 Codex 上下文可见`);
 }
@@ -48,21 +48,21 @@ for (const id of ['OpenSpec', 'CcgWorkflow', 'CodeGraph']) {
 const ccVisible = visibleComponentDefinitions('cc').map(d => d.id);
 const cxVisible = visibleComponentDefinitions('cx').map(d => d.id);
 
-// Claude Code：7 项（含 Ccline）
-assert.equal(ccVisible.length, 7, 'Claude Code 上下文可见 7 项');
+// Claude Code：8 项（含 Ccline）
+assert.equal(ccVisible.length, 8, 'Claude Code 上下文可见 8 项');
 assert.ok(ccVisible.includes('Ccline'), 'Claude Code 上下文含 Ccline');
-// Codex：6 项（不含 Ccline）
-assert.equal(cxVisible.length, 6, 'Codex 上下文可见 6 项');
+// Codex：7 项（不含 Ccline）
+assert.equal(cxVisible.length, 7, 'Codex 上下文可见 7 项');
 assert.equal(cxVisible.includes('Ccline'), false, 'Codex 上下文不含 Ccline');
-// 两种上下文都含 ClaudeCode/CodexCli/AntigravityCli/OpenSpec/CcgWorkflow/CodeGraph
-for (const id of ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'OpenSpec', 'CcgWorkflow', 'CodeGraph']) {
+// 两种上下文都含 ClaudeCode/CodexCli/AntigravityCli/OpenSpec/Trellis/CcgWorkflow/CodeGraph
+for (const id of ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph']) {
 	assert.ok(ccVisible.includes(id), `Claude Code 含 ${id}`);
 	assert.ok(cxVisible.includes(id), `Codex 含 ${id}`);
 }
 // 可见列表按工具管理分组展示顺序排序（Agent → statusLine → 三方工具）
-assert.deepEqual(ccVisible, ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'Ccline', 'OpenSpec', 'CcgWorkflow', 'CodeGraph'], 'Claude Code 可见列表按分组展示顺序排序');
-assert.deepEqual(cxVisible, ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'OpenSpec', 'CcgWorkflow', 'CodeGraph'], 'Codex 可见列表隐藏 Ccline 并保持分组展示顺序');
-assert.deepEqual(COMPONENT_DEFINITIONS.map(d => d.id), ['ClaudeCode', 'Ccline', 'CcgWorkflow', 'OpenSpec', 'CodeGraph', 'CodexCli', 'AntigravityCli'], '静态定义仍保留安装定义原始顺序');
+assert.deepEqual(ccVisible, ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'Ccline', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph'], 'Claude Code 可见列表按分组展示顺序排序');
+assert.deepEqual(cxVisible, ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph'], 'Codex 可见列表隐藏 Ccline 并保持分组展示顺序');
+assert.deepEqual(COMPONENT_DEFINITIONS.map(d => d.id), ['ClaudeCode', 'Ccline', 'CcgWorkflow', 'OpenSpec', 'Trellis', 'CodeGraph', 'CodexCli', 'AntigravityCli'], '静态定义仍保留安装定义原始顺序');
 
 // ── filterVisibleComponents（运行时组件过滤，供 ToolsView 消费）──────────────
 const stub = (id, installed) => ({id, installed, currentVersion: '', latestVersion: '', hasUpdate: null});

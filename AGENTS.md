@@ -44,7 +44,7 @@ graph TD
     C --> C2["Admin / Net / Registry / Update"]
     C --> C3["ccq 可执行文件管理函数（架构检测/下载/PATH）"]
     D --> D1["NodeJS (5 子模块) / Git（Basic 直装）"]
-    D --> D2["ClaudeCode / CodexCli / Ccline / OpenSpec / CcgWorkflow / CodeGraph / AntigravityCli（由 TUI 工具管理）"]
+    D --> D2["ClaudeCode / CodexCli / Ccline / OpenSpec / Trellis / CcgWorkflow / CodeGraph / AntigravityCli（由 TUI 工具管理）"]
     IC --> IC1["steps / build / cleanup-policy + Test-Contracts"]
     TC --> TC1["claude-config / mcp-servers / providers / templates（运行时内嵌）\nccg-workflow / drift.js（磁盘源契约）"]
     T --> T1["src/ → bun build --compile → 4 平台可执行文件"]
@@ -64,7 +64,7 @@ graph TD
 ```
 install 仅装 bootstrap Basic 两步：
 NodeJS ─── Git
-（ClaudeCode / CodexCli / Ccline / OpenSpec / CcgWorkflow / CodeGraph / AntigravityCli 等工具生命周期均由 Manage TUI「工具管理」按当前 Header 上下文承载）
+（ClaudeCode / CodexCli / Ccline / OpenSpec / Trellis / CcgWorkflow / CodeGraph / AntigravityCli 等工具生命周期均由 Manage TUI「工具管理」按当前 Header 上下文承载）
 ```
 
 ---
@@ -240,3 +240,24 @@ zsh -n installer/macos/Install.zsh
 - **决策历史**：`.context/history/commits.md`
 
 **规则**：修改代码前必读 `prefs/`，做决策时按 `workflow.md` 规则记录日志。提交时 `/ccg:commit` 会自动从 git diff 分析决策并归档到 `history/`。
+<!-- TRELLIS:START -->
+# Trellis Instructions
+
+These instructions are for AI assistants working in this project.
+
+This project is managed by Trellis. The working knowledge you need lives under `.trellis/`:
+
+- `.trellis/workflow.md` — development phases, when to create tasks, skill routing
+- `.trellis/spec/` — package- and layer-scoped coding guidelines (read before writing code in a given layer)
+- `.trellis/workspace/` — per-developer journals and session traces
+- `.trellis/tasks/` — active and archived tasks (PRDs, research, jsonl context)
+
+If a Trellis command is available on your platform (e.g. `/trellis:finish-work`, `/trellis:continue`), prefer it over manual steps. Not every platform exposes every command.
+
+If you're using Codex or another agent-capable tool, additional project-scoped helpers may live in:
+- `.agents/skills/` — reusable Trellis skills
+- `.codex/agents/` — optional custom subagents
+
+Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
+
+<!-- TRELLIS:END -->

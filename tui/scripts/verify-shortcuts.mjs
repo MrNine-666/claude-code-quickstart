@@ -60,6 +60,17 @@ if (process.platform === 'darwin') {
 }
 console.log('[PASS] footer：平台化符号展示来自单一 binding source');
 
+// ── 卸载文案：统一使用简洁动作名，不在 footer 重复强调底层全量语义 ────────
+const skillsListLabels = viewShortcuts('skills', 'list').map(shortcut => shortcut.label);
+const skillsConfirmLabels = viewShortcuts('skills', 'confirm-uninstall').map(shortcut => shortcut.label);
+const toolsGridLabels = viewShortcuts('tools', 'grid').map(shortcut => shortcut.label);
+const toolsConfirmLabels = viewShortcuts('tools', 'confirm-uninstall').map(shortcut => shortcut.label);
+assert.equal(skillsListLabels.includes('卸载'), true, 'Skills 列表 footer 应显示“卸载”');
+assert.equal(skillsConfirmLabels.includes('确认卸载（所有 Agent）'), true, 'Skills 确认态应保留卸载范围提示');
+assert.equal(toolsGridLabels.includes('卸载'), true, 'Tools footer 应显示“卸载”');
+assert.equal(toolsConfirmLabels.includes('确认卸载'), true, 'Tools 确认态 footer 应显示“确认卸载”');
+assert.equal([...skillsListLabels, ...skillsConfirmLabels, ...toolsGridLabels, ...toolsConfirmLabels].some(label => label.includes('全量卸载')), false, 'TUI footer 不应再显示“全量卸载”');
+
 // ── 视图源码：页面内不硬编码快捷键提示 ───────────────────────────────
 for (const file of ['src/views/ConfigView.tsx', 'src/views/PromptsView.tsx']) {
 	const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');

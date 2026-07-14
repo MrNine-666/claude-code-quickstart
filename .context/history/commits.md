@@ -24,3 +24,4 @@
 | 2026-07-03 | 4666af0d | (pending) | fix(tui): 优化工具和 Skills 操作完成状态 | 3 | 1 | medium |
 | 2026-07-13 | 0722b4e2 | (pending) | fix(tui): code-preview 归一化 CRLF 换行修复行高翻倍 | 1 | 1 | low |
 | 2026-07-13 | 4098ee42 | (pending) | docs: 定位表述统一为 CLI Agent 并同步截图与供应商信息 | 4 | 0 | low |
+| 2026-07-14 | bd5f652f | (pending) | feat(tui): 接入 Trellis 工具并修正 Skills/Tools 共享投影语义 | 8 | 1 | medium |

@@ -56,7 +56,7 @@ try {
 	assertText('templates/claude-md.platform-windows.md', claudeWindowsTemplate, 'Windows / PowerShell');
 
 	const codexTemplate = loadTextContract('templates/codex-md.md');
-	assertText('templates/codex-md.md', codexTemplate, '# Codex AGENTS.md 推荐规则');
+	assertText('templates/codex-md.md', codexTemplate, '暂未内置推荐规则模板。');
 
 	assertThrows('ccg-workflow.json', () => loadContract('ccg-workflow.json'));
 	assertThrows('templates/index.json', () => loadContract('templates/index.json'));

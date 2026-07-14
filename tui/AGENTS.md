@@ -152,12 +152,12 @@ TUI 不新增第 7 个 Codex 菜单；改由右侧 content 顶部的全局 **Hea
 - **工具管理 / MCP / Skills 隐藏 Header**（shared-resource-injection-ui）：`displayMenuId` 属于共享双侧模块集合 `AGENT_HEADER_HIDDEN_MODULES`（`tools` / `mcp` / `skills`）时**不渲染 AgentHeader**，content 高度不预留 Header 行；残留 `focus === 'header'` 强制回 `view`，列表/网格顶行 `↑` 停在首项（不退回 header），`Esc` / 光标 0 时 `←` 回 `nav`。全局 `agentContext` 状态**保留**，进出这三个模块不改其值；切到其它 Agent 独占模块时 Header 恢复并展示保留的上下文。Skills 检测与 `agentContext` **解耦**（一次 `skills list -g --json` 无 `--agent` 得双侧态），`skillsViewServices` 不再按 `state.agentContext` 建 service key、不随 Header 重建。其它模块 Header 与 `view↑→header` 行为不变（门禁 `scripts/verify-manage-tui-state.mjs` / `scripts/verify-agent-context.mjs`）。
 
 ### HC-TOOLS-AGENT-GROUP
-工具管理以**共享资源列表**为主（shared-resource-injection-ui）：列表**不按 `agentContext` 过滤**，7 组件全集常显（骨架 `scripts/verify-tools-context.mjs` / `scripts/verify-tools-shared-projection.mjs`）：
+工具管理以**共享资源列表**为主（shared-resource-injection-ui）：列表**不按 `agentContext` 过滤**，8 组件全集常显（骨架 `scripts/verify-tools-context.mjs` / `scripts/verify-tools-shared-projection.mjs`）：
 - Tools UI 主路径 = `projectSharedToolComponents(detected)`（返回 `SharedManagedComponent[]`，全集恒定顺序），**禁止**再用 `filterVisibleComponents(..., agentContext)` 作为列表主路径（该函数保留仅供 legacy 门禁 / CLI 兼容）。
 - UI 必须展示为「分组 label + grid」结构，分组顺序固定为 **Agent → statusLine → 三方工具**；空分组隐藏。分组事实源只能来自 `COMPONENT_META` / `TOOL_GROUP_ORDER` / `TOOL_GROUP_META`，禁止在 `ToolsView` 内硬编码第二套分类或工具顺序。
 - **资源分类 `sharingKind`（挂在 `COMPONENT_META`，单一事实源）驱动呈现**：
   - `shared-cli-per-agent-inject`（**CodeGraph / CcgWorkflow**）：卡片行 2 展示 `Claude Code ●|○` + `Codex ●|○` 双态徽章（全称，禁 `cc`/`cx` 缩写；`●`=已注入 success，`○`=未注入 muted），两侧状态由 `injectByAgent` 独立投影、互不塌缩（CodeGraph 来自 `hasClaude/CodexCodeGraphIntegration`，CcgWorkflow 来自 `hasClaude/CodexCcgWorkflowMode`；CcgWorkflow 无真·共享 CLI，**不伪造** `sharedInstalled`）。
-  - `fully-shared-no-inject`（**OpenSpec / AntigravityCli**）：仅全局安装态，**无**行 2 inject 徽章。
+  - `fully-shared-no-inject`（**OpenSpec / Trellis / AntigravityCli**）：仅全局安装态，**无**行 2 inject 徽章。
   - `agent-exclusive`（**ClaudeCode / CodexCli / Ccline**）：行 2 仅标注适用范围（`Claude Code 本体` / `Codex 本体` / `仅 Claude Code`），Ccline 不提供 Codex 注入。
 - **交互（Enter 开关 Modal / u 更新 / d 全量卸载，职责分离硬约束）**：
   - inject 类 **Enter** 打开开关管理 Modal（`select-inject-target`）：进入时用当前双侧 `injectByAgent.integrated` 初始化本地草稿（`injectDraft`），`↑/↓` 选 `Claude Code`/`Codex`，`空格`切换该侧草稿开/关（纯本地，不落盘），`Enter` 统一应用——对比草稿与实际态、对每个变化侧顺序执行 `injectComponent(id, target)` / `ejectComponent(id, target)`，`Esc` 取消。目标 **显式传入**，禁止依赖 Header agentContext（`ToolsView` 不得 useMemo 把 Header 绑死到 inject 路径）；无变化时提示「未改变任何开关」。
@@ -201,9 +201,9 @@ Skills CLI agent 映射：Claude Code → `--agent claude-code`，Codex → `--a
 Skills 是**共享本体 + per-Agent 注入**模型（非 MCP 对等双 runtime；实测 `skills` CLI：codex=universal agent 直读 canonical 本体 `~/.agents/skills`、装了即可用无独立开关，仅 Claude Code 是可独立建/删的 symlink 注入态）。shared-resource-injection-ui 第三阶段落地（门禁 `scripts/verify-skills-shared-projection.mjs` / `scripts/verify-skills-view.mjs` / `scripts/verify-skills-agent.mjs`）：
 - **双侧检测 = 单次 CLI 派生**：`getInstalledSkills()` 无参 / 仅传 exec → **不带 `--agent`** 全量扫所有 agent 目录，一次调用得每条 skill 的 `agents` displayName 列表；显式 `cc`/`cx` 才带 `--agent`（旧单侧路径保留）。`projectSharedSkills` 从 `agents` 派生 `SkillSharedRow`：`sharedInstalled`（含 `Codex`=本体在）/ `claudeInjected`（含 `Claude Code`=symlink 在）/ `codexAvailable`（**恒等于** `sharedInstalled`，codex 无独立态）。非 `Claude Code`/`Codex` displayName 忽略（`SKILL_AGENT_DISPLAY_TO_CONTEXT`）。不缓存、不跑两次 CLI（对齐 HC-3）。
 - **列表**：一行一 skill name + `Claude Code ●|○` + `Codex ●|○` 双态徽章（全称，禁 `cc`/`cx` 缩写；文案「已安装/未安装」）。Codex 徽章**只读镜像**共享本体（不画可操作 toggle），Claude Code 徽章反映可切 symlink 态。列表**不按 `agentContext` 过滤**。
-- **安装目标 Modal**（安装页选中 skill 后 Enter，`select-install-target`）：复用 Tools `InjectTargetModal` 范式；`Claude Code` 可切，`Codex` **只读恒勾**（`● 安装`，装任何 skill 必写共享本体、直读即可用、无法不装）。空格仅切 Claude Code（Codex no-op）；Claude Code 勾 → `installResultToTargets` 含 cc（`add --agent claude-code` 建本体+symlink），不勾 → 含 cx（`add --agent codex` 仅本体）。
-- **管理安装 Modal**（列表行 Enter，`manage-inject`）：`Claude Code` 行可切（`toggleClaudeInstall` → `add`/`remove --agent claude-code`），`Codex` 行只读「已安装（随本体）/未安装」。Esc 无写盘。
-- **`u` 更新两侧** = `updateAllSkillsBothSides`（cc/cx 各 `update --agent <侧>`）；**`d` 全量卸载** = `uninstallSkillAllAgents` **单条** `skills remove <skill> -g --agent '*' --yes`（从所有 Agent 删 symlink + 本体，**非挨个 agent**）。单侧撤销的唯一非全量路径 = 管理 Modal 取消 Claude Code（`remove --agent claude-code`）；Codex 无单侧撤销。所有物理删除由官方 CLI 负责。
+- **安装目标 Modal**（安装页选中 skill 后 Enter，`select-install-target`）：复用 Tools `InjectTargetModal` 范式；`Claude Code` 可切，`Codex` **只读恒勾**（`● 安装`，装任何 skill 必写共享本体、直读即可用、无法不装）。空格仅切 Claude Code（Codex no-op）；Claude Code 勾 → `installResultToTargets` 单次同传 `--agent claude-code --agent codex` 建共享本体 + symlink，不勾 → 仅传 `--agent codex` 写共享本体。
+- **管理安装 Modal**（列表行 Enter，`manage-inject`）：`Claude Code` 行可切，取消安装走 `remove --agent claude-code`；恢复安装必须使用 `~/.agents/.skill-lock.json` 增强得到的 `source` / `ref` 重新 `add`，并显式传 `--skill <skillName>`，缺少 source 时清晰失败，禁止把裸 skill name 当 source。`Codex` 行只读「已安装（随本体）/未安装」。Esc 无写盘。
+- **`u` 更新两侧** = `updateAllSkillsBothSides` 只调用一次 `skills update -g -y`，**省略 `--agent`**；**`d` 全量卸载** = `uninstallSkillAllAgents` 只调用一次 `skills remove <skill> -g --yes`，同样**省略 `--agent`**（CLI 默认删除所有 Agent 投影，无人使用后清理共享本体）。禁止传 `--agent '*'`，CLI 1.5.16 会报 `Invalid agents: *`。单侧撤销的唯一非全量路径 = 管理 Modal 取消 Claude Code（`remove --agent claude-code`）；Codex 无单侧撤销。所有物理删除由官方 CLI 负责。
 - 面向用户文案全链统一「已安装/未安装」「安装/卸载」，**不出现**「注入/解除」「开启/禁用」。快捷键来自 `SKILLS_COMMANDS` 单一源（footer 按上下文展示，禁视图硬编码键位字面量）。
 
 ### HC-NON-TTY
@@ -244,10 +244,17 @@ if (!process.stdin.isTTY) {
 ### HC-SPLIT-OVERFLOW-MARGIN
 **flex column 中「标题(marginBottom) + flexGrow 边框(内含 scrollbox + 可溢出内容)」结构，内容溢出会挤掉标题的 marginBottom**：scrollbox 的 min-content 高度会沿 flex 链向上传导、撑大列的总高度，把上方标题行的 `marginBottom` 空行压缩掉，使边框顶边上移一行。
 - **现象**：ConfigView / PromptsView split 分栏中，左列（推荐边栏，内容十几行溢出）边框比右列（空 textarea 不溢出）早一行、顶边不对齐。
-- **修法**：给 `flexGrow={1}` 的边框 box 加 **`minHeight={0}`**，并给内部 `ThemedScrollbox` 的 style 加 `minHeight: 0`。`minHeight={0}` 放开 flex 子项收缩下限，让内容在分配高度内收缩而非沿 min-content 撑大父容器（flex-height-unify 后统一走 `flexGrow={1} + minHeight={0}`，**不再用 `flexBasis`**——自适应高度全部按 grow 分配、固定项用 `flexShrink={0}`）。
+- **横向等分**：split row 的推荐列与编辑列统一使用 **`flexGrow={1} + flexBasis={0} + minWidth={0}`**。`flexBasis={0}` 让两列从零基准按相同 grow 权重分配宽度，避免推荐内容的 min-content 宽度改变 1:1 比例；这是横向等分的必要配置，禁止删除。
+- **纵向收缩**：给推荐列内 `flexGrow={1}` 的边框 box 加 **`minHeight={0}`**，并给内部 `ThemedScrollbox` 的 style 加 `minHeight: 0`。`minHeight={0}` 放开纵向 flex 子项的收缩下限，让内容在分配高度内滚动，而不是沿 min-content 撑大父容器、挤掉标题的 `marginBottom`。`flexBasis={0}` 不替代 `minHeight={0}`，两者分别负责横向等分与纵向溢出。
   ```jsx
-  <box flexGrow={1} minHeight={0} borderStyle="rounded" ...>
-      <ThemedScrollbox style={{flexGrow: 1, minHeight: 0}}>...</ThemedScrollbox>
+  <box flexDirection="row" flexGrow={1} minHeight={0}>
+      <box flexGrow={1} flexBasis={0} minWidth={0}>
+          <text flexShrink={0}>推荐配置</text>
+          <box flexGrow={1} minWidth={0} minHeight={0} borderStyle="rounded">
+              <ThemedScrollbox style={{flexGrow: 1, minWidth: 0, minHeight: 0}}>...</ThemedScrollbox>
+          </box>
+      </box>
+      <box flexGrow={1} flexBasis={0} minWidth={0}>...</box>
   </box>
   ```
 - **验证手段**：OpenTUI 提供离屏测试渲染器（`@opentui/react/test-utils` 的 `testRender` + `captureCharFrame()`），可离屏渲染并按行读取字符网格，精确测量边框顶边/底边行号——布局类 bug 应用它实测定位，禁止靠肉眼推演 flex 行为。
@@ -388,7 +395,7 @@ if (useIcon && existsSync(ICON_PATH)) {
 
 | 菜单 | 文件 | 功能 |
 |------|------|------|
-| 工具管理 | `views/tools-view.tsx` | Agent 组（ClaudeCode/CodexCli/AntigravityCli）两种 Header 常显；Ccline 仅 Claude Code；OpenSpec/CcgWorkflow/CodeGraph 按 `agentContext` 解析 lifecycle，CodeGraph CLI/integration 分层，CcgWorkflow Codex Mode 走官方非交互命令 |
+| 工具管理 | `views/tools-view.tsx` | Agent 组（ClaudeCode/CodexCli/AntigravityCli）两种 Header 常显；Ccline 仅 Claude Code；OpenSpec/Trellis/CcgWorkflow/CodeGraph 按 `agentContext` 解析 lifecycle，CodeGraph CLI/integration 分层，CcgWorkflow Codex Mode 走官方非交互命令 |
 | 供应商 | `views/provider-view.tsx` + `provider-form.tsx` | Claude Code Header 下管理 `~/.claude/providers/*.json`；Codex Header 下管理 `~/.codex/<key>.config.toml`，key 单一身份，API key 写 `experimental_bearer_token` 且全链脱敏 |
 | 配置文件 | `views/config-view.tsx` | Claude Code 读写 `~/.claude/settings.json`；Codex 读写 `~/.codex/config.toml`。复用预览 / `e` 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入；仅剥离 model + 供应商 env（AUTH_TOKEN/BASE_URL/受管模型键），Claude 侧 statusLine/hooks/outputStyle 等孤儿字段已放开直编 |
 | 全局规则 | `views/prompts-view.tsx` | Claude Code 读写 `~/.claude/CLAUDE.md`；Codex 只读写 `~/.codex/AGENTS.md`。复用推荐规则内容、预览/编辑/导入与脏编辑保护 |

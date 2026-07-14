@@ -223,8 +223,8 @@ function skillsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		{command: SKILLS_COMMANDS.LIST_DOWN, label: '选择'},
 		{command: SKILLS_COMMANDS.MANAGE_INSTALL, label: '管理安装'},
 		{command: SKILLS_COMMANDS.INSTALL, label: '安装页'},
-		{command: SKILLS_COMMANDS.UPDATE_ALL, label: '更新两侧'},
-		{command: SKILLS_COMMANDS.UNINSTALL, label: '卸载两侧'},
+		{command: SKILLS_COMMANDS.UPDATE_ALL, label: '更新'},
+		{command: SKILLS_COMMANDS.UNINSTALL, label: '卸载'},
 		{command: SKILLS_COMMANDS.REFRESH, label: '刷新'},
 		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
 		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
@@ -354,7 +354,7 @@ function toolsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	}
 
 	if (subMode === 'confirm-uninstall') {
-		return manualShortcuts([{key: 'Enter', label: '确认全量卸载'}, {key: 'Esc', label: '取消'}]);
+		return manualShortcuts([{key: 'Enter', label: '确认卸载'}, {key: 'Esc', label: '取消'}]);
 	}
 
 	if (subMode === 'select-inject-target') {
@@ -380,7 +380,7 @@ function toolsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		primaryShortcut,
 		{command: TOOLS_COMMANDS.UPDATE_ONE, label: '更新'},
 		{command: TOOLS_COMMANDS.UPDATE_ALL, label: '更新全部'},
-		{command: TOOLS_COMMANDS.UNINSTALL, label: '全量卸载'},
+		{command: TOOLS_COMMANDS.UNINSTALL, label: '卸载'},
 		{command: TOOLS_COMMANDS.OPEN_DOCS, label: '打开文档'},
 		{command: TOOLS_COMMANDS.REFRESH, label: '重新检测'},
 		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}

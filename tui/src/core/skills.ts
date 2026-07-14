@@ -1,5 +1,7 @@
+import {join} from 'node:path';
 import type {AgentContext} from '../state/manage-state.js';
 import {execCommand, removeAnsiSequences, type ExecResult} from './exec.js';
+import {resolveHome} from './paths.js';
 
 // 外部命令执行缝：默认走 execCommand，测试可注入桩以避免真实 spawn（design D11/D13）。
 export type ExecFn = (command: string, args: readonly string[], options?: {timeout?: number}) => Promise<ExecResult>;
@@ -38,12 +40,22 @@ function normalizeAgentAndExec(agentOrExec: AgentContext | ExecFn | undefined, e
 
 const LIST_TIMEOUT_MS = 120000;
 const SEARCH_TIMEOUT_MS = 120000;
+const GLOBAL_SKILL_LOCK_VERSION = 3;
+
+export type SkillInstallMetadata = {
+	readonly source?: string;
+	readonly ref?: string;
+	readonly skillName: string;
+};
 
 export type InstalledSkill = {
 	readonly name: string;
 	readonly path: string;
 	readonly scope: string;
 	readonly agents: readonly string[];
+	readonly source?: string;
+	readonly ref?: string;
+	readonly skillName?: string;
 };
 
 export type SearchSkillResult = {
@@ -57,6 +69,41 @@ export type SearchSkillResult = {
 export type SkillsSearchOutcome =
 	| {readonly ok: true; readonly results: readonly SearchSkillResult[]}
 	| {readonly ok: false; readonly error: string; readonly rawSummary?: string};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Best-effort 读取 skills CLI v3 全局 lock；缺失、旧版或损坏时返回空 Map。 */
+export async function readGlobalSkillLockMetadata(): Promise<ReadonlyMap<string, SkillInstallMetadata>> {
+	const metadata = new Map<string, SkillInstallMetadata>();
+	try {
+		const parsed = JSON.parse(await Bun.file(join(resolveHome(), '.agents', '.skill-lock.json')).text()) as unknown;
+		if (!isRecord(parsed) || parsed.version !== GLOBAL_SKILL_LOCK_VERSION || !isRecord(parsed.skills)) {
+			return metadata;
+		}
+
+		for (const [skillName, rawEntry] of Object.entries(parsed.skills)) {
+			if (!isRecord(rawEntry)) {
+				continue;
+			}
+
+			// v3 的 sourceUrl 是可直接重新 add 的原始来源；缺失时回退规范化 source shorthand。
+			const sourceUrl = typeof rawEntry.sourceUrl === 'string' ? rawEntry.sourceUrl.trim() : '';
+			const source = sourceUrl || (typeof rawEntry.source === 'string' ? rawEntry.source.trim() : '');
+			const ref = typeof rawEntry.ref === 'string' ? rawEntry.ref.trim() : '';
+			metadata.set(skillName, {
+				...(source ? {source} : {}),
+				...(ref ? {ref} : {}),
+				skillName
+			});
+		}
+	} catch {
+		// Lock 是增强元数据，不得让缺失或损坏阻断已安装列表检测。
+	}
+
+	return metadata;
+}
 
 /**
  * 获取已安装的 Skills（`npx skills list -g [--agent <侧>] --json`）。
@@ -80,33 +127,53 @@ export async function getInstalledSkills(agentOrExec?: AgentContext | ExecFn, ex
 
 	args.push('--json');
 
-	try {
-		const {code, stdout} = await exec('npx', args, {timeout: LIST_TIMEOUT_MS});
-		if (code !== 0 || !stdout.trim()) {
-			return [];
-		}
-
-		const items = JSON.parse(stdout.trim()) as Array<Record<string, unknown>>;
-		const records: InstalledSkill[] = [];
-
-		for (const item of items) {
-			const skillName = typeof item?.name === 'string' ? item.name : '';
-			if (!skillName) {
-				continue;
-			}
-
-			records.push({
-				name: skillName,
-				path: typeof item.path === 'string' ? item.path : '',
-				scope: typeof item.scope === 'string' ? item.scope : '',
-				agents: Array.isArray(item.agents) ? (item.agents as string[]) : []
-			});
-		}
-
-		return records;
-	} catch {
-		return [];
+	const {code, stdout, stderr} = await exec('npx', args, {timeout: LIST_TIMEOUT_MS});
+	if (code !== 0) {
+		const detail = removeAnsiSequences(stderr || stdout).trim().slice(0, 300);
+		throw new Error(`Skills 列表检测失败 (ExitCode: ${code})${detail ? `: ${detail}` : ''}`);
 	}
+
+	const output = stdout.trim();
+	if (!output) {
+		throw new Error('Skills 列表检测失败：命令未返回 JSON');
+	}
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(output);
+	} catch {
+		throw new Error('Skills 列表检测失败：命令返回了无效 JSON');
+	}
+
+	if (!Array.isArray(parsed)) {
+		throw new Error('Skills 列表检测失败：JSON 顶层不是数组');
+	}
+
+	const lockMetadata = await readGlobalSkillLockMetadata();
+	const records: InstalledSkill[] = [];
+	for (const item of parsed) {
+		if (!isRecord(item)) {
+			continue;
+		}
+
+		const skillName = typeof item.name === 'string' ? item.name : '';
+		if (!skillName) {
+			continue;
+		}
+
+		const metadata = lockMetadata.get(skillName);
+		records.push({
+			name: skillName,
+			path: typeof item.path === 'string' ? item.path : '',
+			scope: typeof item.scope === 'string' ? item.scope : '',
+			agents: Array.isArray(item.agents) ? item.agents.filter((agent): agent is string => typeof agent === 'string') : [],
+			...(metadata?.source ? {source: metadata.source} : {}),
+			...(metadata?.ref ? {ref: metadata.ref} : {}),
+			...(metadata ? {skillName: metadata.skillName} : {})
+		});
+	}
+
+	return records;
 }
 
 // ── 共享本体 + 注入投影（shared-resource-injection-ui Section 16.3） ─────────────
@@ -121,6 +188,9 @@ export type SkillSharedRow = {
 	readonly name: string;
 	readonly path: string;
 	readonly scope: string;
+	readonly source?: string;
+	readonly ref?: string;
+	readonly skillName?: string;
 	readonly sharedInstalled: boolean;
 	readonly claudeInjected: boolean;
 	readonly codexAvailable: boolean;
@@ -137,6 +207,9 @@ export function projectSharedSkills(installed: readonly InstalledSkill[]): reado
 			name: skill.name,
 			path: skill.path,
 			scope: skill.scope,
+			...(skill.source ? {source: skill.source} : {}),
+			...(skill.ref ? {ref: skill.ref} : {}),
+			...(skill.skillName ? {skillName: skill.skillName} : {}),
 			sharedInstalled,
 			claudeInjected: skillInstalledOn(skill, 'cc'),
 			codexAvailable: sharedInstalled
@@ -500,4 +573,3 @@ export async function listRepoSkills(repo: string, agentOrExec?: AgentContext | 
 		return {ok: false, error: error instanceof Error ? error.message : String(error)};
 	}
 }
-

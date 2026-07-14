@@ -44,13 +44,13 @@ export type SkillsViewServices = {
 	readonly searchSkills: (
 		query: string
 	) => Promise<{ok: true; results: readonly SearchSkillResult[]} | {ok: false; error: string; rawSummary?: string}>;
-	// 多目标安装（安装目标 Modal 提交）：按选中侧逐侧调用，per-side 结果聚合。
+	// 多目标安装（安装目标 Modal 提交）：单次传入所选目标，结果按目标映射以保持接口兼容。
 	readonly installToTargets: (result: SearchSkillResult, targets: readonly AgentContext[], onProgress?: ProgressCallback) => Promise<readonly SkillsSideResult[]>;
 	// 切换 Claude Code 安装（管理安装 Modal 提交）：install=建 symlink / 卸载=删 symlink。
-	readonly toggleClaude: (name: string, install: boolean, onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string}>;
-	// 更新两侧（u）：cc/cx 各更新一次。
+	readonly toggleClaude: (skill: import('../core/skills.js').SkillSharedRow, install: boolean, onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string}>;
+	// 更新两侧（u）：单次全局 update，由 skills lock 更新所有注入侧。
 	readonly updateBothSides: (onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string; noChange?: boolean}>;
-	// 全量卸载（d）：单条 skills remove --agent '*' 从所有 Agent 删。
+	// 全量卸载（d）：单条 skills remove 省略 --agent，由 CLI 默认从所有 Agent 删除。
 	readonly uninstallAllAgents: (name: string, onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string}>;
 	readonly createDetectionRunner: (
 		onChange: import('../services/detection-runner.js').DetectionStateSink<InstalledSkill[]>
@@ -102,7 +102,7 @@ export function SkillsView({
 	return (
 		<box flexDirection="column" flexGrow={1} minHeight={0}>
 			<ViewHeader title="Skills 技能管理" subtitle="共享维护 Claude Code 与 Codex 两侧的 Skills（搜索、安装、更新、卸载）" />
-			{renderDetectionNotice(detection.status)}
+			{renderDetectionNotice(detection)}
 			{renderPage(view, detection, active)}
 			{view.busyAction ? <ProgressLog title="执行进度" messages={view.progress} /> : null}
 			{view.errorText ? (
@@ -431,7 +431,7 @@ function runSearch(query: string, services: SkillsViewServices, dispatch: Dispat
 	});
 }
 
-/** 安装目标 Modal 提交（select-install-target Enter）：按草稿选中侧多目标安装。cx 恒 true。 */
+/** 安装目标 Modal 提交（select-install-target Enter）：按草稿单次提交所选目标。cx 恒 true。 */
 function runInstallToTargets(
 	view: SkillsViewState,
 	services: SkillsViewServices,
@@ -480,7 +480,7 @@ function runManageInject(
 	}
 
 	dispatch({type: 'confirm'});
-	void services.toggleClaude(current.name, desired, progressSink(dispatch)).then((res) => {
+	void services.toggleClaude(current, desired, progressSink(dispatch)).then((res) => {
 		if (res.success) {
 			toast.success(`${current.name} · Claude Code 已${desired ? '安装' : '卸载'}`);
 			dispatch({type: 'action-done'});
@@ -491,7 +491,7 @@ function runManageInject(
 	});
 }
 
-/** 全量卸载确认（confirm-uninstall Enter）：单条 skills remove --agent '*' 从所有 Agent 删。 */
+/** 全量卸载确认（confirm-uninstall Enter）：单条 skills remove 省略 --agent，从所有 Agent 删除。 */
 function runConfirmedUninstall(
 	view: SkillsViewState,
 	services: SkillsViewServices,
@@ -523,7 +523,7 @@ function runUpdateIfReady(view: SkillsViewState, services: SkillsViewServices, d
 
 	void services.updateBothSides(progressSink(dispatch)).then((res) => {
 		if (res.success) {
-			toast.success(res.noChange ? '两侧 skill 均已是最新版本' : '已更新两侧 skill');
+			toast.success(res.noChange ? 'skill 已是最新版本' : '已更新 skill');
 			dispatch({type: 'action-done'});
 		} else {
 			dispatch({type: 'action-failed', error: res.error ?? '更新失败'});
@@ -534,40 +534,30 @@ function runUpdateIfReady(view: SkillsViewState, services: SkillsViewServices, d
 // ── 渲染 ───────────────────────────────────────────────────────────────────
 
 /** 当前应渲染的页（Modal/执行时保持原页显示，仅叠加 Modal/进度）。 */
-function pageOf(mode: SkillsViewMode, busyAction?: 'install' | 'update' | 'uninstall'): 'list' | 'install' {
-	// 安装页及其安装目标 Modal 停留安装页；busy(install) 保留安装页 + 进度。
+function pageOf(mode: SkillsViewMode, busyReturnMode?: 'list' | 'install'): 'list' | 'install' {
+	// 安装页及其安装目标 Modal 停留安装页；busy 按动作来源保留对应底页 + 进度。
 	if (mode === 'install' || mode === 'select-install-target') {
 		return 'install';
 	}
 
-	if (mode === 'busy' && busyAction === 'install') {
-		return 'install';
+	if (mode === 'busy') {
+		return busyReturnMode ?? 'list';
 	}
 
 	return 'list';
 }
 
-function renderDetectionNotice(status: DetectionState<InstalledSkill[]>['status']): React.ReactNode {
-	if (status === 'idle') {
-		return (
-			<box marginBottom={1}>
-				<text attributes={TextAttributes.DIM}>等待检测已安装 skill...</text>
-			</box>
-		);
-	}
 
-	if (status === 'loading') {
-		return (
-			<box marginBottom={1}>
-				<text fg={colors.primary}>正在检测已安装 skill...</text>
-			</box>
-		);
+function renderDetectionNotice(detection: DetectionState<InstalledSkill[]>): React.ReactNode {
+	const {status} = detection;
+	if (status === 'idle' || status === 'loading') {
+		return <ListLoadingState message="检测中..." />;
 	}
 
 	if (status === 'error') {
 		return (
 			<box marginBottom={1}>
-				<ErrorPanel title="检测失败" message="无法检测已安装 skill" />
+				<ErrorPanel title="检测失败" message={detection.error ?? '无法检测已安装 skill'} />
 			</box>
 		);
 	}
@@ -581,7 +571,7 @@ function renderConfirm(view: SkillsViewState): React.ReactNode {
 	return (
 		<Modal active title="确认卸载 Skill" hint="Enter 确认  Esc 取消" tone="danger" width={SKILLS_MODAL_WIDTH}>
 			<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-				{names.length > 0 ? `即将从所有 Agent 卸载 ${names.join(', ')}：移除 Claude Code symlink 与共享本体，此操作不可撤销。` : '无卸载目标'}
+				{names.length > 0 ? `将在所有 Agent 中卸载 ${names.join(', ')}：移除 Claude Code symlink 与共享本体，此操作不可撤销。` : '无卸载目标'}
 			</text>
 		</Modal>
 	);
@@ -647,7 +637,7 @@ function renderPage(
 	detection: DetectionState<InstalledSkill[]>,
 	active: boolean
 ): React.ReactNode {
-	const page = pageOf(view.mode, view.busyAction);
+	const page = pageOf(view.mode, view.busyReturnMode);
 	if (page === 'install') {
 		return renderInstallPage(view, active);
 	}

@@ -26,13 +26,14 @@ Windows 与 macOS 双平台的 CLI Agent（Claude Code / Codex）开发环境自
 ## 核心特性
 
 - **一键装好开发环境**：一条命令搞定 Windows / macOS 双平台的 Node.js / Git 与 `ccq` 管理控制台，已装组件实时检测自动跳过，无需手动处理版本、编码与初始化顺序
-- **Agent 与插件统一管理**：Claude Code / Codex 等 CLI Agent 与 Ccline / CcgWorkflow / OpenSpec / CodeGraph 等周边工具，都能在「工具管理」里快捷安装 / 更新 / 卸载
+- **Agent 与插件统一管理**：Claude Code / Codex 等 CLI Agent 与 Ccline / CcgWorkflow / OpenSpec / Trellis / CodeGraph 等周边工具，都能在「工具管理」里快捷安装 / 更新 / 卸载
 - **终端一键启动控制台**：装好后在任意终端输入 `ccq` 即进入管理控制台，也可用 `ccq cc` / `ccq cx` 等子命令直接启动对应 Agent
-- **明暗主题自适应**：TUI 自动跟随终端明暗主题切换，深浅色终端都清晰顺眼
 - **供应商快捷配置**：内置智谱 GLM / MiniMax / Kimi / DeepSeek 等供应商模板，填个 Key 就能用；Codex 侧支持官方登录（`codex login`）与指定供应商启动
+- **配置文件与供应商隔离**：每个供应商独立存放在专属 Profile 文件（Claude Code 存 `~/.claude/providers/`，Codex 存 `~/.codex/<key>.config.toml`），与主配置（`settings.json` / `config.toml`）物理分离；切换或设默认供应商时只按字段所有权合并供应商相关内容（Token / Base URL / 模型键），不触碰语言、权限、hooks、statusLine 等其他配置，MCP 也各自独立存放，切换供应商不会影响其余任何配置
 - **配置与规则一键导入**：推荐的 `settings.json` 配置与全局规则（CLAUDE.md）可一键补全导入，只补缺失项、不覆盖你已有的设置
 - **MCP 多 Agent 开关**：内置 Context7 / DeepWiki / Playwright / Exa 等 MCP 模板，凭据录入一次持久保存，可按 Claude Code / Codex 分别启用或禁用
 - **Skills 快捷管理**：基于 `npx skills` 快捷搜索、安装、更新、卸载 Skills，并支持按 Claude Code / Codex 多 Agent 分别安装 / 卸载
+- **明暗主题自适应**：TUI 自动跟随终端明暗主题切换，深浅色终端都清晰顺眼
 - **应用内自更新**：`ccq` 本体支持应用内检查更新，强确认后原子替换并可一键重启，更新前自动快照备份、失败可回滚
 
 ---
@@ -225,7 +226,7 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 
 ### 1) 工具管理（Tools）
 
-- Agent 组常显 ClaudeCode / CodexCli / AntigravityCli；Ccline 仅 Claude Code；OpenSpec / CcgWorkflow / CodeGraph 在两种上下文可见
+- Agent 组常显 ClaudeCode / CodexCli / AntigravityCli；Ccline 仅 Claude Code；OpenSpec / Trellis / CcgWorkflow / CodeGraph 在两种上下文可见
 - 安装 / 更新 / 卸载（强确认 + snapshot 保护）；CodeGraph 安装/更新后校验当前 Agent MCP 接入，更新后重接入已安装的 cc/cx，卸载最后一个 CodeGraph MCP 后自动移除共享 CLI；CcgWorkflow Codex Mode 使用官方非交互 install/uninstall
 - 侧边栏底部「检查更新」按钮可更新 ccq 可执行文件本体：发现新版本后弹窗确认，更新中在弹窗内显示 loading（Enter 禁用，Esc 停止更新），完成后可选择立即重启或稍后重启
 
