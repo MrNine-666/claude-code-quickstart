@@ -2,7 +2,7 @@ import React from 'react';
 import {TextAttributes} from '@opentui/core';
 import {colors, getActiveTheme} from '../theme/index.js';
 
-export type CodePreviewFiletype = 'markdown' | 'json' | 'jsonc' | 'text';
+export type CodePreviewFiletype = 'markdown' | 'json' | 'jsonc' | 'toml' | 'text';
 
 type PreviewToken = {
 	readonly text: string;
@@ -63,6 +63,9 @@ function tokensForLine(line: string, filetype: CodePreviewFiletype, markdownToke
 
 	if (filetype === 'json' || filetype === 'jsonc') {
 		return jsonPreviewTokens(line, filetype === 'jsonc');
+	}
+	if (filetype === 'toml') {
+		return tomlPreviewTokens(line);
 	}
 
 	return plainToken(line);
@@ -149,6 +152,147 @@ function jsonTokenColor(type: JsonTokenType): string {
 		case 'punct': return jsonTokens.punct;
 		case 'space': return jsonTokens.space;
 	}
+}
+
+/** TOML 预览仅做行级着色，不参与配置解析或写入。 */
+function tomlPreviewTokens(line: string): readonly PreviewToken[] {
+	if (line.length === 0) {
+		return [{text: ' '}];
+	}
+
+	const commentIndex = findTomlUnquotedCharacter(line, '#');
+	const content = commentIndex === -1 ? line : line.slice(0, commentIndex);
+	const comment = commentIndex === -1 ? '' : line.slice(commentIndex);
+	const tokens = isTomlTableHeader(content)
+		? tomlTableTokens(content)
+		: tomlKeyValueTokens(content);
+	if (comment) {
+		tokens.push({text: comment, fg: colors.muted, attributes: TextAttributes.DIM});
+	}
+	return tokens;
+}
+
+function isTomlTableHeader(line: string): boolean {
+	const trimmed = line.trim();
+	return trimmed.startsWith('[') && trimmed.endsWith(']');
+}
+
+function tomlTableTokens(line: string): PreviewToken[] {
+	const leadingLength = line.length - line.trimStart().length;
+	const trimmed = line.trim();
+	const bracketCount = trimmed.startsWith('[[') ? 2 : 1;
+	const name = trimmed.slice(bracketCount, -bracketCount);
+	const tokens: PreviewToken[] = [];
+	if (leadingLength > 0) {
+		tokens.push({text: line.slice(0, leadingLength), fg: jsonTokenColor('space')});
+	}
+	tokens.push({text: '['.repeat(bracketCount), fg: jsonTokenColor('punct')});
+	tokens.push({text: name, fg: getActiveTheme().syntax.type, attributes: TextAttributes.BOLD});
+	tokens.push({text: ']'.repeat(bracketCount), fg: jsonTokenColor('punct')});
+	return tokens;
+}
+
+function tomlKeyValueTokens(line: string): PreviewToken[] {
+	const equalsIndex = findTomlUnquotedCharacter(line, '=');
+	if (equalsIndex === -1) {
+		return [...plainToken(line)];
+	}
+
+	const keyPart = line.slice(0, equalsIndex);
+	const leadingLength = keyPart.length - keyPart.trimStart().length;
+	const trailingLength = keyPart.length - keyPart.trimEnd().length;
+	const tokens: PreviewToken[] = [];
+	if (leadingLength > 0) {
+		tokens.push({text: keyPart.slice(0, leadingLength), fg: jsonTokenColor('space')});
+	}
+	const key = keyPart.trim();
+	if (key) {
+		tokens.push({text: key, fg: jsonTokenColor('key')});
+	}
+	if (trailingLength > 0) {
+		tokens.push({text: keyPart.slice(keyPart.length - trailingLength), fg: jsonTokenColor('space')});
+	}
+	tokens.push({text: '=', fg: jsonTokenColor('punct')});
+	tokens.push(...tomlValueTokens(line.slice(equalsIndex + 1)));
+	return tokens;
+}
+
+function tomlValueTokens(value: string): PreviewToken[] {
+	const tokens: PreviewToken[] = [];
+	let cursor = 0;
+	while (cursor < value.length) {
+		const char = value[cursor]!;
+		if (/\s/.test(char)) {
+			const next = readWhile(value, cursor, charAt => /\s/.test(charAt), 'space');
+			tokens.push({text: next.token.text, fg: jsonTokenColor('space')});
+			cursor = next.nextCursor;
+			continue;
+		}
+		if (char === '"' || char === "'") {
+			const next = readTomlString(value, cursor, char);
+			tokens.push({text: next.text, fg: jsonTokenColor('string')});
+			cursor = next.nextCursor;
+			continue;
+		}
+		if ('[]{}.,'.includes(char)) {
+			tokens.push({text: char, fg: jsonTokenColor('punct')});
+			cursor++;
+			continue;
+		}
+		const next = readTomlBareValue(value, cursor);
+		const type: JsonTokenType = /^(true|false)$/i.test(next.text)
+			? 'boolean'
+			: /^[-+]?\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][-+]?\d+)?$/.test(next.text)
+				? 'number'
+				: 'string';
+		tokens.push({text: next.text, fg: jsonTokenColor(type)});
+		cursor = next.nextCursor;
+	}
+	return tokens;
+}
+
+function readTomlString(line: string, start: number, quote: '"' | "'"): {readonly text: string; readonly nextCursor: number} {
+	let cursor = start + 1;
+	while (cursor < line.length) {
+		if (quote === '"' && line[cursor] === '\\') {
+			cursor += 2;
+			continue;
+		}
+		if (line[cursor] === quote) {
+			cursor++;
+			break;
+		}
+		cursor++;
+	}
+	return {text: line.slice(start, cursor), nextCursor: cursor};
+}
+
+function readTomlBareValue(line: string, start: number): {readonly text: string; readonly nextCursor: number} {
+	let cursor = start + 1;
+	while (cursor < line.length && !/\s/.test(line[cursor]!) && !'[]{}.,'.includes(line[cursor]!)) cursor++;
+	return {text: line.slice(start, cursor), nextCursor: cursor};
+}
+
+/** 查找未落在单/双引号内的 TOML 分隔符，双引号字符串支持转义。 */
+function findTomlUnquotedCharacter(line: string, target: '#' | '='): number {
+	let quote: '"' | "'" | null = null;
+	for (let index = 0; index < line.length; index++) {
+		const char = line[index]!;
+		if (quote === '"' && char === '\\') {
+			index++;
+			continue;
+		}
+		if (quote) {
+			if (char === quote) quote = null;
+			continue;
+		}
+		if (char === '"' || char === "'") {
+			quote = char;
+			continue;
+		}
+		if (char === target) return index;
+	}
+	return -1;
 }
 
 function tokenizeMarkdownLines(lines: readonly string[]): readonly (readonly PreviewToken[])[] {

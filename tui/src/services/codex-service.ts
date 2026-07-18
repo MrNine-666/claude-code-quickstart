@@ -1,10 +1,11 @@
 import {existsSync, readFileSync} from 'node:fs';
 import {
 	deleteCodexProfile,
+	codexProfileExists,
 	isDefaultCodexProfile,
 	isOfficialLoginActive,
 	isOfficialLoginKey,
-	listCodexProfiles,
+	scanCodexProfiles,
 	migrateLegacyOfficialLoginFile,
 	readCodexProfile,
 	readCodexProfileToml as readCodexProfileTomlByKey,
@@ -45,7 +46,7 @@ export type CodexProviderFormInput = {
 
 let officialMigrationDone = false;
 
-/** 存量迁移 preflight：进入 Codex 供应商页时清理历史遗留的 official.config.toml 空壳（一次性，幂等）。 */
+/** 存量迁移 preflight：进入 Codex 上下文的供应商页时清理历史遗留的 official.config.toml 空壳（一次性，幂等）。 */
 function runCodexOfficialMigrationOnce(): void {
 	if (officialMigrationDone) {
 		return;
@@ -61,13 +62,18 @@ function runCodexOfficialMigrationOnce(): void {
 
 /** official login 是否已登录：已激活默认态，或 auth.json 存在（凭据由 codex login 生成，ccq 只读）。 */
 export function isCodexOfficialLoggedIn(): boolean {
-	return isOfficialLoginActive() || existsSync(codexAuthJsonPath());
+	try {
+		return isOfficialLoginActive() || existsSync(codexAuthJsonPath());
+	} catch {
+		return existsSync(codexAuthJsonPath());
+	}
 }
 
 export function loadCodexProviderDisplay(): ProviderDisplayData {
 	runCodexOfficialMigrationOnce();
 	const officialLoggedIn = isCodexOfficialLoggedIn();
-	const profiles = listCodexProfiles().map(profile => {
+	const scan = scanCodexProfiles();
+	const profiles = scan.profiles.map(profile => {
 		const official = profile.providerType === 'officialLogin';
 		return {
 			key: profile.key,
@@ -84,7 +90,8 @@ export function loadCodexProviderDisplay(): ProviderDisplayData {
 	return {
 		profiles,
 		activeKey: active?.key ?? '',
-		hasProviders: profiles.length > 0
+		hasProviders: profiles.length > 0,
+		loadFailures: scan.failures
 	};
 }
 
@@ -111,7 +118,7 @@ export function loadCodexProviderProfile(profilePath: string): CodexProfile | nu
 
 export function codexModelSummary(profile: CodexProfile | null): string {
 	if (!profile) {
-		return 'Codex profile';
+		return '供应商';
 	}
 
 	const parts: string[] = [profile.providerType];
@@ -156,18 +163,30 @@ export function saveCodexProviderForm(input: CodexProviderFormInput, values: Cod
 		}
 
 		const key = input.mode === 'edit' ? (input.profileKey ?? values.profileKey) : values.profileKey.trim();
+		if (input.mode !== 'edit' && codexProfileExists(key)) {
+			return {
+				ok: false,
+				error: `供应商 ${key} 已存在，请修改文件名后重试`,
+				errorKind: 'conflict'
+			};
+		}
 		const rawToml = values.toml || codexProviderValuesToToml(values);
 		// 编辑活跃 profile 前先记录其活跃态：saveCodexProfileToml 只写子文件，
 		// 不会同步 config.toml 的供应商键，故活跃 profile 的改动需在写盘后重新同步默认。
 		const wasActive = input.mode === 'edit' && isDefaultCodexProfile(key);
 		const profile = saveCodexProfileToml(key, rawToml);
-		if (input.mode === 'edit') {
-			// 编辑当前活跃 profile：重新导入新值到 config.toml，避免 model/base_url/token 停留在旧值。
-			if (wasActive) {
+		const shouldSyncDefault = input.mode === 'edit' ? wasActive : values.activateAfterSave;
+		if (shouldSyncDefault) {
+			try {
 				setDefaultCodexProfile(profile.key);
+			} catch (error) {
+				const detail = redactCodexTomlForOutput(error instanceof Error ? error.message : String(error)).split(/\r?\n/, 1)[0];
+				return {
+					ok: true,
+					data: profile,
+					warning: `供应商 ${profile.key} 已保存，但激活失败：${detail || '请修复 config.toml 后在列表中重试'}`
+				};
 			}
-		} else if (values.activateAfterSave) {
-			setDefaultCodexProfile(profile.key);
 		}
 		return {ok: true, data: profile};
 	} catch (error) {
@@ -181,7 +200,8 @@ export function switchActiveCodexProvider(key: string): ProviderServiceResult<{p
 		setDefaultCodexProfile(key);
 		return {ok: true, data: {providerName: key}};
 	} catch (error) {
-		return {ok: false, error: error instanceof Error ? error.message : String(error)};
+		const message = error instanceof Error ? error.message : String(error);
+		return {ok: false, error: redactCodexTomlForOutput(message)};
 	}
 }
 
@@ -190,7 +210,8 @@ export function removeCodexProvider(key: string): ProviderServiceResult<{cleared
 		deleteCodexProfile(key);
 		return {ok: true, data: {clearedSettings: false}};
 	} catch (error) {
-		return {ok: false, error: error instanceof Error ? error.message : String(error)};
+		const message = error instanceof Error ? error.message : String(error);
+		return {ok: false, error: redactCodexTomlForOutput(message)};
 	}
 }
 
@@ -281,12 +302,12 @@ function recordToCodexValues(record: Record<string, string>, fallback: CodexProv
 export const codexProviderFormAdapter: ProviderFormAdapter<CodexProviderFormInput, CodexProviderFormValues, CodexProviderFormModel> = {
 	textLabel: (values) => values.providerType === 'officialLogin'
 		? (values.authEditable ? 'auth.json（明文·可编辑）' : 'auth.json（只读脱敏预览）')
-		: '最终 TOML（真实 profile 文件）',
-	title: (model) => model.mode === 'edit' ? '编辑 Codex profile' : '添加 Codex profile',
+		: '最终 TOML（供应商配置文件）',
+	title: (model) => model.mode === 'edit' ? '编辑供应商' : '添加供应商',
 	savedMessage: (model, values) =>
 		model.mode === 'edit'
-			? `Codex profile ${values.profileKey} 已更新`
-			: `Codex profile ${values.profileKey} 已添加${values.activateAfterSave ? '并激活' : ''}`,
+			? `供应商 ${values.profileKey} 已更新`
+			: `供应商 ${values.profileKey} 已添加${values.activateAfterSave ? '并激活' : ''}`,
 	valuesToRecord: codexValuesToRecord,
 	recordToValues: recordToCodexValues,
 	buildText: (values) => values.providerType === 'officialLogin' ? values.authJson : (values.toml || codexProviderValuesToToml(values)),

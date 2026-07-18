@@ -81,7 +81,7 @@ try {
 
 	// ── 5.7 official login：虚拟条目，不落盘，不接受 saveCodexProfile ──
 	assert.throws(() => saveCodexProfile({key: 'official', providerType: 'officialLogin'}),
-		/非法 Codex profile key/, 'official 保留字不可落盘为真实 profile');
+		/非法供应商名称/, 'official 保留字不可落盘为真实 profile');
 	console.log('[PASS] 5.7 official login 为虚拟条目，不落盘');
 
 	// ── 5.8 保存 profile：写 ~/.codex 根目录，不写 ccq vault/Claude provider ──
@@ -124,7 +124,7 @@ try {
 	console.log('[PASS] 5.10 Codex 默认 profile 合并写 + 保留 MCP/其他配置 + 禁 legacy selector + 幂等');
 
 	// ── 5.9 删除 profile：当前默认拒绝删除，切换默认后可删除非默认 ──
-	assert.throws(() => deleteCodexProfile(key), /默认 Codex profile/, '默认 profile 删除前拒绝');
+	assert.throws(() => deleteCodexProfile(key), /默认供应商/, '默认 profile 删除前拒绝');
 	// official login 虚拟条目激活：不落盘，清空 config.toml 供应商键；auth.json 存在即视为登录态。
 	writeFileSync(join(codexHome, 'auth.json'), '{"access_token":"secret"}', 'utf8');
 	setDefaultCodexProfile('official');

@@ -87,6 +87,7 @@ export function ProviderView({
 	const [screen, setScreen] = useState<ProviderScreen>({ kind: 'list' });
 
 	const profiles = display.profiles;
+	const loadFailures = isCodex ? (display.loadFailures ?? []) : [];
 	const safeSelected = profiles.length === 0 ? 0 : Math.min(selected, profiles.length - 1);
 	const current = profiles[safeSelected] ?? null;
 	// Codex official login 虚拟条目：无文件、不可编辑，删除语义为「登出」（清 auth.json）。
@@ -121,6 +122,15 @@ export function ProviderView({
 		setSelected((prev) => (next.profiles.length === 0 ? 0 : Math.min(prev, next.profiles.length - 1)));
 		return next;
 	};
+	const handleSaved = (message: string, warning?: string) => {
+		refresh();
+		if (warning) {
+			toast.warning(warning);
+		} else {
+			toast.success(message);
+		}
+		setScreen({kind: 'list'});
+	};
 
 	// 表单屏（add/edit 统一走 ProviderForm）：Claude 使用 JSON，Codex 使用真实 TOML adapter。
 	if (screen.kind === 'add') {
@@ -135,11 +145,7 @@ export function ProviderView({
 					validate={(values) => validateCodexProviderForm(model.mode, values)}
 					adapter={codexProviderFormAdapter}
 					onCancel={() => setScreen({ kind: 'list' })}
-					onSaved={(message) => {
-						refresh();
-						toast.success(message);
-						setScreen({ kind: 'list' });
-					}}
+					onSaved={handleSaved}
 				/>
 			);
 		}
@@ -153,11 +159,7 @@ export function ProviderView({
 				save={saveProviderForm}
 				validate={(values) => validateProviderForm(model.mode, values)}
 				onCancel={() => setScreen({ kind: 'list' })}
-				onSaved={(message) => {
-					refresh();
-					toast.success(message);
-					setScreen({ kind: 'list' });
-				}}
+				onSaved={handleSaved}
 			/>
 		);
 	}
@@ -177,11 +179,7 @@ export function ProviderView({
 					validate={(values) => validateCodexProviderForm('edit', values)}
 					adapter={codexProviderFormAdapter}
 					onCancel={() => setScreen({ kind: 'list' })}
-					onSaved={(message) => {
-						refresh();
-						toast.success(message);
-						setScreen({ kind: 'list' });
-					}}
+					onSaved={handleSaved}
 				/>
 			);
 		}
@@ -196,11 +194,7 @@ export function ProviderView({
 				save={(input, values) => saveProviderForm({ ...input, profileKey: current.key, profile }, values)}
 				validate={(values) => validateProviderForm('edit', values)}
 				onCancel={() => setScreen({ kind: 'list' })}
-				onSaved={(message) => {
-					refresh();
-					toast.success(message);
-					setScreen({ kind: 'list' });
-				}}
+				onSaved={handleSaved}
 			/>
 		);
 	}
@@ -223,9 +217,19 @@ export function ProviderView({
 				</box>
 			) : null}
 
+			{loadFailures.length > 0 ? (
+				<box marginBottom={1}>
+					<ErrorPanel
+						message={`${loadFailures.length} 个供应商配置无法读取，已跳过：${loadFailures
+							.map((failure) => `${failure.key}（${failure.reason}）`)
+							.join('、')}`}
+					/>
+				</box>
+			) : null}
+
 			{profiles.length === 0 ? (
 				<ListEmptyState
-					message={isCodex ? '暂无 Codex profile' : '暂无供应商配置'}
+					message='暂无供应商配置'
 					hint={{label: isCodex ? '添加第一个供应商（可在表单内选择类型，支持 official login / 自定义）' : '添加第一个供应商（可在表单内选择类型，含自定义）', enabled: true}}
 				/>
 			) : (

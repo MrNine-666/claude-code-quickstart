@@ -2,7 +2,7 @@
 // 非 TTY 友好纯文本输出。Claude 路径复用 getProviderList + getActiveProvider。
 
 import { getProviderList, getActiveProvider } from '../../core/provider.js';
-import { listCodexProfiles, type CodexProfileListItem } from '../../core/codex.js';
+import { scanCodexProfiles, type CodexProfileListItem } from '../../core/codex.js';
 import type { ProviderListItem } from '../../core/provider.js';
 import type { ToolTarget } from '../argv.js';
 
@@ -28,12 +28,12 @@ function runClaudeLs(): number {
 	const activeKey = active?.key;
 
 	if (list.length === 0) {
-		console.log('当前没有任何 provider。');
+		console.log('当前没有任何供应商。');
 		console.log('运行 `ccq` 进入 TUI 新建供应商，或使用 `ccq add`（待实现）。');
 		return 0;
 	}
 
-	console.log('Providers（* = 当前默认）:');
+	console.log('供应商（* = 当前默认）:');
 	for (const line of listProvidersForDisplay(list, activeKey)) {
 		console.log(`  ${line}`);
 	}
@@ -42,14 +42,18 @@ function runClaudeLs(): number {
 }
 
 function runCodexLs(): number {
-	const list = listCodexProfiles();
+	const scan = scanCodexProfiles();
+	const list = scan.profiles;
+	for (const failure of scan.failures) {
+		console.error(`警告：供应商 ${failure.key} 无法读取：${failure.reason}`);
+	}
 	if (list.length === 0) {
-		console.log('当前没有任何 Codex profile。');
+		console.log('当前没有任何供应商。');
 		console.log('运行 `ccq` 进入 TUI，在 Codex 上下文的供应商页中新建。');
 		return 0;
 	}
 
-	console.log('Codex profiles（* = 当前默认）:');
+	console.log('供应商（* = 当前默认）:');
 	for (const line of listCodexProfilesForDisplay(list)) {
 		console.log(`  ${line}`);
 	}

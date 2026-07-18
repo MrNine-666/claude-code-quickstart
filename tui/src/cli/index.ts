@@ -63,7 +63,7 @@ export async function runCli(intent: CliIntent): Promise<number> {
 		case 'unknown': {
 			// 未知动词或缺参数的已知动词
 			if (intent.verb === 'cc') {
-				console.error('cc 缺少 provider 名称。');
+				console.error('cc 缺少供应商名称。');
 				console.error('用法: ccq cc <name> [claude-args...]');
 				return 1;
 			}
@@ -75,7 +75,7 @@ export async function runCli(intent: CliIntent): Promise<number> {
 			}
 
 			if (intent.verb === 'use') {
-				console.error('use 缺少 provider/profile 名称，或 --tool 参数无效。');
+				console.error('use 缺少供应商名称，或 --tool 参数无效。');
 				console.error('用法: ccq use <name> [--tool claude|codex]');
 				return 1;
 			}

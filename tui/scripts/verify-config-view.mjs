@@ -119,6 +119,8 @@ assert.match(configViewSource, /fillMissingIntoText\([^\n]+target\)/, 'Ctrl+O fi
 assert.match(configViewSource, /saveConfigText\(content, target\)/, '保存必须按 target 路由');
 assert.match(configViewSource, /isJson=\{!isCodex\}/, 'Codex Config 编辑器不得启用 JSON 校验，应交给 TOML service 校验');
 assert.match(configViewSource, /filetype=\{isCodex \? 'text' : 'json'\}/, 'Codex Config 编辑器不应声明为 JSON filetype');
+assert.match(configViewSource, /<CodePreview content=\{previewContent\} filetype=\{isCodex \? 'toml' : 'json'\} \/>/, 'Codex 当前配置预览必须使用 TOML 样式');
+assert.match(configViewSource, /<CodePreview content=\{recommendationContent\} filetype=\{isCodex \? 'toml' : 'jsonc'\} \/>/, 'Codex 推荐配置预览必须使用 TOML 样式');
 assert.match(configViewSource, /title='配置文件管理'/, '编辑态 Header 标题统一为「配置文件管理」（Codex 上下文经由 Header 全称区分，配置文件页不再重复 Codex 前缀）');
 assert.match(configViewSource, /subtitle=\{isCodex \? '查看、补全与编辑 ~\/\.codex\/config\.toml' : '查看、补全与编辑 ~\/\.claude\/settings\.json'\}/, '编辑态 Header 必须随 agentContext 切换副标题');
 assert.match(configViewSource, /if \(dirty\) toast\.info\('已放弃未保存的编辑'\);/, '取消编辑必须识别 dirty 状态');
@@ -138,7 +140,19 @@ process.env.CCQ_HOME = codexHome;
 process.env.CODEX_HOME = join(codexHome, '.codex');
 try {
 	mkdirSync(process.env.CODEX_HOME, {recursive: true});
-	const {configFileExists, getConfigPath, readCurrentConfigText, fillMissingIntoText, saveConfigText} = await import('../src/services/config-service.ts');
+	const {configFileExists, getConfigPath, loadRecommendationAnnotated, readCurrentConfigText, fillMissingIntoText, saveConfigText} = await import('../src/services/config-service.ts');
+	const annotatedRecommendation = loadRecommendationAnnotated('cx');
+	assert.match(annotatedRecommendation ?? '', /model_reasoning_effort\s*=\s*"xhigh"/, 'Codex 推荐配置应使用 xhigh 推理等级');
+	assert.match(annotatedRecommendation ?? '', /#\s*\[sandbox_workspace_write\]/, '推荐配置应展示联网增强项');
+	assert.match(annotatedRecommendation ?? '', /#\s*\[features\]/, '推荐配置应展示 memories 增强项');
+	assert.doesNotMatch(annotatedRecommendation ?? '', /notify\s*=/, '推荐配置不得写入本机通知配置');
+	const recommendedFill = fillMissingIntoText('', 'cx');
+	assert.equal(recommendedFill.ok, true, 'Codex fill-missing 应接受空配置');
+	if (recommendedFill.ok) {
+		assert.match(recommendedFill.text, /model_reasoning_effort\s*=\s*"xhigh"/, 'fill-missing 应补 xhigh 推理等级');
+		assert.doesNotMatch(recommendedFill.text, /\[sandbox_workspace_write\]/, 'fill-missing 不得自动开启网络访问');
+		assert.doesNotMatch(recommendedFill.text, /\[features\]/, 'fill-missing 不得自动开启 memories');
+	}
 	const codexPath = getConfigPath('cx');
 	writeFileSync(codexPath, [
 		'model = "custom-model"',

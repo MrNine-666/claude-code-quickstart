@@ -204,7 +204,7 @@ export function buildCodexProviderFormModel(input: {
 			label: '供应商类型',
 			value: values.providerType,
 			options: buildProviderTypeOptions(),
-			helpText: 'Codex profile 独立管理；official login 使用 codex login（不落盘），自定义 API 供应商写入 profile TOML。'
+			helpText: '供应商独立管理；official login 使用 codex login（不落盘），自定义 API 供应商写入供应商配置 TOML。'
 		});
 	}
 

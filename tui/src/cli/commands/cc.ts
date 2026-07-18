@@ -23,9 +23,9 @@ export async function runCc(
 ): Promise<number> {
 	// 名称白名单校验（^[A-Za-z0-9._-]+$，天然防路径穿越：不含 / 与 ..）
 	if (!testProviderKey(name)) {
-		console.error(`无效 provider 名称: ${name}`);
+		console.error(`无效供应商名称: ${name}`);
 		console.error('名称只能包含英文字母、数字、点号、下划线和短横线。');
-		console.error('提示: 文件名即 provider 名（~/.claude/providers/<name>.json）');
+		console.error('提示: 文件名即供应商名（~/.claude/providers/<name>.json）');
 		return 1;
 	}
 
@@ -33,19 +33,19 @@ export async function runCc(
 	const list = getProviderList();
 	const found = list.find(p => p.key === name);
 	if (!found) {
-		console.error(`未找到 provider: ${name}`);
+		console.error(`未找到供应商: ${name}`);
 		if (list.length > 0) {
 			console.error('');
-			console.error('可用 provider:');
+			console.error('可用供应商:');
 			for (const line of listProvidersForDisplay(list)) {
 				console.error(`  ${line}`);
 			}
 		} else {
-			console.error('当前没有任何 provider。请运行 `ccq` 进入 TUI 新建。');
+			console.error('当前没有任何供应商。请运行 `ccq` 进入 TUI 新建。');
 		}
 
 		console.error('');
-		console.error('提示: 文件名即 provider 名（~/.claude/providers/<name>.json）');
+		console.error('提示: 文件名即供应商名（~/.claude/providers/<name>.json）');
 		return 1;
 	}
 

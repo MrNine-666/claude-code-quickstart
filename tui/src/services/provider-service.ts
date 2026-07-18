@@ -27,7 +27,9 @@ import {readJsonFile} from '../core/fs-utils.js';
 
 // Provider service：TUI 视图唯一入口，封装 core 调用为结构化结果，组件不直接读写文件。
 
-export type ProviderServiceResult<T> = {readonly ok: true; readonly data: T} | {readonly ok: false; readonly error: string};
+export type ProviderServiceResult<T> =
+	| {readonly ok: true; readonly data: T; readonly warning?: string}
+	| {readonly ok: false; readonly error: string; readonly errorKind?: 'conflict'};
 
 // 迁移 preflight 结果缓存（§2.4）：进入 Provider 视图执行一次，view 读取缓存决定首屏。
 let migrationCache: MigrationResult | null = null;
@@ -90,14 +92,32 @@ export function saveProviderForm(input: ProviderFormInput, values: ProviderFormV
 				apiKey: payload.apiKey,
 				modelEnv: payload.modelEnv,
 				env: payload.env,
-				activate: payload.activate
+				activate: payload.activate,
+				conflictStrategy: 'error'
 			};
 			const result = addProvider(opts);
 			if (!result.success) {
-				return {ok: false, error: result.error ?? '添加供应商失败'};
+				const error = result.error ?? '添加供应商失败';
+				return {
+					ok: false,
+					error,
+					...(error.includes('已存在') ? {errorKind: 'conflict' as const} : {})
+				};
 			}
 
-			return {ok: true, data: result};
+			const warnings: string[] = [];
+			if (result.onboardingWarning) {
+				warnings.push(result.onboardingWarning);
+			}
+			if (payload.activate && !result.activated) {
+				warnings.push(`供应商 ${result.key} 已保存，但激活失败：${result.activateError ?? '请修复配置后在列表中重试'}`);
+			}
+
+			return {
+				ok: true,
+				data: result,
+				...(warnings.length > 0 ? {warning: warnings.join('；')} : {})
+			};
 		}
 
 		const updates: EditProviderUpdates = {

@@ -241,7 +241,7 @@ export function ConfigView({ agentContext, active, onSubModeChange, onExitToNav,
 				{hasContent ? (
 					<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active}>
 						<ThemedScrollbox ref={viewScrollRef} style={{flexGrow: 1}}>
-							<CodePreview content={previewContent} filetype={isCodex ? 'text' : 'json'} />
+							<CodePreview content={previewContent} filetype={isCodex ? 'toml' : 'json'} />
 						</ThemedScrollbox>
 					</box>
 				) : (
@@ -299,7 +299,7 @@ export function ConfigView({ agentContext, active, onSubModeChange, onExitToNav,
 							borderColor={focus === 'recommend' ? borderColors.active : borderColors.inactive}
 						>
 							<ThemedScrollbox ref={recommendScrollRef} style={{flexGrow: 1, minWidth: 0, minHeight: 0}}>
-								<CodePreview content={recommendationContent} filetype={isCodex ? 'text' : 'jsonc'} />
+								<CodePreview content={recommendationContent} filetype={isCodex ? 'toml' : 'jsonc'} />
 							</ThemedScrollbox>
 						</box>
 					</box>

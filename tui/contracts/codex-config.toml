@@ -1,6 +1,6 @@
 # 模型推理投入程度（Responses API 生效）。取值：minimal | low | medium | high | xhigh。
-# medium 为速度与质量的平衡点；追求更强推理可调 high。
-model_reasoning_effort = "medium"
+# xhigh 适合需要更强推理的日常开发；追求更快响应时可自行调低。
+model_reasoning_effort = "xhigh"
 
 # 执行生成命令前的审批策略。取值：untrusted | on-request | never | { granular = { ... } }。
 # on-request 在需要时才暂停询问，兼顾安全与顺畅，适合日常开发。
@@ -22,3 +22,22 @@ hide_agent_reasoning = false
 # 输出中文件引用的打开方式。取值：vscode | vscode-insiders | windsurf | cursor | none。
 # vscode 为官方默认，点击引用可直接在 VS Code 中定位到对应文件与行号。
 file_opener = "vscode"
+
+# 功能特性开关。以下为显式声明推荐项，其余特性沿用 Codex 内置默认。
+[features]
+# 生命周期钩子（Stable，默认启用）。显式写出以固化意图；hooks.json 或内联 [hooks] 均受此开关控制，禁用改为 false。
+hooks = true
+# 记忆功能为实验特性（默认关闭），依赖较新的 Codex 版本；显式开启，旧客户端不识别时会被忽略。
+memories = true
+
+# 记忆功能子选项（[features].memories 开启后生效）。以下为文档化稳定字段。
+[memories]
+# 是否把新会话线程存为记忆输入（默认启用）。设 false 后新线程不再被记录。
+generate_memories = true
+# 是否在会话中注入已有记忆（默认启用）。设 false 后 Codex 跳过读取历史记忆。
+use_memories = true
+
+# ── 可选增强（默认不启用，复制到编辑器后保存才会生效）────────────────────
+# 工作区联网会扩大外部访问范围；仅在需要安装依赖、查询实时资料等场景手动开启。
+# [sandbox_workspace_write]
+# network_access = true

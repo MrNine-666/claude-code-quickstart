@@ -1,7 +1,7 @@
 import {existsSync, readFileSync, readdirSync, unlinkSync} from 'node:fs';
 import {normalizeBaseUrl, testProviderKey} from './text-utils.js';
 import {codexAuthJsonPath, codexConfigPath, codexDir, codexProfilePath} from './paths.js';
-import {atomicWrite as atomicWriteText} from './fs-utils.js';
+import {atomicWrite as atomicWriteText, SECRET_FILE_MODE} from './fs-utils.js';
 import {
 	atomicWrite,
 	deletePath,
@@ -43,6 +43,16 @@ export type CodexProfileInput = {
 	readonly apiKey?: string;
 };
 
+export type CodexProfileLoadFailure = {
+	readonly key: string;
+	readonly reason: string;
+};
+
+export type CodexProfileScanResult = {
+	readonly profiles: readonly CodexProfileListItem[];
+	readonly failures: readonly CodexProfileLoadFailure[];
+};
+
 const PROFILE_SUFFIX = '.config.toml';
 const API_KEY_FIELD = 'experimental_bearer_token';
 const FORBIDDEN_AUTH_FIELDS = ['env_key', 'auth', 'requires_openai_auth'] as const;
@@ -51,7 +61,8 @@ const FORBIDDEN_AUTH_FIELDS = ['env_key', 'auth', 'requires_openai_auth'] as con
 // 后者 ccq 从不写入，但必须清理用户遗留值，否则残留 `profile = "<key>"` 会让 Codex
 // 仍读旧 profile、与新默认冲突。其余顶层键（mcp_servers/hooks/approval_policy/
 // sandbox_mode 等）原样保留，绝不整体覆盖。
-const CODEX_PROVIDER_KEYS = ['model', 'model_provider', 'model_providers', 'profile', 'profiles'] as const;
+const CODEX_PROVIDER_CLEAR_KEYS = ['model', 'model_provider', 'model_providers', 'profile', 'profiles'] as const;
+const CODEX_PROVIDER_IMPORT_KEYS = ['model', 'model_provider', 'model_providers'] as const;
 
 /**
  * official login 虚拟条目 sentinel key。
@@ -104,7 +115,7 @@ export function testCodexProfileKey(key: string | undefined | null): boolean {
 /** 校验 key 并返回安全 profile 文件名 stem；非法 key 抛错（写盘前调用）。 */
 export function safeCodexProfileKey(key: string): string {
 	if (!testCodexProfileKey(key)) {
-		throw new Error(`非法 Codex profile key: ${key}`);
+		throw new Error(`非法供应商名称: ${key}`);
 	}
 
 	return String(key);
@@ -228,34 +239,61 @@ export function readCodexProfile(key: string): CodexProfile {
 	const safe = safeCodexProfileKey(key);
 	const profilePath = codexProfilePath(safe);
 	if (!existsSync(profilePath)) {
-		throw new Error(`Codex profile 不存在: ${safe}`);
+		throw new Error(`供应商不存在: ${safe}`);
 	}
 
-	return parseCodexProfileToml(safe, readFileSync(profilePath, 'utf8'), profilePath);
+	const rawToml = readFileSync(profilePath, 'utf8');
+	validateCodexProfileDocument(safe, parse(rawToml));
+	return parseCodexProfileToml(safe, rawToml, profilePath);
 }
 
 export function saveCodexProfile(input: CodexProfileInput): CodexProfile {
 	const key = safeCodexProfileKey(input.key);
 	const document = buildCodexProfileDocument({...input, key});
 	const profilePath = codexProfilePath(key);
-	atomicWrite(profilePath, document);
+	atomicWrite(profilePath, document, {mode: SECRET_FILE_MODE});
 	return parseCodexProfileToml(key, stringify(document), profilePath);
+}
+
+function validateCodexProfileDocument(key: string, document: TomlDocument): void {
+	if (Object.prototype.hasOwnProperty.call(document, 'profile') || Object.prototype.hasOwnProperty.call(document, 'profiles')) {
+		throw new Error('供应商配置不得包含 legacy profile/profiles selector');
+	}
+
+	const modelProvider = getPath(document, ['model_provider']);
+	if (modelProvider !== key) {
+		throw new Error(`供应商名称与 model_provider 不一致: 预期 ${key}`);
+	}
+
+	const providers = getPath(document, ['model_providers']);
+	if (!isRecord(providers) || !isRecord(providers[key])) {
+		throw new Error(`供应商配置缺少 [model_providers.${key}]`);
+	}
+
+	const providerKeys = Object.keys(providers);
+	if (providerKeys.length !== 1 || providerKeys[0] !== key) {
+		throw new Error(`供应商配置的 model_providers 只能包含唯一身份 ${key}`);
+	}
+
+	const provider = providers[key] as Record<string, unknown>;
+	if (provider.name !== key) {
+		throw new Error(`供应商名称必须与 key 一致: ${key}`);
+	}
+
+	for (const field of FORBIDDEN_AUTH_FIELDS) {
+		if (Object.prototype.hasOwnProperty.call(provider, field)) {
+			throw new Error(`供应商不得包含认证字段 ${field}`);
+		}
+	}
 }
 
 export function saveCodexProfileToml(key: string, rawToml: string): CodexProfile {
 	const safe = safeCodexProfileKey(key);
 	const document = parse(rawToml);
-	const modelProvider = getPath(document, ['model_provider']);
-	if (typeof modelProvider === 'string' && modelProvider !== safe) {
-		throw new Error(`Codex profile key 与 model_provider 不一致: ${safe} != ${modelProvider}`);
-	}
-
-	if (modelProvider === safe && !isRecord(getPath(document, ['model_providers', safe]))) {
-		throw new Error(`Codex profile 缺少 [model_providers.${safe}]`);
-	}
+	validateCodexProfileDocument(safe, document);
 
 	const profilePath = codexProfilePath(safe);
-	atomicWriteText(profilePath, rawToml);
+	atomicWriteText(profilePath, rawToml, {mode: SECRET_FILE_MODE});
 	return parseCodexProfileToml(safe, rawToml, profilePath);
 }
 
@@ -263,7 +301,7 @@ export function readCodexProfileToml(key: string): string {
 	const safe = safeCodexProfileKey(key);
 	const profilePath = codexProfilePath(safe);
 	if (!existsSync(profilePath)) {
-		throw new Error(`Codex profile 不存在: ${safe}`);
+		throw new Error(`供应商不存在: ${safe}`);
 	}
 	return readFileSync(profilePath, 'utf8');
 }
@@ -282,7 +320,7 @@ export function deleteCodexProfile(key: string): void {
 
 	const safe = safeCodexProfileKey(key);
 	if (isDefaultCodexProfile(safe)) {
-		throw new Error(`不能删除当前默认 Codex profile: ${safe}`);
+		throw new Error(`不能删除当前默认供应商: ${safe}`);
 	}
 
 	const profile = codexProfileExists(safe) ? readCodexProfile(safe) : null;
@@ -361,7 +399,7 @@ export function writeCodexAuthJson(rawJson: string): {loggedOut: boolean} {
 	}
 
 	// 规范化为 2 空格缩进后原子写入，保持与 codex login 产物一致的可读格式。
-	atomicWriteText(authPath, `${JSON.stringify(parsed, null, 2)}\n`);
+	atomicWriteText(authPath, `${JSON.stringify(parsed, null, 2)}\n`, {mode: SECRET_FILE_MODE});
 	return {loggedOut: false};
 }
 
@@ -388,28 +426,50 @@ export function isDefaultCodexProfile(key: string): boolean {
 }
 
 /** 构造 official login 虚拟条目（不落盘，profilePath 为空串标识虚拟）。 */
-function officialLoginListItem(): CodexProfileListItem {
+function officialLoginListItem(defaultKey = resolveDefaultCodexProfileKey()): CodexProfileListItem {
 	return {
 		key: CODEX_OFFICIAL_LOGIN_KEY,
 		providerType: 'officialLogin',
 		baseUrl: '',
 		hasApiKey: false,
-		isDefault: isOfficialLoginActive(),
+		isDefault: defaultKey === CODEX_OFFICIAL_LOGIN_KEY,
 		profilePath: ''
 	};
+}
+
+function safeCodexLoadFailureReason(error: unknown): string {
+	const message = error instanceof Error ? error.message : String(error);
+	return redactCodexTomlForOutput(message).split(/\r?\n/, 1)[0] || '供应商配置无法解析';
 }
 
 /**
  * 列出 Codex profile：真实 `<key>.config.toml` + 始终追加一个 official login 虚拟条目。
  * 虚拟条目排在末尾，profilePath 为空串（无磁盘文件）；其 isDefault 随 auth.json/config.toml 计算。
  */
+export function scanCodexProfiles(): CodexProfileScanResult {
+	const failures: CodexProfileLoadFailure[] = [];
+	let defaultKey = '';
+	try {
+		defaultKey = resolveDefaultCodexProfileKey();
+	} catch (error) {
+		failures.push({key: 'config.toml', reason: safeCodexLoadFailureReason(error)});
+	}
+
+	const profiles: CodexProfileListItem[] = [];
+	for (const key of listCodexProfileKeys()) {
+		try {
+			profiles.push({...readCodexProfile(key), isDefault: key === defaultKey});
+		} catch (error) {
+			failures.push({key, reason: safeCodexLoadFailureReason(error)});
+		}
+	}
+
+	profiles.push(officialLoginListItem(defaultKey));
+	return {profiles, failures};
+}
+
 export function listCodexProfiles(): readonly CodexProfileListItem[] {
-	const defaultKey = resolveDefaultCodexProfileKey();
-	const real = listCodexProfileKeys().map(key => {
-		const profile = readCodexProfile(key);
-		return {...profile, isDefault: key === defaultKey};
-	});
-	return [...real, officialLoginListItem()];
+	return scanCodexProfiles().profiles;
 }
 
 /** 读取 config.toml document（不存在返回空文档）。 */
@@ -421,11 +481,11 @@ function readCodexConfigDocumentOrEmpty(): TomlDocument {
 /** 清空 config.toml 的全部供应商键，保留其余顶层键（mcp_servers/hooks 等）。 */
 function clearCodexProviderKeys(): void {
 	let merged = readCodexConfigDocumentOrEmpty();
-	for (const providerKey of CODEX_PROVIDER_KEYS) {
+	for (const providerKey of CODEX_PROVIDER_CLEAR_KEYS) {
 		merged = deletePath(merged, [providerKey]);
 	}
 
-	atomicWrite(codexConfigPath(), merged);
+	atomicWrite(codexConfigPath(), merged, {mode: SECRET_FILE_MODE});
 }
 
 /**
@@ -444,23 +504,24 @@ export function setDefaultCodexProfile(key: string): void {
 
 	const rawToml = readCodexProfileToml(key);
 	const profileDoc = parse(rawToml);
+	validateCodexProfileDocument(safeCodexProfileKey(key), profileDoc);
 
 	let merged = readCodexConfigDocumentOrEmpty();
 
 	// 1. 删旧供应商：清掉现有 config 里的三个供应商键
-	for (const providerKey of CODEX_PROVIDER_KEYS) {
+	for (const providerKey of CODEX_PROVIDER_CLEAR_KEYS) {
 		merged = deletePath(merged, [providerKey]);
 	}
 
 	// 2. 导新供应商：从新 profile 取三个键（profile 有才写，如 official login 无 provider 表）
-	for (const providerKey of CODEX_PROVIDER_KEYS) {
+	for (const providerKey of CODEX_PROVIDER_IMPORT_KEYS) {
 		const value = getPath(profileDoc, [providerKey]);
 		if (value !== undefined) {
 			merged = setPath(merged, [providerKey], value);
 		}
 	}
 
-	atomicWrite(codexConfigPath(), merged);
+	atomicWrite(codexConfigPath(), merged, {mode: SECRET_FILE_MODE});
 }
 
 /**

@@ -26,14 +26,14 @@ export async function runCx(
 		try {
 			safe = safeCodexProfileKey(name);
 		} catch {
-			console.error(`无效 Codex profile 名称: ${name}`);
+			console.error(`无效供应商名称: ${name}`);
 			console.error('名称只能包含英文字母、数字、点号、下划线和短横线，且不能为 . / .. 或以 - 开头。');
 			return 1;
 		}
 
 		if (!codexProfileExists(safe)) {
-			console.error(`未找到 Codex profile: ${safe}`);
-			console.error('请运行 `ccq` 进入 TUI 的供应商页新建 Codex profile。');
+			console.error(`未找到供应商: ${safe}`);
+			console.error('请运行 `ccq` 进入 TUI 的供应商页新建。');
 			return 1;
 		}
 

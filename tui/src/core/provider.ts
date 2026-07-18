@@ -1,7 +1,13 @@
 import {existsSync, mkdirSync, readdirSync, renameSync, unlinkSync} from 'node:fs';
 import {basename, join} from 'node:path';
 import {createHash} from 'node:crypto';
-import {atomicWrite, readJsonFile, withProfileLock, writeJsonAtomic} from './fs-utils.js';
+import {
+	readJsonFile,
+	readJsonFileStrict,
+	SECRET_FILE_MODE,
+	withProfileLock,
+	writeJsonAtomic
+} from './fs-utils.js';
 import {providersDir, settingsPath, claudeJsonPath} from './paths.js';
 import {
 	escapeRegex,
@@ -45,10 +51,16 @@ export type ProviderDisplayProfile = {
 	readonly maskedApiKey: string;
 };
 
+export type ProviderLoadFailure = {
+	readonly key: string;
+	readonly reason: string;
+};
+
 export type ProviderDisplayData = {
 	readonly profiles: readonly ProviderDisplayProfile[];
 	readonly activeKey: string;
 	readonly hasProviders: boolean;
+	readonly loadFailures?: readonly ProviderLoadFailure[];
 };
 
 export type AddProviderOptions = {
@@ -73,6 +85,7 @@ export type AddProviderResult = {
 	activated: boolean;
 	error?: string;
 	activateError?: string;
+	onboardingWarning?: string;
 };
 
 export type EditProviderUpdates = {
@@ -107,35 +120,64 @@ function cfg(): ProviderRuntimeConfig {
 	return loadProviderContract();
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
 function readSettings(): Record<string, unknown> {
-	return readJsonFile<Record<string, unknown>>(settingsPath(), {}) || {};
+	const settings = readJsonFile<unknown>(settingsPath(), {});
+	return isRecord(settings) ? settings : {};
+}
+
+function readSettingsForMutation(): Record<string, unknown> {
+	const result = readJsonFileStrict<unknown>(settingsPath());
+	if (result.status === 'missing') {
+		return {};
+	}
+
+	if (result.status === 'invalid' || !isRecord(result.value)) {
+		throw new Error('~/.claude/settings.json 损坏或无法解析，请先修复后重试');
+	}
+
+	if (result.value.env !== undefined && !isRecord(result.value.env)) {
+		throw new Error('~/.claude/settings.json 的 env 必须是对象，请先修复后重试');
+	}
+
+	return result.value;
 }
 
 function writeSettingsAtomic(settings: Record<string, unknown>): void {
-	writeJsonAtomic(settingsPath(), settings);
+	writeJsonAtomic(settingsPath(), settings, {mode: SECRET_FILE_MODE});
 }
 
 /**
  * §2.7 决策 2：首次新增供应商时检测 ~/.claude.json 的 hasCompletedOnboarding，
  * 无则写入 true，跳过 Claude Code 官方首次引导。
  */
-function ensureOnboardingMarked(): void {
+function ensureOnboardingMarked(): string | undefined {
 	const path = claudeJsonPath();
-	const data = readJsonFile<Record<string, unknown>>(path, {}) || {};
+	const result = readJsonFileStrict<unknown>(path);
+	if (result.status === 'invalid' || (result.status === 'valid' && !isRecord(result.value))) {
+		return '供应商已保存，但 onboarding 标记跳过：~/.claude.json 损坏或无法解析';
+	}
+
+	const data: Record<string, unknown> = result.status === 'missing' ? {} : result.value as Record<string, unknown>;
 	if (data.hasCompletedOnboarding === true) {
-		return;
+		return undefined;
 	}
 
 	data.hasCompletedOnboarding = true;
 	try {
-		writeJsonAtomic(path, data);
+		writeJsonAtomic(path, data, {mode: SECRET_FILE_MODE});
 	} catch {
-		/* 写入失败不阻塞供应商新增 */
+		return '供应商已保存，但 onboarding 标记写入失败';
 	}
+
+	return undefined;
 }
 
 function settingsEnv(settings: Record<string, unknown>): Record<string, string> {
-	return (settings.env as Record<string, string>) ?? {};
+	return isRecord(settings.env) ? settings.env as Record<string, string> : {};
 }
 
 function stringFingerprint(text: string): string {
@@ -466,7 +508,10 @@ export function getDisplayData(): ProviderDisplayData {
 // 公开函数用 withProfileLock 包裹；内部 *Unlocked 避免重入死锁（对齐旧 provider-manager.js）。
 
 /** 切换活跃供应商（读 Profile → 合并 settings.json，严格字段所有权，HC-SETTINGS-OWNERSHIP）。 */
-function switchProviderUnlocked(key: string): {success: boolean; providerName: string} {
+function switchProviderUnlocked(
+	key: string,
+	additionalCleanupKeys: Iterable<string> = []
+): {success: boolean; providerName: string} {
 	const profiles = getProviderList();
 	if (profiles.length === 0) {
 		throw new Error('未找到供应商 Profile，请先添加供应商');
@@ -486,7 +531,7 @@ function switchProviderUnlocked(key: string): {success: boolean; providerName: s
 		throw new Error(`供应商 Profile 读取失败: ${key}`);
 	}
 
-	const settings = readSettings();
+	const settings = readSettingsForMutation();
 	if (!settings.env) {
 		settings.env = {};
 	}
@@ -498,6 +543,12 @@ function switchProviderUnlocked(key: string): {success: boolean; providerName: s
 	// 避免切换后残留旧供应商 env；非 provider 来源的 env（如 ClaudeConfig 写入的
 	// CLAUDE_AUTOCOMPACT_PCT_OVERRIDE）因不出现在任何 provider.env 中而自动保留。
 	const previousManagedKeys = collectPreviousProviderManagedKeys();
+	for (const managedKey of config.managedModelEnvKeys) {
+		previousManagedKeys.add(managedKey);
+	}
+	for (const previousKey of additionalCleanupKeys) {
+		previousManagedKeys.add(previousKey);
+	}
 	for (const k of previousManagedKeys) {
 		delete env[k];
 	}
@@ -584,18 +635,16 @@ function addProviderUnlocked(opts: AddProviderOptions): AddProviderResult {
 		const strategy = opts.conflictStrategy || 'increment';
 		const exists = existsSync(join(providersDir(), `${selectedKey}.json`));
 		const hasBuiltinCopies = findBuiltinProviderProfiles(selectedKey, getProviderList()).length > 0;
-		if (exists || hasBuiltinCopies) {
-			if (strategy === 'error') {
-				result.error = `供应商 ${selectedKey} 已存在`;
-				return result;
-			}
+		if (strategy === 'error' && exists) {
+			result.error = `供应商 ${selectedKey} 已存在`;
+			return result;
+		}
 
-			if (strategy === 'increment') {
-				selectedKey = getNextAvailableKey(selectedKey, providersDir());
-				const numMatch = selectedKey.match(/-(\d+)$/);
-				const num = numMatch ? Number.parseInt(numMatch[1]!, 10) : 2;
-				providerName = opts.name || `${builtin.name} (${num})`;
-			}
+		if (strategy === 'increment' && (exists || hasBuiltinCopies)) {
+			selectedKey = getNextAvailableKey(selectedKey, providersDir());
+			const numMatch = selectedKey.match(/-(\d+)$/);
+			const num = numMatch ? Number.parseInt(numMatch[1]!, 10) : 2;
+			providerName = opts.name || `${builtin.name} (${num})`;
 		}
 	} else {
 		// 自定义供应商
@@ -655,10 +704,10 @@ function addProviderUnlocked(opts: AddProviderOptions): AddProviderResult {
 		mkdirSync(providersDir(), {recursive: true});
 	}
 
-	writeJsonAtomic(join(providersDir(), `${selectedKey}.json`), profile);
+	writeJsonAtomic(join(providersDir(), `${selectedKey}.json`), profile, {mode: SECRET_FILE_MODE});
 
 	// §2.7 决策 2：首次新增供应商写入 onboarding 标记（跳过官方首次引导）
-	ensureOnboardingMarked();
+	result.onboardingWarning = ensureOnboardingMarked();
 
 	result.success = true;
 	result.key = selectedKey;
@@ -692,16 +741,21 @@ function editProviderUnlocked(key: string, updates: EditProviderUpdates): {succe
 	if (!profile) {
 		throw new Error(`供应商 Profile 读取失败: ${key}`);
 	}
+	const previousOwnedKeys = new Set(Object.keys(profile.env ?? {}));
+	const settingsBefore = readSettingsForMutation();
+	const settingsBeforeEnv = settingsEnv(settingsBefore);
+	const activeBefore = resolveActiveProfile(
+		getProviderList(),
+		settingsBeforeEnv.ANTHROPIC_BASE_URL ?? '',
+		settingsBeforeEnv.ANTHROPIC_AUTH_TOKEN ?? ''
+	);
+	const wasActive = Boolean(activeBefore && activeBefore.key === key);
 
 	if (!profile.env) {
 		profile.env = {};
 	}
 
 	const envData = profile.env;
-
-	// 写入前判断是否活跃（写入后 BaseUrl 可能已变，无法再匹配旧 URL）
-	const activeBefore = getActiveProvider();
-	const wasActive = Boolean(activeBefore && activeBefore.key === key);
 
 	let pendingNewKey: string | null = null;
 
@@ -768,19 +822,19 @@ function editProviderUnlocked(key: string, updates: EditProviderUpdates): {succe
 
 	// 原子写入（重命名场景：写新文件 + 删旧文件）
 	if (pendingNewKey) {
-		writeJsonAtomic(join(providersDir(), `${pendingNewKey}.json`), profile);
+		writeJsonAtomic(join(providersDir(), `${pendingNewKey}.json`), profile, {mode: SECRET_FILE_MODE});
 		try {
 			unlinkSync(profilePath);
 		} catch {
 			/* 旧文件清理失败不阻塞 */
 		}
 	} else {
-		writeJsonAtomic(profilePath, profile);
+		writeJsonAtomic(profilePath, profile, {mode: SECRET_FILE_MODE});
 	}
 
 	// 活跃供应商自动同步 settings.json
 	if (wasActive) {
-		switchProviderUnlocked(effectiveKey);
+		switchProviderUnlocked(effectiveKey, previousOwnedKeys);
 	}
 
 	return {success: true, key: effectiveKey, renamed: pendingNewKey !== null};
@@ -798,7 +852,13 @@ function deleteProviderUnlocked(key: string, opts?: {force?: boolean}): {success
 		throw new Error(`供应商 Profile 不存在: ${key}`);
 	}
 
-	const active = getActiveProvider();
+	const settingsBefore = readSettingsForMutation();
+	const settingsBeforeEnv = settingsEnv(settingsBefore);
+	const active = resolveActiveProfile(
+		getProviderList(),
+		settingsBeforeEnv.ANTHROPIC_BASE_URL ?? '',
+		settingsBeforeEnv.ANTHROPIC_AUTH_TOKEN ?? ''
+	);
 	const isActive = Boolean(active && active.key === key);
 
 	if (isActive && !options.force) {
@@ -822,7 +882,7 @@ function deleteProviderUnlocked(key: string, opts?: {force?: boolean}): {success
 
 	if (isActive) {
 		const config = cfg();
-		const settings = readSettings();
+		const settings = settingsBefore;
 		const env = settings.env as Record<string, string> | undefined;
 		if (env) {
 			for (const k of managedKeys) {
@@ -947,7 +1007,7 @@ function migrateLegacyProfilesUnlocked(): MigrationResult {
 			// 6. 写临时文件
 			const tmpPath = `${profilePath}.tmp-${process.pid}`;
 			try {
-				writeJsonAtomic(tmpPath, newProfile);
+				writeJsonAtomic(tmpPath, newProfile, {mode: SECRET_FILE_MODE});
 			} catch (error) {
 				failed.push({key, status: 'failed', reason: '写入临时文件失败'});
 				continue;

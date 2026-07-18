@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TextAttributes, type KeyEvent, type ScrollBoxRenderable, type TextareaRenderable } from '@opentui/core';
 import { useKeyboard, useRenderer } from '@opentui/react';
+import { toast } from '@opentui-ui/toast';
 import { FormPanel, firstEditableIndex, nextEditableIndex } from '../components/form/FormPanel.js';
 import { ThemedScrollbox } from '../components/themed-scrollbox.js';
 import { handleTextareaEditKeys, handleTextareaIndentKey } from '../components/editor/textarea-edit-keys.js';
@@ -119,7 +120,7 @@ export type ProviderFormProps<TInput = ProviderFormInput, TValues = ProviderForm
 	readonly model: TModel;
 	readonly active: boolean;
 	readonly onCancel: () => void;
-	readonly onSaved: (message: string) => void;
+	readonly onSaved: (message: string, warning?: string) => void;
 	readonly buildForm: (input: TInput) => TModel;
 	readonly save: (input: TInput, values: TValues) => ProviderServiceResult<unknown>;
 	readonly validate: (values: TValues) => string[];
@@ -355,11 +356,17 @@ export function ProviderForm<TInput = ProviderFormInput, TValues = ProviderFormV
 		const input = formAdapter.makeSubmitInput(model, values);
 		const result = save(input, formValues);
 		if (!result.ok) {
+			if (result.errorKind === 'conflict') {
+				setErrors([]);
+				toast.error(result.error);
+				return;
+			}
+
 			setErrors([result.error]);
 			return;
 		}
 
-		onSaved(formAdapter.savedMessage(model, formValues));
+		onSaved(formAdapter.savedMessage(model, formValues), result.warning);
 	};
 
 	const title = formAdapter.title(model);

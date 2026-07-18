@@ -31,4 +31,14 @@ assert.match(
 assert.match(source, /<text key=\{tokenIndex\}[^>]*selectable[^>]*>/, 'CodePreview 正文 <text> 必须声明 selectable 以支持 copy-on-select');
 assert.match(source, /<text fg=\{colors\.lineNumberForeground\}[^>]*selectable/, 'CodePreview 行号 <text> 必须声明 selectable 以支持跨行选择');
 
-console.log('[PASS] CodePreview 长行不拆 inline token + 尾部换行不渲染 + selectable copy-on-select');
+// TOML 预览复用 CodePreview 的行号、主题与可选择复制能力，不依赖 Tree-sitter，
+// 以保证源码和 bun --compile 单文件产物都有一致样式。
+assert.match(source, /CodePreviewFiletype = 'markdown' \| 'json' \| 'jsonc' \| 'toml' \| 'text'/, 'CodePreview 必须声明 toml 文件类型');
+assert.match(source, /if \(filetype === 'toml'\) \{\s*return tomlPreviewTokens\(line\);\s*\}/, 'TOML 必须走独立的预览分词分支');
+assert.match(source, /function tomlPreviewTokens\(/, 'TOML 预览必须有独立行级分词器');
+assert.match(source, /findTomlUnquotedCharacter\(line, '#'/, 'TOML 注释检测必须忽略引号内的 #');
+assert.match(source, /function tomlTableTokens\(/, 'TOML 表头必须单独着色');
+assert.match(source, /function tomlKeyValueTokens\(/, 'TOML 键值对必须单独着色');
+assert.match(source, /colors\.muted, attributes: TextAttributes\.DIM/, 'TOML 注释必须使用弱化样式');
+
+console.log('[PASS] CodePreview 长行不拆 inline token + 尾部换行不渲染 + selectable copy-on-select + TOML 预览');

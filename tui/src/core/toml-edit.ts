@@ -1,5 +1,5 @@
 import {parse as parseToml, stringify as stringifyToml} from 'smol-toml';
-import {atomicWrite as writeTextAtomic} from './fs-utils.js';
+import {atomicWrite as writeTextAtomic, type AtomicWriteOptions} from './fs-utils.js';
 
 export type TomlPath = readonly string[];
 export type TomlDocument = Record<string, unknown>;
@@ -133,6 +133,6 @@ export function deletePath(document: TomlDocument, path: TomlPath): TomlDocument
 	return next;
 }
 
-export function atomicWrite(filePath: string, document: TomlDocument): void {
-	writeTextAtomic(filePath, stringify(document));
+export function atomicWrite(filePath: string, document: TomlDocument, options: AtomicWriteOptions = {}): void {
+	writeTextAtomic(filePath, stringify(document), options);
 }
