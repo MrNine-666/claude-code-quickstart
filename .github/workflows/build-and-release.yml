@@ -253,6 +253,9 @@ jobs:
       - build-tui
 
     steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
       - name: 下载 Windows x64 可执行文件
         uses: actions/download-artifact@v4
         with:
