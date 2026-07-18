@@ -16,7 +16,6 @@ if (process.platform !== 'win32') {
 }
 
 const RETRY_WINDOW_MS = WINDOWS_HELPER_MAX_ATTEMPTS * WINDOWS_HELPER_INTERVAL_MS;
-const LOG_PATH = join(process.env.TEMP ?? tmpdir(), 'ccq-uninstall.log');
 
 function sleep(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
@@ -34,12 +33,9 @@ async function safeRemove(pathToRemove) {
 	console.warn(`[WARN] 清理残留失败（可手动删除）: ${pathToRemove}`);
 }
 
-function clearLog() {
-	rmSync(LOG_PATH, {force: true});
-}
-
-function readLog() {
-	return existsSync(LOG_PATH) ? readFileSync(LOG_PATH, 'utf8') : '';
+function readLog(workdir) {
+	const logPath = join(workdir, 'ccq-uninstall.log');
+	return existsSync(logPath) ? readFileSync(logPath, 'utf8') : '';
 }
 
 function deadPid() {
@@ -88,7 +84,6 @@ async function runShortLockDelete() {
 	const workdir = mkdtempSync(join(tmpdir(), 'ccq-uninstall-short-'));
 	const targetPath = join(workdir, 'ccq.exe');
 	writeFileSync(targetPath, 'RUNNING-CCQ', 'utf8');
-	clearLog();
 	const lock = startExclusiveLock(targetPath, Math.floor(RETRY_WINDOW_MS / 3));
 	await sleep(300);
 	const {child, helperPath} = spawnHelper(workdir, targetPath);
@@ -98,8 +93,8 @@ async function runShortLockDelete() {
 		assert.equal(code, 0);
 		assert.equal(existsSync(targetPath), false);
 		assert.equal(existsSync(helperPath), false);
-		assert.match(readLog(), /delete attempt \d+ failed/);
-		assert.match(readLog(), /delete succeeded on attempt \d+/);
+		assert.match(readLog(workdir), /delete attempt \d+ failed/);
+		assert.match(readLog(workdir), /delete succeeded on attempt \d+/);
 		console.log('[PASS] Windows uninstall helper：短锁释放后删除目标并自清理');
 	} finally {
 		try { lock.kill(); } catch {}
@@ -111,7 +106,6 @@ async function runLongLockFailure() {
 	const workdir = mkdtempSync(join(tmpdir(), 'ccq-uninstall-long-'));
 	const targetPath = join(workdir, 'ccq.exe');
 	writeFileSync(targetPath, 'RUNNING-CCQ', 'utf8');
-	clearLog();
 	const lockMs = RETRY_WINDOW_MS + 3000;
 	const lock = startExclusiveLock(targetPath, lockMs);
 	await sleep(300);
@@ -122,7 +116,7 @@ async function runLongLockFailure() {
 		assert.equal(code, 1);
 		assert.equal(existsSync(targetPath), true);
 		assert.equal(existsSync(helperPath), false);
-		assert.match(readLog(), /delete failed after all attempts/);
+		assert.match(readLog(workdir), /delete failed after all attempts/);
 		console.log('[PASS] Windows uninstall helper：长锁失败保留目标并自清理');
 	} finally {
 		try { lock.kill(); } catch {}
@@ -136,7 +130,6 @@ try {
 	assert.equal(/Start-Process/.test(helper), false, '卸载 helper 禁止启动任何目标');
 	await runShortLockDelete();
 	await runLongLockFailure();
-	clearLog();
 	console.log('[PASS] Windows 卸载 helper 运行时实测全部通过');
 } catch (error) {
 	console.error('[FAIL] Windows 卸载 helper 运行时实测失败：', error?.message ?? error);
