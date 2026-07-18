@@ -378,18 +378,20 @@ function toolsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		]);
 	}
 
-	// 单义键（无多义 Enter）：inject 类光标展示「m 管理开关」；非 inject 展示「i 安装」。
-	// 两者互斥（一个工具要么可安装要么是 inject 类），footer 同一时刻只展示其一。
+	// Enter 是统一主操作：inject 类打开管理 Modal；普通工具按状态安装/更新。
 	const primaryShortcut: ShortcutSpec = subMode === 'grid-inject'
-		? {command: TOOLS_COMMANDS.MANAGE_INJECT, label: '管理开关'}
-		: {command: TOOLS_COMMANDS.INSTALL, label: '安装'};
+		? {command: TOOLS_COMMANDS.PRIMARY_ACTION, label: '管理开关'}
+		: {command: TOOLS_COMMANDS.PRIMARY_ACTION, label: '安装/更新'};
+	const updateShortcut: readonly ShortcutSpec[] = subMode === 'grid-inject'
+		? [{command: TOOLS_COMMANDS.UPDATE_ONE, label: '更新'}]
+		: [];
 	return buildShortcuts([
 		{command: TOOLS_COMMANDS.UP, label: '选择'},
 		{command: TOOLS_COMMANDS.DOWN, label: '选择'},
 		{command: TOOLS_COMMANDS.LEFT, label: '选择'},
 		{command: TOOLS_COMMANDS.RIGHT, label: '选择'},
 		primaryShortcut,
-		{command: TOOLS_COMMANDS.UPDATE_ONE, label: '更新'},
+		...updateShortcut,
 		{command: TOOLS_COMMANDS.UPDATE_ALL, label: '更新全部'},
 		{command: TOOLS_COMMANDS.UNINSTALL, label: '卸载'},
 		{command: TOOLS_COMMANDS.OPEN_DOCS, label: '打开文档'},

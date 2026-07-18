@@ -37,6 +37,7 @@ export type ToolDefinition = {
 	readonly versionArgs: readonly string[];
 	readonly npmPackage?: string; // kind === 'npm'（CcgWorkflow 虽为 ccg-init，仍标注 npm 引擎包名供 update 派生）
 	readonly docsUrl?: string; // 官方文档 / 仓库地址（卡片描述可跳转，OSC-8 超链接）
+	readonly cliAliases?: readonly string[]; // ccq tools 命令别名（canonical id 自动可用）
 };
 
 /** 工具检测状态（供列表展示）。 */
@@ -72,7 +73,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		command: 'claude',
 		versionArgs: ['--version'],
 		npmPackage: '@anthropic-ai/claude-code',
-		docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview'
+		docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview',
+		cliAliases: ['claude', 'claude-code']
 	},
 	{
 		id: 'Ccline',
@@ -82,7 +84,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		command: 'ccline',
 		versionArgs: ['--version'],
 		npmPackage: '@cometix/ccline',
-		docsUrl: 'https://github.com/Haleclipse/CCometixLine'
+		docsUrl: 'https://github.com/Haleclipse/CCometixLine',
+		cliAliases: ['ccline']
 	},
 	{
 		id: 'CcgWorkflow',
@@ -92,7 +95,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		command: 'codeagent-wrapper',
 		versionArgs: ['--version'],
 		npmPackage: 'ccg-workflow',
-		docsUrl: 'https://github.com/fengshao1227/ccg-workflow'
+		docsUrl: 'https://github.com/fengshao1227/ccg-workflow',
+		cliAliases: ['ccg', 'ccg-workflow']
 	},
 	{
 		id: 'OpenSpec',
@@ -102,7 +106,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		command: 'openspec',
 		versionArgs: ['--version'],
 		npmPackage: '@fission-ai/openspec',
-		docsUrl: 'https://github.com/Fission-AI/OpenSpec'
+		docsUrl: 'https://github.com/Fission-AI/OpenSpec',
+		cliAliases: ['open-spec']
 	},
 	{
 		id: 'Trellis',
@@ -112,7 +117,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		command: 'trellis',
 		versionArgs: ['--version'],
 		npmPackage: '@mindfoldhq/trellis',
-		docsUrl: 'https://docs.trytrellis.app/zh'
+		docsUrl: 'https://docs.trytrellis.app/zh',
+		cliAliases: ['trellis']
 	},
 	{
 		id: 'CodeGraph',
@@ -122,7 +128,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		command: 'codegraph',
 		versionArgs: ['--version'],
 		npmPackage: '@colbymchenry/codegraph',
-		docsUrl: 'https://github.com/colbymchenry/codegraph'
+		docsUrl: 'https://github.com/colbymchenry/codegraph',
+		cliAliases: ['code-graph']
 	},
 	{
 		id: 'CodexCli',
@@ -132,7 +139,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		command: 'codex',
 		versionArgs: ['--version'],
 		npmPackage: '@openai/codex',
-		docsUrl: 'https://developers.openai.com/codex/cli'
+		docsUrl: 'https://developers.openai.com/codex/cli',
+		cliAliases: ['codex', 'codex-cli']
 	},
 	{
 		id: 'AntigravityCli',
@@ -141,7 +149,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		kind: 'shell-script',
 		command: 'agy',
 		versionArgs: ['--version'],
-		docsUrl: 'https://antigravity.google/docs/cli'
+		docsUrl: 'https://antigravity.google/docs/cli',
+		cliAliases: ['agy', 'antigravity', 'antigravity-cli']
 	}
 ];
 

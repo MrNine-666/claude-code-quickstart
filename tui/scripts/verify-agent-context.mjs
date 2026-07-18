@@ -62,12 +62,12 @@ assert.doesNotMatch(
 assert.doesNotMatch(
 	appSource,
 	/<McpView[^>]*onExitToHeader=\{/,
-	'McpView 调用不得再传 onExitToHeader（MCP 无 Header，顶行 ↑ 停首项）'
+	'McpView 调用不得再传 onExitToHeader（MCP 无 Header，列表内循环）'
 );
 assert.doesNotMatch(
 	appSource,
 	/<SkillsView[^>]*onExitToHeader=\{/,
-	'SkillsView 调用不得再传 onExitToHeader（Skills 无 Header，顶行 ↑ 停首项）'
+	'SkillsView 调用不得再传 onExitToHeader（Skills 无 Header，列表内循环）'
 );
 // Skills 检测与 agentContext 解耦：services 装配不再按 state.agentContext 建 key。
 assert.doesNotMatch(
@@ -88,12 +88,12 @@ assert.doesNotMatch(
 assert.doesNotMatch(
 	mcpViewSource,
 	/onExitToHeader/,
-	'McpView 不得引用 onExitToHeader（顶行 ↑ 停首项，不进 header）'
+	'McpView 不得引用 onExitToHeader（列表内循环，不进 header）'
 );
 assert.doesNotMatch(
 	skillsViewSource,
 	/onExitToHeader/,
-	'SkillsView 不得引用 onExitToHeader（顶行 ↑ 停首项，不进 header）'
+	'SkillsView 不得引用 onExitToHeader（列表内循环，不进 header）'
 );
 
 console.log('[PASS] 2.4/6.3/13.3/19.5 Tools / MCP / Skills 隐藏 Header：agentContext 保留 + 焦点机跳过 header + 顶行 ↑ 不进 header');

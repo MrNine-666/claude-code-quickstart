@@ -111,6 +111,61 @@ assert.match(codexAfter, /\[mcp_servers\.gamma\]/, '投影后 [mcp_servers.gamma
 assert.match(codexAfter, /enabled = false/, '投影后 gamma enabled=false 保留（不被重写）');
 console.log('[PASS] 13.1 Codex enabled=false 第三态归 not-active + 投影不物化/删除禁用块');
 
+// ── 6) Modal 输入隔离：目标选择上下键不得移动背景列表 ────────────────
+const React = (await import('react')).default;
+const {act} = await import('react');
+const {testRender} = await import('@opentui/react/test-utils');
+const {default: McpView} = await import('../src/views/mcp/McpView.tsx');
+const mcpViewSource = readFileSync(new URL('../src/views/mcp/McpView.tsx', import.meta.url), 'utf8');
+assert.match(
+	mcpViewSource,
+	/screen\.kind === 'list' \? \([\s\S]{0,160}<ListInput/,
+	'MCP 列表输入处理器只应在 list 模式挂载'
+);
+assert.match(
+	mcpViewSource,
+	/screen\.kind === 'select-toggle-target' \? \([\s\S]{0,160}<ToggleModalInput/,
+	'MCP 目标 Modal 输入处理器只应在对应模式挂载'
+);
+const setup = await testRender(
+	React.createElement(McpView, {active: true, onExitToNav() {}}),
+	{width: 80, height: 24}
+);
+
+try {
+	const press = async name => {
+		await act(async () => {
+			setup.renderer.keyInput.emit('keypress', {
+				name,
+				sequence: name === 'enter' ? '\r' : name,
+				ctrl: false,
+				shift: false,
+				meta: false,
+				option: false,
+				eventType: 'press',
+				repeated: false
+			});
+			await setup.renderOnce();
+		});
+	};
+
+	await setup.waitForFrame(frame => /\(1\/\d+\)/.test(frame));
+	await press('down');
+	const selectedFrame = await setup.waitForFrame(frame => /\(2\/\d+\)/.test(frame));
+	const selectedCounter = selectedFrame.match(/\(2\/\d+\)/)?.[0];
+	assert.ok(selectedCounter, 'MCP 列表应先移动到第二项');
+	await press('enter');
+	await setup.waitForFrame(frame => frame.includes('管理开关'));
+	await press('down');
+	const modalFrame = await setup.waitForFrame(frame => frame.includes('Codex'));
+	assert.equal(modalFrame.includes(selectedCounter), true, 'Modal 上下键不得移动背景 MCP 列表');
+	console.log('[PASS] MCP Modal 输入隔离：上下键只移动 Modal 目标，不穿透背景列表');
+} finally {
+	await act(async () => {
+		setup.renderer.destroy();
+	});
+}
+
 delete process.env.CCQ_HOME;
 rmSync(home, {recursive: true, force: true});
 console.log('[PASS] MCP 双侧聚合投影门禁全部通过');

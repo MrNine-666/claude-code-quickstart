@@ -1,4 +1,4 @@
-import type {ComponentId, ManagedComponent, SharedManagedComponent} from '../core/tools-manage.js';
+import {isInjectableComponent, type ComponentId, type ManagedComponent, type SharedManagedComponent} from '../core/tools-manage.js';
 import type {ProgressLevel} from '../core/exec.js';
 import type {AgentContext} from './manage-state.js';
 import {AGENT_CONTEXT_ORDER} from './manage-state.js';
@@ -106,6 +106,21 @@ export function createInitialToolsViewState(): ToolsViewState {
 
 export function cursorComponent(state: ToolsViewState): ManagedComponent | undefined {
 	return state.components[state.cursor];
+}
+
+export type ToolsPrimaryAction = 'manage' | 'install' | 'update' | 'latest';
+
+/** Resolve the grid Enter action from the selected component's current facts. */
+export function resolveToolsPrimaryAction(component: ManagedComponent): ToolsPrimaryAction {
+	if (isInjectableComponent(component.id)) {
+		return 'manage';
+	}
+
+	if (!component.installed) {
+		return 'install';
+	}
+
+	return component.hasUpdate === true ? 'update' : 'latest';
 }
 
 export function updatableComponents(state: ToolsViewState): readonly ManagedComponent[] {
@@ -285,8 +300,14 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 			return cancel(state);
 
 		case 'item-start':
+			// 生命周期开始即关闭任何打开的 Modal（inject 开关 Modal 经此路径进入执行态）：
+			// 回到 grid 并清理草稿，让「安装中」loading 统一在卡片右上角展示，与单项 i/u 安装一致。
+			// 对已在 grid 的 installOne/updateOne 为 no-op。
 			return {
 				...state,
+				mode: 'grid',
+				injectTargetIndex: 0,
+				injectDraft: undefined,
 				itemStatus: {...state.itemStatus, [action.id]: progressTense(action.action)},
 				itemError: omit(state.itemError, action.id),
 				errorText: undefined

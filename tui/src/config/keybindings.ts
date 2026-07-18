@@ -241,11 +241,9 @@ export const TOOLS_COMMANDS = {
 	DOWN: 'tools:down',
 	LEFT: 'tools:left',
 	RIGHT: 'tools:right',
-	// i：安装当前项（仅非 inject 未安装项）；单义键，取代原多义 Enter
-	INSTALL: 'tools:install',
-	// m：管理开关（仅 inject 类 CodeGraph / CcgWorkflow，打开注入开关 Modal）；单义键，取代原多义 Enter
-	MANAGE_INJECT: 'tools:manage-inject',
-	// u：更新当前项（含 inject 类共享 CLI）
+	// Enter：普通工具按状态安装/更新，inject 类打开管理开关 Modal
+	PRIMARY_ACTION: 'tools:primary-action',
+	// u：仅 inject 类保留单项更新，避免管理 Modal 被更新状态阻塞
 	UPDATE_ONE: 'tools:update-one',
 	UPDATE_ALL: 'tools:update-all',
 	// d：全量卸载（inject 类 = CLI + 全部注入）
@@ -264,8 +262,7 @@ export const toolsBindings: Binding[] = commandBindings({
 	[TOOLS_COMMANDS.DOWN]: 'down',
 	[TOOLS_COMMANDS.LEFT]: 'left',
 	[TOOLS_COMMANDS.RIGHT]: 'right',
-	[TOOLS_COMMANDS.INSTALL]: 'i',
-	[TOOLS_COMMANDS.MANAGE_INJECT]: 'm',
+	[TOOLS_COMMANDS.PRIMARY_ACTION]: 'enter',
 	[TOOLS_COMMANDS.UPDATE_ONE]: 'u',
 	[TOOLS_COMMANDS.UPDATE_ALL]: 'a',
 	[TOOLS_COMMANDS.UNINSTALL]: 'd',

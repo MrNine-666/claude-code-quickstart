@@ -153,7 +153,7 @@ export default function McpView({active, onSubModeChange, onExitToNav}: McpViewP
 			{rows.length === 0 ? (
 				<ListEmptyState message="暂无 MCP Server" />
 			) : (
-				<ScrollList items={items} cursor={safeSelected} active={active} />
+				<ScrollList items={items} cursor={safeSelected} active={active && screen.kind === 'list'} />
 			)}
 
 			{screen.kind === 'select-toggle-target' && current ? (
@@ -176,61 +176,66 @@ export default function McpView({active, onSubModeChange, onExitToNav}: McpViewP
 				</Modal>
 			) : null}
 
-			<ListInput
-				active={active && screen.kind === 'list'}
-				hasCurrent={current !== null}
-				atTop={safeSelected === 0}
-				onMove={(delta) => setSelected((prev) => clampMove(prev, delta, rows.length))}
-				onToggle={openToggleModal}
-				onAdd={() => setScreen({kind: 'add'})}
-				onEdit={() => {
-					if (!current) {
-						return;
-					}
+			{screen.kind === 'list' ? (
+				<ListInput
+					active={active}
+					hasCurrent={current !== null}
+					onMove={(delta) => setSelected((prev) => clampMove(prev, delta, rows.length))}
+					onToggle={openToggleModal}
+					onAdd={() => setScreen({kind: 'add'})}
+					onEdit={() => {
+						if (!current) {
+							return;
+						}
 
-					// 编辑回显：统一 c JSON 方言（优先 .claude.json，回落 vault 共享定义体，均为 c 方言）。
-					const detail = loadMcpDetail(current.Id);
-					setScreen({kind: 'edit', serverId: current.Id, initialJson: configToJson(detail.config)});
-				}}
-				onDelete={() => {
-					if (current) {
-						setScreen({kind: 'confirm-remove', serverId: current.Id});
-					}
-				}}
-				onExit={onExitToNav}
-			/>
+						// 编辑回显：统一 c JSON 方言（优先 .claude.json，回落 vault 共享定义体，均为 c 方言）。
+						const detail = loadMcpDetail(current.Id);
+						setScreen({kind: 'edit', serverId: current.Id, initialJson: configToJson(detail.config)});
+					}}
+					onDelete={() => {
+						if (current) {
+							setScreen({kind: 'confirm-remove', serverId: current.Id});
+						}
+					}}
+					onExit={onExitToNav}
+				/>
+			) : null}
 
-			<ToggleModalInput
-				active={active && screen.kind === 'select-toggle-target'}
-				onNav={(delta) => setToggleIndex((prev) => (prev + delta + AGENT_CONTEXT_ORDER.length) % AGENT_CONTEXT_ORDER.length)}
-				onToggle={() => {
-					const ctx = AGENT_CONTEXT_ORDER[toggleIndex] ?? 'cc';
-					setToggleDraft((prev) => ({...prev, [ctx]: !prev[ctx]}));
-				}}
-				onApply={applyToggle}
-				onCancel={() => setScreen({kind: 'list'})}
-			/>
+			{screen.kind === 'select-toggle-target' ? (
+				<ToggleModalInput
+					active={active}
+					onNav={(delta) => setToggleIndex((prev) => (prev + delta + AGENT_CONTEXT_ORDER.length) % AGENT_CONTEXT_ORDER.length)}
+					onToggle={() => {
+						const ctx = AGENT_CONTEXT_ORDER[toggleIndex] ?? 'cc';
+						setToggleDraft((prev) => ({...prev, [ctx]: !prev[ctx]}));
+					}}
+					onApply={applyToggle}
+					onCancel={() => setScreen({kind: 'list'})}
+				/>
+			) : null}
 
-			<ConfirmInput
-				active={active && screen.kind === 'confirm-remove'}
-				onCancel={() => setScreen({kind: 'list'})}
-				onConfirm={() => {
-					if (!current) {
+			{screen.kind === 'confirm-remove' ? (
+				<ConfirmInput
+					active={active}
+					onCancel={() => setScreen({kind: 'list'})}
+					onConfirm={() => {
+						if (!current) {
+							setScreen({kind: 'list'});
+							return;
+						}
+
+						const serverId = current.Id;
+						const result = removeSharedMcpServer(serverId, true);
+						refresh();
 						setScreen({kind: 'list'});
-						return;
-					}
-
-					const serverId = current.Id;
-					const result = removeSharedMcpServer(serverId, true);
-					refresh();
-					setScreen({kind: 'list'});
-					if (result.ok) {
-						toast.success(`已删除 MCP Server ${serverId}`);
-					} else {
-						toast.error(result.error);
-					}
-				}}
-			/>
+						if (result.ok) {
+							toast.success(`已删除 MCP Server ${serverId}`);
+						} else {
+							toast.error(result.error);
+						}
+					}}
+				/>
+			) : null}
 		</box>
 	);
 }
@@ -299,7 +304,6 @@ function ToggleTargetModal({
 function ListInput({
 	active,
 	hasCurrent,
-	atTop,
 	onMove,
 	onToggle,
 	onAdd,
@@ -309,7 +313,6 @@ function ListInput({
 }: {
 	readonly active: boolean;
 	readonly hasCurrent: boolean;
-	readonly atTop: boolean;
 	readonly onMove: (delta: number) => void;
 	readonly onToggle: () => void;
 	readonly onAdd: () => void;
@@ -325,11 +328,8 @@ function ListInput({
 		switch (keyEvent.name.toLowerCase()) {
 			case 'up':
 			case 'arrowup':
-				// MCP 隐藏 Header：顶行 ↑ 停在首项（no-op），不退回 header。
-				if (!atTop) {
-					onMove(-1);
-				}
-
+				// MCP 隐藏 Header：列表 ↑/↓ 首尾循环，不退回 header。
+				onMove(-1);
 				break;
 			case 'down':
 			case 'arrowdown':

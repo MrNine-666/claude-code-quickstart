@@ -12,6 +12,10 @@ process.env.CODEX_HOME = join(tempHome, '.codex');
 
 try {
 	const {parseCli} = await import('../src/cli/argv.ts');
+	const {runCli} = await import('../src/cli/index.ts');
+	const {HELP_GENERAL, HELP_TOOLS} = await import('../src/cli/help.ts');
+	const {TOOL_DEFINITIONS} = await import('../src/core/tools-install.ts');
+	const {resolveToolId, availableToolIds, runToolsUpdate} = await import('../src/cli/commands/tools.ts');
 	const {listProvidersForDisplay, listCodexProfilesForDisplay} = await import('../src/cli/commands/ls.ts');
 	const {runCc} = await import('../src/cli/commands/cc.ts');
 	const {runCx} = await import('../src/cli/commands/cx.ts');
@@ -25,6 +29,7 @@ try {
 	assert.deepEqual(parseCli(['--help']), {kind: 'help'});
 	assert.deepEqual(parseCli(['help', 'cc']), {kind: 'help', verb: 'cc'});
 	assert.deepEqual(parseCli(['help', 'cx']), {kind: 'help', verb: 'cx'});
+	assert.deepEqual(parseCli(['help', 'nope']), {kind: 'help', verb: 'nope'});
 	assert.deepEqual(parseCli(['ls']), {kind: 'ls', tool: 'claude'});
 	assert.deepEqual(parseCli(['ls', '--tool', 'claude']), {kind: 'ls', tool: 'claude'});
 	assert.deepEqual(parseCli(['ls', '--tool', 'codex']), {kind: 'ls', tool: 'codex'});
@@ -52,16 +57,64 @@ try {
 		name: 'glm',
 		passthrough: ['-p', 'hi', '--verbose']
 	});
+	assert.deepEqual(parseCli(['cc', 'glm', '-p', 'hi', '--', '--verbose', '--', 'tail']), {
+		kind: 'cc',
+		name: 'glm',
+		passthrough: ['-p', 'hi', '--verbose', '--', 'tail']
+	});
 	assert.deepEqual(parseCli(['cx']), {kind: 'cx', passthrough: []});
 	assert.deepEqual(parseCli(['cx', '--', '-m', 'gpt-5']), {kind: 'cx', passthrough: ['-m', 'gpt-5']});
 	assert.deepEqual(parseCli(['cx', '-m', 'gpt-5']), {kind: 'cx', passthrough: ['-m', 'gpt-5']});
 	assert.deepEqual(parseCli(['cx', 'dev']), {kind: 'cx', name: 'dev', passthrough: []});
 	assert.deepEqual(parseCli(['cx', 'dev', '-m', 'gpt-5']), {kind: 'cx', name: 'dev', passthrough: ['-m', 'gpt-5']});
 	assert.deepEqual(parseCli(['cx', 'dev', '--', '-m', 'gpt-5']), {kind: 'cx', name: 'dev', passthrough: ['-m', 'gpt-5']});
+	assert.deepEqual(parseCli(['cx', 'dev', '-m', 'gpt-5', '--', '--help']), {
+		kind: 'cx',
+		name: 'dev',
+		passthrough: ['-m', 'gpt-5', '--help']
+	});
 	assert.deepEqual(parseCli(['cc']), {kind: 'unknown', verb: 'cc', args: []});
 	assert.deepEqual(parseCli(['cc', '-p', 'hi']), {kind: 'unknown', verb: 'cc', args: ['-p', 'hi']});
 	assert.deepEqual(parseCli(['unknown']), {kind: 'unknown', verb: 'unknown', args: []});
 	console.log('[PASS] ccq CLI argv 解析');
+
+	// ── help 错误语义 ────────────────────────────────────────────────────────────
+	const capturedErrors = [];
+	const originalConsoleError = console.error;
+	console.error = (...args) => capturedErrors.push(args.join(' '));
+	try {
+		assert.equal(await runCli(parseCli(['help', 'nope'])), 1, '未知 help 动词必须返回非零');
+	} finally {
+		console.error = originalConsoleError;
+	}
+	assert.equal(capturedErrors.some(line => line.includes('未知子命令: nope')), true);
+	assert.equal(capturedErrors.some(line => line.includes(HELP_GENERAL.split('\n')[0])), true);
+	console.log('[PASS] help 未知动词错误语义');
+
+	// ── 工具 registry/别名 + 显式更新 force refresh ───────────────────────────────
+	const registryIds = TOOL_DEFINITIONS.map(definition => definition.id);
+	assert.deepEqual(availableToolIds(), registryIds, 'CLI 可用工具必须直接派生自 registry');
+	for (const id of registryIds) {
+		assert.equal(resolveToolId(id), id, `canonical id 应可解析: ${id}`);
+		assert.equal(HELP_TOOLS.includes(id), true, `帮助应列出 registry 工具: ${id}`);
+	}
+	assert.equal(resolveToolId('trellis'), 'Trellis', 'Trellis 别名不得遗漏');
+	assert.equal(resolveToolId('claude-code'), 'ClaudeCode');
+	assert.equal(resolveToolId('code-graph'), 'CodeGraph');
+
+	let forceRefreshSeen = null;
+	const updateExitCode = await runToolsUpdate(undefined, {
+		detect: async (_onProgress, forceRefresh) => {
+			forceRefreshSeen = forceRefresh;
+			return [];
+		},
+		update: async () => {
+			throw new Error('没有目标时不应执行更新');
+		}
+	});
+	assert.equal(updateExitCode, 0);
+	assert.equal(forceRefreshSeen, true, '显式 tools update 必须绕过远程缓存');
+	console.log('[PASS] 工具 registry 单一事实源 + 显式更新强制刷新');
 
 	// ── provider/profile 展示 ───────────────────────────────────────────────────
 	const lines = listProvidersForDisplay([

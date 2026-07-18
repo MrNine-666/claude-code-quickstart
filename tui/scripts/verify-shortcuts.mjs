@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {singleLineInputKeyBindings} from '../src/components/single-line-input.tsx';
 import {formatShortcutKey, hasShortcutModifier, isAppModifier, isEditingModifier} from '../src/utils/keyboard.ts';
 import {
 	CONFIG_COMMANDS,
 	MCP_COMMANDS,
 	PROMPTS_COMMANDS,
+	SKILLS_COMMANDS,
+	TOOLS_COMMANDS,
 	configBindings,
 	mcpBindings,
-	promptsBindings
+	promptsBindings,
+	skillsBindings,
+	toolsBindings
 } from '../src/config/keybindings.ts';
 import {viewShortcuts} from '../src/state/shortcuts.ts';
 
@@ -60,6 +65,67 @@ if (process.platform === 'darwin') {
 }
 console.log('[PASS] footer：平台化符号展示来自单一 binding source');
 
+// ── Skills 安装页多选：Space/全选键与 footer 共用 registry ────────────────
+assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.TOGGLE_RESULT), 'space', 'Skills 当前项选择应绑定 Space');
+assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.SELECT_ALL), 'a', 'Skills 安装页全选应绑定上下文内 a');
+const skillsInstallLabels = viewShortcuts('skills', 'install').map(shortcut => shortcut.label);
+assert.equal(skillsInstallLabels.includes('选择/取消'), true, 'Skills 安装页 footer 应展示选择切换');
+assert.equal(skillsInstallLabels.includes('全选'), true, 'Skills 安装页 footer 应展示全选');
+console.log('[PASS] Skills 多选快捷键与 footer 来自统一 registry');
+
+// ── Skills 列表页键位：A 更新全部 / U 更新选中 / I 安装（大小写都触发，footer 显示大写） ──
+assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.UPDATE_ALL), 'a', 'Skills 列表页更新全部应绑定 a');
+assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.UPDATE_ONE), 'u', 'Skills 列表页更新选中应绑定 u');
+assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.INSTALL), 'i', 'Skills 列表页安装应绑定 i');
+const skillsListShortcuts = viewShortcuts('skills', 'list');
+const skillsListByLabel = Object.fromEntries(skillsListShortcuts.map(shortcut => [shortcut.label, shortcut.key]));
+assert.equal(skillsListByLabel['更新全部'], 'A', 'Skills 列表 footer 更新全部应显示大写 A');
+assert.equal(skillsListByLabel['更新选中'], 'U', 'Skills 列表 footer 更新选中应显示大写 U');
+assert.equal(skillsListByLabel['安装'], 'I', 'Skills 列表 footer 安装应显示大写 I');
+console.log('[PASS] Skills 列表页 A 更新全部 / U 更新选中 / I 安装 键位与 footer 一致');
+
+// ── Skills Modal：弹窗内提示与 footer 共用解析结果，不复制键位字面量 ────
+const skillsAdoptShortcuts = viewShortcuts('skills', 'confirm-topology-change');
+
+const defaultInputBindings = singleLineInputKeyBindings('default');
+const inputAction = (name, {ctrl = false, shift = false} = {}) => defaultInputBindings.find(binding => binding.name === name && Boolean(binding.ctrl) === ctrl && Boolean(binding.shift) === shift)?.action;
+assert.equal(inputAction('a', {ctrl: true}), 'select-all', 'Windows/Linux Ctrl+A 应全选输入内容');
+assert.equal(inputAction('z', {ctrl: true}), 'undo', 'Windows/Linux Ctrl+Z 应撤销');
+assert.equal(inputAction('z', {ctrl: true, shift: true}), 'redo', 'Windows/Linux Ctrl+Shift+Z 应重做');
+assert.equal(inputAction('y', {ctrl: true}), 'redo', 'Windows/Linux Ctrl+Y 应重做');
+assert.deepEqual(
+	skillsAdoptShortcuts.map(shortcut => [shortcut.key, shortcut.label]),
+	[['Enter', '确认执行'], ['Esc', '取消']],
+	'Skills 收编确认 Modal 应复用确认态快捷键'
+);
+const skillsViewSource = readFileSync(new URL('../src/views/SkillsView.tsx', import.meta.url), 'utf8');
+assert.match(skillsViewSource, /viewShortcuts\('skills', mode\)/, 'Skills Modal hint 应从统一快捷键解析器生成');
+assert.match(skillsViewSource, /hint=\{skillsModalHint\('confirm-topology-change'\)\}/, '拓扑切换确认 Modal 应展示统一快捷键提示');
+console.log('[PASS] Skills Modal 快捷键提示与 footer 共用统一 registry');
+
+// ── Tools 网格主操作：普通卡片统一 Enter，管理型卡片保留专用更新 ────
+assert.equal(keyFor(toolsBindings, TOOLS_COMMANDS.PRIMARY_ACTION), 'enter', 'Tools 网格主操作应统一绑定 Enter');
+assert.equal(keyFor(toolsBindings, TOOLS_COMMANDS.UPDATE_ONE), 'u', 'Tools 管理型卡片应保留 u 单项更新');
+
+const toolsGridShortcuts = viewShortcuts('tools', 'grid');
+assert.deepEqual(
+	toolsGridShortcuts.filter(shortcut => shortcut.label === '安装/更新').map(shortcut => [shortcut.key, shortcut.label]),
+	[['Enter', '安装/更新']],
+	'Tools 普通卡片 footer 应只显示 Enter 安装/更新'
+);
+assert.equal(toolsGridShortcuts.some(shortcut => ['i', 'm', 'u'].includes(shortcut.key.toLowerCase())), false, 'Tools 普通卡片 footer 不应保留 i/m/u 主操作');
+
+const toolsInjectShortcuts = viewShortcuts('tools', 'grid-inject');
+assert.deepEqual(
+	toolsInjectShortcuts.filter(shortcut => shortcut.label === '管理开关' || shortcut.label === '更新').map(shortcut => [shortcut.key, shortcut.label]),
+	[['Enter', '管理开关'], ['U', '更新']],
+	'Tools 管理型卡片 footer 应显示 Enter 管理开关与 u 更新'
+);
+const toolsViewSource = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
+assert.match(toolsViewSource, /if \(k === 'enter' \|\| k === 'return'\) \{\s*runPrimaryAction\(/, 'ToolsView Enter 应调用统一主操作分派');
+assert.match(toolsViewSource, /if \(k === 'u'\) \{\s*updateInjectableCurrent\(/, 'ToolsView u 应只走管理型工具更新入口');
+console.log('[PASS] Tools 普通/管理型卡片快捷键按上下文统一到 Enter 主操作');
+
 // ── 卸载文案：统一使用简洁动作名，不在 footer 重复强调底层全量语义 ────────
 const skillsListLabels = viewShortcuts('skills', 'list').map(shortcut => shortcut.label);
 const skillsConfirmLabels = viewShortcuts('skills', 'confirm-uninstall').map(shortcut => shortcut.label);
@@ -76,6 +142,6 @@ for (const file of ['src/views/ConfigView.tsx', 'src/views/PromptsView.tsx']) {
 	const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
 	assert.equal(/按\s*a|Ctrl\+|Cmd\+|\[[A-Za-z]\]/.test(source), false, `${file} 不应硬编码快捷键提示`);
 }
-console.log('[PASS] 视图源码：快捷键提示仅由 footer ShortcutBar 展示');
+console.log('[PASS] 视图源码：快捷键提示由统一 registry 派生');
 
 console.log('[PASS] macOS 快捷键混合策略门禁全部通过');

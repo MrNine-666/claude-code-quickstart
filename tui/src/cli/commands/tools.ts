@@ -2,27 +2,12 @@
 
 import {createConsoleProgress} from '../../core/exec.js';
 import {detectComponents, updateComponents, uninstallComponent, type ComponentId, type ManagedComponent} from '../../core/tools-manage.js';
+import {TOOL_DEFINITIONS} from '../../core/tools-install.js';
 import {confirmDangerousAction} from '../confirm.js';
 
-const TOOL_ALIASES: Record<string, ComponentId> = {
-	claude: 'ClaudeCode',
-	claudecode: 'ClaudeCode',
-	'claude-code': 'ClaudeCode',
-	ccline: 'Ccline',
-	ccg: 'CcgWorkflow',
-	ccgworkflow: 'CcgWorkflow',
-	'ccg-workflow': 'CcgWorkflow',
-	openspec: 'OpenSpec',
-	'open-spec': 'OpenSpec',
-	codegraph: 'CodeGraph',
-	'code-graph': 'CodeGraph',
-	codex: 'CodexCli',
-	codexcli: 'CodexCli',
-	'codex-cli': 'CodexCli',
-	agy: 'AntigravityCli',
-	antigravity: 'AntigravityCli',
-	antigravitycli: 'AntigravityCli',
-	'antigravity-cli': 'AntigravityCli'
+export type ToolsUpdateDeps = {
+	readonly detect?: typeof detectComponents;
+	readonly update?: typeof updateComponents;
 };
 
 export async function runTools(action: 'update' | 'uninstall', name: string | undefined, assumedYes: boolean): Promise<number> {
@@ -34,13 +19,15 @@ export async function runTools(action: 'update' | 'uninstall', name: string | un
 	}
 }
 
-async function runToolsUpdate(name: string | undefined): Promise<number> {
+export async function runToolsUpdate(name: string | undefined, deps: ToolsUpdateDeps = {}): Promise<number> {
 	console.log('正在检测工具状态与可用更新...');
-	const components = await detectComponents();
+	const detect = deps.detect ?? detectComponents;
+	const update = deps.update ?? updateComponents;
+	const components = await detect(undefined, true);
 	const targets = selectUpdateTargets(components, name);
 	if (!targets.ok) {
 		console.error(targets.error);
-		printAvailableTools(components);
+		printAvailableTools();
 		return 1;
 	}
 
@@ -49,7 +36,7 @@ async function runToolsUpdate(name: string | undefined): Promise<number> {
 		return 0;
 	}
 
-	const result = await updateComponents(targets.components, createConsoleProgress());
+	const result = await update(targets.components, createConsoleProgress());
 	console.log(`更新快照: ${result.snapshotPath}`);
 	const failed = result.updatedItems.filter(item => item.startsWith('failed::'));
 	return failed.length > 0 ? 1 : 0;
@@ -105,14 +92,22 @@ function selectUpdateTargets(components: readonly ManagedComponent[], name: stri
 	return {ok: true, components: components.filter(item => item.hasUpdate === true)};
 }
 
-function resolveToolId(name: string): ComponentId | null {
-	return TOOL_ALIASES[name.toLowerCase()] ?? null;
+export function resolveToolId(name: string): ComponentId | null {
+	const normalized = name.trim().toLowerCase();
+	const definition = TOOL_DEFINITIONS.find(item =>
+		item.id.toLowerCase() === normalized ||
+		item.cliAliases?.some(alias => alias.toLowerCase() === normalized)
+	);
+	return definition?.id ?? null;
 }
 
-function printAvailableTools(components?: readonly ManagedComponent[]): void {
-	const ids = components?.map(item => item.id) ?? ['ClaudeCode', 'Ccline', 'CcgWorkflow', 'OpenSpec', 'CodeGraph', 'CodexCli', 'AntigravityCli'];
+export function availableToolIds(): ComponentId[] {
+	return TOOL_DEFINITIONS.map(item => item.id);
+}
+
+function printAvailableTools(): void {
 	console.error('可用工具:');
-	for (const id of ids) {
+	for (const id of availableToolIds()) {
 		console.error(`  ${id}`);
 	}
 }

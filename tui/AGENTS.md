@@ -120,10 +120,10 @@ ccq 可执行文件支持「无参进 TUI + 子命令非交互」双入口。`sr
 - `ccq`（无参）保持进入 OpenTUI 6 菜单；若无参且 non-TTY，仍输出只读提示并退出码 0。
 - `ccq cc <provider> [claude-args...]` 用 `~/.claude/providers/<provider>.json` 作为 `claude --settings` 启动 Claude Code，**不写盘**，后续参数原样透传给 claude；必须用 `Bun.spawn(..., {stdio: ['inherit','inherit','inherit']})` 保持交互 TTY，禁止复用 `execCommand`（它 `stdio:'pipe'` 会吃掉 TTY）。
 - `ccq ls` 列 provider 并标记当前默认；`ccq use <provider>` 复用 `switchProvider` 设置默认（写入 `~/.claude/settings.json`，持久生效）。
-- `ccq update [--check]` 复用 `core/update.ts` 的整可执行文件热更新逻辑；`--check` 只检查，不下载/替换。
-- `ccq tools update [name]` 复用 `core/tools-manage.ts` 检测与 `updateComponents` 更新工具；未指定 name 时仅更新 `hasUpdate=true` 的组件。
+- `ccq update [--check]` 复用 `core/self-update.ts`（由 `core/update.ts` re-export）的可验证事务；`--check` 只检查，不下载/替换。CLI 更新在 Windows 只安排退出后替换，**禁止自动启动 TUI**；TUI 更新才传 `restartAfterApply=true`。
+- `ccq tools update [name]` 复用 `core/tools-manage.ts` 检测与 `updateComponents` 更新工具；显式命令每次必须以 `forceRefresh=true` 绕过 npm outdated/npm view 缓存，未指定 name 时仅更新 `hasUpdate=true` 的组件。
 - `ccq tools uninstall <name> [--yes|-y]` 复用 `uninstallComponent` 卸载工具；默认必须输入 `y` 确认，追加 `--yes` 或 `-y` 才可跳过确认。非 TTY 环境未传 `--yes`/`-y` 时必须拒绝执行。
-- `ccq uninstall [--yes|-y]` 卸载 ccq 本体（删除 `~/.local/bin/ccq[.exe]`）；默认必须输入 `y` 确认，追加 `--yes` 或 `-y` 才可跳过确认。非 TTY 环境未传 `--yes`/`-y` 时必须拒绝执行。
+- `ccq uninstall [--yes|-y]` 卸载 ccq 本体（删除 `~/.local/bin/ccq[.exe]`）；默认必须输入 `y` 确认，追加 `--yes` 或 `-y` 才可跳过确认。非 TTY 环境未传 `--yes`/`-y` 时必须拒绝执行。Windows 当前 exe 必须由独立 PS5.1 helper 等父进程退出后删除，输出「已安排」而非谎报「已删除」，且 helper **永不重启 TUI**。
 - `cc` 与 `use` 语义必须分离：`cc` = 临时 session 覆盖；`use` = 持久默认。新增 CLI 命令按 `ccq <verb> [object] [--flags] [-- passthrough]` 子命令骨架扩展，禁止把动作塞进裸 flag（如 `-cc`）。
 - **多工具命名与 agentContext（HC-CLI-MULTITOOL）**：ccq 支持 Claude Code 与 Codex 双 Agent（内部键 `agentContext: 'cc' | 'cx'`，界面只展示全称 `Claude Code` / `Codex`，不显示缩写）。两工具的 provider/profile 独立存储，**禁止复用 claude provider 文件或塞进 `~/.claude/settings.json`**：
   - 独立短动词：claude = `cc`，codex = `cx`（`ccq cx <key> [codex-args...]`）；`cc` 语义不变。
@@ -146,10 +146,14 @@ ccq 可执行文件支持「无参进 TUI + 子命令非交互」双入口。`sr
   - 管理类动词支持"动词 + 子对象"两级（如 `ccq mcp list` / `ccq mcp add` / `ccq mcp rm <id>` / `ccq update self|tools|skills`），子对象由该动词的 `parseXxx` 自行路由，不在 `parseCli` 顶层展开。
   - 复用优先：管理类动词应直接包装既有 core 层能力（`core/update.ts` / `core/mcp.ts` / `core/skills-actions.ts` / `core/tools-manage.ts`），CLI 层只做参数解析 + 调用 + 退出码，不重复实现业务逻辑。
 - 新增/修改 CLI 路由必须同步 `scripts/verify-cli-subcommands.mjs` 与本文档；新增工具动词须在本约束补一行动词表 + 存储约定；新增管理类动词须归入上表两类之一。
+- `ccq tools` 的 canonical id、别名与可用工具列表必须从 `TOOL_DEFINITIONS` 单一 registry 派生，禁止在 CLI/help 再维护第二份完整工具列表；8 个现有组件必须包含 Trellis。
+
+### HC-CODEX-SUPPLIER-TERMINOLOGY
+Claude Code 与 Codex 上下文中的业务实体在所有**用户可见** TUI/CLI 文案中都直接称为「供应商」，禁止展示 `Codex 供应商`、`Codex profile` / `Codex profiles` 或 `Codex provider`。Agent 区分由当前 Header、`--tool` 参数或命令上下文承担，不把 `Codex` 前缀重复加到实体名称上。这只是一层 presentation 术语映射：内部 `CodexProfile*` 类型与函数、`~/.codex/<key>.config.toml` 文件机制、`codex --profile <key>` 参数，以及 TOML legacy `profile` / `profiles` 字段必须保留官方技术名称，禁止随 UI 文案一起重命名。门禁由 `scripts/verify-provider-safety.mjs` 守护。
 
 ### HC-AGENT-CONTEXT-SHELL
 TUI 不新增第 7 个 Codex 菜单；改由右侧 content 顶部的全局 **Header** 用全称 `Claude Code` / `Codex` 切换 `agentContext`（内部键 `cc` / `cx`，界面不展示缩写）。左侧导航恒为 6 项（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills），Header 切换**不改变**菜单顺序，只重渲染当前模块的 Agent 数据域；默认 `Claude Code`。`agentContext` 下发给 Tools / Provider / Config / Prompts / MCP / Skills 各视图及其 service，视图不自行推断路径、不直接写运行时配置文件（写盘只在 core/service 层）。骨架门禁 `scripts/verify-agent-context.mjs`。
-- **工具管理 / MCP / Skills 隐藏 Header**（shared-resource-injection-ui）：`displayMenuId` 属于共享双侧模块集合 `AGENT_HEADER_HIDDEN_MODULES`（`tools` / `mcp` / `skills`）时**不渲染 AgentHeader**，content 高度不预留 Header 行；残留 `focus === 'header'` 强制回 `view`，列表/网格顶行 `↑` 停在首项（不退回 header），`Esc` / 光标 0 时 `←` 回 `nav`。全局 `agentContext` 状态**保留**，进出这三个模块不改其值；切到其它 Agent 独占模块时 Header 恢复并展示保留的上下文。Skills 检测与 `agentContext` **解耦**（一次 `skills list -g --json` 无 `--agent` 得双侧态），`skillsViewServices` 不再按 `state.agentContext` 建 service key、不随 Header 重建。其它模块 Header 与 `view↑→header` 行为不变（门禁 `scripts/verify-manage-tui-state.mjs` / `scripts/verify-agent-context.mjs`）。
+- **工具管理 / MCP / Skills 隐藏 Header**（shared-resource-injection-ui）：`displayMenuId` 属于共享双侧模块集合 `AGENT_HEADER_HIDDEN_MODULES`（`tools` / `mcp` / `skills`）时**不渲染 AgentHeader**，content 高度不预留 Header 行；残留 `focus === 'header'` 强制回 `view`。Tools 顶行 `↑` 不退回 header，MCP 与 Skills 列表由视图消费 `↑/↓` 并首尾循环；`Esc` / 光标 0 时 `←` 回 `nav`。全局 `agentContext` 状态**保留**，进出这三个模块不改其值；切到其它 Agent 独占模块时 Header 恢复并展示保留的上下文。Skills 检测与 `agentContext` **解耦**（一次 `skills list -g --json` 无 `--agent` 得双侧态），`skillsViewServices` 不再按 `state.agentContext` 建 service key、不随 Header 重建。其它模块 Header 与 `view↑→header` 行为不变（门禁 `scripts/verify-manage-tui-state.mjs` / `scripts/verify-agent-context.mjs`）。
 
 ### HC-TOOLS-AGENT-GROUP
 工具管理以**共享资源列表**为主（shared-resource-injection-ui）：列表**不按 `agentContext` 过滤**，8 组件全集常显（骨架 `scripts/verify-tools-context.mjs` / `scripts/verify-tools-shared-projection.mjs`）：
@@ -159,12 +163,13 @@ TUI 不新增第 7 个 Codex 菜单；改由右侧 content 顶部的全局 **Hea
   - `shared-cli-per-agent-inject`（**CodeGraph / CcgWorkflow**）：卡片行 2 展示 `Claude Code ●|○` + `Codex ●|○` 双态徽章（全称，禁 `cc`/`cx` 缩写；`●`=已注入 success，`○`=未注入 muted），两侧状态由 `injectByAgent` 独立投影、互不塌缩（CodeGraph 来自 `hasClaude/CodexCodeGraphIntegration`，CcgWorkflow 来自 `hasClaude/CodexCcgWorkflowMode`；CcgWorkflow 无真·共享 CLI，**不伪造** `sharedInstalled`）。
   - `fully-shared-no-inject`（**OpenSpec / Trellis / AntigravityCli**）：仅全局安装态，**无**行 2 inject 徽章。
   - `agent-exclusive`（**ClaudeCode / CodexCli / Ccline**）：行 2 仅标注适用范围（`Claude Code 本体` / `Codex 本体` / `仅 Claude Code`），Ccline 不提供 Codex 注入。
-- **交互（Enter 开关 Modal / u 更新 / d 全量卸载，职责分离硬约束）**：
-  - inject 类 **Enter** 打开开关管理 Modal（`select-inject-target`）：进入时用当前双侧 `injectByAgent.integrated` 初始化本地草稿（`injectDraft`），`↑/↓` 选 `Claude Code`/`Codex`，`空格`切换该侧草稿开/关（纯本地，不落盘），`Enter` 统一应用——对比草稿与实际态、对每个变化侧顺序执行 `injectComponent(id, target)` / `ejectComponent(id, target)`，`Esc` 取消。目标 **显式传入**，禁止依赖 Header agentContext（`ToolsView` 不得 useMemo 把 Header 绑死到 inject 路径）；无变化时提示「未改变任何开关」。
-  - **u** = 更新当前项（含 inject 类共享 CLI）：inject 类 Enter 被开关 Modal 占用后，单项更新统一改由 `u` 触发；无更新则提示已是最新。
+- **交互（Enter 统一主操作 / 管理型 u 更新 / d 全量卸载，职责分离硬约束）**：
+  - inject 类 **Enter** 打开开关管理 Modal（`select-inject-target`）：进入时用当前双侧 `injectByAgent.integrated` 初始化本地草稿（`injectDraft`），`↑/↓` 选 `Claude Code`/`Codex`，`空格`切换该侧草稿开/关（纯本地，不落盘），`Enter` 统一应用——对比草稿与实际态、对每个变化侧顺序执行 `injectComponent(id, target)` / `ejectComponent(id, target)`，`Esc` 取消。目标 **显式传入**，禁止依赖 Header agentContext（`ToolsView` 不得 useMemo 把 Header 绑死到 inject 路径）；无变化时提示「未改变任何开关」。Modal 或确认态打开时背景网格必须以 `active=false` 渲染，Modal 上下键只改变草稿目标，不得移动背景光标。
+  - 非 inject 类 **Enter** = 统一主操作：未安装时安装、`hasUpdate === true` 时更新、已是最新时只提示，不再保留 `i` / `u` 两套状态判断键。
+  - inject 类 **u** = 更新当前项：inject 类 Enter 被开关 Modal 占用后，仅 CodeGraph / CcgWorkflow 保留 `u` 单项更新；无更新则提示已是最新。非 inject 类不得展示或响应 `u`。
   - inject 类 **d** = 全量卸载（`confirm-uninstall`，`uninstallComponent(id, {fullUninstall:true})`：解除两侧注入 + 移除共享 CLI/包），**不**进入开关 Modal；确认文案写明「CLI + 全部注入」。单侧关闭注入**只走 Enter 开关 Modal**。
-  - 非 inject 类 Enter 保持 install/update/已是最新，`u` 更新当前项，`d` 保持既有全局卸载。
-- 快捷键单一数据源（HC-SHORTCUT-SINGLE-SOURCE）：开关相关键位注册在 `keybindings.ts`（`TOOLS_COMMANDS.INJECT_TARGET_TOGGLE`=空格 / `INJECT_TARGET_CONFIRM`=Enter 应用 / `INJECT_TARGET_CANCEL`=Esc；`UPDATE_ONE`=u），footer 仅在光标落在 inject 类（`grid-inject`）时提示「管理开关」，禁止视图硬编码键位字面量。
+  - 非 inject 类 `d` 保持既有全局卸载。
+- 快捷键单一数据源（HC-SHORTCUT-SINGLE-SOURCE）：网格主操作注册为 `TOOLS_COMMANDS.PRIMARY_ACTION`=Enter；开关 Modal 使用 `INJECT_TARGET_TOGGLE`=空格 / `INJECT_TARGET_CONFIRM`=Enter 应用 / `INJECT_TARGET_CANCEL`=Esc；`UPDATE_ONE`=u 仅供 inject 类。footer 普通 `grid` 只提示「Enter 安装/更新」，`grid-inject` 提示「Enter 管理开关 + u 更新」，禁止视图硬编码第二套键位说明。
 - install/update/uninstall 经 lifecycle command resolver 按目标 Agent 返回不同指令：
   - **CodeGraph**：检测安装态必须同时满足 CLI 可用与当前 Agent MCP 已接入（Claude Code 看 `~/.claude.json.mcpServers.codegraph`，Codex 看 `~/.codex/config.toml` 的 `[mcp_servers.codegraph]`）；install 语义是“确保共享 CLI + 接入当前 Agent”：若 `codegraph --version` 已可用，必须跳过 `npm install -g @colbymchenry/codegraph`，直接执行 `codegraph install --target=<claude|codex> --location=global --yes` 并校验 MCP 写入成功；CLI 不可用时才安装 npm 包；update 更新 npm CLI 后按已接入的 cc/cx 目标逐个重跑 `codegraph install ...`；uninstall 先执行 `codegraph uninstall --target=<claude|codex> --yes`，随后若 cc/cx 两边都无 CodeGraph MCP，则自动 `npm uninstall -g @colbymchenry/codegraph`，始终不删除项目 `.codegraph/` 索引（骨架 `scripts/verify-codegraph-lifecycle.mjs` + `scripts/verify-tools-manage.mjs`）。
   - **CcgWorkflow**：上游 GitHub 仓库真实标识为 `fengshao1227/ccg-workflow`（查 DeepWiki/GitHub 时不要用 `MrNine-666/ccg-workflow`）；Claude 走 `npx ccg-workflow@latest init ... --install-dir ~/.claude`（保留 mcpServers 快照保护）+ `npx ccg-workflow uninstall`；Codex Mode 走官方非交互 `npx ccg-workflow codex-mode install/uninstall`。文件边界（`config.toml`/`AGENTS.md`/hooks/rules）一律交给官方命令负责，**ccq 不手写 fs 删除 `~/.codex/config.toml`**（骨架 `scripts/verify-ccgworkflow-codex.mjs`）。
@@ -181,8 +186,8 @@ MCP 状态以运行时配置文件为唯一事实源，**忽略 vault 历史 `di
 MCP 视图以**共享双侧列表**为主（shared-resource-injection-ui Section 8-13，骨架 `scripts/verify-mcp-shared-projection.mjs`）：
 - **双侧聚合投影 `computeSharedStatus()`**（`core/mcp.ts`）：一 Server ID 一行，`injectByAgent.{cc,cx}` 双侧开关态独立不塌缩；**每次实时读 `~/.claude.json` / `~/.codex/config.toml` 派生开关态**（对齐 HC-3 / HC-MCP-FILE-SOURCE，不缓存、不以 vault 推断激活）。列表全集 = `vault 定义 ∪ ~/.claude.json mcpServers ∪ ~/.codex config.toml [mcp_servers]`，按 Id 去重。**纯读投影，绝不物化 vault → runtime**（区别于带副作用的 `computeStatus`）；仅把两侧现有 runtime 配置**备份**进 vault 作共享定义体。`McpView` 禁止再用 `computeStatus(agentContext)` 作列表主路径。
 - **vault 升格为共享定义源**：vault `servers.<id>.config/credentials` = 跨 Agent 复用的共享定义体；vault 有定义 **≠** 激活态（激活只从 runtime 派生）。
-- **行内双态徽章**：一行展示 `● Claude Code` + `● Codex`（全称，禁 `cc`/`cx` 缩写；`●`=开启 success，`○`=禁用/未开启 muted）。面向用户文案统一「**开启 / 禁用**」，**不出现「注入」**（内部函数名可保留 inject/eject）。
-- **Enter = 开关目标 Modal**（`select-toggle-target`，照搬 ToolsView `InjectTargetModal` 范式，`width=56`）：草稿预置各侧实时开关态，`↑/↓` 选 `Claude Code`/`Codex`，`空格`切草稿，`Enter` 按草稿 vs 实时态差异对两侧 `enableServer`/`disableServer`（显式传 target，未变侧不写），`Esc` 取消无写盘。Codex 语义：草稿开→存在则改 `enabled=true`/不存在写入；草稿关→写 `enabled=false` 不删块。
+- **行内双态徽章**：一行展示 `● Claude Code` + `● Codex`（全称，禁 `cc`/`cx` 缩写；`●`=开启 success，`○`=禁用/未开启 muted）。列表 `↑/↓` 在首末项之间循环。面向用户文案统一「**开启 / 禁用**」，**不出现「注入」**（内部函数名可保留 inject/eject）。
+- **Enter = 开关目标 Modal**（`select-toggle-target`，照搬 ToolsView `InjectTargetModal` 范式，`width=56`）：草稿预置各侧实时开关态，`↑/↓` 选 `Claude Code`/`Codex`，`空格`切草稿，`Enter` 按草稿 vs 实时态差异对两侧 `enableServer`/`disableServer`（显式传 target，未变侧不写），`Esc` 取消无写盘。列表、目标 Modal、删除确认的键盘处理器必须按 `screen.kind` 互斥挂载；Modal 打开时背景列表失焦且不得响应上下键。Codex 语义：草稿开→存在则改 `enabled=true`/不存在写入；草稿关→写 `enabled=false` 不删块。
 - **add = 只写 vault**（`persistSharedDefinition`，不开启任何侧）；**edit = 写 vault + 同步所有当前已开启侧**（`syncSharedDefinition`，未开启侧不开启）；Server ID 不可变、env-file 只读。开启入口唯一 = 列表行 Enter 开关 Modal。
 - **d = 全量删除**（`removeSharedServer`，强确认文案写明「两侧 runtime + 共享定义」）：两侧移除 + 删 vault 定义 + 清 settings permission；**不**进选目标流，单侧禁用只走 Enter。
 - 快捷键单一数据源：`keybindings.ts` 注册 `MCP_COMMANDS.TOGGLE`（Enter 管理开关）/ `TOGGLE_DRAFT`（空格）/ `TOGGLE_APPLY`（Enter 应用）/ `TOGGLE_CANCEL`（Esc）/ `DELETE`（d 全量删除）；footer 列表光标时展示「管理开关」，禁止视图硬编码键位。
@@ -195,16 +200,24 @@ MCP 视图以**共享双侧列表**为主（shared-resource-injection-ui Section
 - **effective definition**：契约 `McpServerDefinition` 可选带 `AgentConfigs: {cc?: Partial, cx?: Partial}`，`resolveEffectiveDefinition(def, agentContext)` 浅合并 base + 覆盖；无覆盖时 pass-through base，不制造差异。`AgentConfigs` 字段不参与最终定义输出。
 
 ### HC-SKILLS-AGENT
-Skills CLI agent 映射：Claude Code → `--agent claude-code`，Codex → `--agent codex`（`skillsAgentOf`，骨架 `scripts/verify-skills-agent.mjs`）。物理存储与目录映射交由 `skills` CLI（`~/.agents/skills`），ccq **绝不手写 symlink/copy 或自删文件**。
+Skills CLI agent 映射：Claude Code → `--agent claude-code`，Codex → `--agent codex`（`skillsAgentOf`，骨架 `scripts/verify-skills-agent.mjs`）。所有目标树 mutation 固定走官方 `skills@1.5.19`；物理存储与目录映射交由 CLI，ccq **绝不手写 symlink/copy 或自删文件**，只允许在 OS temp 创建并校验 snapshot。
 
 ### HC-SKILLS-SHARED-INJECT
-Skills 是**共享本体 + per-Agent 注入**模型（非 MCP 对等双 runtime；实测 `skills` CLI：codex=universal agent 直读 canonical 本体 `~/.agents/skills`、装了即可用无独立开关，仅 Claude Code 是可独立建/删的 symlink 注入态）。shared-resource-injection-ui 第三阶段落地（门禁 `scripts/verify-skills-shared-projection.mjs` / `scripts/verify-skills-view.mjs` / `scripts/verify-skills-agent.mjs`）：
-- **双侧检测 = 单次 CLI 派生**：`getInstalledSkills()` 无参 / 仅传 exec → **不带 `--agent`** 全量扫所有 agent 目录，一次调用得每条 skill 的 `agents` displayName 列表；显式 `cc`/`cx` 才带 `--agent`（旧单侧路径保留）。`projectSharedSkills` 从 `agents` 派生 `SkillSharedRow`：`sharedInstalled`（含 `Codex`=本体在）/ `claudeInjected`（含 `Claude Code`=symlink 在）/ `codexAvailable`（**恒等于** `sharedInstalled`，codex 无独立态）。非 `Claude Code`/`Codex` displayName 忽略（`SKILL_AGENT_DISPLAY_TO_CONTEXT`）。不缓存、不跑两次 CLI（对齐 HC-3）。
-- **列表**：一行一 skill name + `Claude Code ●|○` + `Codex ●|○` 双态徽章（全称，禁 `cc`/`cx` 缩写；文案「已安装/未安装」）。Codex 徽章**只读镜像**共享本体（不画可操作 toggle），Claude Code 徽章反映可切 symlink 态。列表**不按 `agentContext` 过滤**。
-- **安装目标 Modal**（安装页选中 skill 后 Enter，`select-install-target`）：复用 Tools `InjectTargetModal` 范式；`Claude Code` 可切，`Codex` **只读恒勾**（`● 安装`，装任何 skill 必写共享本体、直读即可用、无法不装）。空格仅切 Claude Code（Codex no-op）；Claude Code 勾 → `installResultToTargets` 单次同传 `--agent claude-code --agent codex` 建共享本体 + symlink，不勾 → 仅传 `--agent codex` 写共享本体。
-- **管理安装 Modal**（列表行 Enter，`manage-inject`）：`Claude Code` 行可切，取消安装走 `remove --agent claude-code`；恢复安装必须使用 `~/.agents/.skill-lock.json` 增强得到的 `source` / `ref` 重新 `add`，并显式传 `--skill <skillName>`，缺少 source 时清晰失败，禁止把裸 skill name 当 source。`Codex` 行只读「已安装（随本体）/未安装」。Esc 无写盘。
-- **`u` 更新两侧** = `updateAllSkillsBothSides` 只调用一次 `skills update -g -y`，**省略 `--agent`**；**`d` 全量卸载** = `uninstallSkillAllAgents` 只调用一次 `skills remove <skill> -g --yes`，同样**省略 `--agent`**（CLI 默认删除所有 Agent 投影，无人使用后清理共享本体）。禁止传 `--agent '*'`，CLI 1.5.16 会报 `Invalid agents: *`。单侧撤销的唯一非全量路径 = 管理 Modal 取消 Claude Code（`remove --agent claude-code`）；Codex 无单侧撤销。所有物理删除由官方 CLI 负责。
-- 面向用户文案全链统一「已安装/未安装」「安装/卸载」，**不出现**「注入/解除」「开启/禁用」。快捷键来自 `SKILLS_COMMANDS` 单一源（footer 按上下文展示，禁视图硬编码键位字面量）。
+Skills 是**单实体 C/X/B 拓扑**（非 MCP 对等双 runtime）：C=仅 `~/.claude/skills/<name>` 实体，X=仅 `~/.agents/skills/<name>` 实体，B=X 实体 + C 指向 X 的 symlink/junction 投影。B 禁止两侧都物化；两侧等价实体是可恢复但非成功的 `shared-copy/partial`。门禁为 `verify-skills-adoption.mjs` / `test-skills-topology-smoke.mjs` / `verify-skills-view.mjs` / `verify-skills-render.mjs`：
+- **双侧检测 = 单次 CLI + 物理事实增强**：`getInstalledSkills()` 无参 / 仅传 exec → **不带 `--agent`** 全量扫所有 agent 目录，一次调用得每条 skill 的 `agents` displayName 列表；显式 `cc`/`cx` 才带 `--agent`（旧单侧路径保留）。随后只读检查同名物理路径；`projectSharedSkills` 有 storage inspection 时以 canonical/Claude 路径有效性派生 `sharedInstalled` / `claudeInjected`，无 storage 的兼容调用才回退 `agents`。`codexAvailable` 恒等于 canonical 本体有效，Codex 无独立开关。原因：官方 skills 1.5.19 在隔离 HOME 的真实双 Agent local add 后可能只在 JSON `agents` 中列 `Claude Code`，但 canonical 已存在且 Codex 可直读。整个检测不缓存、不跑两次 CLI（对齐 HC-3）。
+- **物理存储分类只读增强**：一次 CLI 列表完成后，`core/skills-storage.ts` 只读检查同名 `~/.claude/skills` / `~/.agents/skills`，分类为 `shared-symlink` / `shared-copy` / `claude-only` / `canonical-only` / `invalid-link` / `conflict` / `invalid` / `missing`；不得把 CLI badge 直接当作 Claude-only。真正 Claude-only 必须是 Claude 实体有效目录且 canonical 物理路径不存在。页面进入、检测与 `r` 刷新只读，不得自动迁移或修复。
+- **列表**：一行一 skill name + `Claude Code ●|○` + `Codex ●|○` 双态徽章（全称，禁 `cc`/`cx` 缩写；文案「已安装/未安装」）。徽章只展示实时路径事实；管理 Modal 中两侧目标均可编辑，以 `{true,false}=C` / `{false,true}=X` / `{true,true}=B` 解释，零目标拒绝并引导 `d` 全量卸载。列表**不按 `agentContext` 过滤**，`↑/↓` 在首末项之间循环。
+- **扁平多选安装页**：`skills find` 子 Skill 保持原顺序单层展示，禁止恢复 owner/repo 父子导航，结果列表 `↑/↓` 在首末项之间循环。Space 只切当前可安装项，安装页上下文 `a` 只全选可安装且名称唯一的项；已安装、全局同名占用、当前选择同名冲突与来源不可识别项均保留可遍历但禁选。选择 key 为 `(source, skillName)`，提交新搜索清空旧选择；无显式多选时 Enter 把当前可安装项作为单项批次。active 仅让 Checkbox 的 `[` / `]` 与标题使用主题色，禁止整卡 active 背景；非 active 标题（包括不可选项）统一使用正常文字色，Checkbox 顶对齐标题首行。带 leading 的 Card 必须保留右侧 `titleRight`，确保安装状态与下载量可见。lock GitHub `sourceUrl` 与搜索 `owner/repo` 先规范化再判断已安装/同名占用，禁止直接比较原始字符串。
+- **会话内检测缓存**：进入安装页复用 App 级已安装状态缓存，禁止仅因页面切换再次执行 `skills list`。刷新入口限定为 App 首检、用户按 `r`、真实生命周期变更后的刷新，以及批量安装 postflight 对账；缓存未成功时仍允许搜索/导航，但禁选和禁提交。
+- **批量安装目标 Modal**（安装页 Enter，`select-install-target`）：整批只打开一次并显示数量；`Claude Code` 可切，`Codex` **只读恒勾**。同 source 多 Skill 合并为一次多 `--skill` 调用，不同 source 按首次出现顺序串行执行且失败后继续；Claude Code 勾 → 固定 `--agent codex --agent claude-code` 且无 `--copy`，得到 B；不勾 → `--agent codex --copy`，并 scoped `CODEX_HOME=~/.agents` 得到 X。所有 Skills 目标/管理/强确认 Modal 打开时背景列表必须失焦，`↑/↓` 只操作 Modal，不得改变背景列表光标。
+- **安装后对账与留页**：全部 source 执行后只通过共享 detection cache 的一次可等待刷新取得最终全局事实；退出码只作命令诊断，逐项成功以最终已安装名单为准。全部成功、部分成功、全部失败或复检失败均停留原安装页并保留查询/扁平结果/光标；确认成功项取消选择并禁选，仍缺失或未确认项保持选择以便重试。busy 期间锁定输入，不新增取消/进程终止协议。
+- **统一管理事务**（列表行 Enter，`manage-inject` → `confirm-topology-change`）：C/X/B/shared-copy 均允许选择 C、X、B；精确 C/X/B no-op 零 snapshot/零 CLI/零 refresh，shared-copy 选 B 表示显式修复。六向顺序固定：C→X=`remove C → missing → add X --copy`；C→B=有序双 Agent add；X→C=`remove X → missing → add C --copy`；X→B=有序双 Agent add；B→C=`remove [C,X] → missing → add C --copy`；B→X=只 remove C，禁止重写 X。目标 C 且 CLI raw agents 含第三方时在 spawn 前阻断。
+- **env / postflight / 恢复**：所有 topology child env 固定 `HOME` / `USERPROFILE` / `CLAUDE_CONFIG_DIR=~/.claude`；Codex add 与**每一条 topology remove**额外固定 `CODEX_HOME=~/.agents`。即使 remove 只传 Claude，也不能省略 `CODEX_HOME`，否则 1.5.19 会把 canonical 判断为无人使用并删除。每步以 storage + manifest + link/lock 事实对账，exit code 只作诊断。mutation 失败最多执行一次官方 CLI cleanup + 原拓扑恢复；恢复成功为非成功 `restored`，失败保留 snapshot。`complete/partial/restored/failed` 只要 `mutated=true` 都恰好 `refreshAndWait()` 一次。
+- **Windows partial**：链接权限失败而回退 copy 时保留 canonical 与 Claude 独立副本，显示“部分完成”并允许管理 Modal 重试，不做破坏性回滚；`partial.success=false` 且保留 recovery snapshot。
+- **同名不同源替换**：同来源、来源未知、Claude-only、Codex-only、完整共享与 `shared-copy` 搜索项保持禁选；只有 lock source 可识别、与搜索 source 规范化后确实不同且旧内容可恢复的项允许选择，列表固定显示“已有同名”。执行前强确认逐项展示旧/新 source、所选 Agent、canonical/lock 覆盖影响；顺序固定为旧内容 snapshot → 官方 `add` 新来源（B 无 `--copy`；X 用 `--copy` + scoped canonical env）→ filesystem/lock postflight → 成功后按需 targeted remove C。add/postflight 失败禁止后置 remove，并保留恢复快照。
+- **更新/删除**：`A` 只调用一次 `skills@1.5.19 update -g -y`（省略 `--agent`，由 lock 管理远程项）；`U` 仅允许当前行有最终 lock/source 时调用 `update <name>`，本地 snapshot 拓扑必须阻断，防止 update 重建或改写拓扑。`d` 全量卸载调用一次 `skills@1.5.19 remove <skill> -g --yes` 并省略 `--agent`；拓扑事务绝不复用该全量删除。更新最长 10 分钟，timeout/rejection 必须收敛退出 busy。
+- **原生输入**：已安装过滤与远程搜索复用稳定挂载的 `SingleLineInput`（真实 OpenTUI `<input>`），受控 value 同步 reducer，支持 paste 单行化、光标/选择、删除、全选、剪贴板、撤销/重做。Windows/Linux 补 Ctrl+A/Z/Y/Shift+Z，macOS 使用 Command；复制/剪切走 OSC52 feedback。input 不绑定 `onSubmit`，远程 Enter 只由 Skills 页 handler 提交一次，过滤 Enter 无副作用。
+- 面向用户文案全链统一「已安装/未安装」「安装/卸载」，**不出现**「注入/解除」「开启/禁用」。快捷键来自 `SKILLS_COMMANDS` 单一源；footer 按上下文展示，Skills Modal 可通过 `viewShortcuts()` 镜像当前确认态，但禁止在视图硬编码键位字面量。
 
 ### HC-NON-TTY
 ccq 可执行文件 non-TTY（管道 / 重定向 / CI）输出只读提示、不进交互 TUI、退出码 0。`src/index.tsx` 入口实现：
@@ -221,7 +234,7 @@ if (!process.stdin.isTTY) {
 删除旧链时必须全仓 grep 零业务引用确认（`manage-tui.tgz`/`ManageCore`/`ink`/`react-ink-textarea`/`external-editor`/`ccq-function`/`function ccq` 业务引用清零，测试 fixture/历史 plan 文档除外）。
 
 ### HC-SHORTCUT-SINGLE-SOURCE
-快捷键说明**唯一**由 footer `ShortcutBar`（`app.tsx:178`）展示，按键文本从 `@opentui/keymap`（`config/keybindings.js` 绑定定义）经 `state/shortcuts.ts` 动态解析——**单一数据源**。
+快捷键说明的**唯一数据源**是 `@opentui/keymap`（`config/keybindings.js` 绑定定义）经 `state/shortcuts.ts` 得到的动态解析结果。常规页面由 footer `ShortcutBar`（`app.tsx`）展示；强确认/选择类 Modal 可镜像同一解析结果，但不得维护第二套键位文本。
 - **禁止**在视图/组件内硬编码键位字面量（`[I]`、`[Tab]`、`Ctrl+S` 等）；新增/改键一律走 `config/keybindings.js` 注册 + `shortcuts.ts` 映射，footer 自动同步。
 - macOS 快捷键采用**编辑语义 Command + TUI 应用功能 Control**：复制 / 粘贴 / 撤回 / 重做 / 保存等编辑语义用 `⌘`（`KeyEvent.super`），不做 `⌃` 兼容；推荐边栏、导入/补全、面板/焦点切换等应用功能用 `⌃`（`KeyEvent.ctrl`）。非 macOS 仍显示 `Ctrl+...`。
 - macOS footer 使用符号展示：Command=`⌘`、Control=`⌃`、Shift=`⇧`、Option=`⌥`；若未来发现终端字体不支持，再在 formatter 中统一 fallback 为 `Cmd+` / `Ctrl+`，禁止视图内单独处理。
@@ -400,7 +413,7 @@ if (useIcon && existsSync(ICON_PATH)) {
 | 配置文件 | `views/config-view.tsx` | Claude Code 读写 `~/.claude/settings.json`；Codex 读写 `~/.codex/config.toml`。复用预览 / `e` 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入；仅剥离 model + 供应商 env（AUTH_TOKEN/BASE_URL/受管模型键），Claude 侧 statusLine/hooks/outputStyle 等孤儿字段已放开直编 |
 | 全局规则 | `views/prompts-view.tsx` | Claude Code 读写 `~/.claude/CLAUDE.md`；Codex 只读写 `~/.codex/AGENTS.md`。复用推荐规则内容、预览/编辑/导入与脏编辑保护 |
 | MCP | `views/mcp/McpView.tsx` + `mcp-view-model.ts` | MCP Server 启用/禁用 + 凭据管理；Claude Code 状态来自 `~/.claude.json.mcpServers`，Codex 状态来自 `~/.codex/config.toml` 的 `[mcp_servers]`，vault 不作 Active/Disabled 事实源 |
-| Skills | `views/SkillsView.tsx` | 共享本体+双侧注入：隐藏 Header、单次 CLI 双态投影、安装目标 Modal（Codex 只读恒勾）、u 更新两侧 / d 全量卸载（`--agent '*'`）；物理存储与映射交给 skills CLI（见 HC-SKILLS-SHARED-INJECT） |
+| Skills | `views/SkillsView.tsx` | 共享本体+双侧安装：隐藏 Header、单次 CLI 双态投影、扁平跨来源多选、内部 source 顺序批次、一次目标 Modal（Codex 只读恒勾）、A 更新全部 / U 更新当前 / d 全量卸载（省略 `--agent`）；物理存储与映射交给 skills CLI（见 HC-SKILLS-SHARED-INJECT） |
 
 ---
 
@@ -416,17 +429,18 @@ if (useIcon && existsSync(ICON_PATH)) {
 
 侧边栏底部「检查更新」入口：
 - `latest`：Enter 重新检查。
-- `available`：Enter 打开 Modal；用户再次 Enter 确认后才下载新版到 `<target-dir>/.ccq-update.tmp`，Esc 取消。
-- 下载过程中 Modal 不关闭，展示 loading；Enter 禁用，Esc 通过 AbortSignal 停止下载。
+- `available`：Enter 打开 Modal；用户再次 Enter 确认后才按不可变 `SelfUpdatePlan` 下载新版到目标同目录的 pid+随机唯一临时文件，Esc 取消。
+- 下载过程中 Modal 不关闭，展示 loading；Enter 禁用，只有 downloading 阶段的 Esc 可通过 AbortSignal 停止下载；applying 阶段不可取消。
 - 下载失败时展示 `formatSelfUpdateError()` 生成的具体阶段、HTTP 状态、目标路径、临时路径或底层错误。
-- 下载成功后 Modal 进入「下载完成」确认态；用户 Enter 才应用更新并重启，Esc 稍后处理。
+- 下载成功后 Modal 必须携带原 `DownloadedSelfUpdate` 事务进入「下载完成」确认态；用户 Enter 才应用更新并重启，禁止重新推导共享临时路径。
 
 ### 替换与重启
 
 - 更新目标优先使用当前运行的 ccq 可执行文件路径；若当前 `process.execPath` 不像 ccq（例如源码/Bun dev 模式），回退到安装目标 `~/.local/bin/ccq[.exe]`。
-- **Windows**：运行中的 exe 无法可靠覆盖，使用 PowerShell helper：等待当前 pid 退出 → `Copy-Item` 临时文件覆盖目标 exe → 删除临时文件 → `Start-Process` 重启 ccq；不再依赖「下次启动时自己覆盖自己」。
-- **macOS/Linux**：下载成功后用 `rename` 替换目标文件，并 `chmod 755`。
-- CLI `ccq update [--check]` 与 TUI 复用同一 core 逻辑；失败必须输出结构化原因。
+- Release plan 必须严格验证平台/架构、正整数 size 与 `sha256:<64 hex>` digest；缺失或不匹配一律 fail closed。只有 latest semver 严格大于当前版本才下载，禁止 prerelease/stable 误降级。
+- **Windows**：运行中的 exe 无法可靠覆盖，使用 PS5.1 helper：等待当前 pid 退出 → 复核临时文件 size/hash → 重试 `Copy-Item` → 复核目标 size/hash → 删除临时文件；仅 TUI 调用的 `RestartAfterApply=true` 才 `Start-Process`，CLI 调用不得重启。
+- **macOS/Linux**：应用前复核 size/hash、对临时文件 `chmod 755` + fsync，再以同目录 `rename` 作为最后一个可能失败的目标变更步骤。TUI 立即重启前必须先 `renderer.destroy()` 恢复终端状态。
+- CLI `ccq update [--check]` 与 TUI 复用同一 core 逻辑；`scheduled` 与 `applied` 文案必须准确区分，失败必须输出结构化原因。
 
 ### P-5 失败不阻断 + P-6 版本相同零网络
 

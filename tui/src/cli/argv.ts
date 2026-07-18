@@ -24,8 +24,6 @@ export type CliIntent =
 	| { kind: 'uninstall'; assumedYes: boolean }
 	| { kind: 'unknown'; verb: string; args: string[] };
 
-const VERBS = new Set(['cc', 'cx', 'ls', 'use', 'update', 'tools', 'uninstall', 'help']);
-
 /** 将 argv（已 slice(2)）解析为 CliIntent。纯函数，无副作用。 */
 export function parseCli(argv: string[]): CliIntent {
 	// 无参 → 进 TUI
@@ -47,11 +45,7 @@ export function parseCli(argv: string[]): CliIntent {
 	// help [verb]
 	if (first === 'help') {
 		const verb = argv[1];
-		if (verb && VERBS.has(verb)) {
-			return { kind: 'help', verb };
-		}
-
-		return { kind: 'help' };
+		return verb ? { kind: 'help', verb } : { kind: 'help' };
 	}
 
 	// 子命令动词
@@ -117,7 +111,9 @@ function parseCx(rest: string[]): CliIntent {
 
 function parsePassthrough(rest: string[]): string[] {
 	const ddIndex = rest.indexOf('--');
-	return ddIndex >= 0 ? rest.slice(ddIndex + 1) : rest;
+	return ddIndex >= 0
+		? [...rest.slice(0, ddIndex), ...rest.slice(ddIndex + 1)]
+		: rest;
 }
 
 function parseToolTarget(value: string | undefined): ToolTarget | null {

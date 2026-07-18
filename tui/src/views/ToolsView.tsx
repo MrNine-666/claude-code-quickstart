@@ -15,6 +15,7 @@ import {
 	isAnyBusy,
 	itemStatusOf,
 	reduceToolsViewState,
+	resolveToolsPrimaryAction,
 	updatableComponents,
 	activeProgressTasks,
 	injectTargetContext,
@@ -40,7 +41,7 @@ export type InjectChangesResult = {
 
 // 工具管理视图（Phase 4，OpenTUI 适配）：合并工具安装 + 检查更新为全生命周期菜单。
 // grid 卡片范式：flexWrap 布局 + StatusDot 彩色圆点 + 上下左右 2D 导航。
-// 卡片按状态暴露操作：未装→安装 / 可更新→更新 / 已装→卸载（u 强确认）。
+// 卡片主操作：普通项 Enter 按状态安装/更新，inject 项 Enter 管理开关；d 强确认卸载。
 // 检测缓存提升到 App 层：切走再切回不重跑；r 键刷新。
 // OpenTUI 适配：useKeyboard 替代 useInput，<box>/<text> 小写元素，<input> 替代 ink-text-input。
 
@@ -172,7 +173,7 @@ export function ToolsView({ services: rawServices, cache, active = true, content
 			<ViewHeader title="工具管理" subtitle="管理常用 CLI 工具的安装、更新与卸载" />
 			{renderDetectionNotice(detection.status)}
 			{/* 检测中时隐藏网格，仅显示加载态；检测完成后才显示分组网格或空状态 */}
-			{detection.status !== 'loading' && detection.status !== 'idle' ? renderGrid(view, scrollRef, active) : null}
+			{detection.status !== 'loading' && detection.status !== 'idle' ? renderGrid(view, scrollRef, active && view.mode === 'grid') : null}
 			{activeProgressTasks(view).length > 0 ? <ActiveProgressTasks tasks={activeProgressTasks(view)} /> : null}
 			{view.errorText ? <ErrorPanel message={view.errorText} /> : null}
 			{view.mode === 'confirm-uninstall' ? <UninstallConfirm view={view} dispatch={dispatch} services={services} cache={cache} active={active} /> : null}
@@ -228,21 +229,15 @@ function handleGridKey(
 		return;
 	}
 
-	// i：安装当前项（仅非 inject 未安装项）；单义键，取代原多义 Enter。
-	if (k === 'i') {
-		installCurrent(view, services, dispatch, cache);
+	// Enter：普通项按实时状态安装/更新，inject 类始终打开管理开关 Modal。
+	if (k === 'enter' || k === 'return') {
+		runPrimaryAction(view, services, dispatch, cache);
 		return;
 	}
 
-	// m：管理开关（仅 inject 类 CodeGraph / CcgWorkflow，打开注入开关 Modal）；单义键，取代原多义 Enter。
-	if (k === 'm') {
-		manageInjectCurrent(view, dispatch);
-		return;
-	}
-
-	// u：更新当前项（含 inject 类共享 CLI）。
+	// u：仅 inject 类保留单项更新，普通项已由 Enter 按状态处理。
 	if (k === 'u') {
-		updateCurrent(view, services, dispatch, cache);
+		updateInjectableCurrent(view, services, dispatch, cache);
 		return;
 	}
 
@@ -325,10 +320,10 @@ function handleInjectTargetKey(
 	}
 }
 
-// ── i：安装当前项（仅非 inject 未安装项）─────────────────────────────────────────
+// ── Enter：按组件能力与实时状态解析唯一主操作 ───────────────────────────────────
 
-function installCurrent(view: ToolsViewState, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
-	const component = cursorComponent(view) as SharedManagedComponent | undefined;
+function runPrimaryAction(view: ToolsViewState, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
+	const component = cursorComponent(view);
 	if (!component) {
 		return;
 	}
@@ -337,47 +332,33 @@ function installCurrent(view: ToolsViewState, services: ToolsViewServices, dispa
 		return;
 	}
 
-	// inject 类的安装/接入统一走「管理开关」（m）；i 仅处理非 inject 项。
-	if (isInjectableComponent(component.id)) {
-		toast.info(`${component.name} 请按 m 管理开关`);
-		return;
+	switch (resolveToolsPrimaryAction(component)) {
+		case 'manage':
+			dispatch({type: 'open-inject-target', draft: initialInjectDraft(component as SharedManagedComponent)});
+			return;
+		case 'install':
+			installOne(component, services, dispatch, cache);
+			return;
+		case 'update':
+			updateOne(component, services, dispatch, cache);
+			return;
+		case 'latest':
+			toast.success(`${component.name} 已是最新`);
 	}
-
-	if (!component.installed) {
-		installOne(component, services, dispatch, cache);
-		return;
-	}
-
-	if (component.hasUpdate === true) {
-		toast.info(`${component.name} 有更新，请按 u 更新`);
-		return;
-	}
-
-	toast.success(`${component.name} 已安装`);
 }
 
-// ── m：管理开关（仅 inject 类，打开注入开关 Modal）─────────────────────────────────
+// ── u：仅管理型工具保留单项更新 ───────────────────────────────────────────────
 
-function manageInjectCurrent(view: ToolsViewState, dispatch: Dispatch): void {
-	const component = cursorComponent(view) as SharedManagedComponent | undefined;
-	if (!component) {
+function updateInjectableCurrent(view: ToolsViewState, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
+	const component = cursorComponent(view);
+	if (!component || !isInjectableComponent(component.id)) {
 		return;
 	}
 
-	if (itemStatusOf(view, component.id) !== 'idle') {
-		return;
-	}
-
-	if (!isInjectableComponent(component.id)) {
-		toast.info(`${component.name} 无安装开关`);
-		return;
-	}
-
-	// inject 类（CodeGraph / CcgWorkflow）：打开开关 Modal，用当前状态初始化草稿（D5）。
-	dispatch({ type: 'open-inject-target', draft: initialInjectDraft(component) });
+	updateCurrent(view, services, dispatch, cache);
 }
 
-// ── u：更新当前项（含 inject 类共享 CLI；无更新则提示已是最新） ──────────────────
+// ── 更新当前项（无更新则提示已是最新） ────────────────────────────────────────
 
 function updateCurrent(view: ToolsViewState, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
 	const component = cursorComponent(view);
@@ -594,6 +575,21 @@ export function successfulUpdatePatch(component: ManagedComponent): ComponentPat
 	return {...patch, sharedInstalled: true, sharedVersion: currentVersion};
 }
 
+export function settleBatchUpdateComponents(
+	components: readonly ManagedComponent[],
+	targets: readonly ManagedComponent[],
+	failedIds: ReadonlySet<string>
+): readonly ManagedComponent[] {
+	const successfulTargets = new Map(
+		targets.filter(component => !failedIds.has(component.id)).map(component => [component.id, component] as const)
+	);
+
+	return components.map(component => {
+		const target = successfulTargets.get(component.id);
+		return target ? {...component, ...successfulUpdatePatch(target)} as ManagedComponent : component;
+	});
+}
+
 function updateAll(view: ToolsViewState, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
 	const targets = updatableComponents(view);
 	if (targets.length === 0) {
@@ -604,15 +600,20 @@ function updateAll(view: ToolsViewState, services: ToolsViewServices, dispatch: 
 	dispatch({ type: 'batch-start', action: 'update', ids: targets.map((item) => item.id) });
 	void services
 		.updateComponents(targets, progressSink(dispatch, targets[0]?.id ?? 'batch-update'))
-		.then(async (result) => {
-			const components = projectSharedToolComponents(await services.detectComponents());
-			const failedIds = result.updatedItems.filter((item) => item.startsWith('failed::')).map((item) => item.split('::')[1]);
-			const updatedCount = targets.length - failedIds.length;
+		.then((result) => {
+			const failedIds = new Set<string>(
+				result.updatedItems
+					.filter(item => item.startsWith('failed::'))
+					.map(item => item.split('::')[1])
+					.filter((id): id is string => Boolean(id))
+			);
+			const components = settleBatchUpdateComponents(view.components, targets, failedIds);
+			const updatedCount = targets.length - failedIds.size;
 			const summary =
-				failedIds.length === 0
+				failedIds.size === 0
 					? `已更新 ${targets.length} 个组件`
-					: `${updatedCount}/${targets.length} 成功，失败: ${failedIds.join(', ')}`;
-			if (failedIds.length === 0) {
+					: `${updatedCount}/${targets.length} 成功，失败: ${[...failedIds].join(', ')}`;
+			if (failedIds.size === 0) {
 				toast.success(summary);
 				dispatch({ type: 'batch-done', components });
 			} else {
@@ -621,15 +622,8 @@ function updateAll(view: ToolsViewState, services: ToolsViewServices, dispatch: 
 
 			cache.refresh();
 		})
-		.catch(async (error: unknown) => {
-			let detected: readonly ManagedComponent[] | null = null;
-			try {
-				detected = await services.detectComponents();
-			} catch {
-				// 保留现有共享投影；下方 cache.refresh 会再次检测并展示原始错误。
-			}
-			const components = detected ? projectSharedToolComponents(detected) : undefined;
-			dispatch({ type: 'batch-failed', error: errorMessage(error), ...(components ? {components} : {}) });
+		.catch((error: unknown) => {
+			dispatch({ type: 'batch-failed', error: errorMessage(error) });
 			cache.refresh();
 		});
 }
@@ -897,9 +891,14 @@ function ToolCard({
 	readonly focused: boolean;
 	readonly status: ComponentItemStatus;
 }) {
-	// 状态点在标题行右上角展示。CcgWorkflow 例外：两侧安装态已由卡片内 cc/cx 双态徽章行完整呈现，
-	// 右上角再放聚合点属冗余（且两侧版本可不同易误导），故隐藏；CodeGraph 是真·共享 CLI，右上角保留版本/更新态。
-	const titleRight = component.id === 'CcgWorkflow' ? undefined : <StatusRight dot={toolStatusDot(component, status)} />;
+	// 状态点在标题行右上角展示。CcgWorkflow 特例：平时两侧安装态已由卡片内 cc/cx 双态徽章行完整呈现，
+	// 右上角聚合点冗余（且两侧版本可不同易误导），故隐藏；但「有更新」时（含更新执行态）于右上角高亮
+	// 黄点 + 可更新版本号，便于快速发现待更新项。CodeGraph 是真·共享 CLI，右上角始终保留版本/更新态。
+	// CcgWorkflow 平时靠卡片内双态徽章呈现两侧安装态，右上角聚合点冗余故隐藏；但「有更新」或
+	// 处于执行态（安装/更新/卸载中）时于右上角展示状态点/loading，与其它工具一致。
+	const titleRight = component.id === 'CcgWorkflow'
+		? (component.hasUpdate === true || status !== 'idle' ? <StatusRight dot={toolStatusDot(component, status)} /> : undefined)
+		: <StatusRight dot={toolStatusDot(component, status)} />;
 	// 卡片不固定高度：multiLine 让 body 按实际行数自然撑开（标题行 + 空行 + 描述 [+ 徽章行]），
 	// inject 类比非 inject 高一行，同行按各自内容高度渲染，不再用 minHeight 强行拉平。
 	return (
@@ -1058,7 +1057,8 @@ function injectSharedDot(component: SharedManagedComponent): { kind: StatusDotKi
 	}
 	const olderVersion = olderInjectedVersion(component);
 	if (component.hasUpdate === true) {
-		return { kind: 'updatable', label: olderVersion ? `${olderVersion} 有更新` : '有更新' };
+		// 与全页其它 updatable 组件统一口径：旧版本 → 最新版本；旧版本不可读时退回 latestVersion 单值。
+		return { kind: 'updatable', label: olderVersion ? `${olderVersion} → ${component.latestVersion || '-'}` : `→ ${component.latestVersion || '-'}` };
 	}
 	return { kind: 'latest', label: olderVersion || '已安装' };
 }

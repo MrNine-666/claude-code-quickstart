@@ -32,7 +32,7 @@ Windows 与 macOS 双平台的 CLI Agent（Claude Code / Codex）开发环境自
 - **配置文件与供应商隔离**：每个供应商独立存放在专属 Profile 文件（Claude Code 存 `~/.claude/providers/`，Codex 存 `~/.codex/<key>.config.toml`），与主配置（`settings.json` / `config.toml`）物理分离；切换或设默认供应商时只按字段所有权合并供应商相关内容（Token / Base URL / 模型键），不触碰语言、权限、hooks、statusLine 等其他配置，MCP 也各自独立存放，切换供应商不会影响其余任何配置
 - **配置与规则一键导入**：推荐的 `settings.json` 配置与全局规则（CLAUDE.md）可一键补全导入，只补缺失项、不覆盖你已有的设置
 - **MCP 多 Agent 开关**：内置 Context7 / DeepWiki / Playwright / Exa 等 MCP 模板，凭据录入一次持久保存，可按 Claude Code / Codex 分别启用或禁用
-- **Skills 快捷管理**：基于 `npx skills` 快捷搜索、安装、更新、卸载 Skills，并支持按 Claude Code / Codex 多 Agent 分别安装 / 卸载
+- **Skills 快捷管理**：基于官方 `npx skills` 管理共享本体与 Agent 投影；支持 Claude-only 显式收编、Codex-only/独立副本链接修复，以及同名不同源经强确认后的安全替换
 - **明暗主题自适应**：TUI 自动跟随终端明暗主题切换，深浅色终端都清晰顺眼
 - **应用内自更新**：`ccq` 本体支持应用内检查更新，强确认后原子替换并可一键重启，更新前自动快照备份、失败可回滚
 
@@ -268,8 +268,9 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 
 ### 6) Skills
 
-- 列表页：按当前 Header 调用 `skills --agent claude-code|codex`，本地过滤框模糊查询已装 Skills；`u` 更新全部、`d` 卸载单条、`r` 刷新
-- 安装页（`a` 进入）：远程搜索框 + 扁平 Skill 列表，`Enter` 触发确认弹窗安装；`owner/repo@skill` 搜索结果仅安装选中的子 Skill；物理存储与 Agent 映射交给 skills CLI
+- 列表页：一次全量检测同时展示 Claude Code / Codex 状态；`Enter` 管理安装，Claude-only 可在强确认后安装到 Codex 并迁移为共享本体，Codex-only 或 Windows 独立副本可重试 Claude 共享链接；检测与刷新不会自动改动已有 Skill
+- 安装页（`a` 进入）：远程搜索框 + 扁平多选列表；双侧都没有的 Skill 正常安装，同来源已安装或来源未知项禁选；可证明同名不同源的项显示“已有同名”，执行前逐项确认旧/新来源和覆盖影响
+- 物理存储、canonical 与 Agent 链接仍由官方 Skills CLI 负责；ccq 仅在目标目录外创建安全恢复快照，并在 `add` 与文件系统/lock 对账成功后清理未选择的旧投影
 
 ![Skills 管理](./assets/screenshots/tui-skills.png)
 

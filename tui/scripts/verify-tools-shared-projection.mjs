@@ -89,8 +89,18 @@ const {
 	reduceToolsViewState,
 	createInitialToolsViewState,
 	initialInjectDraft,
+	resolveToolsPrimaryAction,
 	updatableComponents
 } = await import('../src/state/tools-view-state.ts');
+
+// ── 网格 Enter 主操作：管理 Modal 优先，普通工具按安装/更新事实分派 ──────────
+const openSpec = dualProjected.find(c => c.id === 'OpenSpec');
+assert.ok(openSpec, 'OpenSpec 在共享投影中存在');
+assert.equal(resolveToolsPrimaryAction({...openSpec, installed: false, hasUpdate: null}), 'install', '普通未安装工具 Enter 执行安装');
+assert.equal(resolveToolsPrimaryAction({...openSpec, installed: true, hasUpdate: true}), 'update', '普通可更新工具 Enter 执行更新');
+assert.equal(resolveToolsPrimaryAction({...openSpec, installed: true, hasUpdate: false}), 'latest', '普通最新工具 Enter 只提示已是最新');
+assert.equal(resolveToolsPrimaryAction({...codegraph, hasUpdate: true}), 'manage', '管理型工具即使有更新，Enter 仍优先打开 Modal');
+console.log('[PASS] Tools Enter 主操作优先级：manage > install/update/latest');
 
 // 光标落在 CodeGraph（cc 已注入 / cx 未注入），进入开关 Modal。
 const gridState = {
@@ -105,12 +115,14 @@ assert.deepEqual(draft, {cc: true, cx: false}, '草稿用组件实际 inject 态
 let modal = reduceToolsViewState(gridState, {type: 'open-inject-target', draft});
 assert.equal(modal.mode, 'select-inject-target', 'Enter 打开开关 Modal');
 assert.deepEqual(modal.injectDraft, {cc: true, cx: false}, 'Modal 初始草稿=实际态');
+const modalCursor = modal.cursor;
 
 // 空格切换当前焦点侧（injectTargetIndex=0 → cc）：cc 由开→关。
 modal = reduceToolsViewState(modal, {type: 'inject-target-toggle'});
 assert.deepEqual(modal.injectDraft, {cc: false, cx: false}, '空格切换 cc 草稿 true→false');
 // 下移到 cx 再切换：cx 由关→开。
 modal = reduceToolsViewState(modal, {type: 'inject-target-nav', delta: 1});
+assert.equal(modal.cursor, modalCursor, 'Tools Modal 上下键不得移动背景网格光标');
 modal = reduceToolsViewState(modal, {type: 'inject-target-toggle'});
 assert.deepEqual(modal.injectDraft, {cc: false, cx: true}, '空格切换 cx 草稿 false→true');
 
@@ -124,6 +136,13 @@ const cancelled = reduceToolsViewState(modal, {type: 'cancel'});
 assert.equal(cancelled.mode, 'grid', 'Esc 取消回 grid');
 assert.equal(cancelled.injectDraft, undefined, 'Esc 取消清空草稿');
 console.log('[PASS] 空格切换草稿 + Enter 前不落盘 + Esc 取消清空草稿');
+
+const toolsModalViewSource = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
+assert.match(
+	toolsModalViewSource,
+	/renderGrid\(view, scrollRef, active && view\.mode === 'grid'\)/,
+	'Tools Modal 打开时背景网格必须失焦'
+);
 
 // ── CodeGraph 首次单侧安装：安装结果版本必须立即进入共享 CLI 状态 ───────────────
 // 首次仅开启 Claude Code 时，刷新检测完成前仍依赖本地 patch；若丢弃 install outcome.version，
@@ -141,6 +160,7 @@ const pendingCodegraph = {
 };
 const {
 	injectChangesAction,
+	settleBatchUpdateComponents,
 	runInjectChanges,
 	successfulInstallPatch,
 	successfulUpdatePatch,
@@ -304,7 +324,16 @@ console.log('[PASS] CodeGraph 配置残留但 CLI 缺失显示「CLI 不可用�
 // ── updateAll：成功/失败检测结果都必须先走共享投影，失败后仍刷新 ───────────────
 const toolsViewSource = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
 const updateAllSource = toolsViewSource.slice(toolsViewSource.indexOf('function updateAll'), toolsViewSource.indexOf('// ── 卸载确认'));
-assert.match(updateAllSource, /projectSharedToolComponents\(/, '批量更新检测结果进入 state 前走共享投影');
+const settledBatch = settleBatchUpdateComponents(
+	[installedWithUpdate, {...openSpec, installed: true, currentVersion: '1.0.0', latestVersion: '1.1.0', hasUpdate: true}],
+	[installedWithUpdate],
+	new Set()
+);
+assert.equal(settledBatch[0].hasUpdate, false, '批量更新成功项立即清空可更新状态');
+assert.equal(settledBatch[0].currentVersion, '1.5.0', '批量更新成功项立即推进本地版本');
+assert.equal(settledBatch[1].hasUpdate, true, '非目标项保持原状态');
+assert.doesNotMatch(updateAllSource, /services\.detectComponents\(/, '批量更新收尾不得等待二次全量检测');
+assert.match(updateAllSource, /settleBatchUpdateComponents\(/, '批量更新先用本地结果结算状态');
 assert.match(updateAllSource.slice(updateAllSource.indexOf('.catch')), /cache\.refresh\(\)/, '批量更新失败后刷新真实状态');
 for (const [start, end, label] of [
 	['function installOne', 'export function successfulInstallPatch', '安装'],
@@ -314,7 +343,7 @@ for (const [start, end, label] of [
 	const section = toolsViewSource.slice(toolsViewSource.indexOf(start), toolsViewSource.indexOf(end));
 	assert.match(section.slice(section.indexOf('.catch')), /cache\.refresh\(\)/, `${label}异常后刷新真实状态`);
 }
-console.log('[PASS] 批量更新成功/失败路径保持共享投影并刷新');
+console.log('[PASS] 批量更新立即退出 busy，并在后台刷新真实状态');
 
 delete process.env.CCQ_HOME;
 console.log('[PASS] Tools 共享投影不变量门禁全部通过');

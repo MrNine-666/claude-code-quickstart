@@ -2,6 +2,9 @@
 // 总帮助 + 各子命令帮助。新增子命令时在此注册一行 + 补一段 help 文本即可。
 
 import { CCQ_VERSION } from '../version.js';
+import { TOOL_DEFINITIONS } from '../core/tools-install.js';
+
+const AVAILABLE_TOOL_IDS = TOOL_DEFINITIONS.map(definition => definition.id).join(' / ');
 
 export const USAGE_HEADER = `ccq v${CCQ_VERSION} — Claude Code Quickstart 管理控制台`;
 
@@ -12,12 +15,12 @@ export const HELP_GENERAL = `${USAGE_HEADER}
   ccq <verb> [object] [--flags] [-- 透传...]
 
 子命令:
-  cc <name> [args...]     临时用指定 Claude provider 启动 claude（不写盘）
+  cc <name> [args...]     临时用指定 Claude 供应商启动 claude（不写盘）
                           等价: claude --settings ~/.claude/providers/<name>.json [args...]
   cx [name] [args...]     启动 codex；有 name 时等价 codex --profile <name> [args...]
-  ls [--tool <tool>]      列出 provider/profile 并标记当前默认（tool=claude|codex，默认 claude）
+  ls [--tool <tool>]      列出供应商并标记当前默认（tool=claude|codex，默认 claude）
   use <name> [--tool <tool>]
-                          设默认 provider/profile（默认 tool=claude）
+                          设默认供应商（默认 tool=claude）
   update [--check]        检查或更新 ccq 可执行文件
   tools update [name]     更新全部可更新工具，或更新指定工具
   tools uninstall <name> [--yes|-y]
@@ -26,7 +29,7 @@ export const HELP_GENERAL = `${USAGE_HEADER}
   help [verb]             显示总帮助或某子命令帮助
 
 动词分类（设计约定）:
-  启动类（cc/cx）  后续 token = provider/profile 名 + 透传给底层工具；用 -- 分隔透传
+  启动类（cc/cx）  后续 token = 供应商名 + 透传给底层工具；用 -- 分隔透传
   管理类（ls/use/update/tools/uninstall 及未来 mcp/skills）  子命令 + ccq 自有 flag，不透传
 
 通用 flag:
@@ -44,7 +47,7 @@ export const HELP_GENERAL = `${USAGE_HEADER}
   卸载类命令默认交互确认；传 --yes 或 -y 才跳过 y/N。
 `;
 
-export const HELP_CC = `ccq cc — 临时用指定 Claude provider 启动 claude
+export const HELP_CC = `ccq cc — 临时用指定 Claude 供应商启动 claude
 
 用法:
   ccq cc <name> [claude-args...] [-- 透传...]
@@ -52,7 +55,7 @@ export const HELP_CC = `ccq cc — 临时用指定 Claude provider 启动 claude
 行为:
   - 读取 ~/.claude/providers/<name>.json 作为 claude 的 --settings（session 级，不写盘）
   - <name> 之后的参数原样透传给 claude
-  - <name> 不存在或无效时，列出可用 provider 并以退出码 1 退出
+  - <name> 不存在或无效时，列出可用供应商并以退出码 1 退出
 
 示例:
   ccq cc glm                       # 交互式 claude，套用 providers/glm.json
@@ -68,7 +71,7 @@ export const HELP_CX = `ccq cx — 启动 Codex
 行为:
   - 不带 name 时直接启动 plain codex，让 Codex 读取 ~/.codex/config.toml
   - 带 name 时校验 ~/.codex/<name>.config.toml 存在，并启动 codex --profile <name>
-  - 不读取 ccq vault，不注入 API key env；Codex 自行读取 profile TOML 或官方登录状态
+  - 不读取 ccq vault，不注入 API key env；Codex 自行读取供应商配置 TOML 或官方登录状态
   - codex 不在 PATH 时返回 127，并提示到 TUI 工具管理安装 CodexCli
 
 示例:
@@ -78,7 +81,7 @@ export const HELP_CX = `ccq cx — 启动 Codex
   ccq cx deepseek -- -m gpt-5       # 用 -- 显式分隔透传
 `;
 
-export const HELP_LS = `ccq ls — 列出 provider/profile
+export const HELP_LS = `ccq ls — 列出供应商
 
 用法:
   ccq ls
@@ -87,12 +90,12 @@ export const HELP_LS = `ccq ls — 列出 provider/profile
 
 行为:
   - 默认等价 ccq ls --tool claude
-  - claude：扫描 ~/.claude/providers/*.json，列出 key + BaseUrl，并标记当前默认 provider
-  - codex：扫描 ~/.codex 下的 <key>.config.toml，列出 profile 并标记当前默认
+  - claude：扫描 ~/.claude/providers/*.json，列出 key + BaseUrl，并标记当前默认供应商
+  - codex：扫描 ~/.codex 下的 <key>.config.toml，列出供应商并标记当前默认
   - 非 TTY 友好（纯文本输出，可在管道/CI 中使用）
 `;
 
-export const HELP_USE = `ccq use — 设默认 provider/profile
+export const HELP_USE = `ccq use — 设默认供应商
 
 用法:
   ccq use <name>
@@ -117,8 +120,10 @@ export const HELP_UPDATE = `ccq update — 更新 ccq 可执行文件
 
 行为:
   - --check 只检查 GitHub Release latest，不下载也不替换
-  - 无 --check 时下载对应平台的 ccq 可执行文件并应用更新
-  - Windows 下运行中 exe 无法直接替换，更新会在下次启动时尝试完成
+  - 仅当 latest 语义化版本严格高于当前版本时更新，不会降级
+  - 下载前要求 Release 提供合法 size 与 SHA-256 digest，下载后严格校验
+  - macOS/Linux 校验通过后原子替换；命令退出后请重新运行 ccq
+  - Windows 会安排 helper 在当前命令退出后完成替换，不会自动启动 TUI
 `;
 
 export const HELP_TOOLS = `ccq tools — 管理工具更新与卸载
@@ -137,7 +142,7 @@ export const HELP_TOOLS = `ccq tools — 管理工具更新与卸载
   - uninstall <name> --yes / -y：跳过确认直接卸载（适合脚本/CI）
 
 可用工具名:
-  ClaudeCode / Ccline / CcgWorkflow / OpenSpec / CodeGraph / CodexCli / AntigravityCli
+  ${AVAILABLE_TOOL_IDS}
 `;
 
 export const HELP_UNINSTALL = `ccq uninstall — 卸载 ccq 本体
@@ -152,6 +157,8 @@ export const HELP_UNINSTALL = `ccq uninstall — 卸载 ccq 本体
   - 默认要求输入 y/N 确认
   - 传 --yes / -y 时跳过确认直接执行
   - 非 TTY 环境必须传 --yes 或 -y，否则拒绝执行
+  - Windows 运行中的 ccq.exe 由 helper 在当前命令退出后延迟删除
+  - 自卸载只删除 ccq 可执行文件，不删除配置、PATH 或其他工具，也不会重启 TUI
 `;
 
 /** 取某动词的帮助文本；未知动词返回 null。 */

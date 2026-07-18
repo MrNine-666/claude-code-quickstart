@@ -60,15 +60,36 @@ export function execCommand(command: string, args: readonly string[], options: E
 
 		let stdout = '';
 		let stderr = '';
-		let timedOut = false;
+		let settled = false;
+		let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+
+		const settleResolve = (result: ExecResult) => {
+			if (settled) {
+				return;
+			}
+
+			settled = true;
+			resolve(result);
+		};
+
+		const settleReject = (error: Error) => {
+			if (settled) {
+				return;
+			}
+
+			settled = true;
+			reject(error);
+		};
 
 		const timer = setTimeout(() => {
-			timedOut = true;
+			// Windows shell:true 只终止外层 shell 时，npx 子进程树可能继续持有 stdio，
+			// 因而 close 永远不返回。超时事实应在此刻直接收敛 Promise，kill 只负责清理。
+			settleReject(new Error(`命令超时 (${timeout}ms): ${command} ${args.join(' ')}`));
 			try {
 				proc.kill('SIGTERM');
 			} catch {}
 
-			setTimeout(() => {
+			forceKillTimer = setTimeout(() => {
 				try {
 					proc.kill('SIGKILL');
 				} catch {}
@@ -84,17 +105,19 @@ export function execCommand(command: string, args: readonly string[], options: E
 
 		proc.on('close', code => {
 			clearTimeout(timer);
-			if (timedOut) {
-				reject(new Error(`命令超时 (${timeout}ms): ${command} ${args.join(' ')}`));
-				return;
+			if (forceKillTimer) {
+				clearTimeout(forceKillTimer);
 			}
 
-			resolve({code: code ?? 0, stdout, stderr});
+			settleResolve({code: code ?? 0, stdout, stderr});
 		});
 
 		proc.on('error', error => {
 			clearTimeout(timer);
-			reject(error);
+			if (forceKillTimer) {
+				clearTimeout(forceKillTimer);
+			}
+			settleReject(error);
 		});
 	});
 }
