@@ -33,6 +33,8 @@ export type ScrollListProps = {
 	readonly header?: React.ReactNode;
 	// 列表是否拥有内容焦点；失焦时保留 cursor 位置但不显示卡片 focused 高亮。
 	readonly active?: boolean;
+	// 焦点由卡片承载，或由 item.leading 自行承载（如 Skills Checkbox）。
+	readonly focusIndicator?: 'card' | 'leading';
 };
 
 function itemId(item: ScrollListItem, index: number): string {
@@ -44,7 +46,8 @@ export function ScrollList({
 	cursor,
 	emptyText = '暂无数据',
 	header,
-	active = true
+	active = true,
+	focusIndicator = 'card'
 }: ScrollListProps) {
 	const ref = useRef<ScrollBoxRenderable>(null);
 	const safeCursor = items.length === 0 ? 0 : Math.min(Math.max(cursor, 0), items.length - 1);
@@ -84,7 +87,7 @@ export function ScrollList({
 							titleAttrs={item.titleAttrs}
 							titleRight={item.titleRight}
 							leading={item.leading}
-							focused={active && index === safeCursor}
+							focused={focusIndicator === 'card' && active && index === safeCursor}
 							selected={item.selected}
 							multiLine={item.multiLine}
 						>

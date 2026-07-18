@@ -17,7 +17,7 @@ export type CardProps = {
 	readonly titleColor?: string;
 	// 标题文字样式（可选，默认 BOLD）
 	readonly titleAttrs?: number;
-	// 标题行右侧内容（纵向布局专用，如检查更新状态）
+	// 标题行右侧内容（如检查更新状态、Skills 安装状态与下载量）
 	readonly titleRight?: React.ReactNode;
 	// 左栏标记（左右两栏布局触发器）
 	readonly leading?: React.ReactNode;
@@ -65,13 +65,16 @@ export function Card({
 				minHeight={minHeight}
 				flexShrink={0}
 			>
-				<box flexShrink={0} width={3} justifyContent="center" marginRight={1}>{leading}</box>
+				<box flexDirection="row" flexShrink={0} width={3} height={1} justifyContent="center" marginRight={1}>{leading}</box>
 				<box flexDirection="column" flexGrow={1} minWidth={0} overflow="hidden">
 					{title === undefined ? null : (
 						<box flexDirection="row" height={1} overflow="hidden">
-							<text fg={finalTitleColor} attributes={titleAttrs} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-								{title}
-							</text>
+							<box flexDirection="row" flexShrink={1} flexGrow={1} overflow="hidden">
+								<text fg={finalTitleColor} attributes={titleAttrs} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+									{title}
+								</text>
+							</box>
+							{titleRight === undefined ? null : <box flexShrink={0}>{titleRight}</box>}
 						</box>
 					)}
 					{body}

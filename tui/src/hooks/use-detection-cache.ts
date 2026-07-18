@@ -10,6 +10,8 @@ export type DetectionCache<Result> = {
 	readonly state: DetectionState<Result>;
 	// 手动刷新：重置后重新检测（对应视图内的 r 键）。
 	readonly refresh: (options?: DetectionRunOptions) => void;
+	// 可等待刷新：供写操作 postflight 获取这次 runner 的最终事实，避免读到旧 success。
+	readonly refreshAndWait: (options?: DetectionRunOptions) => Promise<DetectionState<Result> | undefined>;
 };
 
 export type DetectionCacheServices<Result> = {
@@ -17,6 +19,22 @@ export type DetectionCacheServices<Result> = {
 	readonly runDetection: (runner: DetectionRunner<Result>) => Promise<unknown>;
 	readonly refreshDetection?: (runner: DetectionRunner<Result>, options?: DetectionRunOptions) => Promise<unknown>;
 };
+
+/** 重置并执行同一个常驻 runner，返回写入 cache sink 的最终状态对象。 */
+export async function refreshDetectionRunner<Result>(
+	services: DetectionCacheServices<Result>,
+	runner: DetectionRunner<Result>,
+	options?: DetectionRunOptions
+): Promise<DetectionState<Result>> {
+	runner.reset();
+	if (services.refreshDetection) {
+		await services.refreshDetection(runner, options);
+	} else {
+		await services.runDetection(runner);
+	}
+
+	return runner.getState();
+}
 
 export function useDetectionCache<Result>(services: DetectionCacheServices<Result>): DetectionCache<Result> {
 	const [state, setState] = useState<DetectionState<Result>>({status: 'idle'});
@@ -29,20 +47,18 @@ export function useDetectionCache<Result>(services: DetectionCacheServices<Resul
 		void services.runDetection(runner);
 	}, [services]);
 
-	const refresh = (options?: DetectionRunOptions): void => {
+	const refreshAndWait = async (options?: DetectionRunOptions): Promise<DetectionState<Result> | undefined> => {
 		const runner = runnerRef.current;
 		if (!runner) {
-			return;
+			return undefined;
 		}
 
-		runner.reset();
-		if (services.refreshDetection) {
-			void services.refreshDetection(runner, options);
-			return;
-		}
-
-		void services.runDetection(runner);
+		return refreshDetectionRunner(services, runner, options);
 	};
 
-	return {state, refresh};
+	const refresh = (options?: DetectionRunOptions): void => {
+		void refreshAndWait(options);
+	};
+
+	return {state, refresh, refreshAndWait};
 }

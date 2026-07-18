@@ -2,6 +2,7 @@ import {join} from 'node:path';
 import type {AgentContext} from '../state/manage-state.js';
 import {execCommand, removeAnsiSequences, type ExecResult} from './exec.js';
 import {resolveHome} from './paths.js';
+import {inspectSkillStorage, type SkillStorageInspection, type SkillStorageOptions} from './skills-storage.js';
 
 // 外部命令执行缝：默认走 execCommand，测试可注入桩以避免真实 spawn（design D11/D13）。
 export type ExecFn = (command: string, args: readonly string[], options?: {timeout?: number}) => Promise<ExecResult>;
@@ -56,6 +57,7 @@ export type InstalledSkill = {
 	readonly source?: string;
 	readonly ref?: string;
 	readonly skillName?: string;
+	readonly storage?: SkillStorageInspection;
 };
 
 export type SearchSkillResult = {
@@ -66,6 +68,85 @@ export type SearchSkillResult = {
 	readonly url?: string;
 };
 
+export type SearchSkillIdentity = {
+	readonly key: string;
+	readonly source: string;
+	readonly skillName: string;
+};
+
+function githubRepoSlug(source: string): string | undefined {
+	let candidate = source.trim();
+	if (!candidate) {
+		return undefined;
+	}
+
+	try {
+		const url = new URL(candidate);
+		if (url.hostname.toLowerCase() !== 'github.com') {
+			return undefined;
+		}
+
+		candidate = url.pathname;
+	} catch {
+		const sshMatch = candidate.match(/^git@github\.com:(.+)$/i);
+		candidate = sshMatch?.[1] ?? candidate.replace(/^github:/i, '').replace(/^github\.com\//i, '');
+	}
+
+	const parts = candidate.replace(/^\/+|\/+$/g, '').split('/');
+	if (parts.length !== 2 || !parts[0] || !parts[1]) {
+		return undefined;
+	}
+
+	const repo = parts[1].replace(/\.git$/i, '');
+	return repo ? `${parts[0].toLowerCase()}/${repo.toLowerCase()}` : undefined;
+}
+
+/** GitHub repo URL、SSH source 与 `owner/repo` 简写视为同一 Skills 来源。 */
+export function skillSourcesEquivalent(left: string, right: string): boolean {
+	const normalizedLeft = left.trim();
+	const normalizedRight = right.trim();
+	if (!normalizedLeft || !normalizedRight) {
+		return false;
+	}
+
+	if (normalizedLeft === normalizedRight) {
+		return true;
+	}
+
+	const leftSlug = githubRepoSlug(normalizedLeft);
+	const rightSlug = githubRepoSlug(normalizedRight);
+	return Boolean(leftSlug && rightSlug && leftSlug === rightSlug);
+}
+
+/** 从搜索结果中提取 source 下的子 Skill 名；非 `source@skill` 形态返回 undefined。 */
+export function skillNameFromSearchResult(result: SearchSkillResult, source: string): string | undefined {
+	const prefix = `${source}@`;
+	if (!source || !result.name.startsWith(prefix)) {
+		return undefined;
+	}
+
+	const skillName = result.name.slice(prefix.length).trim();
+	return skillName || undefined;
+}
+
+/**
+ * 搜索结果的唯一身份。全局安装目录按 skillName 占位，但 UI 选择必须同时区分 source，
+ * 因此 key 使用可逆的 tuple JSON，避免分隔符碰撞。
+ */
+export function searchSkillIdentity(result: SearchSkillResult): SearchSkillIdentity | undefined {
+	const source = (result.source || repoOfName(result.name)).trim();
+	const skillName = skillNameFromSearchResult(result, source);
+	if (!source || !skillName) {
+		return undefined;
+	}
+
+	return {
+		key: JSON.stringify([source, skillName]),
+		source,
+		skillName
+	};
+}
+
 export type SkillsSearchOutcome =
 	| {readonly ok: true; readonly results: readonly SearchSkillResult[]}
 	| {readonly ok: false; readonly error: string; readonly rawSummary?: string};
@@ -75,10 +156,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Best-effort 读取 skills CLI v3 全局 lock；缺失、旧版或损坏时返回空 Map。 */
-export async function readGlobalSkillLockMetadata(): Promise<ReadonlyMap<string, SkillInstallMetadata>> {
+export async function readGlobalSkillLockMetadata(homeDir = resolveHome()): Promise<ReadonlyMap<string, SkillInstallMetadata>> {
 	const metadata = new Map<string, SkillInstallMetadata>();
 	try {
-		const parsed = JSON.parse(await Bun.file(join(resolveHome(), '.agents', '.skill-lock.json')).text()) as unknown;
+		const parsed = JSON.parse(await Bun.file(join(homeDir, '.agents', '.skill-lock.json')).text()) as unknown;
 		if (!isRecord(parsed) || parsed.version !== GLOBAL_SKILL_LOCK_VERSION || !isRecord(parsed.skills)) {
 			return metadata;
 		}
@@ -194,6 +275,9 @@ export type SkillSharedRow = {
 	readonly sharedInstalled: boolean;
 	readonly claudeInjected: boolean;
 	readonly codexAvailable: boolean;
+	readonly agents: readonly string[];
+	readonly otherAgents: readonly string[];
+	readonly storage?: SkillStorageInspection;
 };
 
 /**
@@ -202,7 +286,11 @@ export type SkillSharedRow = {
  */
 export function projectSharedSkills(installed: readonly InstalledSkill[]): readonly SkillSharedRow[] {
 	return installed.map(skill => {
-		const sharedInstalled = skillInstalledOn(skill, 'cx');
+		// skills 1.5.19 在隔离 HOME 的真实双 Agent add 后，list --json 可能只列 Claude Code，
+		// 即使 canonical 已存在且 Codex 已可直读。因此有物理检查时以路径事实为准；旧调用无 storage 时兼容 agents 投影。
+		const sharedInstalled = skill.storage ? skill.storage.canonicalValid : skillInstalledOn(skill, 'cx');
+		const claudeInjected = skill.storage ? skill.storage.claudeValid : skillInstalledOn(skill, 'cc');
+		const otherAgents = skill.agents.filter(agent => SKILL_AGENT_DISPLAY_TO_CONTEXT[agent] === undefined);
 		return {
 			name: skill.name,
 			path: skill.path,
@@ -210,11 +298,25 @@ export function projectSharedSkills(installed: readonly InstalledSkill[]): reado
 			...(skill.source ? {source: skill.source} : {}),
 			...(skill.ref ? {ref: skill.ref} : {}),
 			...(skill.skillName ? {skillName: skill.skillName} : {}),
+			...(skill.storage ? {storage: skill.storage} : {}),
 			sharedInstalled,
-			claudeInjected: skillInstalledOn(skill, 'cc'),
-			codexAvailable: sharedInstalled
+			claudeInjected,
+			codexAvailable: sharedInstalled,
+			agents: skill.agents,
+			otherAgents
 		};
 	});
+}
+
+/** 为一次 CLI 列表结果追加只读文件系统事实；不新增 CLI 调用，也不修改任何 Skill。 */
+export async function inspectInstalledSkillStorage(
+	installed: readonly InstalledSkill[],
+	options: SkillStorageOptions = {}
+): Promise<InstalledSkill[]> {
+	return Promise.all(installed.map(async skill => ({
+		...skill,
+		storage: await inspectSkillStorage(skill.name, options)
+	})));
 }
 
 // ── 搜索（skills find） ─────────────────────────────────────────────────────

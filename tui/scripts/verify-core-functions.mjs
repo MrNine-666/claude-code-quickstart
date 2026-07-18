@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {buildMcpConfig} from '../src/core/mcp-config-builder.ts';
 import {hasUpdate, parseSemver, semverCompare} from '../src/core/semver.ts';
 import {buildProviderFormModel, toProviderSavePayload, validateProviderForm} from '../src/core/provider-form.ts';
 import {maskApiKey, normalizeBaseUrl, testProviderKey} from '../src/core/text-utils.ts';
 import {parseSkillsFindOutput} from '../src/core/skills.ts';
 import {loadMcpContract} from '../src/core/mcp-contract.ts';
+import {execCommand} from '../src/core/exec.ts';
 
 // Phase 2 核心纯函数回归门禁：守住 buildMcpConfig parity、semver、provider 表单、
 // skills find parser、env-file 拒绝——这些是后续 Phase 视图与测试的基础不变量。
@@ -148,5 +150,28 @@ assert.equal(ansiParsed[0].name, 'openai/skills@pdf', '含 ANSI 的真实输出�
 
 assert.equal(parseSkillsFindOutput(''), null, '完全无输出返回 null');
 console.log('[PASS] skills find parser');
+
+// ── 外部命令超时必须主动收敛 ───────────────────────────────────────────────
+// 子进程忽略 SIGTERM 并继续持有 stdio；Windows shell:true 下这也模拟 npx 子进程树
+// 未随 shell 退出的情况。Promise 必须在 timeout 到达时拒绝，不能等待 close 事件。
+const timeoutStartedAt = Date.now();
+await assert.rejects(
+	execCommand(
+		process.execPath,
+		['-e', "process.on('SIGTERM',()=>{});setTimeout(()=>{},900)"],
+		{timeout: 25}
+	),
+	/命令超时 \(25ms\)/
+);
+assert.ok(Date.now() - timeoutStartedAt < 500, '命令超时应立即拒绝，不等待子进程 close');
+const execSource = readFileSync(new URL('../src/core/exec.ts', import.meta.url), 'utf8');
+const timeoutHandlerIndex = execSource.indexOf('const timer = setTimeout(() => {');
+const timeoutRejectIndex = execSource.indexOf('settleReject(new Error(`命令超时', timeoutHandlerIndex);
+const closeHandlerIndex = execSource.indexOf("proc.on('close'", timeoutHandlerIndex);
+assert.ok(
+	timeoutHandlerIndex >= 0 && timeoutRejectIndex > timeoutHandlerIndex && timeoutRejectIndex < closeHandlerIndex,
+	'超时回调必须直接拒绝 Promise，不能依赖后续 close 事件'
+);
+console.log('[PASS] 外部命令超时主动收敛');
 
 console.log('[PASS] Phase 2 核心纯函数回归门禁通过');

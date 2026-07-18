@@ -5,6 +5,7 @@ import {
 	reduceDetectionState,
 	shouldStartDetection
 } from '../src/services/index.ts';
+import {refreshDetectionRunner} from '../src/hooks/use-detection-cache.ts';
 
 const idle = createInitialDetectionState();
 assert.equal(idle.status, 'idle');
@@ -35,5 +36,25 @@ const final = await first;
 assert.equal(final.status, 'success');
 assert.equal(final.result, 'first');
 assert.deepEqual(states.map(state => state.status), ['loading', 'success']);
+
+let refreshedState;
+const refreshRunner = createDetectionRunner(
+	{status: 'success', result: ['stale']},
+	state => {
+		refreshedState = state;
+	}
+);
+const refreshed = await refreshDetectionRunner(
+	{
+		createDetectionRunner: () => refreshRunner,
+		runDetection: runner => runner.run(async () => ['fresh'])
+	},
+	refreshRunner,
+	{forceRefresh: true}
+);
+assert.equal(refreshed, refreshRunner.getState(), '可等待刷新应返回该 runner 的最终状态对象');
+assert.equal(refreshed, refreshedState, '可等待刷新返回值应与写入 cache sink 的状态一致');
+assert.equal(refreshed.status, 'success');
+assert.deepEqual(refreshed.result, ['fresh']);
 
 console.log('[PASS] 并发异步检测状态机门禁通过');

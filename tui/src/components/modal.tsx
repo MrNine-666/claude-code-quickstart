@@ -64,8 +64,8 @@ export function Modal({
 }
 
 // hint 中高亮为主题色的按键 token：方向/空格/确认/取消键统一加粗主色，其余文案走 muted。
-const HINT_KEY_TOKENS = new Set(['↑/↓', '空格', 'Enter', 'Esc']);
-const HINT_KEY_SPLIT = /(↑\/↓|空格|Enter|Esc)/g;
+const HINT_KEY_TOKENS = new Set(['↑/↓', '空格', 'Space', 'Enter', 'Esc']);
+const HINT_KEY_SPLIT = /(↑\/↓|空格|Space|Enter|Esc)/g;
 
 function ModalHint({ hint }: { readonly hint: string }) {
 	const parts = hint.split(HINT_KEY_SPLIT);

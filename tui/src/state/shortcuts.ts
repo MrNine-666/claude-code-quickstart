@@ -199,6 +199,13 @@ function skillsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		return manualShortcuts([{key: 'Enter', label: '确认卸载（所有 Agent）'}, {key: 'Esc', label: '取消'}]);
 	}
 
+	if (subMode === 'confirm-topology-change' || subMode === 'confirm-source-replacement') {
+		return buildShortcuts([
+			{command: SKILLS_COMMANDS.TARGET_CONFIRM, label: '确认执行'},
+			{command: SKILLS_COMMANDS.TARGET_CANCEL, label: '取消'}
+		]);
+	}
+
 	if (subMode === 'busy') {
 		return manualShortcuts([{key: '请稍候', label: '执行中'}]);
 	}
@@ -211,19 +218,23 @@ function skillsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 			{command: SKILLS_COMMANDS.TOGGLE_FOCUS, label: '搜索框/列表'},
 			{command: SKILLS_COMMANDS.LIST_UP, label: '选择 skill'},
 			{command: SKILLS_COMMANDS.LIST_DOWN, label: '选择 skill'},
+			{command: SKILLS_COMMANDS.TOGGLE_RESULT, label: '选择/取消'},
+			{command: SKILLS_COMMANDS.SELECT_ALL, label: '全选'},
 			{command: SKILLS_COMMANDS.SELECT_TARGET, label: '选择安装目标'},
+			{command: SKILLS_COMMANDS.REFRESH, label: '刷新状态'},
 			{command: SKILLS_COMMANDS.TARGET_CANCEL, label: '返回列表页'}
 		]);
 	}
 
-	// 列表页（默认）：本地过滤 + 双侧管理（Enter 管理安装 / u 更新两侧 / d 全量卸载）
+	// 列表页（默认）：本地过滤 + 双侧管理（Enter 管理安装 / A 更新全部 / U 更新选中 / I 安装 / d 全量卸载）
 	return buildShortcuts([
 		{command: SKILLS_COMMANDS.TOGGLE_FOCUS, label: '过滤框/列表'},
 		{command: SKILLS_COMMANDS.LIST_UP, label: '选择'},
 		{command: SKILLS_COMMANDS.LIST_DOWN, label: '选择'},
 		{command: SKILLS_COMMANDS.MANAGE_INSTALL, label: '管理安装'},
-		{command: SKILLS_COMMANDS.INSTALL, label: '安装页'},
-		{command: SKILLS_COMMANDS.UPDATE_ALL, label: '更新'},
+		{command: SKILLS_COMMANDS.UPDATE_ALL, label: '更新全部'},
+		{command: SKILLS_COMMANDS.UPDATE_ONE, label: '更新选中'},
+		{command: SKILLS_COMMANDS.INSTALL, label: '安装'},
 		{command: SKILLS_COMMANDS.UNINSTALL, label: '卸载'},
 		{command: SKILLS_COMMANDS.REFRESH, label: '刷新'},
 		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},

@@ -19,6 +19,7 @@ export { ProgressLog, type ProgressLogProps } from './progress-log.js';
 export { TextareaEditor, type TextareaEditorProps, type EditorFiletype, type TextEditorHandle } from './editor/TextareaEditor.js';
 export { CodePreview, type CodePreviewProps, type CodePreviewFiletype } from './code-preview.js';
 export { ListEmptyState, ListLoadingState } from './list-state.js';
+export {SingleLineInput, normalizeSingleLineValue, singleLineInputKeyBindings, type SingleLineInputProps} from './single-line-input.js';
 
 // Form 组件导出
 export type { FormField, SelectOption, KeyValueEntry } from './form/field-types.js';

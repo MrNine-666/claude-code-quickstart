@@ -4,10 +4,12 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {
 	getInstalledSkills,
+	inspectInstalledSkillStorage,
 	projectSharedSkills,
 	skillInstalledOn,
 	SKILL_AGENT_DISPLAY_TO_CONTEXT
 } from '../src/core/skills.ts';
+import {createSkillsDetectionRunner, runSkillsDetection} from '../src/services/view-detection.ts';
 
 // shared-resource-injection-ui Section 19.3：Skills 共享本体+注入投影门禁（core/skills.ts）。
 // 断言（对齐 specs/skills-multitool/spec.md「Skills status SHALL be projected as a shared-body plus per-Agent injection view」）：
@@ -179,6 +181,61 @@ import {
 	assert.equal(SKILL_AGENT_DISPLAY_TO_CONTEXT['Cline'], undefined, '未知 displayName 无映射');
 
 	console.log('[PASS] 19.3-4 非 Claude Code/Codex displayName 忽略');
+}
+
+// ── 5) 单次 CLI 检测后追加只读物理分类，不把 badge 直接当作 Claude-only ──────
+{
+	const root = await mkdtemp(join(tmpdir(), 'ccq-skills-storage-detection-'));
+	const homeDir = join(root, 'home');
+	const claudeSkill = join(homeDir, '.claude', 'skills', 'local-only');
+	await mkdir(claudeSkill, {recursive: true});
+	await writeFile(
+		join(claudeSkill, 'SKILL.md'),
+		'---\nname: local-only\ndescription: Local only\n---\n',
+		'utf8'
+	);
+	let state;
+	let calls = 0;
+	const runner = createSkillsDetectionRunner(next => {
+		state = next;
+	});
+	try {
+		await runSkillsDetection(
+			runner,
+			async () => {
+				calls += 1;
+				return {
+					code: 0,
+					stdout: JSON.stringify([{name: 'local-only', path: claudeSkill, scope: 'global', agents: ['Claude Code']}]),
+					stderr: ''
+				};
+			},
+			{homeDir, tempDir: join(root, 'temp')}
+		);
+		assert.equal(calls, 1, '物理分类不得新增第二次 skills list');
+		assert.equal(state?.status, 'success');
+		assert.equal(state?.result?.[0]?.storage?.kind, 'claude-only');
+		const projected = projectSharedSkills(state?.result ?? [])[0];
+		assert.equal(projected?.storage?.kind, 'claude-only');
+		assert.equal(projected?.codexAvailable, false, 'Claude-only 物理上无 canonical，不能只看 CLI badge');
+
+		const canonicalPath = join(homeDir, '.agents', 'skills', 'physical-canonical');
+		await mkdir(canonicalPath, {recursive: true});
+		await writeFile(
+			join(canonicalPath, 'SKILL.md'),
+			'---\nname: physical-canonical\ndescription: Canonical\n---\n',
+			'utf8'
+		);
+		const physicallyEnriched = await inspectInstalledSkillStorage([
+			{name: 'physical-canonical', path: canonicalPath, scope: 'global', agents: ['Claude Code']}
+		], {homeDir});
+		const physicalRow = projectSharedSkills(physicallyEnriched)[0];
+		assert.equal(physicalRow?.codexAvailable, true, 'canonical 物理存在时 Codex 可用，即使 CLI agents 漏报 Codex');
+	} finally {
+		await rm(root, {recursive: true, force: true});
+	}
+
+	console.log('[PASS] 单次 Skills CLI 检测 + 只读文件系统分类增强');
 }
 
 console.log('[PASS] Skills 共享本体+注入投影门禁全部通过');
