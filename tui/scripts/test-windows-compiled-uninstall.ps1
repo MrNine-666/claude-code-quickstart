@@ -42,7 +42,23 @@ try {
     } while ((Get-Date) -lt $deadline)
 
     if (Test-Path -LiteralPath $targetExe) {
-        throw 'The running ccq.exe was not removed after its parent exited.'
+        # 决定性诊断：helper 未删除 exe 时，dump uninstall 输出、helper 落盘日志与残留 helper，
+        # 避免只凭 20s 超时结论盲猜（helper 未启动 / Wait-Process 后死亡 / 删除被拒各有不同日志痕迹）。
+        $helperLog = Join-Path $env:TEMP 'ccq-uninstall.log'
+        $logContent = if (Test-Path -LiteralPath $helperLog) { Get-Content -LiteralPath $helperLog -Raw } else { '(no ccq-uninstall.log)' }
+        $seenHelpers = @(
+            Get-ChildItem -LiteralPath $env:TEMP -Force -Filter '.ccq-uninstall-*.ps1' -ErrorAction SilentlyContinue |
+                Where-Object { $beforeHelpers -notcontains $_.FullName } |
+                ForEach-Object { $_.FullName }
+        )
+        $diag = @(
+            'The running ccq.exe was not removed after its parent exited.',
+            "uninstall exit code: ${uninstallExitCode}",
+            "uninstall output:`n$($uninstallOutput -join "`n")",
+            "residual helpers: $($seenHelpers -join ', ')",
+            "helper log:`n$logContent"
+        ) -join "`n----`n"
+        throw $diag
     }
     if ($newHelpers.Count -ne 0) {
         throw "The uninstall helper did not self-clean: $($newHelpers.FullName -join ', ')"
