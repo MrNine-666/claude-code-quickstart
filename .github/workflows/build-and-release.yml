@@ -26,6 +26,20 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      - name: 安装 Bun（Windows helper 运行时测试）
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+
+      - name: 运行 Windows 自更新与自卸载 helper 测试
+        shell: pwsh
+        working-directory: tui
+        run: |
+          $ErrorActionPreference = 'Stop'
+          bun install --frozen-lockfile
+          bun scripts/test-windows-helper.mjs
+          bun scripts/test-windows-uninstall-helper.mjs
+
       - name: 验证 Windows PowerShell 5.1 兼容语法
         shell: powershell
         run: |
@@ -271,6 +285,10 @@ jobs:
             throw "Windows x64 可执行文件退出码异常: $LASTEXITCODE"
           }
           Write-Host "[PASS] Windows x64 可执行文件 smoke 通过" -ForegroundColor Green
+
+      - name: Smoke 测试运行中 ccq.exe 自卸载
+        shell: pwsh
+        run: pwsh -NoProfile -File .\tui\scripts\test-windows-compiled-uninstall.ps1 -SourceExe .\tui-dist\ccq-windows-x64.exe
 
       - name: P-11 验证：契约内嵌离线加载
         shell: pwsh

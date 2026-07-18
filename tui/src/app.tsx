@@ -20,7 +20,22 @@ import { Modal, ShortcutBar, Spinner, ToastViewport, toast, type Shortcut, type 
 import { colors, borderColors, borderStyles, activeBorderChars, PRIMARY, getTheme, setActiveTheme, type AppThemeMode, type ThemePalette } from './theme/index.js';
 import { CCQ_LOGO } from './theme/logo.js';
 import { CCQ_VERSION } from './version.js';
-import { applyUpdate, checkLatestVersion, downloadUpdate, formatSelfUpdateError, restartExecutable } from './core/update.js';
+import {
+	applyUpdate,
+	checkLatestVersion,
+	cleanupTempUpdate,
+	downloadUpdate,
+	formatSelfUpdateError,
+	restartExecutable,
+	type DownloadedSelfUpdate,
+	type SelfUpdatePlan
+} from './core/update.js';
+import {
+	isSelfUpdateCancellable,
+	reduceSelfUpdateScreen,
+	selfUpdateScreenVersion,
+	type SelfUpdateScreen
+} from './state/self-update-state.js';
 // 导入 6 个视图组件
 import { ProviderView } from './views/provider-view.js';
 import McpView from './views/mcp/McpView.js';
@@ -48,16 +63,7 @@ const AGENT_HEADER_HIDDEN_MODULES = new Set<ManageModuleId>(['tools', 'mcp', 'sk
 // OpenTUI 回退到不存在的 parser.worker.ts），故编译产物下禁用语法高亮、降级纯文本。
 const IS_COMPILED_EXECUTABLE = import.meta.dirname != null && !existsSync(import.meta.dirname);
 
-type UpdateScreen =
-	| { readonly kind: 'checking' }
-	| { readonly kind: 'latest' }
-	| { readonly kind: 'available'; readonly version: string; readonly downloadUrl: string }
-	| { readonly kind: 'updating'; readonly version: string; readonly downloadUrl: string; readonly stage: 'downloading' | 'applying' | 'cancelling' }
-	| { readonly kind: 'readyToRestart'; readonly version: string }
-	| { readonly kind: 'updated'; readonly version: string }
-	| { readonly kind: 'error'; readonly message: string };
-
-type UpdateStatus = UpdateScreen['kind'];
+type UpdateStatus = SelfUpdateScreen['kind'];
 
 type AppProps = {
 	readonly initialThemeMode: AppThemeMode;
@@ -103,7 +109,7 @@ export default function App({ initialThemeMode }: AppProps) {
 	const [state, setState] = useState(createInitialManageState);
 	const [viewSubMode, setViewSubMode] = useState<string>('');
 	const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
-	const [updateScreen, setUpdateScreen] = useState<UpdateScreen>({ kind: 'checking' });
+	const [updateScreen, setUpdateScreen] = useState<SelfUpdateScreen>({kind: 'checking'});
 	const updateAbortRef = useRef<AbortController | null>(null);
 	// 右侧内容区当前显示的菜单 id：selectedIndex 在菜单范围内时跟随，停在底部按钮位时保持上一个（按钮不切视图，回车只开浮窗）
 	const [displayMenuId, setDisplayMenuId] = useState<ManageModuleId>(menuItems[0]!.id);
@@ -178,29 +184,31 @@ export default function App({ initialThemeMode }: AppProps) {
 	}, [renderer, state.shouldExit]);
 
 	const runUpdateCheck = async (): Promise<void> => {
-		setUpdateScreen({ kind: 'checking' });
+		setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'checkStarted'}));
 		const info = await checkLatestVersion();
 		if (!info.ok) {
-			setUpdateScreen({ kind: 'error', message: formatSelfUpdateError(info.error) });
+			setUpdateScreen(current => reduceSelfUpdateScreen(current, {
+				type: 'failed',
+				message: formatSelfUpdateError(info.error)
+			}));
 			return;
 		}
 
-		setUpdateScreen(info.hasUpdate
-			? { kind: 'available', version: info.version, downloadUrl: info.downloadUrl }
-			: { kind: 'latest' }
-		);
+		setUpdateScreen(current => reduceSelfUpdateScreen(current, info.hasUpdate
+			? {type: 'updateAvailable', plan: info.plan}
+			: {type: 'latestConfirmed'}
+		));
 	};
 
-	const restartUpdatedApp = (): void => {
-		const restarted = restartExecutable();
+	const restartUpdatedApp = async (): Promise<void> => {
+		renderer?.destroy();
+		const restarted = await restartExecutable();
 		if (!restarted.ok) {
 			const message = formatSelfUpdateError(restarted.error);
-			toast.error(message);
-			setUpdateScreen({ kind: 'error', message });
-			return;
+			console.error(message);
+			process.exit(1);
 		}
 
-		renderer?.destroy();
 		process.exit(0);
 	};
 
@@ -210,49 +218,56 @@ export default function App({ initialThemeMode }: AppProps) {
 			return;
 		}
 
+		setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'cancelRequested'}));
 		controller.abort();
-		setUpdateScreen(current => current.kind === 'updating' ? {...current, stage: 'cancelling'} : current);
 	};
 
-	const runUpdate = async (version: string, downloadUrl: string): Promise<void> => {
+	const runUpdate = async (plan: SelfUpdatePlan): Promise<void> => {
 		const abortController = new AbortController();
 		updateAbortRef.current = abortController;
 		setUpdateDialogOpen(true);
-		setUpdateScreen({ kind: 'updating', version, downloadUrl, stage: 'downloading' });
+		setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'downloadStarted', plan}));
 
-		const downloaded = await downloadUpdate(downloadUrl, abortController.signal);
+		const downloaded = await downloadUpdate(plan, abortController.signal);
 		updateAbortRef.current = null;
 		if (abortController.signal.aborted) {
-			setUpdateScreen({ kind: 'available', version, downloadUrl });
+			if (downloaded.ok) await cleanupTempUpdate(downloaded.transaction);
+			setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'updateAvailable', plan}));
 			return;
 		}
 
 		if (!downloaded.ok) {
 			const message = formatSelfUpdateError(downloaded.error);
 			toast.error(message);
-			setUpdateScreen({ kind: 'error', message });
+			setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'failed', message}));
 			return;
 		}
 
-		setUpdateScreen({ kind: 'readyToRestart', version });
+		setUpdateScreen(current => reduceSelfUpdateScreen(current, {
+			type: 'downloadReady',
+			transaction: downloaded.transaction
+		}));
 	};
 
-	const applyDownloadedUpdate = async (version: string): Promise<void> => {
-		setUpdateScreen({ kind: 'updating', version, downloadUrl: '', stage: 'applying' });
-		const applied = await applyUpdate();
+	const applyDownloadedUpdate = async (transaction: DownloadedSelfUpdate): Promise<void> => {
+		setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'applyStarted', transaction}));
+		const applied = await applyUpdate(transaction, {restartAfterApply: true});
 		if (!applied.ok) {
 			const message = formatSelfUpdateError(applied.error);
 			toast.error(message);
-			setUpdateScreen({ kind: 'error', message });
+			setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'failed', message}));
 			return;
 		}
 
-		if (applied.restartStarted) {
+		if (applied.state === 'scheduled') {
 			renderer?.destroy();
 			process.exit(0);
 		}
 
-		setUpdateScreen({ kind: 'updated', version });
+		setUpdateScreen(current => reduceSelfUpdateScreen(current, {
+			type: 'applyCompleted',
+			version: transaction.plan.version
+		}));
 	};
 
 	useEffect(() => {
@@ -445,10 +460,10 @@ export default function App({ initialThemeMode }: AppProps) {
 				active={updateDialogOpen}
 				screen={updateScreen}
 				onClose={() => setUpdateDialogOpen(false)}
-				onUpdate={(version, downloadUrl) => void runUpdate(version, downloadUrl)}
-				onApplyUpdate={(version) => void applyDownloadedUpdate(version)}
+				onUpdate={(plan) => void runUpdate(plan)}
+				onApplyUpdate={(transaction) => void applyDownloadedUpdate(transaction)}
 				onCancelUpdate={cancelUpdate}
-				onRestart={restartUpdatedApp}
+				onRestart={() => void restartUpdatedApp()}
 			/>
 		</>
 	);
@@ -589,10 +604,10 @@ function UpdateDialog({
 	onRestart
 }: {
 	readonly active: boolean;
-	readonly screen: UpdateScreen;
+	readonly screen: SelfUpdateScreen;
 	readonly onClose: () => void;
-	readonly onUpdate: (version: string, downloadUrl: string) => void;
-	readonly onApplyUpdate: (version: string) => void;
+	readonly onUpdate: (plan: SelfUpdatePlan) => void;
+	readonly onApplyUpdate: (transaction: DownloadedSelfUpdate) => void;
 	readonly onCancelUpdate: () => void;
 	readonly onRestart: () => void;
 }) {
@@ -601,18 +616,18 @@ function UpdateDialog({
 		const isEsc = keyName === 'escape';
 
 		if (screen.kind === 'available') {
-			if (isEnter) onUpdate(screen.version, screen.downloadUrl);
+			if (isEnter) onUpdate(screen.plan);
 			else if (isEsc) onClose();
 			return;
 		}
 
 		if (screen.kind === 'updating') {
-			if (isEsc) onCancelUpdate();
+			if (isEsc && isSelfUpdateCancellable(screen)) onCancelUpdate();
 			return;
 		}
 
 		if (screen.kind === 'readyToRestart') {
-			if (isEnter) onApplyUpdate(screen.version);
+			if (isEnter) onApplyUpdate(screen.transaction);
 			else if (isEsc) onClose();
 			return;
 		}
@@ -641,7 +656,7 @@ function UpdateDialog({
 	);
 }
 
-function updateDialogContent(screen: UpdateScreen): { readonly title: string; readonly body: React.ReactNode; readonly hint: string } {
+function updateDialogContent(screen: SelfUpdateScreen): { readonly title: string; readonly body: React.ReactNode; readonly hint: string } {
 	switch (screen.kind) {
 		case 'available':
 			return {
@@ -649,7 +664,7 @@ function updateDialogContent(screen: UpdateScreen): { readonly title: string; re
 				body: (
 					<box flexDirection="column">
 						<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  当前 v${CCQ_VERSION}`}</text>
-						<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  最新 v${screen.version}`}</text>
+						<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  最新 v${screen.plan.version}`}</text>
 					</box>
 				),
 				hint: 'Enter 更新  Esc 取消'
@@ -660,10 +675,12 @@ function updateDialogContent(screen: UpdateScreen): { readonly title: string; re
 				body: (
 					<box flexDirection="column">
 						<Spinner label={updateStageLabel(screen.stage)} />
-						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  目标版本 v${screen.version}`}</text>
+						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  目标版本 v${selfUpdateScreenVersion(screen)}`}</text>
 					</box>
 				),
-				hint: screen.stage === 'cancelling' ? '正在停止更新...' : 'Enter 已禁用  Esc 停止更新'
+				hint: screen.stage === 'downloading'
+					? 'Enter 已禁用  Esc 停止更新'
+					: (screen.stage === 'cancelling' ? '正在停止更新...' : '正在应用，暂不可取消')
 			};
 		case 'readyToRestart':
 			return {
@@ -671,7 +688,7 @@ function updateDialogContent(screen: UpdateScreen): { readonly title: string; re
 				body: (
 					<box flexDirection="column">
 						<text fg={colors.success} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>更新已下载完成</text>
-						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  新版本 v${screen.version} 将在重启后生效`}</text>
+						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  新版本 v${screen.transaction.plan.version} 将在重启后生效`}</text>
 					</box>
 				),
 				hint: 'Enter 应用并重启  Esc 稍后处理'
@@ -694,7 +711,7 @@ function updateDialogContent(screen: UpdateScreen): { readonly title: string; re
 	}
 }
 
-function updateStageLabel(stage: Extract<UpdateScreen, {readonly kind: 'updating'}>['stage']): string {
+function updateStageLabel(stage: Extract<SelfUpdateScreen, {readonly kind: 'updating'}>['stage']): string {
 	switch (stage) {
 		case 'downloading':
 			return '正在下载更新...';
