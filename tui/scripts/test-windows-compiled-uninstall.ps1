@@ -12,10 +12,10 @@ $smokeHome = Join-Path $tempRoot ('ccq-uninstall-smoke-' + [Guid]::NewGuid().ToS
 $targetDir = Join-Path $smokeHome '.local\bin'
 $targetExe = Join-Path $targetDir 'ccq.exe'
 $previousHome = $env:CCQ_HOME
-$beforeHelpers = @(
-    Get-ChildItem -LiteralPath $env:TEMP -Force -Filter '.ccq-uninstall-*.ps1' -ErrorAction SilentlyContinue |
-        ForEach-Object { $_.FullName }
-)
+# helper 与其日志现写在目标 exe 同目录（$targetDir），不再落 $env:TEMP：
+# CI Windows runner 上 Node os.tmpdir() 与 PowerShell $env:TEMP 是不同目录，
+# 此前 smoke 在 $env:TEMP 查找导致既看不到残留 helper 也读不到日志。
+$beforeHelpers = @()
 
 try {
     New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
@@ -32,8 +32,8 @@ try {
     $deadline = (Get-Date).AddSeconds(20)
     do {
         $newHelpers = @(
-            Get-ChildItem -LiteralPath $env:TEMP -Force -Filter '.ccq-uninstall-*.ps1' -ErrorAction SilentlyContinue |
-                Where-Object { $beforeHelpers -notcontains $_.FullName }
+            Get-ChildItem -LiteralPath $targetDir -Force -Filter '.ccq-uninstall-*.ps1' -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.FullName }
         )
         if (-not (Test-Path -LiteralPath $targetExe) -and $newHelpers.Count -eq 0) {
             break
@@ -44,11 +44,10 @@ try {
     if (Test-Path -LiteralPath $targetExe) {
         # 决定性诊断：helper 未删除 exe 时，dump uninstall 输出、helper 落盘日志与残留 helper，
         # 避免只凭 20s 超时结论盲猜（helper 未启动 / Wait-Process 后死亡 / 删除被拒各有不同日志痕迹）。
-        $helperLog = Join-Path $env:TEMP 'ccq-uninstall.log'
+        $helperLog = Join-Path $targetDir 'ccq-uninstall.log'
         $logContent = if (Test-Path -LiteralPath $helperLog) { Get-Content -LiteralPath $helperLog -Raw } else { '(no ccq-uninstall.log)' }
         $seenHelpers = @(
-            Get-ChildItem -LiteralPath $env:TEMP -Force -Filter '.ccq-uninstall-*.ps1' -ErrorAction SilentlyContinue |
-                Where-Object { $beforeHelpers -notcontains $_.FullName } |
+            Get-ChildItem -LiteralPath $targetDir -Force -Filter '.ccq-uninstall-*.ps1' -ErrorAction SilentlyContinue |
                 ForEach-Object { $_.FullName }
         )
         $diag = @(

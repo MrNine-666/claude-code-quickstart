@@ -15,29 +15,67 @@ try {
 	const {spawnDetachedPowerShell} = await import('../src/core/windows-deferred-operation.ts');
 	const {runUninstall} = await import('../src/cli/commands/uninstall.ts');
 
-	// ── ready 握手回归：helper 从不写 ready 文件时，spawn 成功即视为已调度，
-	// 短超时后必须正常返回而非抛错（此前 5s 超时会误杀本会完成的删除，真机 CI 暴露）。
+	// ── Bun Windows detached 回归：必须经 cmd start 跳出父进程 job object，
+	// 并且只有 helper 真正进入脚本体（写入 ready）才能报告已调度。
 	{
+		let spawnCall = null;
 		let unrefCalled = false;
-		const fakeSpawnNoReady = () => {
+		const helperPath = join(tempHome, 'ready-helper.ps1');
+		const fakeSpawnReady = (command, args, options) => {
+			spawnCall = {command, args, options};
 			const child = new EventEmitter();
 			child.unref = () => {
 				unrefCalled = true;
 			};
-			// 异步 emit 'spawn'：模拟进程成功创建，但脚本体（写 ready）尚未执行。
-			setImmediate(() => child.emit('spawn'));
+			setImmediate(() => {
+				child.emit('spawn');
+				writeFileSync(helperPath + '.ready', '123', 'utf8');
+				setImmediate(() => child.emit('exit', 0, null));
+			});
 			return child;
 		};
 
-		const helperPath = join(tempHome, 'ready-timeout-helper.ps1');
-		const started = Date.now();
 		await assert.doesNotReject(
-			spawnDetachedPowerShell(helperPath, ['-ParentPid', '1'], fakeSpawnNoReady, 120),
-			'ready 超时不得抛错：helper 已 detached，会独立完成延迟操作'
+			spawnDetachedPowerShell(helperPath, ['-ParentPid', '1'], fakeSpawnReady, 120)
 		);
-		assert.equal(unrefCalled, true, 'spawn 成功后必须 unref，避免父进程被 detached helper 挂住');
-		assert.ok(Date.now() - started >= 100, 'ready 缺席时应等满注入的短超时窗口');
+		assert.equal(spawnCall?.command, 'cmd.exe', 'Bun Windows 必须通过 cmd start trampoline 启动 helper');
+		assert.deepEqual(spawnCall?.args.slice(0, 5), ['/d', '/c', 'start', '', '/b']);
+		assert.equal(spawnCall?.options.detached, undefined, 'bootstrap 不得使用 Bun 已知失效的 detached 选项');
+		assert.equal(unrefCalled, false, 'bootstrap 必须等待 start 返回，不得提前 unref');
+		const encodedIndex = spawnCall?.args.indexOf('-EncodedCommand') ?? -1;
+		assert.ok(encodedIndex >= 0, 'PowerShell helper 参数必须编码，避免 cmd 路径元字符注入');
+		const decodedCommand = Buffer.from(spawnCall.args[encodedIndex + 1], 'base64').toString('utf16le');
+		assert.match(decodedCommand, /-ReadyPath/);
+		assert.match(decodedCommand, /-ParentPid '1'/);
 		assert.equal(existsSync(helperPath + '.ready'), false, 'ready 文件应被清理');
+	}
+	{
+		const fakeSpawnNoReady = () => {
+			const child = new EventEmitter();
+			child.unref = () => {};
+			setImmediate(() => {
+				child.emit('spawn');
+				setImmediate(() => child.emit('exit', 0, null));
+			});
+			return child;
+		};
+		await assert.rejects(
+			spawnDetachedPowerShell(join(tempHome, 'ready-timeout-helper.ps1'), [], fakeSpawnNoReady, 120),
+			/ready/i,
+			'bootstrap 返回但 helper 未进入脚本体时不得误报 scheduled'
+		);
+	}
+	{
+		const fakeSpawnFailure = () => {
+			const child = new EventEmitter();
+			setImmediate(() => child.emit('exit', 7, null));
+			return child;
+		};
+		await assert.rejects(
+			spawnDetachedPowerShell(join(tempHome, 'bootstrap-fail-helper.ps1'), [], fakeSpawnFailure, 120),
+			/bootstrap failed: 7/,
+			'cmd start bootstrap 非零退出必须向上报告'
+		);
 	}
 
 	// spawn 阶段失败才是致命：进程未能创建时必须抛出，绝不静默视为已调度。
@@ -54,7 +92,7 @@ try {
 			'spawn error 必须向上抛出，供调用方报告调度失败'
 		);
 	}
-	console.log('[PASS] spawnDetachedPowerShell：ready 超时非致命、spawn 失败致命');
+	console.log('[PASS] spawnDetachedPowerShell：cmd start 跳出 Bun job、ready 与 spawn 失败均致命');
 
 	const directTarget = join(tempHome, 'ccq-direct');
 	writeFileSync(directTarget, 'binary', 'utf8');

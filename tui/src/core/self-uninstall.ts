@@ -1,6 +1,5 @@
 import {existsSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
-import {resolve} from 'node:path';
-import {tmpdir} from 'node:os';
+import {dirname, resolve} from 'node:path';
 import {
 	spawnDetachedPowerShell,
 	uniqueWindowsHelperPath,
@@ -62,7 +61,7 @@ export function buildWindowsUninstallHelperScript(): string {
 		'  [string]$ReadyPath',
 		')',
 		'$ErrorActionPreference = "Stop"',
-		'$logPath = Join-Path $env:TEMP "ccq-uninstall.log"',
+		'$logPath = Join-Path (Split-Path -Parent $PSCommandPath) "ccq-uninstall.log"',
 		'function Write-UninstallLog($msg) {',
 		'  try { Add-Content -LiteralPath $logPath -Value ("[{0}] [pid {1}] {2}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"), $PID, $msg) -ErrorAction SilentlyContinue } catch {}',
 		'}',
@@ -95,7 +94,10 @@ export function buildWindowsUninstallHelperScript(): string {
 export async function startWindowsUninstallHelper(
 	args: StartWindowsUninstallArgs
 ): Promise<{readonly helperPath: string}> {
-	const helperPath = uniqueWindowsHelperPath(tmpdir(), 'ccq-uninstall');
+	// 与 update helper 对齐：写在目标 exe 同目录，而非 os.tmpdir()。
+	// CI Windows runner 上 Node os.tmpdir() 与 PowerShell $env:TEMP 可能是不同目录，
+	// helper 落在前者、日志/残留排查看后者会两头扑空；固定到目标同目录消除该歧义。
+	const helperPath = uniqueWindowsHelperPath(dirname(args.targetPath), 'ccq-uninstall');
 	try {
 		writeFileSync(helperPath, buildWindowsUninstallHelperScript(), {encoding: 'utf8', flag: 'wx'});
 		await spawnDetachedPowerShell(helperPath, [
