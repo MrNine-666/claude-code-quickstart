@@ -144,7 +144,9 @@ try {
 	const annotatedRecommendation = loadRecommendationAnnotated('cx');
 	assert.match(annotatedRecommendation ?? '', /model_reasoning_effort\s*=\s*"xhigh"/, 'Codex 推荐配置应使用 xhigh 推理等级');
 	assert.match(annotatedRecommendation ?? '', /#\s*\[sandbox_workspace_write\]/, '推荐配置应展示联网增强项');
-	assert.match(annotatedRecommendation ?? '', /#\s*\[features\]/, '推荐配置应展示 memories 增强项');
+	assert.match(annotatedRecommendation ?? '', /^\[features\]$/m, '推荐配置应启用 features 表');
+	assert.match(annotatedRecommendation ?? '', /^memories\s*=\s*true$/m, '推荐配置应启用 memories feature');
+	assert.match(annotatedRecommendation ?? '', /^\[memories\]$/m, '推荐配置应展示 memories 子选项');
 	assert.doesNotMatch(annotatedRecommendation ?? '', /notify\s*=/, '推荐配置不得写入本机通知配置');
 	const recommendedFill = fillMissingIntoText('', 'cx');
 	assert.equal(recommendedFill.ok, true, 'Codex fill-missing 应接受空配置');
