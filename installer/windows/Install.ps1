@@ -334,6 +334,41 @@ function Invoke-GroupedInstall {
 
 # ─── CCQ 可执行文件下载确认 ───────────────────────────────────────────────────
 
+function Get-CcqReleaseTag {
+    <#
+    .SYNOPSIS
+    返回当前安装器对应的 Release tag；源码模式通常为不可比较的占位值。
+    #>
+    param()
+
+    $tag = [Environment]::GetEnvironmentVariable("CCQ_RELEASE_TAG", "Process")
+    if ([string]::IsNullOrWhiteSpace($tag)) {
+        $tag = $script:CcqReleaseTag
+    }
+
+    return $tag.Trim()
+}
+
+function Get-CcqReleaseTargetVersion {
+    <#
+    .SYNOPSIS
+    从 Release tag 提取可与 ccq --version 比较的目标版本。
+    #>
+    param()
+
+    $tag = Get-CcqReleaseTag
+    if ($tag -notlike 'v*') {
+        return ""
+    }
+
+    $version = ConvertTo-CcqComparableVersion -Version $tag
+    if ($version -notmatch '^\d+\.\d+\.\d+') {
+        return ""
+    }
+
+    return $version
+}
+
 function Get-CcqReleaseDownloadBaseUrl {
     <#
     .SYNOPSIS
@@ -346,10 +381,7 @@ function Get-CcqReleaseDownloadBaseUrl {
         return $overrideUrl.TrimEnd('/')
     }
 
-    $tag = [Environment]::GetEnvironmentVariable("CCQ_RELEASE_TAG", "Process")
-    if ([string]::IsNullOrWhiteSpace($tag)) {
-        $tag = $script:CcqReleaseTag
-    }
+    $tag = Get-CcqReleaseTag
 
     # 哨兵判断改用"tag 是否以 v 开头"（与 build.ps1 的 GITHUB_REF_NAME -like 'v*' 约定一致）。
     # 不可比对占位符字面量：build 用全文 Replace 注入 tag，会把此处的 "__CCQ_RELEASE_TAG__" 一并
@@ -382,35 +414,58 @@ function Confirm-CcqExecutableDownload {
     Write-UiInfo "  • 工具管理（安装/更新 Claude Code、Codex、CodeGraph、OpenSpec 等）"
     Write-Host ""
 
-    $decision = Show-SingleSelectMenu `
-        -Title "是否现在下载 ccq 可执行文件到 PATH 目录？" `
-        -Options @("是，下载 ccq", "否，稍后手动安装") `
-        -DefaultIndex 0
+    # 1. 已安装时先比较当前版本与安装器 Release 版本。
+    $installed = Test-CcqExecutableInstalled
+    $targetVersion = Get-CcqReleaseTargetVersion
+    if ($installed.IsInstalled) {
+        Write-UiSuccess "✓ ccq 可执行文件已安装: $($installed.Path)"
+        Write-UiInfo "  当前版本: $($installed.Version)"
 
-    if ($decision -ne 0) {
-        Write-Host ""
-        Write-UiInfo "已跳过 ccq 可执行文件下载"
-        Write-UiDim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
-        Write-Host ""
-        Write-UiPrimary "后续安装 Claude Code / Codex："
-        Write-UiInfo "  稍后安装 ccq 后运行 ccq，进入「工具管理」安装 Claude Code 或 Codex"
-        Write-UiInfo "  API Key 与 profile 可在「供应商」菜单中可视化配置"
-        return
+        if ([string]::IsNullOrWhiteSpace($targetVersion)) {
+            Write-UiWarning "无法确定安装器目标版本，已保留现有 ccq"
+            Write-UiDim "  如需更新，请使用正式 Release 安装脚本或在 ccq 中执行更新"
+            return
+        }
+
+        Write-UiInfo "  目标版本: $targetVersion"
+        $currentVersion = ConvertTo-CcqComparableVersion -Version $installed.Version
+        if ([string]::Equals($currentVersion, $targetVersion, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-UiSuccess "✓ 当前版本与目标版本一致，无需覆盖"
+            return
+        }
+
+        Write-UiWarning "检测到 ccq 版本不一致"
+        $overwriteDecision = Show-SingleSelectMenu `
+            -Title "是否覆盖现有文件？" `
+            -Options @("是，覆盖为 $targetVersion", "否，保留当前版本 $currentVersion") `
+            -DefaultIndex 1
+
+        if ($overwriteDecision -ne 0) {
+            Write-UiInfo "已保留当前 ccq 版本: $currentVersion"
+            return
+        }
+
+        Write-UiWarning "将使用目标版本 $targetVersion 覆盖当前版本 $currentVersion"
+    } else {
+        $decision = Show-SingleSelectMenu `
+            -Title "是否现在下载 ccq 可执行文件到 PATH 目录？" `
+            -Options @("是，下载 ccq", "否，稍后手动安装") `
+            -DefaultIndex 0
+
+        if ($decision -ne 0) {
+            Write-Host ""
+            Write-UiInfo "已跳过 ccq 可执行文件下载"
+            Write-UiDim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
+            Write-Host ""
+            Write-UiPrimary "后续安装 Claude Code / Codex："
+            Write-UiInfo "  稍后安装 ccq 后运行 ccq，进入「工具管理」安装 Claude Code 或 Codex"
+            Write-UiInfo "  API Key 与 profile 可在「供应商」菜单中可视化配置"
+            return
+        }
     }
 
     Write-Host ""
     Write-UiInfo "正在准备下载 ccq 可执行文件..."
-
-    # 1. 检测是否已安装
-    $installed = Test-CcqExecutableInstalled
-    if ($installed.IsInstalled) {
-        Write-UiSuccess "✓ ccq 可执行文件已安装: $($installed.Path)"
-        if (-not [string]::IsNullOrWhiteSpace($installed.Version)) {
-            Write-UiInfo "  当前版本: $($installed.Version)"
-        }
-        Write-UiDim "  如需更新，请在新终端运行: ccq"
-        return
-    }
 
     # 2. 检测平台架构
     $arch = Get-CcqArchitecture

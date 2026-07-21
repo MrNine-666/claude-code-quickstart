@@ -35,7 +35,7 @@ export CCQ_MACOS_ROOT CCQ_INSTALLER_ROOT
 
 CCQ_PARAM_LIST_STEPS=0
 CCQ_PARAM_OUTPUT_MODE="normal"
-CCQ_RELEASE_TAG="__CCQ_RELEASE_TAG__"
+: "${CCQ_RELEASE_TAG:=__CCQ_RELEASE_TAG__}"
 
 ccq_usage() {
   cat <<'EOF'
@@ -486,6 +486,18 @@ ccq_get_release_download_base_url() {
   printf 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download'
 }
 
+ccq_get_release_target_version() {
+  # 从 Release tag 提取可与 ccq --version 比较的目标版本。
+  local tag="${CCQ_RELEASE_TAG:-}" version=""
+  case "${tag}" in
+    v*) version="$(ccq_normalize_version "${tag}")" ;;
+    *) return 0 ;;
+  esac
+  case "${version}" in
+    [0-9]*.[0-9]*.[0-9]*) printf '%s' "${version}" ;;
+  esac
+}
+
 ccq_confirm_executable_download() {
   # 在 install 末尾弹出确认，询问用户是否下载 ccq 可执行文件到 ~/.local/bin
   # 遵守 TDR-6：用户拒绝则跳过；确认则按平台架构下载并设置可执行权限
@@ -501,38 +513,56 @@ ccq_confirm_executable_download() {
   ccq_ui_info "  • 工具管理（安装/更新 Claude Code、Codex、CodeGraph、OpenSpec 等）"
   printf '\n'
 
-  # 确认选择
-  local decision
-  decision="$(ccq_prompt_single "是否现在下载 ccq 可执行文件到 ~/.local/bin？（拒绝则跳过，可稍后手动安装）" 0 "是，下载 ccq" "否，稍后手动安装")" || decision=1
-  if [ "${decision}" != "0" ]; then
-    printf '\n'
-    ccq_ui_info "已跳过 ccq 可执行文件下载"
-    ccq_ui_dim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
-    printf '\n'
-    ccq_ui_primary "后续安装 Claude Code / Codex："
-    ccq_ui_info "  稍后安装 ccq 后运行 ccq，进入「工具管理」安装 Claude Code 或 Codex"
-    ccq_ui_info "  API Key 与 profile 可在「供应商」菜单中可视化配置"
-    return 0
-  fi
-
-  printf '\n'
-  ccq_ui_info "正在准备下载 ccq 可执行文件..."
-
-  # 1. 检测是否已安装
-  local installed_json installed_status
+  # 1. 已安装时先比较当前版本与安装器 Release 版本。
+  local installed_json installed_status installed_path installed_version target_version current_version decision
   installed_json="$(ccq_test_executable_installed)"
   installed_status="$(printf '%s' "${installed_json}" | grep -o '"isInstalled":[^,}]*' | cut -d: -f2)"
 
   if [ "${installed_status}" = "1" ] || [ "${installed_status}" = "true" ]; then
-    local installed_path installed_version
     installed_path="$(printf '%s' "${installed_json}" | grep -o '"path":"[^"]*"' | cut -d'"' -f4)"
     installed_version="$(printf '%s' "${installed_json}" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)"
+    current_version="$(ccq_normalize_version "${installed_version}")"
+    target_version="$(ccq_get_release_target_version)"
 
     ccq_ui_success "✓ ccq 可执行文件已安装: ${installed_path}"
-    [ -n "${installed_version}" ] && ccq_ui_info "  当前版本: ${installed_version}"
-    ccq_ui_dim "  如需更新，请在新终端运行: ccq"
-    return 0
+    ccq_ui_info "  当前版本: ${current_version}"
+
+    if [ -z "${target_version}" ]; then
+      ccq_ui_warning "无法确定安装器目标版本，已保留现有 ccq"
+      ccq_ui_dim "  如需更新，请使用正式 Release 安装脚本或在 ccq 中执行更新"
+      return 0
+    fi
+
+    ccq_ui_info "  目标版本: ${target_version}"
+    if [ "${current_version}" = "${target_version}" ]; then
+      ccq_ui_success "✓ 当前版本与目标版本一致，无需覆盖"
+      return 0
+    fi
+
+    ccq_ui_warning "检测到 ccq 版本不一致"
+    decision="$(ccq_prompt_single "是否覆盖现有文件？" 1 "是，覆盖为 ${target_version}" "否，保留当前版本 ${current_version}")" || decision=1
+    if [ "${decision}" != "0" ]; then
+      ccq_ui_info "已保留当前 ccq 版本: ${current_version}"
+      return 0
+    fi
+
+    ccq_ui_warning "将使用目标版本 ${target_version} 覆盖当前版本 ${current_version}"
+  else
+    decision="$(ccq_prompt_single "是否现在下载 ccq 可执行文件到 ~/.local/bin？（拒绝则跳过，可稍后手动安装）" 0 "是，下载 ccq" "否，稍后手动安装")" || decision=1
+    if [ "${decision}" != "0" ]; then
+      printf '\n'
+      ccq_ui_info "已跳过 ccq 可执行文件下载"
+      ccq_ui_dim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
+      printf '\n'
+      ccq_ui_primary "后续安装 Claude Code / Codex："
+      ccq_ui_info "  稍后安装 ccq 后运行 ccq，进入「工具管理」安装 Claude Code 或 Codex"
+      ccq_ui_info "  API Key 与 profile 可在「供应商」菜单中可视化配置"
+      return 0
+    fi
   fi
+
+  printf '\n'
+  ccq_ui_info "正在准备下载 ccq 可执行文件..."
 
   # 2. 检测平台架构
   local arch

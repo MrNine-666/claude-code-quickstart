@@ -113,7 +113,7 @@ assert.match(viewDetectionSource, /detectComponents\(undefined,\s*options\.force
 assert.match(toolsManageSource, /getNpmOutdatedGlobal\(forceRefresh\)/, 'detectComponents 强刷 npm outdated 缓存');
 assert.match(updateSource, /resolveNpmViewLatest\(Object\.values\(NPM_COMPONENT_MAP\),\s*forceRefresh\)/, 'checkCliToolUpdates 强刷 npm view 缓存');
 assert.match(toolsViewSource, /groupComponentsByToolGroup\(view\.components\)/, 'ToolsView 按分组结构渲染 label + grid');
-assert.match(toolsViewSource, /<text[^>]+>\{section\.label\}<\/text>/, 'ToolsView 渲染分组 label');
+assert.match(toolsViewSource, /<text[\s\S]{0,500}>\s*\{section\.label\}\s*<\/text>/, 'ToolsView 渲染分组 label');
 assert.doesNotMatch(toolsViewSource, /label:\s*['"]Agent['"]/, 'ToolsView 不硬编码 Agent 分组 label');
 console.log('[PASS] r 手动刷新绕过 npm outdated/npm view 缓存');
 

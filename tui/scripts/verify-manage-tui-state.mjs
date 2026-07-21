@@ -10,6 +10,7 @@ import {
 	selectedMenuItem
 } from '../src/state/manage-state.ts';
 import {navShortcuts, viewShortcuts, agentCycleShortcuts, headerShortcuts} from '../src/state/shortcuts.ts';
+import {createTuiExitController} from '../src/core/tui-exit.ts';
 
 const keys = ['up', 'down', 'left', 'right', 'tab', 'shift-tab', 'enter', 'escape', 'ctrl-s', 'q', 'other'];
 
@@ -133,9 +134,10 @@ const appSrc = readFileSync(new URL('../src/app.tsx', import.meta.url), 'utf8');
 const toolsSrc = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
 const mcpSrc = readFileSync(new URL('../src/views/mcp/McpView.tsx', import.meta.url), 'utf8');
 const skillsSrc = readFileSync(new URL('../src/views/SkillsView.tsx', import.meta.url), 'utf8');
+const indexSrc = readFileSync(new URL('../src/index.tsx', import.meta.url), 'utf8');
 
 assert.match(appSrc, /AGENT_HEADER_HIDDEN_MODULES\s*=\s*new Set<ManageModuleId>\(\[\s*'tools',\s*'mcp',\s*'skills'\s*\]\)/, 'HIDDEN_MODULES 含 tools + mcp + skills');
-assert.match(appSrc, /hideAgentHeader\s*\?\s*null\s*:\s*\(\s*<AgentHeader/, '隐藏 Header 模块不渲染 AgentHeader');
+assert.match(appSrc, /hideAgentHeader\s*\?\s*null\s*:\s*\(?\s*<AgentHeader/, '隐藏 Header 模块不渲染 AgentHeader');
 assert.match(appSrc, /AGENT_HEADER_HIDDEN_MODULES\.has\(displayMenuId\) && state\.focus === 'header'/, '隐藏 Header 模块下 header 焦点被 coerce 回 view');
 // 隐藏 Header 不占布局行由 flex 自适应天然保证（hideAgentHeader ? null : <AgentHeader> 不渲染即不占位），
 // 无需再断言 reserved-rows 算高（flex-height-unify 已移除 AGENT_HEADER_ROWS 等算高常量）。
@@ -148,3 +150,29 @@ assert.doesNotMatch(appSrc, /<ToolsView[^>]*onExitToHeader/, 'app.tsx 渲染 Too
 assert.doesNotMatch(appSrc, /<McpView[^>]*onExitToHeader/, 'app.tsx 渲染 McpView 时不得再传 onExitToHeader');
 assert.doesNotMatch(appSrc, /<SkillsView[^>]*onExitToHeader/, 'app.tsx 渲染 SkillsView 时不得再传 onExitToHeader');
 console.log('[PASS] Tools / MCP / Skills 模块隐藏 Agent Header + MCP/Skills 列表循环（不进 header）');
+
+// TUI 退出不能依赖后台检测/网络句柄自然释放。只有 renderer 完成 destroy 回调后，
+// 才显式结束 ccq 进程，既恢复终端状态，也避免残留 ccq.exe。
+const exitCodes = [];
+let destroyCalls = 0;
+const exitController = createTuiExitController(code => exitCodes.push(code));
+const fakeRenderer = {
+	destroy() {
+		destroyCalls++;
+	}
+};
+
+exitController.handleRendererDestroyed();
+assert.deepEqual(exitCodes, [], '非退出场景的 renderer destroy 不得结束进程');
+exitController.requestExit(fakeRenderer);
+assert.equal(destroyCalls, 1, '退出请求必须先销毁 renderer');
+assert.deepEqual(exitCodes, [], 'renderer 尚未完成 destroy 时不得提前结束进程');
+exitController.handleRendererDestroyed();
+assert.deepEqual(exitCodes, [0], 'renderer 清理完成后必须显式以 0 结束进程');
+exitController.requestExit(fakeRenderer);
+assert.equal(destroyCalls, 1, '重复退出请求不得重复销毁 renderer');
+assert.deepEqual(exitCodes, [0], '重复退出请求不得重复结束进程');
+assert.match(indexSrc, /onDestroy:\s*exitController\.handleRendererDestroyed/, 'renderer onDestroy 必须接入退出控制器');
+assert.match(indexSrc, /<App[^>]*onExit=\{requestTuiExit\}/, 'App 必须把普通退出委派给入口控制器');
+assert.match(appSrc, /if \(state\.shouldExit\) \{\s*onExit\(\);/, 'shouldExit 必须调用入口 onExit，不能只销毁界面');
+console.log('[PASS] TUI 退出在 renderer 清理后显式结束 ccq 进程');

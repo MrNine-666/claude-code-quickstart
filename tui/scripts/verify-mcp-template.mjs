@@ -56,6 +56,77 @@ assert.deepEqual(JSON.parse(exaJson.json).headers, {'x-api-key': ''}, 'exa 模�
 assert.match(exaJson.credHint ?? '', /dashboard\.exa\.ai/, 'exa credHint 含 key 申请地址');
 console.log('[PASS] http 可选 header 模板预填（统一 JSON headers + credHint）');
 
+// ── url-embedded（tavily）：URL 保留占位符、禁止 env 预填、credHint 提示替换 ──
+const tavilyJson = getMcpTemplateJson('tavily');
+assert.ok(tavilyJson, 'tavily 模板应存在');
+const tavilyConfig = JSON.parse(tavilyJson.json);
+assert.equal(tavilyConfig.type, 'http', 'tavily 模板为 http');
+assert.equal(
+	tavilyConfig.url,
+	'https://mcp.tavily.com/mcp/?tavilyApiKey={TAVILY_API_KEY}',
+	'tavily url 保留 UrlTemplate 占位符'
+);
+assert.equal(tavilyConfig.env, undefined, 'tavily url-embedded 不得预填 env');
+assert.match(tavilyJson.credHint ?? '', /\{TAVILY_API_KEY\}/, 'tavily credHint 提示替换占位符');
+assert.match(tavilyJson.credHint ?? '', /app\.tavily\.com/, 'tavily credHint 含 key 申请地址');
+// URL 必须独占一行（避免「标签: url」同行被窄终端软换行拆断导致跳转路径错）
+assert.match(
+	tavilyJson.credHint ?? '',
+	/(^|\n)https:\/\/app\.tavily\.com\/home(\n|$)/,
+	'tavily 申请地址 URL 独占一行'
+);
+assert.equal((tavilyJson.credHint ?? '').includes('；'), false, 'credHint 不再用分号拼同行');
+console.log('[PASS] url-embedded（tavily）模板：url 占位 + 无 env + credHint');
+
+// ── parseMcpFormInput url-embedded：兼容旧 env 形态 / 未替换拦截 / 已替换透传 ──
+const tavilyLegacy = parseMcpFormInput(
+	'tavily',
+	JSON.stringify({
+		type: 'http',
+		url: 'https://mcp.tavily.com/mcp/?tavilyApiKey={TAVILY_API_KEY}',
+		env: {TAVILY_API_KEY: 'tvly a/b'}
+	})
+);
+assert.ok(tavilyLegacy.ok, 'tavily 旧 env 形态应可兼容解析');
+assert.equal(
+	tavilyLegacy.payload.config.url,
+	'https://mcp.tavily.com/mcp/?tavilyApiKey=tvly%20a%2Fb',
+	'tavily env 值 encodeURIComponent 后写入 url'
+);
+assert.equal(tavilyLegacy.payload.config.env, undefined, '替换后剥离 TAVILY_API_KEY env');
+assert.deepEqual(
+	tavilyLegacy.payload.credentials,
+	{TAVILY_API_KEY: 'tvly a/b'},
+	'tavily 占位符替换后 credentials 备份到 vault'
+);
+
+const tavilyUnresolved = parseMcpFormInput(
+	'tavily',
+	JSON.stringify({
+		type: 'http',
+		url: 'https://mcp.tavily.com/mcp/?tavilyApiKey={TAVILY_API_KEY}'
+	})
+);
+assert.equal(tavilyUnresolved.ok, false, '未替换占位符应失败');
+assert.match(tavilyUnresolved.error ?? '', /未替换占位符/, '错误提示未替换占位符');
+assert.match(tavilyUnresolved.error ?? '', /\{TAVILY_API_KEY\}/, '错误提示具体占位符名');
+
+const tavilyResolved = parseMcpFormInput(
+	'tavily',
+	JSON.stringify({
+		type: 'http',
+		url: 'https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-real-key'
+	})
+);
+assert.ok(tavilyResolved.ok, '用户已替换 URL 应直接通过');
+assert.equal(
+	tavilyResolved.payload.config.url,
+	'https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-real-key',
+	'已替换 URL 原样保留'
+);
+assert.equal(tavilyResolved.payload.credentials, undefined, '无 env 兼容路径时不额外提取 credentials');
+console.log('[PASS] parseMcpFormInput url-embedded（兼容 env / 未替换拦截 / 已替换透传）');
+
 // ── configToJson：config → pretty JSON 回显（原样保留 type/headers，不降级）──
 const jsonEcho = configToJson({type: 'http', url: 'https://x', headers: {h: 'v'}});
 assert.match(jsonEcho, /"type": "http"/, 'configToJson 保留 type');

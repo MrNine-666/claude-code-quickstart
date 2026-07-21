@@ -1615,6 +1615,29 @@ function Get-CcqExecutablePath {
     return Join-Path $ccqBinDir "ccq.exe"
 }
 
+function ConvertTo-CcqComparableVersion {
+    <#
+    .SYNOPSIS
+    规范化 ccq 命令输出或 Release tag，供安装器比较版本。
+    #>
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Version
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        return ""
+    }
+
+    $normalized = $Version.Trim() -replace '^ccq\s+', ''
+    if ($normalized -match '^[vV](?=\d)') {
+        $normalized = $normalized.Substring(1)
+    }
+
+    return $normalized.Trim()
+}
+
 function Test-CcqExecutableInstalled {
     <#
     .SYNOPSIS
@@ -1638,7 +1661,7 @@ function Test-CcqExecutableInstalled {
             $versionResult = Invoke-ExternalCommand -Command $ccqPath -Arguments @("--version") -TimeoutSeconds 3 -RetryCount 0 -SuppressOutput
             if ($versionResult.Success -and -not [string]::IsNullOrWhiteSpace($versionResult.Output)) {
                 $result.IsInstalled = $true
-                $result.Version = $versionResult.Output -replace '^ccq\s+', '' -replace '\s+$', ''
+                $result.Version = ConvertTo-CcqComparableVersion -Version $versionResult.Output
             }
         } catch {
             $result.IsInstalled = $false

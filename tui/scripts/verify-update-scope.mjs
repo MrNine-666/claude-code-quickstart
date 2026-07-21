@@ -134,6 +134,18 @@ assert.equal(threw, true, 'snapshot 失败应抛错');
 assert.equal(execCalls, 0, 'snapshot 失败不得执行任何更新命令');
 console.log('[PASS] 8.4 snapshot 失败不执行更新命令');
 
+const updateEvents = [];
+await applyUpdates([npmComp], event => updateEvents.push(event), {
+	createSnapshotFn: () => 'snapshot.json',
+	exec: trackExec
+});
+assert.equal(
+	updateEvents.find(event => event.instruction)?.instruction,
+	'npm install -g @anthropic-ai/claude-code@1.1.0',
+	'工具更新 progress 必须上报实际 npm 命令'
+);
+console.log('[PASS] 工具更新 progress 上报实际执行命令');
+
 rmSync(home, {recursive: true, force: true});
 rmSync(cacheDir, {recursive: true, force: true});
 console.log('[PASS] task 8.4 + 8.7 Update 范围收缩门禁全部通过');

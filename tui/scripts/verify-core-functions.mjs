@@ -165,7 +165,7 @@ await assert.rejects(
 );
 assert.ok(Date.now() - timeoutStartedAt < 500, '命令超时应立即拒绝，不等待子进程 close');
 const execSource = readFileSync(new URL('../src/core/exec.ts', import.meta.url), 'utf8');
-const timeoutHandlerIndex = execSource.indexOf('const timer = setTimeout(() => {');
+const timeoutHandlerIndex = execSource.indexOf('timer = setTimeout(() => {');
 const timeoutRejectIndex = execSource.indexOf('settleReject(new Error(`命令超时', timeoutHandlerIndex);
 const closeHandlerIndex = execSource.indexOf("proc.on('close'", timeoutHandlerIndex);
 assert.ok(
@@ -173,5 +173,29 @@ assert.ok(
 	'超时回调必须直接拒绝 Promise，不能依赖后续 close 事件'
 );
 console.log('[PASS] 外部命令超时主动收敛');
+
+// 父组件传入 AbortSignal 后，exec 只负责终止子进程树并快速拒绝；业务状态由调用方收敛。
+const preAbortedController = new AbortController();
+preAbortedController.abort();
+await assert.rejects(
+	execCommand(process.execPath, ['-e', 'throw new Error("must not spawn")'], {signal: preAbortedController.signal}),
+	error => error instanceof Error && error.name === 'AbortError',
+	'已取消 signal 不应启动外部命令'
+);
+const abortController = new AbortController();
+const abortStartedAt = Date.now();
+const abortedCommand = execCommand(
+	process.execPath,
+	['-e', 'setTimeout(()=>{},900)'],
+	{timeout: 5000, signal: abortController.signal}
+);
+setTimeout(() => abortController.abort(), 25);
+await assert.rejects(
+	abortedCommand,
+	error => error instanceof Error && error.name === 'AbortError' && /操作已取消/.test(error.message),
+	'AbortSignal 应以 AbortError 拒绝外部命令'
+);
+assert.ok(Date.now() - abortStartedAt < 500, '取消应立即收敛 Promise，不等待子进程 close');
+console.log('[PASS] 外部命令响应父级 AbortSignal');
 
 console.log('[PASS] Phase 2 核心纯函数回归门禁通过');

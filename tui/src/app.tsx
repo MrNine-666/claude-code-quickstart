@@ -1,9 +1,9 @@
-import { existsSync } from 'node:fs';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useRenderer } from '@opentui/react';
-import { TextAttributes, getTreeSitterClient, SyntaxStyle, RGBA, type ThemeMode as OpenTuiThemeMode } from '@opentui/core';
-import { useManageInput } from './hooks/use-manage-input.js';
-import { useDetectionCache, type DetectionCache } from './hooks/use-detection-cache.js';
+import {existsSync} from 'node:fs';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
+import {useRenderer} from '@opentui/react';
+import {TextAttributes, getTreeSitterClient, SyntaxStyle, RGBA, type ThemeMode as OpenTuiThemeMode} from '@opentui/core';
+import {useManageInput} from './hooks/use-manage-input.js';
+import {useDetectionCache, type DetectionCache} from './hooks/use-detection-cache.js';
 import {
 	createInitialManageState,
 	menuItems,
@@ -15,11 +15,30 @@ import {
 	type ManageModuleId,
 	type ManageState
 } from './state/manage-state.js';
-import { navShortcuts, viewShortcuts, updateButtonShortcuts, headerShortcuts } from './state/shortcuts.js';
-import { Modal, ShortcutBar, Spinner, ToastViewport, toast, type Shortcut, type StatusDotKind } from './components/index.js';
-import { colors, borderColors, borderStyles, activeBorderChars, PRIMARY, getTheme, setActiveTheme, type AppThemeMode, type ThemePalette } from './theme/index.js';
-import { CCQ_LOGO } from './theme/logo.js';
-import { CCQ_VERSION } from './version.js';
+import {navShortcuts, viewShortcuts, updateButtonShortcuts, headerShortcuts} from './state/shortcuts.js';
+import {
+	Modal,
+	ShortcutBar,
+	Spinner,
+	ToastViewport,
+	toast,
+	type BusyOverlayState,
+	type Shortcut,
+	type StatusDotKind
+} from './components/index.js';
+import {
+	colors,
+	borderColors,
+	borderStyles,
+	activeBorderChars,
+	PRIMARY,
+	getTheme,
+	setActiveTheme,
+	type AppThemeMode,
+	type ThemePalette
+} from './theme/index.js';
+import {CCQ_LOGO} from './theme/logo.js';
+import {CCQ_VERSION} from './version.js';
 import {
 	applyUpdate,
 	checkLatestVersion,
@@ -28,6 +47,7 @@ import {
 	formatSelfUpdateError,
 	restartExecutable,
 	type DownloadedSelfUpdate,
+	type DownloadUpdateProgress,
 	type SelfUpdatePlan
 } from './core/update.js';
 import {
@@ -37,16 +57,16 @@ import {
 	type SelfUpdateScreen
 } from './state/self-update-state.js';
 // 导入 6 个视图组件
-import { ProviderView } from './views/provider-view.js';
+import {ProviderView} from './views/provider-view.js';
 import McpView from './views/mcp/McpView.js';
-import { SkillsView } from './views/SkillsView.js';
-import { PromptsView } from './views/PromptsView.js';
-import { ConfigView } from './views/ConfigView.js';
-import { ToolsView } from './views/ToolsView.js';
+import {SkillsView} from './views/SkillsView.js';
+import {PromptsView} from './views/PromptsView.js';
+import {ConfigView} from './views/ConfigView.js';
+import {ToolsView} from './views/ToolsView.js';
 
 // 导入视图 services
-import { createSkillsViewServices } from './views/skills-view-services.js';
-import { createToolsViewServices } from './views/tools-view-services.js';
+import {createSkillsViewServices} from './views/skills-view-services.js';
+import {createToolsViewServices} from './views/tools-view-services.js';
 
 // logo 每行 13 列宽（块面风格），侧边栏内宽 = SIDEBAR_WIDTH - 2(边框) - 2(paddingX) = 20，菜单标签充裕。
 const SIDEBAR_WIDTH = 24;
@@ -67,6 +87,7 @@ type UpdateStatus = SelfUpdateScreen['kind'];
 
 type AppProps = {
 	readonly initialThemeMode: AppThemeMode;
+	readonly onExit: () => void;
 };
 
 function normalizeThemeMode(mode: OpenTuiThemeMode | null | undefined): AppThemeMode {
@@ -74,40 +95,41 @@ function normalizeThemeMode(mode: OpenTuiThemeMode | null | undefined): AppTheme
 }
 
 function createSyntaxStyle(theme: ThemePalette): SyntaxStyle {
-	const { syntax } = theme;
+	const {syntax} = theme;
 	return SyntaxStyle.fromStyles({
 		// code token（fenced code block：TS/JS）
-		keyword: { fg: RGBA.fromHex(syntax.keyword), bold: true },
-		string: { fg: RGBA.fromHex(syntax.string) },
-		number: { fg: RGBA.fromHex(syntax.number) },
-		comment: { fg: RGBA.fromHex(syntax.comment), italic: true },
-		function: { fg: RGBA.fromHex(syntax.function) },
-		type: { fg: RGBA.fromHex(syntax.type) },
-		operator: { fg: RGBA.fromHex(syntax.operator) },
+		keyword: {fg: RGBA.fromHex(syntax.keyword), bold: true},
+		string: {fg: RGBA.fromHex(syntax.string)},
+		number: {fg: RGBA.fromHex(syntax.number)},
+		comment: {fg: RGBA.fromHex(syntax.comment), italic: true},
+		function: {fg: RGBA.fromHex(syntax.function)},
+		type: {fg: RGBA.fromHex(syntax.type)},
+		operator: {fg: RGBA.fromHex(syntax.operator)},
 		// markdown markup token（全局规则页 CLAUDE.md：标题/粗体/列表/引用/代码/链接着色）
-		'markup.heading': { fg: RGBA.fromHex(syntax.markupHeading), bold: true },
-		'markup.heading.1': { fg: RGBA.fromHex(syntax.markupHeading1), bold: true },
-		'markup.heading.2': { fg: RGBA.fromHex(syntax.markupHeading2), bold: true },
-		'markup.heading.3': { fg: RGBA.fromHex(syntax.markupHeading3), bold: true },
-		'markup.bold': { fg: RGBA.fromHex(syntax.markupBold), bold: true },
-		'markup.strong': { fg: RGBA.fromHex(syntax.markupBold), bold: true },
-		'markup.italic': { fg: RGBA.fromHex(syntax.markupBold), italic: true },
-		'markup.list': { fg: RGBA.fromHex(syntax.markupList) },
-		'markup.list.checked': { fg: RGBA.fromHex(syntax.markupListChecked) },
-		'markup.quote': { fg: RGBA.fromHex(syntax.markupQuote), italic: true },
-		'markup.raw': { fg: RGBA.fromHex(syntax.markupRaw) },
-		'markup.raw.block': { fg: RGBA.fromHex(syntax.markupRaw) },
-		'markup.link': { fg: RGBA.fromHex(syntax.markupLink), underline: true },
-		'markup.link.url': { fg: RGBA.fromHex(syntax.markupLink), underline: true },
-		default: { fg: RGBA.fromHex(syntax.default) }
+		'markup.heading': {fg: RGBA.fromHex(syntax.markupHeading), bold: true},
+		'markup.heading.1': {fg: RGBA.fromHex(syntax.markupHeading1), bold: true},
+		'markup.heading.2': {fg: RGBA.fromHex(syntax.markupHeading2), bold: true},
+		'markup.heading.3': {fg: RGBA.fromHex(syntax.markupHeading3), bold: true},
+		'markup.bold': {fg: RGBA.fromHex(syntax.markupBold), bold: true},
+		'markup.strong': {fg: RGBA.fromHex(syntax.markupBold), bold: true},
+		'markup.italic': {fg: RGBA.fromHex(syntax.markupBold), italic: true},
+		'markup.list': {fg: RGBA.fromHex(syntax.markupList)},
+		'markup.list.checked': {fg: RGBA.fromHex(syntax.markupListChecked)},
+		'markup.quote': {fg: RGBA.fromHex(syntax.markupQuote), italic: true},
+		'markup.raw': {fg: RGBA.fromHex(syntax.markupRaw)},
+		'markup.raw.block': {fg: RGBA.fromHex(syntax.markupRaw)},
+		'markup.link': {fg: RGBA.fromHex(syntax.markupLink), underline: true},
+		'markup.link.url': {fg: RGBA.fromHex(syntax.markupLink), underline: true},
+		default: {fg: RGBA.fromHex(syntax.default)}
 	});
 }
 
-export default function App({ initialThemeMode }: AppProps) {
+export default function App({initialThemeMode, onExit}: AppProps) {
 	const [themeMode, setThemeMode] = useState<AppThemeMode>(initialThemeMode);
 	const theme = useMemo(() => getTheme(themeMode), [themeMode]);
 	const [state, setState] = useState(createInitialManageState);
 	const [viewSubMode, setViewSubMode] = useState<string>('');
+	const [busyOverlay, setBusyOverlay] = useState<BusyOverlayState | null>(null);
 	const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
 	const [updateScreen, setUpdateScreen] = useState<SelfUpdateScreen>({kind: 'checking'});
 	const updateAbortRef = useRef<AbortController | null>(null);
@@ -179,25 +201,26 @@ export default function App({ initialThemeMode }: AppProps) {
 
 	useEffect(() => {
 		if (state.shouldExit) {
-			renderer?.destroy();
+			onExit();
 		}
-	}, [renderer, state.shouldExit]);
+	}, [onExit, state.shouldExit]);
 
 	const runUpdateCheck = async (): Promise<void> => {
 		setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'checkStarted'}));
 		const info = await checkLatestVersion();
 		if (!info.ok) {
-			setUpdateScreen(current => reduceSelfUpdateScreen(current, {
-				type: 'failed',
-				message: formatSelfUpdateError(info.error)
-			}));
+			setUpdateScreen(current =>
+				reduceSelfUpdateScreen(current, {
+					type: 'failed',
+					message: formatSelfUpdateError(info.error)
+				})
+			);
 			return;
 		}
 
-		setUpdateScreen(current => reduceSelfUpdateScreen(current, info.hasUpdate
-			? {type: 'updateAvailable', plan: info.plan}
-			: {type: 'latestConfirmed'}
-		));
+		setUpdateScreen(current =>
+			reduceSelfUpdateScreen(current, info.hasUpdate ? {type: 'updateAvailable', plan: info.plan} : {type: 'latestConfirmed'})
+		);
 	};
 
 	const restartUpdatedApp = async (): Promise<void> => {
@@ -228,7 +251,11 @@ export default function App({ initialThemeMode }: AppProps) {
 		setUpdateDialogOpen(true);
 		setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'downloadStarted', plan}));
 
-		const downloaded = await downloadUpdate(plan, abortController.signal);
+		const downloaded = await downloadUpdate(plan, abortController.signal, {
+			onProgress: progress => {
+				setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'downloadProgress', progress}));
+			}
+		});
 		updateAbortRef.current = null;
 		if (abortController.signal.aborted) {
 			if (downloaded.ok) await cleanupTempUpdate(downloaded.transaction);
@@ -243,10 +270,12 @@ export default function App({ initialThemeMode }: AppProps) {
 			return;
 		}
 
-		setUpdateScreen(current => reduceSelfUpdateScreen(current, {
-			type: 'downloadReady',
-			transaction: downloaded.transaction
-		}));
+		setUpdateScreen(current =>
+			reduceSelfUpdateScreen(current, {
+				type: 'downloadReady',
+				transaction: downloaded.transaction
+			})
+		);
 	};
 
 	const applyDownloadedUpdate = async (transaction: DownloadedSelfUpdate): Promise<void> => {
@@ -264,10 +293,12 @@ export default function App({ initialThemeMode }: AppProps) {
 			process.exit(0);
 		}
 
-		setUpdateScreen(current => reduceSelfUpdateScreen(current, {
-			type: 'applyCompleted',
-			version: transaction.plan.version
-		}));
+		setUpdateScreen(current =>
+			reduceSelfUpdateScreen(current, {
+				type: 'applyCompleted',
+				version: transaction.plan.version
+			})
+		);
 	};
 
 	useEffect(() => {
@@ -280,14 +311,10 @@ export default function App({ initialThemeMode }: AppProps) {
 	// 都让位给视图自身处理，避免双重响应；浮窗打开时也让位给浮窗自身处理。
 	// 其余模块由全局 reducer 处理 Esc/← 返回导航。
 	const viewModulesWithInput = useMemo(() => new Set(menuItems.map(item => item.id)), []);
-	const ownsViewInput = updateDialogOpen || (state.focus === 'view' && viewModulesWithInput.has(displayMenuId));
+	const ownsViewInput = busyOverlay !== null || updateDialogOpen || (state.focus === 'view' && viewModulesWithInput.has(displayMenuId));
 	useManageInput(keyName => {
 		// 底部「检查更新」按钮：nav 焦点 + 按钮位 + Enter 键处理
-		if (
-			state.focus === 'nav' &&
-			state.selectedIndex === menuItems.length &&
-			keyName === 'enter'
-		) {
+		if (state.focus === 'nav' && state.selectedIndex === menuItems.length && keyName === 'enter') {
 			const currentStatus = updateScreen.kind;
 
 			// 'latest' 状态：重新检查更新
@@ -328,32 +355,35 @@ export default function App({ initialThemeMode }: AppProps) {
 	// 右卡片 = content（flexGrow，焦点驱动滚动） + 下划线分隔 + footer
 
 	// Toast 主题配置：根据当前主题动态设置颜色
-	const toastOptions = useMemo(() => ({
-		style: {
-			backgroundColor: theme.colors.modalBackground,
-			foregroundColor: theme.colors.text,
-			borderColor: theme.borderColors.inactive,
-			mutedColor: theme.colors.muted,
-			borderStyle: 'rounded' as const,
-			paddingX: 1,
-			paddingY: 0,
-		},
-		duration: 4000,
-		success: {
-			style: { borderColor: theme.colors.success },
-			duration: 3000,
-		},
-		error: {
-			style: { borderColor: theme.colors.danger },
-			duration: 6000,
-		},
-		warning: {
-			style: { borderColor: theme.colors.warning },
-		},
-		info: {
-			style: { borderColor: theme.colors.info },
-		},
-	}), [theme]);
+	const toastOptions = useMemo(
+		() => ({
+			style: {
+				backgroundColor: theme.colors.modalBackground,
+				foregroundColor: theme.colors.text,
+				borderColor: theme.borderColors.inactive,
+				mutedColor: theme.colors.muted,
+				borderStyle: 'rounded' as const,
+				paddingX: 1,
+				paddingY: 0
+			},
+			duration: 4000,
+			success: {
+				style: {borderColor: theme.colors.success},
+				duration: 3000
+			},
+			error: {
+				style: {borderColor: theme.colors.danger},
+				duration: 6000
+			},
+			warning: {
+				style: {borderColor: theme.colors.warning}
+			},
+			info: {
+				style: {borderColor: theme.colors.info}
+			}
+		}),
+		[theme]
+	);
 
 	return (
 		<>
@@ -408,51 +438,50 @@ export default function App({ initialThemeMode }: AppProps) {
 					/>
 				</box>
 
-					{/* 右侧区域：Header 独立固定行，content 卡片占满剩余空间 */}
-					<box flexDirection="column" flexGrow={1} minWidth={0}>
-						{hideAgentHeader ? null : (
-							<AgentHeader agentContext={state.agentContext} active={headerActive} />
-						)}
+				{/* 右侧区域：Header 独立固定行，content 卡片占满剩余空间 */}
+				<box flexDirection="column" flexGrow={1} minWidth={0}>
+					{hideAgentHeader ? null : <AgentHeader agentContext={state.agentContext} active={headerActive} />}
 
-						<box
-							flexDirection="column"
-							flexGrow={1}
-							flexShrink={1}
-							minHeight={1}
-							borderStyle={effectiveFocus === 'view' ? borderStyles.active : borderStyles.inactive}
-							borderColor={effectiveFocus === 'view' ? borderColors.active : borderColors.inactive}
-							customBorderChars={effectiveFocus === 'view' ? activeBorderChars : undefined}
-							paddingX={1}
-						>
-							{/* 内容视图区域 */}
-							<box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={1} overflow="hidden">
-								<ModuleContent
-									moduleId={displayMenuId}
-									agentContext={state.agentContext}
-									contentWidth={contentWidth}
-									active={effectiveFocus === 'view'}
-									skillsViewServices={skillsViewServices}
-									skillsCache={skillsCache}
-									toolsViewServices={toolsViewServices}
-									toolsCache={toolsCache}
-									onSubModeChange={setViewSubMode}
-									syntaxStyle={syntaxStyle}
-									onExitToNav={() => {
-										setViewSubMode('');
-										setState(current => reduceManageState(current, 'escape'));
-									}}
-									onExitToHeader={() => {
-										setState(current => reduceManageState(current, 'up'));
-									}}
-								/>
-							</box>
-
-							<Divider width={terminalWidth - SIDEBAR_WIDTH - 4} />
-
-							{/* Footer 快捷键提示 */}
-							<ShortcutBar shortcuts={activeFooterShortcuts} width={contentWidth} />
+					<box
+						flexDirection="column"
+						flexGrow={1}
+						flexShrink={1}
+						minHeight={1}
+						borderStyle={effectiveFocus === 'view' ? borderStyles.active : borderStyles.inactive}
+						borderColor={effectiveFocus === 'view' ? borderColors.active : borderColors.inactive}
+						customBorderChars={effectiveFocus === 'view' ? activeBorderChars : undefined}
+						paddingX={1}
+					>
+						{/* 内容视图区域 */}
+						<box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={1} overflow="hidden">
+							<ModuleContent
+								moduleId={displayMenuId}
+								agentContext={state.agentContext}
+								contentWidth={contentWidth}
+								active={effectiveFocus === 'view' && busyOverlay === null && !updateDialogOpen}
+								skillsViewServices={skillsViewServices}
+								skillsCache={skillsCache}
+								toolsViewServices={toolsViewServices}
+								toolsCache={toolsCache}
+								onSubModeChange={setViewSubMode}
+								onBusyStateChange={setBusyOverlay}
+								syntaxStyle={syntaxStyle}
+								onExitToNav={() => {
+									setViewSubMode('');
+									setState(current => reduceManageState(current, 'escape'));
+								}}
+								onExitToHeader={() => {
+									setState(current => reduceManageState(current, 'up'));
+								}}
+							/>
 						</box>
+
+						<Divider width={terminalWidth - SIDEBAR_WIDTH - 4} />
+
+						{/* Footer 快捷键提示 */}
+						<ShortcutBar shortcuts={activeFooterShortcuts} width={contentWidth} />
 					</box>
+				</box>
 			</box>
 
 			{/* 检查更新浮窗：确认更新、更新进度与重启确认在同一 Modal 内完成 */}
@@ -460,25 +489,38 @@ export default function App({ initialThemeMode }: AppProps) {
 				active={updateDialogOpen}
 				screen={updateScreen}
 				onClose={() => setUpdateDialogOpen(false)}
-				onUpdate={(plan) => void runUpdate(plan)}
-				onApplyUpdate={(transaction) => void applyDownloadedUpdate(transaction)}
+				onUpdate={plan => void runUpdate(plan)}
+				onApplyUpdate={transaction => void applyDownloadedUpdate(transaction)}
 				onCancelUpdate={cancelUpdate}
 				onRestart={() => void restartUpdatedApp()}
 			/>
+			{busyOverlay ? (
+				<Spinner
+					variant="overlay"
+					label={busyOverlay.title}
+					message={busyOverlay.message}
+					terminalWidth={terminalWidth}
+					onCancel={busyOverlay.onCancel}
+				/>
+			) : null}
 		</>
 	);
 }
 
 // 卡片内分区下划线（替代独立 card 边框，Logo/menu 与 content/footer 各自一卡内分隔）
-function Divider({ width }: { readonly width: number }) {
-	return <text fg={colors.muted} flexShrink={0}>{'─'.repeat(Math.max(1, width))}</text>;
+function Divider({width}: {readonly width: number}) {
+	return (
+		<text fg={colors.muted} flexShrink={0}>
+			{'─'.repeat(Math.max(1, width))}
+		</text>
+	);
 }
 
 // Agent 上下文 Header：右侧 content 顶部，全称标签 Claude Code / Codex 切换。
 // spec manage-tui-shell：可见标签必须为全称，禁止 cc/cx 缩写；切换不改左侧 6 菜单顺序/选中。
 // Header 获焦后用 ←/→ 切换 Agent，并用主题色边框提示焦点。
 // 宽度使用百分比铺满父容器，而不是用 contentWidth 估算值写死，避免 Header 比 content 卡片短一截。
-function AgentHeader({ agentContext, active }: { readonly agentContext: AgentContext; readonly active: boolean }) {
+function AgentHeader({agentContext, active}: {readonly agentContext: AgentContext; readonly active: boolean}) {
 	return (
 		<box
 			flexDirection="row"
@@ -511,7 +553,12 @@ function AgentHeader({ agentContext, active }: { readonly agentContext: AgentCon
 // 侧边栏导航行（菜单项）：
 // 背景高亮条（铺满宽度）+ 粗体三重状态，无选中箭头。
 // marginBottom 拉开行距，paddingLeft 增加左侧缩进。
-function NavRow({ label, selected, navActive, width }: {
+function NavRow({
+	label,
+	selected,
+	navActive,
+	width
+}: {
 	readonly label: string;
 	readonly selected: boolean;
 	readonly navActive: boolean;
@@ -522,11 +569,7 @@ function NavRow({ label, selected, navActive, width }: {
 	return (
 		<box marginBottom={1}>
 			<box flexDirection="row" width={width} backgroundColor={bg} paddingLeft={1}>
-				<text
-					fg={fg}
-					bg={bg}
-					attributes={selected ? TextAttributes.BOLD : 0}
-				>
+				<text fg={fg} bg={bg} attributes={selected ? TextAttributes.BOLD : 0}>
 					{label}
 				</text>
 			</box>
@@ -536,7 +579,13 @@ function NavRow({ label, selected, navActive, width }: {
 
 // 底部「检查更新」按钮（独立组件，紧贴底部无下边距）：
 // 状态点 + 背景高亮条 + 粗体三重状态，无选中箭头，paddingLeft 增加左侧缩进。
-function UpdateButton({ label, selected, navActive, width, statusKind }: {
+function UpdateButton({
+	label,
+	selected,
+	navActive,
+	width,
+	statusKind
+}: {
 	readonly label: string;
 	readonly selected: boolean;
 	readonly navActive: boolean;
@@ -547,12 +596,10 @@ function UpdateButton({ label, selected, navActive, width, statusKind }: {
 	const bg = selected ? (navActive ? PRIMARY : colors.navInactiveSelectedBackground) : undefined;
 	return (
 		<box flexDirection="row" width={width} backgroundColor={bg} paddingLeft={1}>
-			<text fg={statusDotColor(statusKind)} bg={bg}>● </text>
-			<text
-				fg={fg}
-				bg={bg}
-				attributes={selected ? TextAttributes.BOLD : 0}
-			>
+			<text fg={statusDotColor(statusKind)} bg={bg}>
+				●{' '}
+			</text>
+			<text fg={fg} bg={bg} attributes={selected ? TextAttributes.BOLD : 0}>
 				{label}
 			</text>
 		</box>
@@ -611,7 +658,7 @@ function UpdateDialog({
 	readonly onCancelUpdate: () => void;
 	readonly onRestart: () => void;
 }) {
-	useManageInput((keyName) => {
+	useManageInput(keyName => {
 		const isEnter = keyName === 'enter';
 		const isEsc = keyName === 'escape';
 
@@ -656,15 +703,46 @@ function UpdateDialog({
 	);
 }
 
-function updateDialogContent(screen: SelfUpdateScreen): { readonly title: string; readonly body: React.ReactNode; readonly hint: string } {
+const UPDATE_PROGRESS_BAR_WIDTH = 24;
+
+export function UpdateProgressBar({progress}: {readonly progress: DownloadUpdateProgress}) {
+	const percentage = Math.min(100, Math.max(0, progress.percentage));
+	const filledWidth = Math.round((percentage * UPDATE_PROGRESS_BAR_WIDTH) / 100);
+	const bar = '='.repeat(filledWidth) + '-'.repeat(UPDATE_PROGRESS_BAR_WIDTH - filledWidth);
+
+	return (
+		<box flexDirection="column" marginTop={1}>
+			<text fg={colors.primary}>{`[${bar}] ${String(percentage).padStart(3, ' ')}%`}</text>
+			<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+				{`  ${formatDownloadBytes(progress.downloadedBytes)} / ${formatDownloadBytes(progress.totalBytes)}`}
+			</text>
+		</box>
+	);
+}
+
+function formatDownloadBytes(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+function updateDialogContent(screen: SelfUpdateScreen): {readonly title: string; readonly body: React.ReactNode; readonly hint: string} {
 	switch (screen.kind) {
 		case 'available':
 			return {
 				title: '发现新版本',
 				body: (
 					<box flexDirection="column">
-						<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  当前 v${CCQ_VERSION}`}</text>
-						<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  最新 v${screen.plan.version}`}</text>
+						<text
+							fg={colors.text}
+							selectionBg={colors.selectionBg}
+							selectionFg={colors.selectionFg}
+						>{`  当前 v${CCQ_VERSION}`}</text>
+						<text
+							fg={colors.text}
+							selectionBg={colors.selectionBg}
+							selectionFg={colors.selectionFg}
+						>{`  最新 v${screen.plan.version}`}</text>
 					</box>
 				),
 				hint: 'Enter 更新  Esc 取消'
@@ -675,20 +753,34 @@ function updateDialogContent(screen: SelfUpdateScreen): { readonly title: string
 				body: (
 					<box flexDirection="column">
 						<Spinner label={updateStageLabel(screen.stage)} />
-						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  目标版本 v${selfUpdateScreenVersion(screen)}`}</text>
+						<text
+							fg={colors.muted}
+							selectionBg={colors.selectionBg}
+							selectionFg={colors.selectionFg}
+						>{`  目标版本 v${selfUpdateScreenVersion(screen)}`}</text>
+						{screen.stage === 'applying' ? null : <UpdateProgressBar progress={screen.progress} />}
 					</box>
 				),
-				hint: screen.stage === 'downloading'
-					? 'Enter 已禁用  Esc 停止更新'
-					: (screen.stage === 'cancelling' ? '正在停止更新...' : '正在应用，暂不可取消')
+				hint:
+					screen.stage === 'downloading'
+						? 'Enter 已禁用  Esc 停止更新'
+						: screen.stage === 'cancelling'
+							? '正在停止更新...'
+							: '正在应用，暂不可取消'
 			};
 		case 'readyToRestart':
 			return {
 				title: '下载完成',
 				body: (
 					<box flexDirection="column">
-						<text fg={colors.success} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>更新已下载完成</text>
-						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  新版本 v${screen.transaction.plan.version} 将在重启后生效`}</text>
+						<text fg={colors.success} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+							更新已下载完成
+						</text>
+						<text
+							fg={colors.muted}
+							selectionBg={colors.selectionBg}
+							selectionFg={colors.selectionFg}
+						>{`  新版本 v${screen.transaction.plan.version} 将在重启后生效`}</text>
 					</box>
 				),
 				hint: 'Enter 应用并重启  Esc 稍后处理'
@@ -698,16 +790,40 @@ function updateDialogContent(screen: SelfUpdateScreen): { readonly title: string
 				title: '更新完成',
 				body: (
 					<box flexDirection="column">
-						<text fg={colors.success} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>更新已应用</text>
-						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`  新版本 v${screen.version} 将在重启后生效`}</text>
+						<text fg={colors.success} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+							更新已应用
+						</text>
+						<text
+							fg={colors.muted}
+							selectionBg={colors.selectionBg}
+							selectionFg={colors.selectionFg}
+						>{`  新版本 v${screen.version} 将在重启后生效`}</text>
 					</box>
 				),
 				hint: 'Enter 立即重启  Esc 稍后重启'
 			};
 		case 'error':
-			return { title: '更新失败', body: <text fg={colors.danger} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`✗ 更新失败：${screen.message}`}</text>, hint: 'Enter 关闭  Esc 取消' };
+			return {
+				title: '更新失败',
+				body: (
+					<text
+						fg={colors.danger}
+						selectionBg={colors.selectionBg}
+						selectionFg={colors.selectionFg}
+					>{`✗ 更新失败：${screen.message}`}</text>
+				),
+				hint: 'Enter 关闭  Esc 取消'
+			};
 		default:
-			return { title: '检查更新', body: <text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>处理中...</text>, hint: 'Esc 关闭' };
+			return {
+				title: '检查更新',
+				body: (
+					<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+						处理中...
+					</text>
+				),
+				hint: 'Esc 关闭'
+			};
 	}
 }
 
@@ -769,6 +885,7 @@ function ModuleContent({
 	toolsViewServices,
 	toolsCache,
 	onSubModeChange,
+	onBusyStateChange,
 	onExitToNav,
 	onExitToHeader,
 	syntaxStyle
@@ -782,6 +899,7 @@ function ModuleContent({
 	readonly toolsViewServices: ReturnType<typeof createToolsViewServices>;
 	readonly toolsCache: DetectionCache<any>;
 	readonly onSubModeChange: (subMode: string) => void;
+	readonly onBusyStateChange: (state: BusyOverlayState | null) => void;
 	readonly onExitToNav: () => void;
 	readonly onExitToHeader: () => void;
 	readonly syntaxStyle: SyntaxStyle | null;
@@ -791,17 +909,62 @@ function ModuleContent({
 	// 根据 moduleId 渲染对应的视图组件
 	switch (moduleId) {
 		case 'provider':
-			return <ProviderView agentContext={agentContext} active={active} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} />;
+			return (
+				<ProviderView
+					agentContext={agentContext}
+					active={active}
+					onSubModeChange={onSubModeChange}
+					onExitToNav={onExitToNav}
+					onExitToHeader={onExitToHeader}
+				/>
+			);
 		case 'mcp':
 			return <McpView active={active} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
 		case 'skills':
-			return <SkillsView services={skillsViewServices} cache={skillsCache} active={active} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
+			return (
+				<SkillsView
+					services={skillsViewServices}
+					cache={skillsCache}
+					active={active}
+					onSubModeChange={onSubModeChange}
+					onBusyStateChange={onBusyStateChange}
+					onExitToNav={onExitToNav}
+				/>
+			);
 		case 'prompts':
-			return <PromptsView agentContext={agentContext} active={active} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} syntaxStyle={syntaxStyle} />;
+			return (
+				<PromptsView
+					agentContext={agentContext}
+					active={active}
+					onSubModeChange={onSubModeChange}
+					onExitToNav={onExitToNav}
+					onExitToHeader={onExitToHeader}
+					syntaxStyle={syntaxStyle}
+				/>
+			);
 		case 'config':
-			return <ConfigView agentContext={agentContext} active={active} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} onExitToHeader={onExitToHeader} syntaxStyle={syntaxStyle} />;
+			return (
+				<ConfigView
+					agentContext={agentContext}
+					active={active}
+					onSubModeChange={onSubModeChange}
+					onExitToNav={onExitToNav}
+					onExitToHeader={onExitToHeader}
+					syntaxStyle={syntaxStyle}
+				/>
+			);
 		case 'tools':
-			return <ToolsView services={toolsViewServices} cache={toolsCache} active={active} contentWidth={contentWidth} onSubModeChange={onSubModeChange} onExitToNav={onExitToNav} />;
+			return (
+				<ToolsView
+					services={toolsViewServices}
+					cache={toolsCache}
+					active={active}
+					contentWidth={contentWidth}
+					onSubModeChange={onSubModeChange}
+					onBusyStateChange={onBusyStateChange}
+					onExitToNav={onExitToNav}
+				/>
+			);
 		default:
 			// 兜底：显示模块信息
 			const item = menuItems.find(menuItem => menuItem.id === moduleId);
@@ -816,9 +979,7 @@ function ModuleContent({
 						</text>
 					</box>
 					<box marginTop={1}>
-						<text fg={colors.warning}>
-							⚠ 未知模块
-						</text>
+						<text fg={colors.warning}>⚠ 未知模块</text>
 					</box>
 				</box>
 			);

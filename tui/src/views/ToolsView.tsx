@@ -1,14 +1,35 @@
-import React, { useEffect, useMemo, useReducer, useRef } from 'react';
-import { TextAttributes, type ScrollBoxRenderable } from '@opentui/core';
-import { useKeyboard } from '@opentui/react';
-import { Card, ErrorPanel, ListEmptyState, ListLoadingState, Modal, ProgressLog, StatusDot, ThemedScrollbox, ViewHeader, toast, type StatusDotKind } from '../components/index.js';
-import { colors } from '../theme/index.js';
+import React, {useCallback, useEffect, useMemo, useReducer, useRef} from 'react';
+import {TextAttributes, type ScrollBoxRenderable} from '@opentui/core';
+import {useKeyboard} from '@opentui/react';
+import {
+	Card,
+	ErrorPanel,
+	ListEmptyState,
+	ListLoadingState,
+	Modal,
+	StatusDot,
+	ThemedScrollbox,
+	ViewHeader,
+	busyActionTitle,
+	toast,
+	type BusyAction,
+	type BusyOverlayState,
+	type StatusDotKind
+} from '../components/index.js';
+import {colors} from '../theme/index.js';
 import type {ProgressCallback} from '../core/exec.js';
-import type { DetectionState } from '../services/async-detection.js';
-import type { DetectionCache } from '../hooks/use-detection-cache.js';
-import type { DetectionRunner, DetectionRunOptions, DetectionStateSink } from '../services/detection-runner.js';
-import type { AgentInjectSnapshot, ComponentId, ComponentInstallOutcome, ComponentUninstallOutcome, ManagedComponent, SharedManagedComponent } from '../core/tools-manage.js';
-import type { ApplyUpdatesResult } from '../core/update.js';
+import type {DetectionState} from '../services/async-detection.js';
+import type {DetectionCache} from '../hooks/use-detection-cache.js';
+import type {DetectionRunner, DetectionRunOptions, DetectionStateSink} from '../services/detection-runner.js';
+import type {
+	AgentInjectSnapshot,
+	ComponentId,
+	ComponentInstallOutcome,
+	ComponentUninstallOutcome,
+	ManagedComponent,
+	SharedManagedComponent
+} from '../core/tools-manage.js';
+import type {ApplyUpdatesResult} from '../core/update.js';
 import {
 	createInitialToolsViewState,
 	cursorComponent,
@@ -17,7 +38,7 @@ import {
 	reduceToolsViewState,
 	resolveToolsPrimaryAction,
 	updatableComponents,
-	activeProgressTasks,
+	latestActiveProgressTask,
 	injectTargetContext,
 	initialInjectDraft,
 	CARD_WIDTH,
@@ -27,10 +48,16 @@ import {
 	type ToolsViewAction,
 	type ToolsViewState
 } from '../state/tools-view-state.js';
-import {groupComponentsByToolGroup, isInjectableComponent, projectSharedToolComponents, uninstallImpactNotice} from '../core/tools-manage.js';
+import {
+	groupComponentsByToolGroup,
+	isInjectableComponent,
+	projectSharedToolComponents,
+	uninstallImpactNotice
+} from '../core/tools-manage.js';
 import {openUrl} from '../core/open-url.js';
 import {AGENT_CONTEXT_LABELS, AGENT_CONTEXT_ORDER, type AgentContext} from '../state/manage-state.js';
 import {semverCompare} from '../core/semver.js';
+import {useTaskCancellation, type TaskCancellation} from '../hooks/use-task-cancellation.js';
 
 type Dispatch = React.Dispatch<ToolsViewAction>;
 
@@ -49,17 +76,47 @@ export type InjectChangesResult = {
 export type UninstallOptions = {
 	readonly agentContext?: AgentContext;
 	readonly fullUninstall?: boolean;
+	readonly signal?: AbortSignal;
 };
 
 export type ToolsViewServices = {
 	readonly detectComponents: () => Promise<readonly ManagedComponent[]>;
-	readonly installComponent: (id: ComponentId, onProgress?: ProgressCallback, agentContext?: AgentContext) => Promise<ComponentInstallOutcome>;
-	readonly installMultiple: (ids: readonly ComponentId[], onProgress?: ProgressCallback, agentContext?: AgentContext) => Promise<readonly ComponentInstallOutcome[]>;
-	readonly updateComponents: (components: readonly ManagedComponent[], onProgress?: ProgressCallback, agentContext?: AgentContext) => Promise<ApplyUpdatesResult>;
-	readonly uninstallComponent: (id: ComponentId, onProgress?: ProgressCallback, options?: UninstallOptions) => Promise<ComponentUninstallOutcome>;
+	readonly installComponent: (
+		id: ComponentId,
+		onProgress?: ProgressCallback,
+		agentContext?: AgentContext,
+		signal?: AbortSignal
+	) => Promise<ComponentInstallOutcome>;
+	readonly installMultiple: (
+		ids: readonly ComponentId[],
+		onProgress?: ProgressCallback,
+		agentContext?: AgentContext,
+		signal?: AbortSignal
+	) => Promise<readonly ComponentInstallOutcome[]>;
+	readonly updateComponents: (
+		components: readonly ManagedComponent[],
+		onProgress?: ProgressCallback,
+		agentContext?: AgentContext,
+		signal?: AbortSignal
+	) => Promise<ApplyUpdatesResult>;
+	readonly uninstallComponent: (
+		id: ComponentId,
+		onProgress?: ProgressCallback,
+		options?: UninstallOptions
+	) => Promise<ComponentUninstallOutcome>;
 	// 单侧 inject/eject：显式传目标 Agent，禁止依赖 Header agentContext（design D5/4.2）。
-	readonly injectComponent: (id: ComponentId, target: AgentContext, onProgress?: ProgressCallback) => Promise<ComponentInstallOutcome>;
-	readonly ejectComponent: (id: ComponentId, target: AgentContext, onProgress?: ProgressCallback) => Promise<ComponentUninstallOutcome>;
+	readonly injectComponent: (
+		id: ComponentId,
+		target: AgentContext,
+		onProgress?: ProgressCallback,
+		signal?: AbortSignal
+	) => Promise<ComponentInstallOutcome>;
+	readonly ejectComponent: (
+		id: ComponentId,
+		target: AgentContext,
+		onProgress?: ProgressCallback,
+		signal?: AbortSignal
+	) => Promise<ComponentUninstallOutcome>;
 	readonly createDetectionRunner: (onChange: DetectionStateSink<ManagedComponent[]>) => DetectionRunner<ManagedComponent[]>;
 	readonly runDetection: (runner: DetectionRunner<ManagedComponent[]>) => Promise<unknown>;
 	readonly refreshDetection?: (runner: DetectionRunner<ManagedComponent[]>, options?: DetectionRunOptions) => Promise<unknown>;
@@ -71,12 +128,31 @@ export type ToolsViewProps = {
 	readonly active?: boolean;
 	readonly contentWidth?: number;
 	readonly onSubModeChange?: (subMode: string) => void;
+	readonly onBusyStateChange?: (state: BusyOverlayState | null) => void;
 	readonly onExitToNav?: () => void;
 };
 
-export function ToolsView({ services: rawServices, cache, active = true, contentWidth, onSubModeChange, onExitToNav }: ToolsViewProps) {
+export function ToolsView({
+	services: rawServices,
+	cache,
+	active = true,
+	contentWidth,
+	onSubModeChange,
+	onBusyStateChange,
+	onExitToNav
+}: ToolsViewProps) {
 	const [view, dispatch] = useReducer(reduceToolsViewState, undefined, createInitialToolsViewState);
 	const detection = cache.state;
+	const taskCancellation = useTaskCancellation();
+	const cancelBusyTask = useCallback(() => {
+		if (!taskCancellation.cancel()) {
+			return;
+		}
+
+		dispatch({type: 'cancel-busy'});
+		toast.info('已取消任务，正在刷新状态');
+		cache.refresh({forceRefresh: true});
+	}, [cache, taskCancellation]);
 
 	// D5/4.6：inject/eject/uninstall 路径显式传目标，禁止把 Header agentContext useMemo 绑死到生命周期动作。
 	// rawServices 直接透传；单侧 inject/eject 由 select-inject-target 显式解析目标，非 inject 的 install/update
@@ -90,11 +166,11 @@ export function ToolsView({ services: rawServices, cache, active = true, content
 	// inject 类附双侧 injectByAgent 快照，对侧状态互不塌缩；refresh 后经同一投影重投影。
 	useEffect(() => {
 		if (detection.status === 'success') {
-			dispatch({ type: 'components-loaded', components: projectSharedToolComponents(detection.result ?? []) });
+			dispatch({type: 'components-loaded', components: projectSharedToolComponents(detection.result ?? [])});
 		}
 
 		if (detection.status === 'error') {
-			dispatch({ type: 'detection-error', error: detection.error ?? '检测失败' });
+			dispatch({type: 'detection-error', error: detection.error ?? '检测失败'});
 		}
 	}, [detection.status, detection.result, detection.error]);
 
@@ -108,6 +184,7 @@ export function ToolsView({ services: rawServices, cache, active = true, content
 	const scrollRef = useRef<ScrollBoxRenderable>(null);
 	const cursorCard = view.components[view.cursor];
 	const activeCardId = cursorCard ? toolCardId(cursorCard, view.cursor) : null;
+	const busyOverlayState = useMemo(() => createToolsBusyOverlayState(view, cancelBusyTask), [view, cancelBusyTask]);
 
 	// 上报当前子模式给 App footer：inject 类光标下 grid → grid-inject（footer 展示「选择注入目标」）。
 	const cursorInjectable = cursorCard ? isInjectableComponent(cursorCard.id) : false;
@@ -116,13 +193,23 @@ export function ToolsView({ services: rawServices, cache, active = true, content
 			return;
 		}
 		const subMode =
-			view.mode === 'busy' ? 'busy'
-			: view.mode === 'confirm-uninstall' ? 'confirm-uninstall'
-			: view.mode === 'select-inject-target' ? 'select-inject-target'
-			: cursorInjectable ? 'grid-inject'
-			: 'grid';
+			view.mode === 'busy'
+				? 'busy'
+				: view.mode === 'confirm-uninstall'
+					? 'confirm-uninstall'
+					: view.mode === 'select-inject-target'
+						? 'select-inject-target'
+						: cursorInjectable
+							? 'grid-inject'
+							: 'grid';
 		onSubModeChange?.(subMode);
 	}, [active, view.mode, cursorInjectable, onSubModeChange]);
+
+	useEffect(() => {
+		onBusyStateChange?.(busyOverlayState);
+	}, [busyOverlayState, onBusyStateChange]);
+
+	useEffect(() => () => onBusyStateChange?.(null), [onBusyStateChange]);
 
 	useEffect(() => {
 		if (!scrollRef.current || !activeCardId) {
@@ -133,7 +220,7 @@ export function ToolsView({ services: rawServices, cache, active = true, content
 	}, [activeCardId]);
 
 	// 键盘输入处理
-	useKeyboard((keyEvent) => {
+	useKeyboard(keyEvent => {
 		if (!active) return;
 
 		// OpenTUI 回调收到 KeyEvent 对象，取 .name 得到键名字符串。
@@ -146,7 +233,12 @@ export function ToolsView({ services: rawServices, cache, active = true, content
 		}
 
 		// grid 模式：光标停在所属分组首项时，← 退回左侧导航（各分组 grid 相对独立，行首边界快捷返回，与 Esc 等效）。
-		if (view.mode === 'grid' && (key === 'left' || key === 'arrowleft') && view.cursor === (cursorGroupBounds(view)?.start ?? 0) && onExitToNav) {
+		if (
+			view.mode === 'grid' &&
+			(key === 'left' || key === 'arrowleft') &&
+			view.cursor === (cursorGroupBounds(view)?.start ?? 0) &&
+			onExitToNav
+		) {
 			onExitToNav();
 			return;
 		}
@@ -157,7 +249,7 @@ export function ToolsView({ services: rawServices, cache, active = true, content
 		}
 
 		if (view.mode === 'select-inject-target') {
-			handleInjectTargetKey(key, view, services, dispatch, cache);
+			handleInjectTargetKey(key, view, services, dispatch, cache, taskCancellation);
 			return;
 		}
 
@@ -165,7 +257,7 @@ export function ToolsView({ services: rawServices, cache, active = true, content
 			return; // 执行中禁用操作
 		}
 
-		handleGridKey(key, view, services, dispatch, cache, columns);
+		handleGridKey(key, view, services, dispatch, cache, columns, taskCancellation);
 	});
 
 	return (
@@ -173,10 +265,20 @@ export function ToolsView({ services: rawServices, cache, active = true, content
 			<ViewHeader title="工具管理" subtitle="管理常用 CLI 工具的安装、更新与卸载" />
 			{renderDetectionNotice(detection.status)}
 			{/* 检测中时隐藏网格，仅显示加载态；检测完成后才显示分组网格或空状态 */}
-			{detection.status !== 'loading' && detection.status !== 'idle' ? renderGrid(view, scrollRef, active && view.mode === 'grid') : null}
-			{activeProgressTasks(view).length > 0 ? <ActiveProgressTasks tasks={activeProgressTasks(view)} /> : null}
+			{detection.status !== 'loading' && detection.status !== 'idle'
+				? renderGrid(view, scrollRef, active && view.mode === 'grid')
+				: null}
 			{view.errorText ? <ErrorPanel message={view.errorText} /> : null}
-			{view.mode === 'confirm-uninstall' ? <UninstallConfirm view={view} dispatch={dispatch} services={services} cache={cache} active={active} /> : null}
+			{view.mode === 'confirm-uninstall' ? (
+				<UninstallConfirm
+					view={view}
+					dispatch={dispatch}
+					services={services}
+					cache={cache}
+					taskCancellation={taskCancellation}
+					active={active}
+				/>
+			) : null}
 			{view.mode === 'select-inject-target' ? <InjectTargetModal view={view} /> : null}
 		</box>
 	);
@@ -191,14 +293,15 @@ function handleGridKey(
 	services: ToolsViewServices,
 	dispatch: Dispatch,
 	cache: DetectionCache<ManagedComponent[]>,
-	columns: number
+	columns: number,
+	taskCancellation: TaskCancellation
 ): void {
 	const k = key.toLowerCase();
 
 	if (k === 'up' || k === 'arrowup') {
 		const nextCursor = visualVerticalCursor(view, columns, -1);
 		if (nextCursor !== null) {
-			dispatch({ type: 'nav', delta: nextCursor - view.cursor });
+			dispatch({type: 'nav', delta: nextCursor - view.cursor});
 		}
 		// 顶行 ↑：停在首项（Tools 无 Header，不退回）。
 		return;
@@ -207,7 +310,7 @@ function handleGridKey(
 	if (k === 'down' || k === 'arrowdown') {
 		const nextCursor = visualVerticalCursor(view, columns, 1);
 		if (nextCursor !== null) {
-			dispatch({ type: 'nav', delta: nextCursor - view.cursor });
+			dispatch({type: 'nav', delta: nextCursor - view.cursor});
 		}
 		return;
 	}
@@ -217,37 +320,37 @@ function handleGridKey(
 
 	if (k === 'left' || k === 'arrowleft') {
 		if (!bounds || view.cursor > bounds.start) {
-			dispatch({ type: 'nav', delta: -1 });
+			dispatch({type: 'nav', delta: -1});
 		}
 		return;
 	}
 
 	if (k === 'right' || k === 'arrowright') {
 		if (!bounds || view.cursor < bounds.end) {
-			dispatch({ type: 'nav', delta: 1 });
+			dispatch({type: 'nav', delta: 1});
 		}
 		return;
 	}
 
 	// Enter：普通项按实时状态安装/更新，inject 类始终打开管理开关 Modal。
 	if (k === 'enter' || k === 'return') {
-		runPrimaryAction(view, services, dispatch, cache);
+		runPrimaryAction(view, services, dispatch, cache, taskCancellation);
 		return;
 	}
 
 	// u：仅 inject 类保留单项更新，普通项已由 Enter 按状态处理。
 	if (k === 'u') {
-		updateInjectableCurrent(view, services, dispatch, cache);
+		updateInjectableCurrent(view, services, dispatch, cache, taskCancellation);
 		return;
 	}
 
 	if (k === 'a') {
-		updateAll(view, services, dispatch, cache);
+		updateAll(view, services, dispatch, cache, taskCancellation);
 		return;
 	}
 
 	if (k === 'd') {
-		dispatch({ type: 'request-uninstall' });
+		dispatch({type: 'request-uninstall'});
 		return;
 	}
 
@@ -275,7 +378,7 @@ function openCurrentDocs(view: ToolsViewState): void {
 		return;
 	}
 
-	void openUrl(component.docsUrl).then((result) => {
+	void openUrl(component.docsUrl).then(result => {
 		if (result.ok) {
 			toast.success(`已打开 ${component.name} 文档`);
 		} else {
@@ -291,38 +394,45 @@ function handleInjectTargetKey(
 	view: ToolsViewState,
 	services: ToolsViewServices,
 	dispatch: Dispatch,
-	cache: DetectionCache<ManagedComponent[]>
+	cache: DetectionCache<ManagedComponent[]>,
+	taskCancellation: TaskCancellation
 ): void {
 	const k = key.toLowerCase();
 
 	if (k === 'up' || k === 'arrowup') {
-		dispatch({ type: 'inject-target-nav', delta: -1 });
+		dispatch({type: 'inject-target-nav', delta: -1});
 		return;
 	}
 
 	if (k === 'down' || k === 'arrowdown') {
-		dispatch({ type: 'inject-target-nav', delta: 1 });
+		dispatch({type: 'inject-target-nav', delta: 1});
 		return;
 	}
 
 	if (k === 'space' || key === ' ') {
-		dispatch({ type: 'inject-target-toggle' });
+		dispatch({type: 'inject-target-toggle'});
 		return;
 	}
 
 	if (k === 'escape') {
-		dispatch({ type: 'cancel' });
+		dispatch({type: 'cancel'});
 		return;
 	}
 
 	if (k === 'enter' || k === 'return') {
-		applyInjectDraft(view, services, dispatch, cache);
+		applyInjectDraft(view, services, dispatch, cache, taskCancellation);
 	}
 }
 
 // ── Enter：按组件能力与实时状态解析唯一主操作 ───────────────────────────────────
 
-function runPrimaryAction(view: ToolsViewState, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
+function runPrimaryAction(
+	view: ToolsViewState,
+	services: ToolsViewServices,
+	dispatch: Dispatch,
+	cache: DetectionCache<ManagedComponent[]>,
+	taskCancellation: TaskCancellation
+): void {
 	const component = cursorComponent(view);
 	if (!component) {
 		return;
@@ -337,10 +447,10 @@ function runPrimaryAction(view: ToolsViewState, services: ToolsViewServices, dis
 			dispatch({type: 'open-inject-target', draft: initialInjectDraft(component as SharedManagedComponent)});
 			return;
 		case 'install':
-			installOne(component, services, dispatch, cache);
+			installOne(component, services, dispatch, cache, taskCancellation);
 			return;
 		case 'update':
-			updateOne(component, services, dispatch, cache);
+			updateOne(component, services, dispatch, cache, taskCancellation);
 			return;
 		case 'latest':
 			toast.success(`${component.name} 已是最新`);
@@ -349,18 +459,30 @@ function runPrimaryAction(view: ToolsViewState, services: ToolsViewServices, dis
 
 // ── u：仅管理型工具保留单项更新 ───────────────────────────────────────────────
 
-function updateInjectableCurrent(view: ToolsViewState, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
+function updateInjectableCurrent(
+	view: ToolsViewState,
+	services: ToolsViewServices,
+	dispatch: Dispatch,
+	cache: DetectionCache<ManagedComponent[]>,
+	taskCancellation: TaskCancellation
+): void {
 	const component = cursorComponent(view);
 	if (!component || !isInjectableComponent(component.id)) {
 		return;
 	}
 
-	updateCurrent(view, services, dispatch, cache);
+	updateCurrent(view, services, dispatch, cache, taskCancellation);
 }
 
 // ── 更新当前项（无更新则提示已是最新） ────────────────────────────────────────
 
-function updateCurrent(view: ToolsViewState, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
+function updateCurrent(
+	view: ToolsViewState,
+	services: ToolsViewServices,
+	dispatch: Dispatch,
+	cache: DetectionCache<ManagedComponent[]>,
+	taskCancellation: TaskCancellation
+): void {
 	const component = cursorComponent(view);
 	if (!component) {
 		return;
@@ -371,7 +493,7 @@ function updateCurrent(view: ToolsViewState, services: ToolsViewServices, dispat
 	}
 
 	if (component.hasUpdate === true) {
-		updateOne(component, services, dispatch, cache);
+		updateOne(component, services, dispatch, cache, taskCancellation);
 		return;
 	}
 
@@ -385,38 +507,57 @@ function updateCurrent(view: ToolsViewState, services: ToolsViewServices, dispat
 
 // ── Enter 应用开关草稿：对比草稿与实际态，对每个变化侧顺序执行 inject/eject ──────────
 
-function applyInjectDraft(view: ToolsViewState, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
+function applyInjectDraft(
+	view: ToolsViewState,
+	services: ToolsViewServices,
+	dispatch: Dispatch,
+	cache: DetectionCache<ManagedComponent[]>,
+	taskCancellation: TaskCancellation
+): void {
 	const component = cursorComponent(view) as SharedManagedComponent | undefined;
 	const draft = view.injectDraft;
 	if (!component || !isInjectableComponent(component.id) || !draft) {
-		dispatch({ type: 'cancel' });
+		dispatch({type: 'cancel'});
 		return;
 	}
 
 	// 计算与实际态有差异的侧（草稿 true=开启注入，false=关闭）。
-	const changes = AGENT_CONTEXT_ORDER
-		.map(ctx => ({ ctx, desired: draft[ctx], actual: Boolean(component.injectByAgent?.[ctx]?.integrated) }))
-		.filter(item => item.desired !== item.actual);
+	const changes = AGENT_CONTEXT_ORDER.map(ctx => ({
+		ctx,
+		desired: draft[ctx],
+		actual: Boolean(component.injectByAgent?.[ctx]?.integrated)
+	})).filter(item => item.desired !== item.actual);
 
 	if (changes.length === 0) {
 		toast.info('未改变任何开关');
-		dispatch({ type: 'cancel' });
+		dispatch({type: 'cancel'});
 		return;
 	}
 
-	dispatch({ type: 'item-start', id: component.id, action: injectChangesAction(changes) });
-	void runInjectChanges(component, changes, services, dispatch)
-		.then((result) => {
-			dispatch({ type: 'item-patched', id: component.id, patch: result.patch });
+	const signal = taskCancellation.start();
+	if (!signal) return;
+	dispatch({type: 'item-start', id: component.id, action: injectChangesAction(changes)});
+	void runInjectChanges(component, changes, services, dispatch, signal)
+		.then(result => {
+			if (signal.aborted) return;
+			dispatch({type: 'item-patched', id: component.id, patch: result.patch});
 			if (result.error) {
-				dispatch({ type: 'item-failed', id: component.id, error: result.error });
+				dispatch({type: 'item-failed', id: component.id, error: result.error});
+				toast.warning(`${component.name} 操作部分完成，请检查详情`);
+			} else {
+				toast.success(`${component.name} 设置已更新`);
 			}
 			// 无论全部成功还是部分失败，均刷新真实双侧状态。
 			cache.refresh();
 		})
 		.catch((error: unknown) => {
-			dispatch({ type: 'item-failed', id: component.id, error: errorMessage(error) });
+			if (signal.aborted) return;
+			dispatch({type: 'item-failed', id: component.id, error: errorMessage(error)});
 			cache.refresh();
+		})
+		.finally(() => {
+			taskCancellation.finish(signal);
+			if (signal.aborted) cache.refresh({forceRefresh: true});
 		});
 }
 
@@ -453,18 +594,19 @@ export async function runInjectChanges(
 	component: SharedManagedComponent,
 	changes: readonly {readonly ctx: AgentContext; readonly desired: boolean}[],
 	services: ToolsViewServices,
-	dispatch: Dispatch
+	dispatch: Dispatch,
+	signal?: AbortSignal
 ): Promise<InjectChangesResult> {
-	let nextInject = { ...(component.injectByAgent ?? {}) } as Record<AgentContext, AgentInjectSnapshot>;
+	let nextInject = {...(component.injectByAgent ?? {})} as Record<AgentContext, AgentInjectSnapshot>;
 	let codeGraphVersion = component.sharedVersion || component.currentVersion;
 
-	for (const { ctx, desired } of changes) {
+	for (const {ctx, desired} of changes) {
 		const label = AGENT_CONTEXT_LABELS[ctx];
 		let outcome: ComponentInstallOutcome | ComponentUninstallOutcome;
 		try {
 			outcome = desired
-				? await services.injectComponent(component.id, ctx, progressSink(dispatch, component.id))
-				: await services.ejectComponent(component.id, ctx, progressSink(dispatch, component.id));
+				? await services.injectComponent(component.id, ctx, progressSink(dispatch, component.id), signal)
+				: await services.ejectComponent(component.id, ctx, progressSink(dispatch, component.id), signal);
 		} catch (error) {
 			return {patch: injectChangesPatch(component, nextInject, codeGraphVersion), error: errorMessage(error)};
 		}
@@ -478,11 +620,10 @@ export async function runInjectChanges(
 
 		const installedVersion = desired && 'version' in outcome ? outcome.version : undefined;
 		const version = component.id === 'CcgWorkflow' ? installedVersion : undefined;
-		nextInject = { ...nextInject, [ctx]: { context: ctx, integrated: desired, ...(version ? {version} : {}) } };
+		nextInject = {...nextInject, [ctx]: {context: ctx, integrated: desired, ...(version ? {version} : {})}};
 		if (desired && component.id === 'CodeGraph') {
 			codeGraphVersion = installedVersion || codeGraphVersion;
 		}
-		toast.success(`${component.name} · ${label} 已${desired ? '安装' : '卸载'}`);
 	}
 
 	return {patch: injectChangesPatch(component, nextInject, codeGraphVersion)};
@@ -491,14 +632,27 @@ export async function runInjectChanges(
 // ── 安装（单项 / 批量，失败隔离） ─────────────────────────────────────────────
 
 function progressSink(dispatch: Dispatch, fallbackId: string): ProgressCallback {
-	return (event) => dispatch({type: 'progress', id: event.componentId ?? fallbackId, message: event.message, level: event.level});
+	return event => {
+		if (event.instruction) {
+			dispatch({type: 'progress', id: event.componentId ?? fallbackId, message: event.instruction, level: event.level});
+		}
+	};
 }
 
-function installOne(component: ManagedComponent, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
+function installOne(
+	component: ManagedComponent,
+	services: ToolsViewServices,
+	dispatch: Dispatch,
+	cache: DetectionCache<ManagedComponent[]>,
+	taskCancellation: TaskCancellation
+): void {
+	const signal = taskCancellation.start();
+	if (!signal) return;
 	dispatch({type: 'item-start', id: component.id, action: 'install'});
 	void services
-		.installComponent(component.id, progressSink(dispatch, component.id))
-		.then((outcome) => {
+		.installComponent(component.id, progressSink(dispatch, component.id), undefined, signal)
+		.then(outcome => {
+			if (signal.aborted) return;
 			if (outcome.success) {
 				toast.success(`${component.name} 安装成功`);
 				dispatch({type: 'item-patched', id: component.id, patch: successfulInstallPatch(component, outcome.version)});
@@ -510,8 +664,13 @@ function installOne(component: ManagedComponent, services: ToolsViewServices, di
 			}
 		})
 		.catch((error: unknown) => {
+			if (signal.aborted) return;
 			dispatch({type: 'item-failed', id: component.id, error: errorMessage(error)});
 			cache.refresh();
+		})
+		.finally(() => {
+			taskCancellation.finish(signal);
+			if (signal.aborted) cache.refresh({forceRefresh: true});
 		});
 }
 
@@ -529,12 +688,21 @@ export function successfulInstallPatch(component: ManagedComponent, installedVer
 
 // ── 更新（单项 / 一键） ───────────────────────────────────────────────────────
 
-function updateOne(component: ManagedComponent, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
+function updateOne(
+	component: ManagedComponent,
+	services: ToolsViewServices,
+	dispatch: Dispatch,
+	cache: DetectionCache<ManagedComponent[]>,
+	taskCancellation: TaskCancellation
+): void {
+	const signal = taskCancellation.start();
+	if (!signal) return;
 	dispatch({type: 'item-start', id: component.id, action: 'update'});
 	void services
-		.updateComponents([component], progressSink(dispatch, component.id))
-		.then((result) => {
-			const failed = result.updatedItems.some((item) => item.startsWith(`failed::${component.id}`));
+		.updateComponents([component], progressSink(dispatch, component.id), undefined, signal)
+		.then(result => {
+			if (signal.aborted) return;
+			const failed = result.updatedItems.some(item => item.startsWith(`failed::${component.id}`));
 			if (failed) {
 				dispatch({type: 'item-failed', id: component.id, error: `${component.name} 更新失败`});
 				cache.refresh();
@@ -547,8 +715,13 @@ function updateOne(component: ManagedComponent, services: ToolsViewServices, dis
 			cache.refresh();
 		})
 		.catch((error: unknown) => {
+			if (signal.aborted) return;
 			dispatch({type: 'item-failed', id: component.id, error: errorMessage(error)});
 			cache.refresh();
+		})
+		.finally(() => {
+			taskCancellation.finish(signal);
+			if (signal.aborted) cache.refresh({forceRefresh: true});
 		});
 }
 
@@ -565,10 +738,12 @@ export function successfulUpdatePatch(component: ManagedComponent): ComponentPat
 	if (shared.id === 'CcgWorkflow' && shared.injectByAgent) {
 		return {
 			...patch,
-			injectByAgent: Object.fromEntries(AGENT_CONTEXT_ORDER.map(context => {
-				const snapshot = shared.injectByAgent?.[context] ?? {context, integrated: false};
-				return [context, snapshot.integrated ? {...snapshot, version: currentVersion} : snapshot];
-			})) as Readonly<Record<AgentContext, AgentInjectSnapshot>>
+			injectByAgent: Object.fromEntries(
+				AGENT_CONTEXT_ORDER.map(context => {
+					const snapshot = shared.injectByAgent?.[context] ?? {context, integrated: false};
+					return [context, snapshot.integrated ? {...snapshot, version: currentVersion} : snapshot];
+				})
+			) as Readonly<Record<AgentContext, AgentInjectSnapshot>>
 		};
 	}
 
@@ -586,21 +761,30 @@ export function settleBatchUpdateComponents(
 
 	return components.map(component => {
 		const target = successfulTargets.get(component.id);
-		return target ? {...component, ...successfulUpdatePatch(target)} as ManagedComponent : component;
+		return target ? ({...component, ...successfulUpdatePatch(target)} as ManagedComponent) : component;
 	});
 }
 
-function updateAll(view: ToolsViewState, services: ToolsViewServices, dispatch: Dispatch, cache: DetectionCache<ManagedComponent[]>): void {
+function updateAll(
+	view: ToolsViewState,
+	services: ToolsViewServices,
+	dispatch: Dispatch,
+	cache: DetectionCache<ManagedComponent[]>,
+	taskCancellation: TaskCancellation
+): void {
 	const targets = updatableComponents(view);
 	if (targets.length === 0) {
 		toast.info('没有可更新的组件');
 		return;
 	}
 
-	dispatch({ type: 'batch-start', action: 'update', ids: targets.map((item) => item.id) });
+	const signal = taskCancellation.start();
+	if (!signal) return;
+	dispatch({type: 'batch-start', action: 'update', ids: targets.map(item => item.id)});
 	void services
-		.updateComponents(targets, progressSink(dispatch, targets[0]?.id ?? 'batch-update'))
-		.then((result) => {
+		.updateComponents(targets, progressSink(dispatch, targets[0]?.id ?? 'batch-update'), undefined, signal)
+		.then(result => {
+			if (signal.aborted) return;
 			const failedIds = new Set<string>(
 				result.updatedItems
 					.filter(item => item.startsWith('failed::'))
@@ -615,16 +799,21 @@ function updateAll(view: ToolsViewState, services: ToolsViewServices, dispatch: 
 					: `${updatedCount}/${targets.length} 成功，失败: ${[...failedIds].join(', ')}`;
 			if (failedIds.size === 0) {
 				toast.success(summary);
-				dispatch({ type: 'batch-done', components });
+				dispatch({type: 'batch-done', components});
 			} else {
-				dispatch({ type: 'batch-failed', error: summary, components });
+				dispatch({type: 'batch-failed', error: summary, components});
 			}
 
 			cache.refresh();
 		})
 		.catch((error: unknown) => {
-			dispatch({ type: 'batch-failed', error: errorMessage(error) });
+			if (signal.aborted) return;
+			dispatch({type: 'batch-failed', error: errorMessage(error)});
 			cache.refresh();
+		})
+		.finally(() => {
+			taskCancellation.finish(signal);
+			if (signal.aborted) cache.refresh({forceRefresh: true});
 		});
 }
 
@@ -635,48 +824,46 @@ function UninstallConfirm({
 	dispatch,
 	services,
 	cache,
+	taskCancellation,
 	active
 }: {
 	readonly view: ToolsViewState;
 	readonly dispatch: Dispatch;
 	readonly services: ToolsViewServices;
 	readonly cache: DetectionCache<ManagedComponent[]>;
+	readonly taskCancellation: TaskCancellation;
 	readonly active: boolean;
 }) {
-	const target = view.components.find((item) => item.id === view.uninstallTarget);
-	if (!target) {
-		return null;
-	}
-
+	const target = view.components.find(item => item.id === view.uninstallTarget);
 	// d = 全量卸载（design D5）：inject 类解除两侧注入 + 共享 CLI/包；非 inject 走既有全局卸载。
-	const fullUninstall = isInjectableComponent(target.id);
+	const fullUninstall = target ? isInjectableComponent(target.id) : false;
 
-	useKeyboard((keyEvent) => {
-		if (!active) return;
+	useKeyboard(keyEvent => {
+		if (!active || !target) return;
 
 		const key = keyEvent.name;
 
 		if (key === 'escape') {
-			dispatch({ type: 'cancel' });
+			dispatch({type: 'cancel'});
 			return;
 		}
 
 		if (key === 'enter' || key === 'return') {
-			runUninstall(target, services, dispatch, cache, fullUninstall);
+			runUninstall(target, services, dispatch, cache, fullUninstall, taskCancellation);
 		}
 	});
 
+	if (!target) {
+		return null;
+	}
+
 	return (
-		<Modal
-			active
-			title={`卸载确认：${target.name}`}
-			hint="Enter 确认  Esc 取消"
-			tone="danger"
-			width={INJECT_MODAL_WIDTH}
-		>
+		<Modal active title={`卸载确认：${target.name}`} hint="Enter 确认  Esc 取消" tone="danger" width={INJECT_MODAL_WIDTH}>
 			<box flexDirection="column">
 				{/* inject 类：全量卸载文案（CLI + 全部注入）；非 inject：既有全局卸载文案（按组件 id 区分，不依赖 Header 上下文）。 */}
-				<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{uninstallImpactNotice(target.id, {fullUninstall})}</text>
+				<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+					{uninstallImpactNotice(target.id, {fullUninstall})}
+				</text>
 			</box>
 		</Modal>
 	);
@@ -687,12 +874,16 @@ function runUninstall(
 	services: ToolsViewServices,
 	dispatch: Dispatch,
 	cache: DetectionCache<ManagedComponent[]>,
-	fullUninstall: boolean
+	fullUninstall: boolean,
+	taskCancellation: TaskCancellation
 ): void {
+	const signal = taskCancellation.start();
+	if (!signal) return;
 	dispatch({type: 'confirm-uninstall'});
 	void services
-		.uninstallComponent(component.id, progressSink(dispatch, component.id), {fullUninstall})
-		.then((outcome) => {
+		.uninstallComponent(component.id, progressSink(dispatch, component.id), {fullUninstall, signal})
+		.then(outcome => {
+			if (signal.aborted) return;
 			if (outcome.success) {
 				toast.success(`${component.name} 已卸载`);
 				dispatch({type: 'item-patched', id: component.id, patch: uninstallSuccessPatch(component, fullUninstall)});
@@ -701,14 +892,19 @@ function runUninstall(
 			} else {
 				const message = outcome.manualHint
 					? `${outcome.error ?? '卸载失败'}\n${outcome.manualHint}`
-					: outcome.error ?? `${component.name} 卸载失败`;
+					: (outcome.error ?? `${component.name} 卸载失败`);
 				dispatch({type: 'item-failed', id: component.id, error: message});
 				cache.refresh();
 			}
 		})
 		.catch((error: unknown) => {
+			if (signal.aborted) return;
 			dispatch({type: 'item-failed', id: component.id, error: errorMessage(error)});
 			cache.refresh();
+		})
+		.finally(() => {
+			taskCancellation.finish(signal);
+			if (signal.aborted) cache.refresh({forceRefresh: true});
 		});
 }
 
@@ -737,11 +933,7 @@ export function uninstallSuccessPatch(component: ManagedComponent, fullUninstall
 
 // ── 开关管理 Modal：↑/↓ 选 Claude Code / Codex，空格切换草稿开/关，Enter 统一应用，Esc 取消 ──
 
-function InjectTargetModal({
-	view
-}: {
-	readonly view: ToolsViewState;
-}) {
+function InjectTargetModal({view}: {readonly view: ToolsViewState}) {
 	const shared = cursorComponent(view) as SharedManagedComponent | undefined;
 	const selected = injectTargetContext(view);
 	const draft = view.injectDraft;
@@ -754,7 +946,7 @@ function InjectTargetModal({
 			width={INJECT_MODAL_WIDTH}
 		>
 			<box flexDirection="column">
-				{AGENT_CONTEXT_ORDER.map((ctx) => {
+				{AGENT_CONTEXT_ORDER.map(ctx => {
 					const enabled = Boolean(draft?.[ctx]);
 					const focused = ctx === selected;
 					// 每侧实际版本（已注入且版本可读时展示）：CcgWorkflow cc/cx 可不同版本，Modal 逐侧精确呈现。
@@ -762,10 +954,21 @@ function InjectTargetModal({
 					const stateLabel = enabled ? (version ? `● 已安装 ${version}` : '● 已安装') : '○ 卸载';
 					return (
 						<box key={ctx} flexDirection="row">
-							<text fg={focused ? colors.primary : colors.muted} attributes={focused ? TextAttributes.BOLD : 0} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} flexGrow={1}>
+							<text
+								fg={focused ? colors.primary : colors.muted}
+								attributes={focused ? TextAttributes.BOLD : 0}
+								selectionBg={colors.selectionBg}
+								selectionFg={colors.selectionFg}
+								flexGrow={1}
+							>
 								{`${focused ? '›' : ' '} ${AGENT_CONTEXT_LABELS[ctx]} `}
 							</text>
-							<text fg={enabled ? colors.success : colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} flexShrink={0}>
+							<text
+								fg={enabled ? colors.success : colors.muted}
+								selectionBg={colors.selectionBg}
+								selectionFg={colors.selectionFg}
+								flexShrink={0}
+							>
 								{stateLabel}
 							</text>
 						</box>
@@ -811,7 +1014,9 @@ function cursorGroupBounds(view: ToolsViewState): {readonly start: number; reado
 
 function groupedGridRows(view: ToolsViewState, columns: number): readonly GridRow[] {
 	return groupComponentsByToolGroup(view.components).flatMap(section => {
-		const indices = section.components.map(component => view.components.findIndex(item => item.id === component.id)).filter(index => index >= 0);
+		const indices = section.components
+			.map(component => view.components.findIndex(item => item.id === component.id))
+			.filter(index => index >= 0);
 		const rows: GridRow[] = [];
 		for (let offset = 0; offset < indices.length; offset += columns) {
 			rows.push(indices.slice(offset, offset + columns));
@@ -857,12 +1062,25 @@ function renderGrid(view: ToolsViewState, scrollRef: React.RefObject<ScrollBoxRe
 			<box flexDirection="column">
 				{sections.map(section => (
 					<box key={section.group} flexDirection="column" marginBottom={1}>
-						<text fg={colors.primary} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{section.label}</text>
+						<text
+							fg={colors.primary}
+							attributes={TextAttributes.BOLD}
+							selectionBg={colors.selectionBg}
+							selectionFg={colors.selectionFg}
+						>
+							{section.label}
+						</text>
 						<box flexDirection="row" flexWrap="wrap">
 							{section.components.map(component => {
 								const index = view.components.findIndex(item => item.id === component.id);
 								return (
-									<box key={component.id} id={toolCardId(component, index)} marginRight={1} marginBottom={0} flexShrink={0}>
+									<box
+										key={component.id}
+										id={toolCardId(component, index)}
+										marginRight={1}
+										marginBottom={0}
+										flexShrink={0}
+									>
 										<ToolCard
 											component={component as SharedManagedComponent}
 											focused={active && index === view.cursor}
@@ -896,9 +1114,14 @@ function ToolCard({
 	// 黄点 + 可更新版本号，便于快速发现待更新项。CodeGraph 是真·共享 CLI，右上角始终保留版本/更新态。
 	// CcgWorkflow 平时靠卡片内双态徽章呈现两侧安装态，右上角聚合点冗余故隐藏；但「有更新」或
 	// 处于执行态（安装/更新/卸载中）时于右上角展示状态点/loading，与其它工具一致。
-	const titleRight = component.id === 'CcgWorkflow'
-		? (component.hasUpdate === true || status !== 'idle' ? <StatusRight dot={toolStatusDot(component, status)} /> : undefined)
-		: <StatusRight dot={toolStatusDot(component, status)} />;
+	const titleRight =
+		component.id === 'CcgWorkflow' ? (
+			component.hasUpdate === true || status !== 'idle' ? (
+				<StatusRight dot={toolStatusDot(component, status)} />
+			) : undefined
+		) : (
+			<StatusRight dot={toolStatusDot(component, status)} />
+		);
 	// 卡片不固定高度：multiLine 让 body 按实际行数自然撑开（标题行 + 空行 + 描述 [+ 徽章行]），
 	// inject 类比非 inject 高一行，同行按各自内容高度渲染，不再用 minHeight 强行拉平。
 	return (
@@ -909,14 +1132,14 @@ function ToolCard({
 }
 
 // 标题行右上角：状态圆点 + 版本（toolStatusDot 的 label 已含版本/更新箭头）。
-function StatusRight({ dot }: { readonly dot: { readonly kind: StatusDotKind; readonly label: string } }) {
+function StatusRight({dot}: {readonly dot: {readonly kind: StatusDotKind; readonly label: string}}) {
 	return <StatusDot kind={dot.kind} label={dot.label} />;
 }
 
 // 卡片 body：inject 类为两行（行1 可跳转描述 + 行2 双态徽章）；非 inject 为单行可跳转描述。
 // 描述统一走 DocsLink（官方文档 / GitHub），文案已在 tools-install 精简到卡片安全宽度，
 // 保证 OSC-8 超链接序列不被 overflow 裁剪、终端可点击。
-function CardBody({ component }: { readonly component: SharedManagedComponent }) {
+function CardBody({component}: {readonly component: SharedManagedComponent}) {
 	if (component.sharingKind === 'shared-cli-per-agent-inject') {
 		// 版本按侧独立展示：CcgWorkflow 两侧独立安装、可不同版本（cc=~/.claude/.ccg，cx=~/.codex/.ccg-version），
 		// 故版本随各侧徽章走。CodeGraph 是真·共享 CLI，injectByAgent 无 version 字段，徽章不显版本（版本在右上角）。
@@ -924,9 +1147,17 @@ function CardBody({ component }: { readonly component: SharedManagedComponent })
 		return (
 			<box flexDirection="column">
 				<box flexDirection="row" height={1} overflow="hidden">
-					<InjectBadge label={AGENT_CONTEXT_LABELS.cc} injected={Boolean(component.injectByAgent?.cc?.integrated)} version={component.injectByAgent?.cc?.version} />
+					<InjectBadge
+						label={AGENT_CONTEXT_LABELS.cc}
+						injected={Boolean(component.injectByAgent?.cc?.integrated)}
+						version={component.injectByAgent?.cc?.version}
+					/>
 					<text fg={colors.muted}>{'  '}</text>
-					<InjectBadge label={AGENT_CONTEXT_LABELS.cx} injected={Boolean(component.injectByAgent?.cx?.integrated)} version={component.injectByAgent?.cx?.version} />
+					<InjectBadge
+						label={AGENT_CONTEXT_LABELS.cx}
+						injected={Boolean(component.injectByAgent?.cx?.integrated)}
+						version={component.injectByAgent?.cx?.version}
+					/>
 				</box>
 				<box height={1} overflow="hidden">
 					<DocsLink text={component.description} url={component.docsUrl} />
@@ -948,7 +1179,7 @@ function CardBody({ component }: { readonly component: SharedManagedComponent })
 }
 
 // 可跳转描述链接（OSC-8）：终端支持时可点击打开 docsUrl，不支持则降级为普通文本。
-function DocsLink({ text, url }: { readonly text: string; readonly url?: string }) {
+function DocsLink({text, url}: {readonly text: string; readonly url?: string}) {
 	if (!url) {
 		return (
 			<text fg={colors.muted} attributes={TextAttributes.DIM} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
@@ -959,14 +1190,16 @@ function DocsLink({ text, url }: { readonly text: string; readonly url?: string 
 
 	return (
 		<text selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-			<a href={url} fg={colors.primary} attributes={TextAttributes.UNDERLINE}>{text}</a>
+			<a href={url} fg={colors.primary} attributes={TextAttributes.UNDERLINE}>
+				{text}
+			</a>
 		</text>
 	);
 }
 
 // 双态徽章：已注入=success ●，未注入=muted ○（全称标签，禁 cc/cx 缩写）。
 // version 按侧独立（CcgWorkflow cc/cx 可不同版本）：已注入且有版本时附版本号。
-function InjectBadge({ label, injected, version }: { readonly label: string; readonly injected: boolean; readonly version?: string }) {
+function InjectBadge({label, injected, version}: {readonly label: string; readonly injected: boolean; readonly version?: string}) {
 	const suffix = injected && version ? ` ${version}` : '';
 	return (
 		<text fg={injected ? colors.success : colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
@@ -988,28 +1221,44 @@ function agentExclusiveScope(id: ComponentId): string {
 	}
 }
 
-/** 活跃任务进度：遍历进行中的组件，每个一项；完成（离开进行时态）自动从列表消失，下方上移补齐。 */
-function ActiveProgressTasks({tasks}: {readonly tasks: ReturnType<typeof activeProgressTasks>}) {
-	return (
-		<ProgressLog
-			title="执行进度"
-			entries={tasks.map(task => ({id: task.id, message: `${task.name} · ${task.message}`, level: task.level}))}
-		/>
-	);
+function createToolsBusyOverlayState(view: ToolsViewState, onCancel: () => void): BusyOverlayState | null {
+	if (!isAnyBusy(view)) {
+		return null;
+	}
+
+	const action = currentToolsBusyAction(view);
+	const currentTask = latestActiveProgressTask(view);
+	return {
+		title: action ? busyActionTitle(action, '工具') : '正在执行工具操作',
+		message: currentTask ? `${currentTask.name} · ${currentTask.message}` : undefined,
+		onCancel
+	};
+}
+
+function currentToolsBusyAction(view: ToolsViewState): BusyAction | undefined {
+	if (view.busyAction) {
+		return view.busyAction;
+	}
+
+	const statuses = Object.values(view.itemStatus);
+	if (statuses.includes('uninstalling')) return 'uninstall';
+	if (statuses.includes('updating')) return 'update';
+	if (statuses.includes('installing')) return 'install';
+	return undefined;
 }
 
 /** 把组件状态 + 执行态映射为圆点语义。执行态优先于版本态。 */
-export function toolStatusDot(component: SharedManagedComponent, status: ComponentItemStatus): { kind: StatusDotKind; label: string } {
+export function toolStatusDot(component: SharedManagedComponent, status: ComponentItemStatus): {kind: StatusDotKind; label: string} {
 	if (status === 'installing') {
-		return { kind: 'installing', label: '安装中' };
+		return {kind: 'installing', label: '安装中'};
 	}
 
 	if (status === 'updating') {
-		return { kind: 'updating', label: '更新中' };
+		return {kind: 'updating', label: '更新中'};
 	}
 
 	if (status === 'uninstalling') {
-		return { kind: 'uninstalling', label: '卸载中' };
+		return {kind: 'uninstalling', label: '卸载中'};
 	}
 
 	// inject 类行1 = 共享体/接入态：CodeGraph 看共享 CLI；CcgWorkflow 无真·共享 CLI，看任一侧是否注入。
@@ -1018,56 +1267,56 @@ export function toolStatusDot(component: SharedManagedComponent, status: Compone
 	}
 
 	if (!component.installed) {
-		return { kind: 'notInstalled', label: '未安装' };
+		return {kind: 'notInstalled', label: '未安装'};
 	}
 
 	if (component.hasUpdate === true) {
-		return { kind: 'updatable', label: `${component.currentVersion || '-'} → ${component.latestVersion || '-'}` };
+		return {kind: 'updatable', label: `${component.currentVersion || '-'} → ${component.latestVersion || '-'}`};
 	}
 
 	if (component.hasUpdate === false) {
-		return { kind: 'latest', label: component.currentVersion || '最新' };
+		return {kind: 'latest', label: component.currentVersion || '最新'};
 	}
 
 	// hasUpdate === null：已安装但无法判定更新（如 AntigravityCli 无远端版本源），显示版本号 + 无法检测更新标识。
-	return { kind: 'latest', label: `${component.currentVersion || '已安装'} · 无法检测更新` };
+	return {kind: 'latest', label: `${component.currentVersion || '已安装'} · 无法检测更新`};
 }
 
 // inject 类行1：CodeGraph 用共享 CLI 版本态；CcgWorkflow 无共享 CLI，只要任一侧注入即视为已安装。
-function injectSharedDot(component: SharedManagedComponent): { kind: StatusDotKind; label: string } {
-	const anyInjected = component.injectByAgent
-		? Object.values(component.injectByAgent).some(snapshot => snapshot.integrated)
-		: false;
+function injectSharedDot(component: SharedManagedComponent): {kind: StatusDotKind; label: string} {
+	const anyInjected = component.injectByAgent ? Object.values(component.injectByAgent).some(snapshot => snapshot.integrated) : false;
 
 	if (component.id === 'CodeGraph') {
 		if (!component.sharedInstalled) {
-			return anyInjected ? { kind: 'failed', label: 'CLI 不可用' } : { kind: 'notInstalled', label: '未安装' };
+			return anyInjected ? {kind: 'failed', label: 'CLI 不可用'} : {kind: 'notInstalled', label: '未安装'};
 		}
 		if (component.hasUpdate === true) {
-			return { kind: 'updatable', label: `${component.currentVersion || '-'} → ${component.latestVersion || '-'}` };
+			return {kind: 'updatable', label: `${component.currentVersion || '-'} → ${component.latestVersion || '-'}`};
 		}
-		return { kind: 'latest', label: component.currentVersion || 'CLI 已装' };
+		return {kind: 'latest', label: component.currentVersion || 'CLI 已装'};
 	}
 
 	// CcgWorkflow：无全局共享 CLI，cc/cx 各自独立安装、版本可不同。
 	// 行 1 状态点取两侧较旧版本对外展示（保守口径，避免误以为整体已是最新）；
 	// per-side 精确版本仍在管理开关 Modal 与行 2 双态徽章按侧展示。
 	if (!anyInjected) {
-		return { kind: 'notInstalled', label: '未安装' };
+		return {kind: 'notInstalled', label: '未安装'};
 	}
 	const olderVersion = olderInjectedVersion(component);
 	if (component.hasUpdate === true) {
 		// 与全页其它 updatable 组件统一口径：旧版本 → 最新版本；旧版本不可读时退回 latestVersion 单值。
-		return { kind: 'updatable', label: olderVersion ? `${olderVersion} → ${component.latestVersion || '-'}` : `→ ${component.latestVersion || '-'}` };
+		return {
+			kind: 'updatable',
+			label: olderVersion ? `${olderVersion} → ${component.latestVersion || '-'}` : `→ ${component.latestVersion || '-'}`
+		};
 	}
-	return { kind: 'latest', label: olderVersion || '已安装' };
+	return {kind: 'latest', label: olderVersion || '已安装'};
 }
 
 // CcgWorkflow 状态点版本口径：取 cc/cx 两侧已注入版本中较旧的一个（保守展示）。
 // 仅一侧有版本时返回该版本；两侧皆无版本（已注入但版本文件不可读）返回空串由调用方兜底文案。
 function olderInjectedVersion(component: SharedManagedComponent): string {
-	const versions = AGENT_CONTEXT_ORDER
-		.map(ctx => component.injectByAgent?.[ctx])
+	const versions = AGENT_CONTEXT_ORDER.map(ctx => component.injectByAgent?.[ctx])
 		.filter((snapshot): snapshot is AgentInjectSnapshot => Boolean(snapshot?.integrated && snapshot.version))
 		.map(snapshot => snapshot.version as string);
 

@@ -112,7 +112,10 @@ export function viewShortcuts(menuId: ManageModuleId, subMode: ViewSubMode): rea
 
 function providerShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	if (subMode === 'confirm-delete') {
-		return manualShortcuts([{key: 'Enter', label: '确认删除'}, {key: 'Esc', label: '取消'}]);
+		return manualShortcuts([
+			{key: 'Enter', label: '确认删除'},
+			{key: 'Esc', label: '取消'}
+		]);
 	}
 
 	if (subMode === 'form') {
@@ -146,7 +149,12 @@ function providerShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 
 function mcpShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	if (subMode === 'form') {
-		return manualShortcuts([{key: '↑/↓', label: '字段'}, {key: '←/→', label: '选项'}, {key: formatShortcutKey(editingShortcutKey('s')), label: '保存'}, {key: 'Esc', label: '取消'}]);
+		return manualShortcuts([
+			{key: '↑/↓', label: '字段'},
+			{key: '←/→', label: '选项'},
+			{key: formatShortcutKey(editingShortcutKey('s')), label: '保存'},
+			{key: 'Esc', label: '取消'}
+		]);
 	}
 
 	if (subMode === 'select-toggle-target') {
@@ -160,7 +168,10 @@ function mcpShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	}
 
 	if (subMode === 'confirm-remove') {
-		return manualShortcuts([{key: 'Enter', label: '确认全量删除'}, {key: 'Esc', label: '取消'}]);
+		return manualShortcuts([
+			{key: 'Enter', label: '确认全量删除'},
+			{key: 'Esc', label: '取消'}
+		]);
 	}
 
 	if (subMode === 'empty') {
@@ -196,7 +207,10 @@ function skillsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	}
 
 	if (subMode === 'confirm-uninstall') {
-		return manualShortcuts([{key: 'Enter', label: '确认卸载（所有 Agent）'}, {key: 'Esc', label: '取消'}]);
+		return manualShortcuts([
+			{key: 'Enter', label: '确认卸载（所有 Agent）'},
+			{key: 'Esc', label: '取消'}
+		]);
 	}
 
 	if (subMode === 'confirm-topology-change' || subMode === 'confirm-source-replacement') {
@@ -231,14 +245,15 @@ function skillsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		{command: SKILLS_COMMANDS.TOGGLE_FOCUS, label: '过滤框/列表'},
 		{command: SKILLS_COMMANDS.LIST_UP, label: '选择'},
 		{command: SKILLS_COMMANDS.LIST_DOWN, label: '选择'},
+		{command: SKILLS_COMMANDS.LIST_LEFT, label: '选择'},
+		{command: SKILLS_COMMANDS.LIST_RIGHT, label: '选择'},
 		{command: SKILLS_COMMANDS.MANAGE_INSTALL, label: '管理安装'},
 		{command: SKILLS_COMMANDS.UPDATE_ALL, label: '更新全部'},
 		{command: SKILLS_COMMANDS.UPDATE_ONE, label: '更新选中'},
 		{command: SKILLS_COMMANDS.INSTALL, label: '安装'},
 		{command: SKILLS_COMMANDS.UNINSTALL, label: '卸载'},
 		{command: SKILLS_COMMANDS.REFRESH, label: '刷新'},
-		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
-		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
+		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}
 	]);
 }
 
@@ -298,7 +313,10 @@ function promptsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	}
 
 	// 确认浮层（import）
-	return manualShortcuts([{key: 'Enter', label: '确认'}, {key: 'Esc', label: '取消'}]);
+	return manualShortcuts([
+		{key: 'Enter', label: '确认'},
+		{key: 'Esc', label: '取消'}
+	]);
 }
 
 function configShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
@@ -365,7 +383,10 @@ function toolsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	}
 
 	if (subMode === 'confirm-uninstall') {
-		return manualShortcuts([{key: 'Enter', label: '确认卸载'}, {key: 'Esc', label: '取消'}]);
+		return manualShortcuts([
+			{key: 'Enter', label: '确认卸载'},
+			{key: 'Esc', label: '取消'}
+		]);
 	}
 
 	if (subMode === 'select-inject-target') {
@@ -379,12 +400,11 @@ function toolsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	}
 
 	// Enter 是统一主操作：inject 类打开管理 Modal；普通工具按状态安装/更新。
-	const primaryShortcut: ShortcutSpec = subMode === 'grid-inject'
-		? {command: TOOLS_COMMANDS.PRIMARY_ACTION, label: '管理开关'}
-		: {command: TOOLS_COMMANDS.PRIMARY_ACTION, label: '安装/更新'};
-	const updateShortcut: readonly ShortcutSpec[] = subMode === 'grid-inject'
-		? [{command: TOOLS_COMMANDS.UPDATE_ONE, label: '更新'}]
-		: [];
+	const primaryShortcut: ShortcutSpec =
+		subMode === 'grid-inject'
+			? {command: TOOLS_COMMANDS.PRIMARY_ACTION, label: '管理开关'}
+			: {command: TOOLS_COMMANDS.PRIMARY_ACTION, label: '安装/更新'};
+	const updateShortcut: readonly ShortcutSpec[] = subMode === 'grid-inject' ? [{command: TOOLS_COMMANDS.UPDATE_ONE, label: '更新'}] : [];
 	return buildShortcuts([
 		{command: TOOLS_COMMANDS.UP, label: '选择'},
 		{command: TOOLS_COMMANDS.DOWN, label: '选择'},
@@ -439,7 +459,10 @@ function mergeKeys(left: string, right: string): string {
 
 function formatCommand(command: string): string {
 	const bindings = bindingLookup.get(command) ?? [];
-	return bindings.map(binding => formatShortcutKey(bindingKeyToString(binding.key))).filter(Boolean).join('/');
+	return bindings
+		.map(binding => formatShortcutKey(bindingKeyToString(binding.key)))
+		.filter(Boolean)
+		.join('/');
 }
 
 function bindingKeyToString(key: Binding['key']): string {

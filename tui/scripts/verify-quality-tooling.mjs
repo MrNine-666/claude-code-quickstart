@@ -28,6 +28,8 @@ assert.match(formatter, /CCQ_FORMAT_BASE/);
 assert.match(formatter, /\$\{base\}\.\.\.HEAD/);
 assert.match(formatter, /'--cached'/);
 assert.match(formatter, /'ls-files', '--others', '--exclude-standard'/);
+assert.match(formatter, /'rev-parse', '--show-prefix'/);
+assert.match(formatter, /normalized\.startsWith\(gitPrefix\)/);
 assert.match(formatter, /'src', 'tests'/);
 
 assert.match(workflow, /pull_request:/);

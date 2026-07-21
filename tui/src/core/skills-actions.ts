@@ -1,7 +1,14 @@
 import type {AgentContext} from '../state/manage-state.js';
 import {join} from 'node:path';
 import {skillsAgentOf, type SkillsCliAgent} from './skills.js';
-import {execCommand, removeAnsiSequences, type ExecOptions, type ProgressCallback, type ExecResult} from './exec.js';
+import {
+	execCommand,
+	formatCommandInstruction,
+	removeAnsiSequences,
+	type ExecOptions,
+	type ProgressCallback,
+	type ExecResult
+} from './exec.js';
 import {resolveHome} from './paths.js';
 
 // Skills 操作服务：install / update / uninstall，进度通过 onProgress(event) 上报，
@@ -20,9 +27,10 @@ export type SkillsActionResult = {
 	readonly noChange?: boolean;
 };
 
-export type SkillsCommandDiagnostic = SkillsActionResult & ExecResult & {
-	readonly spawned: boolean;
-};
+export type SkillsCommandDiagnostic = SkillsActionResult &
+	ExecResult & {
+		readonly spawned: boolean;
+	};
 
 export type SkillsAddCommandInput = {
 	readonly source: string;
@@ -126,7 +134,12 @@ export async function runSkillsAdd(
 	}
 
 	const label = input.displayName ?? (input.skillNames.join(', ') || input.source);
-	emit(onProgress, {level: 'info', message: `正在安装 ${label}`, componentId: label});
+	emit(onProgress, {
+		level: 'info',
+		message: `正在安装 ${label}`,
+		componentId: label,
+		instruction: formatCommandInstruction('npx', args)
+	});
 	try {
 		const result = await exec('npx', args, execOptions(INSTALL_TIMEOUT_MS, input.env));
 		if (result.code === 0) {
@@ -156,7 +169,11 @@ export async function runSkillsRemove(
 	}
 
 	const args = ['--yes', SKILLS_CLI_PACKAGE, 'remove', ...input.skillNames, '-g', ...agentArgs(input.agents), '--yes'];
-	emit(onProgress, {level: 'info', message: `正在卸载: ${input.skillNames.join(', ')}`});
+	emit(onProgress, {
+		level: 'info',
+		message: `正在卸载: ${input.skillNames.join(', ')}`,
+		instruction: formatCommandInstruction('npx', args)
+	});
 	try {
 		const result = await exec('npx', args, execOptions(UNINSTALL_TIMEOUT_MS, input.env));
 		if (result.code === 0) {
@@ -206,14 +223,18 @@ export async function installSkill(
 ): Promise<SkillsActionResult> {
 	const {agents, exec} = normalizeAgentAndExec(agentOrExec, execArg);
 	const label = input.displayName || input.source;
-	const result = await runSkillsAdd({
-		source: input.source,
-		skillNames: input.skillName ? [input.skillName] : [],
-		agents,
-		copy: input.copy,
-		env: input.env,
-		displayName: label
-	}, onProgress, exec);
+	const result = await runSkillsAdd(
+		{
+			source: input.source,
+			skillNames: input.skillName ? [input.skillName] : [],
+			agents,
+			copy: input.copy,
+			env: input.env,
+			displayName: label
+		},
+		onProgress,
+		exec
+	);
 	return {success: result.success, ...(result.error ? {error: result.error} : {})};
 }
 
@@ -225,14 +246,20 @@ export async function updateSkills(
 ): Promise<SkillsActionResult> {
 	// 上游 update 只接受 scope/yes/skill names；它会按 lock 重装全部注入侧，不支持 --agent。
 	const args = ['--yes', SKILLS_CLI_PACKAGE, 'update', ...skillNames, '-g', '-y'];
-	emit(onProgress, {level: 'info', message: '正在更新 Skills（最长等待 10 分钟）...'});
+	emit(onProgress, {
+		level: 'info',
+		message: '正在更新 Skills（最长等待 10 分钟）...',
+		instruction: formatCommandInstruction('npx', args)
+	});
 
 	try {
 		const {code, stdout, stderr} = await exec('npx', args, {timeout: UPDATE_TIMEOUT_MS});
 		const output = removeAnsiSequences(`${stdout}\n${stderr}`);
 
 		if (code === 0) {
-			const noChange = /no\s+updates|already\s+up\s+to\s+date|up\s+to\s+date|all\s+skills\s+.*latest|0\s+skills?\s+updated/i.test(output);
+			const noChange = /no\s+updates|already\s+up\s+to\s+date|up\s+to\s+date|all\s+skills\s+.*latest|0\s+skills?\s+updated/i.test(
+				output
+			);
 			if (noChange) {
 				emit(onProgress, {level: 'info', message: 'Skills 已是最新'});
 				return {success: true, noChange: true};
@@ -282,7 +309,11 @@ export async function uninstallSkills(
 	}
 
 	args.push('--yes');
-	emit(onProgress, {level: 'info', message: `正在卸载: ${skillNames.join(', ')}`});
+	emit(onProgress, {
+		level: 'info',
+		message: `正在卸载: ${skillNames.join(', ')}`,
+		instruction: formatCommandInstruction('npx', args)
+	});
 
 	try {
 		const {code, stdout, stderr} = await exec('npx', args, {timeout: UNINSTALL_TIMEOUT_MS});
@@ -323,13 +354,17 @@ export async function installMultipleSkills(
 
 	const {agents, exec} = normalizeAgentAndExec(agentOrExec, execArg);
 	const label = input.displayName || `${input.source}（${input.skillNames.join(', ')}）`;
-	const result = await runSkillsAdd({
-		source: input.source,
-		skillNames: input.skillNames,
-		agents,
-		copy: input.copy,
-		env: input.env,
-		displayName: label
-	}, onProgress, exec);
+	const result = await runSkillsAdd(
+		{
+			source: input.source,
+			skillNames: input.skillNames,
+			agents,
+			copy: input.copy,
+			env: input.env,
+			displayName: label
+		},
+		onProgress,
+		exec
+	);
 	return {success: result.success, ...(result.error ? {error: result.error} : {})};
 }

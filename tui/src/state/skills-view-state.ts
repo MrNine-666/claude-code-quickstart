@@ -53,9 +53,12 @@ export type SourceReplacementItem = {
 // 安装页默认草稿：两侧都装（cc symlink + cx 本体）。
 const DEFAULT_INSTALL_DRAFT: InstallDraft = {cc: true, cx: true};
 
+export const SKILLS_GRID_COLUMNS = 2;
+export type SkillsGridDirection = 'up' | 'down' | 'left' | 'right';
+
 export type SkillsViewState = {
 	readonly mode: SkillsViewMode;
-	// 列表页（共享投影行，一行一 skill name）
+	// 列表页（共享投影行，一张网格卡片一个 skill name）
 	readonly installed: readonly SkillSharedRow[];
 	readonly installedIndex: number; // 索引 filteredInstalled（过滤后视图）
 	readonly filterText: string; // 本地过滤词（大小写不敏感包含匹配 name）
@@ -77,13 +80,13 @@ export type SkillsViewState = {
 	readonly busyAction?: 'install' | 'update' | 'uninstall';
 	readonly busyReturnMode?: 'list' | 'install'; // busy 结束后返回的底页（区分新装与管理安装）
 	readonly batchStage?: 'executing' | 'reconciling';
-	readonly batchSummary?: string;
 };
 
 export type SkillsViewAction =
 	| {readonly type: 'installed-loaded'; readonly installed: readonly SkillSharedRow[]}
 	| {readonly type: 'nav-up'}
 	| {readonly type: 'nav-down'}
+	| {readonly type: 'nav-grid'; readonly direction: SkillsGridDirection}
 	| {readonly type: 'open-install'} // 列表页 `a` → 安装页（触发自动加载热门）
 	| {readonly type: 'filter-input'; readonly value: string}
 	| {readonly type: 'filter-focus'}
@@ -108,9 +111,15 @@ export type SkillsViewAction =
 	| {readonly type: 'request-uninstall'}
 	| {readonly type: 'confirm'}
 	| {readonly type: 'cancel'}
+	| {readonly type: 'cancel-busy'}
 	| {readonly type: 'progress'; readonly message: string}
 	| {readonly type: 'install-execution-done'}
-	| {readonly type: 'install-reconciled'; readonly installed: readonly SkillSharedRow[]; readonly confirmedKeys?: readonly string[]; readonly error?: string}
+	| {
+			readonly type: 'install-reconciled';
+			readonly installed: readonly SkillSharedRow[];
+			readonly confirmedKeys?: readonly string[];
+			readonly error?: string;
+	  }
 	| {readonly type: 'install-reconcile-failed'; readonly error: string}
 	| {readonly type: 'lifecycle-reconciled'; readonly installed: readonly SkillSharedRow[]; readonly error?: string}
 	| {readonly type: 'action-done'}
@@ -259,9 +268,7 @@ export function pendingSourceReplacements(state: SkillsViewState): readonly Sour
 		}
 
 		const installed = installedByName.get(identity.skillName);
-		return installed?.source && !skillSourcesEquivalent(installed.source, identity.source)
-			? [{result, identity, installed}]
-			: [];
+		return installed?.source && !skillSourcesEquivalent(installed.source, identity.source) ? [{result, identity, installed}] : [];
 	});
 }
 
@@ -295,13 +302,19 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 		case 'nav-down':
 			return navigate(state, 1);
 
+		case 'nav-grid':
+			return state.mode === 'list'
+				? {
+						...state,
+						installedIndex: moveSkillsGridCursor(state.installedIndex, filteredInstalled(state).length, action.direction)
+					}
+				: state;
+
 		case 'open-install':
 			return {...state, mode: 'install', queryFocused: true, errorText: undefined};
 
 		case 'filter-input':
-			return state.mode === 'list'
-				? {...state, filterText: action.value, installedIndex: 0}
-				: state;
+			return state.mode === 'list' ? {...state, filterText: action.value, installedIndex: 0} : state;
 
 		case 'filter-focus':
 			return state.mode === 'list' ? {...state, filterFocused: true} : state;
@@ -331,7 +344,6 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				searching: true,
 				pickedResultKeys: [],
 				pendingInstallKeys: [],
-				batchSummary: undefined,
 				errorText: undefined
 			};
 
@@ -344,7 +356,6 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				pickedResultKeys: [],
 				pendingInstallKeys: [],
 				queryFocused: false,
-				batchSummary: undefined,
 				errorText: undefined
 			};
 
@@ -363,9 +374,7 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 			return toggleCurrentResult(state);
 
 		case 'select-all-results':
-			return state.mode === 'install'
-				? {...state, pickedResultKeys: selectableResultKeys(state), errorText: undefined}
-				: state;
+			return state.mode === 'install' ? {...state, pickedResultKeys: selectableResultKeys(state), errorText: undefined} : state;
 
 		case 'select-skill': {
 			if (state.mode !== 'install') {
@@ -376,11 +385,8 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				.filter(item => item.selected && item.selectable && item.identity)
 				.map(item => item.identity!.key);
 			const current = searchInstallItems(state)[state.resultIndex];
-			const pendingInstallKeys = explicitKeys.length > 0
-				? explicitKeys
-				: current?.selectable && current.identity
-					? [current.identity.key]
-					: [];
+			const pendingInstallKeys =
+				explicitKeys.length > 0 ? explicitKeys : current?.selectable && current.identity ? [current.identity.key] : [];
 			if (pendingInstallKeys.length === 0) {
 				return {...state, errorText: '没有可选的 skill'};
 			}
@@ -392,7 +398,6 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				pendingInstallKeys,
 				installDraft: DEFAULT_INSTALL_DRAFT,
 				targetIndex: 0,
-				batchSummary: undefined,
 				errorText: undefined
 			};
 		}
@@ -466,9 +471,7 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 			// 新装仍固定物化 Codex；管理模式的两个 checkbox 只表达 C/X/B 目标可用侧。
 			const target = AGENT_CONTEXT_ORDER[state.targetIndex] ?? 'cc';
 			const current = selectedInstalled(state);
-			const canToggle = state.mode === 'select-install-target'
-				? target === 'cc'
-				: isRecoverableStorageKind(current?.storage?.kind);
+			const canToggle = state.mode === 'select-install-target' ? target === 'cc' : isRecoverableStorageKind(current?.storage?.kind);
 			if (!canToggle) {
 				return state;
 			}
@@ -496,14 +499,20 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 
 		case 'confirm':
 			// select-install-target / manage-inject 的提交由组件层执行（按草稿 diff），reducer 只切 busy。
-			if (state.mode === 'select-install-target' || state.mode === 'manage-inject'
-				|| state.mode === 'confirm-topology-change' || state.mode === 'confirm-source-replacement') {
+			if (
+				state.mode === 'select-install-target' ||
+				state.mode === 'manage-inject' ||
+				state.mode === 'confirm-topology-change' ||
+				state.mode === 'confirm-source-replacement'
+			) {
 				return {
 					...state,
 					mode: 'busy',
 					busyAction: 'install',
-					busyReturnMode: state.mode === 'select-install-target' || state.mode === 'confirm-source-replacement' ? 'install' : 'list',
-					batchStage: state.mode === 'select-install-target' || state.mode === 'confirm-source-replacement' ? 'executing' : undefined,
+					busyReturnMode:
+						state.mode === 'select-install-target' || state.mode === 'confirm-source-replacement' ? 'install' : 'list',
+					batchStage:
+						state.mode === 'select-install-target' || state.mode === 'confirm-source-replacement' ? 'executing' : undefined,
 					progress: [],
 					errorText: undefined
 				};
@@ -517,6 +526,31 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 
 		case 'cancel':
 			return cancel(state);
+
+		case 'cancel-busy':
+			if (state.busyReturnMode === 'install') {
+				return {
+					...state,
+					mode: 'install',
+					pickedResultKeys: [...new Set([...state.pickedResultKeys, ...state.pendingInstallKeys])],
+					pendingInstallKeys: [],
+					busyAction: undefined,
+					busyReturnMode: undefined,
+					batchStage: undefined,
+					progress: [],
+					errorText: undefined
+				};
+			}
+
+			return {
+				...state,
+				mode: state.busyReturnMode ?? 'list',
+				busyAction: undefined,
+				busyReturnMode: undefined,
+				batchStage: undefined,
+				progress: [],
+				errorText: undefined
+			};
 
 		case 'progress':
 			return {...state, progress: [...state.progress, action.message].slice(-8)};
@@ -549,7 +583,6 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				picked.add(key);
 			}
 
-			const confirmedCount = successfulKeys.size;
 			const missingCount = missingKeys.length;
 			return {
 				...state,
@@ -560,7 +593,6 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				busyAction: undefined,
 				busyReturnMode: undefined,
 				batchStage: undefined,
-				batchSummary: `安装结果：已确认 ${confirmedCount}，仍未安装 ${missingCount}`,
 				errorText: action.error ?? (missingCount > 0 ? `${missingCount} 个 Skill 仍未安装，已保留选择以便重试` : undefined)
 			};
 		}
@@ -575,7 +607,6 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				busyAction: undefined,
 				busyReturnMode: undefined,
 				batchStage: undefined,
-				batchSummary: `安装结果：${picked.size} 个状态未确认`,
 				errorText: action.error
 			};
 		}
@@ -649,8 +680,8 @@ function cancel(state: SkillsViewState): SkillsViewState {
 		case 'manage-inject':
 			// 管理安装 Modal Esc → 回列表页，无写盘
 			return {...state, mode: 'list'};
-			case 'confirm-topology-change':
-				return {...state, mode: 'manage-inject'};
+		case 'confirm-topology-change':
+			return {...state, mode: 'manage-inject'};
 		case 'confirm-source-replacement':
 			return {...state, mode: 'select-install-target'};
 		case 'confirm-uninstall':
@@ -750,14 +781,14 @@ function sameSelectionFacts(left: SkillSharedRow | undefined, right: SkillShared
 		return left === right;
 	}
 
-	const sameSource = left.source && right.source
-		? skillSourcesEquivalent(left.source, right.source)
-		: left.source === right.source;
-	return sameSource
-		&& left.sharedInstalled === right.sharedInstalled
-		&& left.claudeInjected === right.claudeInjected
-		&& left.codexAvailable === right.codexAvailable
-		&& left.storage?.kind === right.storage?.kind;
+	const sameSource = left.source && right.source ? skillSourcesEquivalent(left.source, right.source) : left.source === right.source;
+	return (
+		sameSource &&
+		left.sharedInstalled === right.sharedInstalled &&
+		left.claudeInjected === right.claudeInjected &&
+		left.codexAvailable === right.codexAvailable &&
+		left.storage?.kind === right.storage?.kind
+	);
 }
 
 /** 卸载目标：列表页当前光标项（单条）。 */
@@ -766,12 +797,43 @@ export function uninstallTargets(state: SkillsViewState): readonly string[] {
 	return current ? [current.name] : [];
 }
 
+/** 两列 Skills 网格导航；上下保持列位置，并在首尾行循环。 */
+export function moveSkillsGridCursor(index: number, length: number, direction: SkillsGridDirection, columns = SKILLS_GRID_COLUMNS): number {
+	if (length <= 0) {
+		return 0;
+	}
+
+	const columnCount = Math.max(1, columns);
+	const cursor = clamp(index, length);
+	if (direction === 'left') {
+		return Math.max(0, cursor - 1);
+	}
+
+	if (direction === 'right') {
+		return Math.min(length - 1, cursor + 1);
+	}
+
+	const column = cursor % columnCount;
+	const lastRowStart = Math.floor((length - 1) / columnCount) * columnCount;
+	if (direction === 'up') {
+		const previousRow = cursor - columnCount;
+		return previousRow >= 0 ? previousRow : Math.min(lastRowStart + column, length - 1);
+	}
+
+	const nextRow = cursor + columnCount;
+	if (nextRow < length) {
+		return nextRow;
+	}
+
+	return cursor < lastRowStart ? length - 1 : Math.min(column, length - 1);
+}
+
 function step(index: number, delta: number, length: number): number {
 	if (length === 0) {
 		return 0;
 	}
 
-	return ((index + delta) % length + length) % length;
+	return (((index + delta) % length) + length) % length;
 }
 
 function clamp(index: number, length: number): number {

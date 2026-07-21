@@ -46,7 +46,7 @@ assert.match(
 );
 assert.match(
 	appSource,
-	/hideAgentHeader\s*\?\s*null\s*:\s*\(\s*<AgentHeader/,
+	/hideAgentHeader\s*\?\s*null\s*:\s*\(?\s*<AgentHeader/,
 	'隐藏 Header 模块（hideAgentHeader）不渲染 AgentHeader'
 );
 assert.match(

@@ -128,11 +128,12 @@ async function runShortLockWithoutRestart() {
 
 	try {
 		const log = readLog();
-		assert.match(log, /copy attempt \d+ failed/, `helper stderr: ${readStderr()}`);
-		assert.match(log, /copy succeeded on attempt \d+/);
+		assert.match(log, /replace attempt \d+ failed/, `helper stderr: ${readStderr()}`);
+		assert.match(log, /replace succeeded on attempt \d+/);
 		assert.equal(code, 0);
 		assert.equal(existsSync(tempPath), false);
 		assert.equal(existsSync(helperPath), false);
+		assert.equal(existsSync(helperPath + '.backup'), false, '成功替换后不得残留 backup');
 		assert.equal(sha256File(targetPath), expectedSha256);
 		assert.equal(existsSync(markerPath), false, 'restart=false 不得启动更新后的目标');
 		console.log('[PASS] Windows update helper：短锁重试成功且 restart=false 不启动目标');
@@ -157,10 +158,11 @@ async function runLongLockFailure() {
 	const code = await waitExit(child, lockMs + 15000);
 
 	try {
-		assert.match(readLog(), /copy failed after all attempts/);
+		assert.match(readLog(), /replace failed after all attempts/);
 		assert.equal(code, 1);
 		assert.equal(existsSync(tempPath), true);
 		assert.equal(existsSync(helperPath), false);
+		assert.equal(existsSync(helperPath + '.backup'), false, '替换未开始时不得创建 backup');
 		try { lock.kill(); } catch {}
 		await waitExit(lock, 5000).catch(() => undefined);
 		assert.equal(readFileSync(targetPath, 'utf8'), 'OLD-CONTENT-MUST-NOT-CHANGE');
@@ -189,6 +191,7 @@ async function runRestartAfterApply() {
 		await waitForFile(markerPath, 5000);
 		assert.match(readLog(), /starting updated executable/);
 		assert.equal(existsSync(helperPath), false);
+		assert.equal(existsSync(helperPath + '.backup'), false, '重启前必须清理 backup');
 		console.log('[PASS] Windows update helper：restart=true 仅在验证成功后启动目标');
 	} finally {
 		await safeRemove(workdir);

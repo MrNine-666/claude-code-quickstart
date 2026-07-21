@@ -41,6 +41,16 @@ const cache = {
 			agents: ['Claude Code'],
 			source: 'old/repo',
 			storage
+		}, {
+			name: 'second',
+			path: '/home/.agents/skills/second',
+			scope: 'global',
+			agents: ['Codex']
+		}, {
+			name: 'third',
+			path: '/home/.agents/skills/third',
+			scope: 'global',
+			agents: ['Codex']
 		}]
 	},
 	refresh() {},
@@ -96,7 +106,12 @@ const setup = await testRender(
 );
 
 try {
-	await setup.waitForFrame(frame => frame.includes('same'));
+	const gridFrame = await setup.waitForFrame(frame => frame.includes('same') && frame.includes('second') && frame.includes('third'));
+	const gridLines = gridFrame.split('\n');
+	const firstRow = gridLines.findIndex(line => line.includes('same') && line.includes('second'));
+	const secondRow = gridLines.findIndex(line => line.includes('third'));
+	assert.notEqual(firstRow, -1, 'Skills 网格首行应并排显示两个卡片');
+	assert.ok(secondRow > firstRow, 'Skills 网格第三个卡片应换到第二行');
 	const press = async (name, modifiers) => {
 		await act(async () => {
 			setup.renderer.keyInput.emit('keypress', key(name, modifiers));

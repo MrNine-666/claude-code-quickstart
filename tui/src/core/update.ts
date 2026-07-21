@@ -4,12 +4,17 @@ import {tmpdir} from 'node:os';
 import {createHash, randomBytes} from 'node:crypto';
 import {atomicWrite, readJsonFile} from './fs-utils.js';
 import {claudeDir, claudeJsonPath, ccqDir, resolveHome, settingsPath, skillsDir} from './paths.js';
-import {execCommand, type ProgressCallback} from './exec.js';
+import {execCommand, formatCommandInstruction, type ProgressCallback} from './exec.js';
 import {refreshNpmGlobalBinPath} from './npm-path.js';
 import {hasUpdate} from './semver.js';
 import {installTool, TOOL_DEFINITIONS} from './tools-install.js';
 import {codeGraphInstallCommands} from './tools-lifecycle.js';
-import {hasCodeGraphIntegration, installedCodeGraphContexts, hasClaudeCcgWorkflowMode, hasCodexCcgWorkflowMode} from './tools-integrations.js';
+import {
+	hasCodeGraphIntegration,
+	installedCodeGraphContexts,
+	hasClaudeCcgWorkflowMode,
+	hasCodexCcgWorkflowMode
+} from './tools-integrations.js';
 import type {AgentContext} from '../state/manage-state.js';
 
 // Update core：版本检测、快照、应用、汇总。检测返回 Promise 支持后台并发（design D12/D13）。
@@ -119,7 +124,10 @@ function isTimeoutError(error: unknown): boolean {
 	return error instanceof Error && /命令超时|timed out|timeout/i.test(error.message);
 }
 
-async function execVersionCommand(command: string, args: readonly string[]): Promise<{readonly code: number; readonly stdout: string; readonly stderr: string}> {
+async function execVersionCommand(
+	command: string,
+	args: readonly string[]
+): Promise<{readonly code: number; readonly stdout: string; readonly stderr: string}> {
 	try {
 		return await execCommand(command, args, {timeout: 5000});
 	} catch (error) {
@@ -443,11 +451,7 @@ function checkMcpServerUpdates(): UpdateComponent[] {
 export async function checkComponentUpdates(onProgress?: ProgressCallback): Promise<UpdateComponent[]> {
 	onProgress?.({level: 'info', message: '正在检测组件状态与远程版本...'});
 	const outdated = await getNpmOutdatedGlobal(false);
-	return [
-		...(await checkCliToolUpdates(outdated)),
-		...(await checkSkillsUpdates(outdated)),
-		...checkMcpServerUpdates()
-	];
+	return [...(await checkCliToolUpdates(outdated)), ...(await checkSkillsUpdates(outdated)), ...checkMcpServerUpdates()];
 }
 
 // ── 快照层 ─────────────────────────────────────────────────────────────────
@@ -462,12 +466,7 @@ function sha256File(filePath: string): string | null {
 
 /** 收集需要快照的文件（settings/CLAUDE.md/.claude.json/vault + ccq-/ccg- rules）。 */
 export function getSnapshotFiles(): string[] {
-	const files = [
-		settingsPath(),
-		claudeJsonPath(),
-		join(claudeDir(), 'CLAUDE.md'),
-		join(ccqDir(), 'mcp-meta.json')
-	];
+	const files = [settingsPath(), claudeJsonPath(), join(claudeDir(), 'CLAUDE.md'), join(ccqDir(), 'mcp-meta.json')];
 
 	const rules = join(claudeDir(), 'rules');
 	if (existsSync(rules)) {
@@ -571,7 +570,12 @@ async function reinstallCodeGraphIntegrations(exec: typeof execCommand, onProgre
 			continue;
 		}
 
-		onProgress?.({level: 'info', message: `${command.cmd} ${command.args.join(' ')}`, componentId: 'CodeGraph'});
+		onProgress?.({
+			level: 'info',
+			message: `${command.cmd} ${command.args.join(' ')}`,
+			componentId: 'CodeGraph',
+			instruction: formatCommandInstruction(command.cmd, command.args)
+		});
 		const result = await exec(command.cmd, [...command.args], {timeout: 300000});
 		if (result.code !== 0) {
 			throw new Error(`CodeGraph 接入刷新失败 (exit ${result.code})`);
@@ -610,13 +614,22 @@ export async function applyUpdates(
 					await installTool('CcgWorkflow', onProgress, context);
 				}
 				onProgress?.({level: 'success', message: `${component.name} 已更新`, componentId: component.id});
-				updatedItems.push(`updated::${component.id}::${component.currentVersion || 'none'}->${component.latestVersion || 'latest'}`);
+				updatedItems.push(
+					`updated::${component.id}::${component.currentVersion || 'none'}->${component.latestVersion || 'latest'}`
+				);
 			} else if (component.type === 'npm' || component.type === 'skill') {
 				const packageSpec =
 					component.latestVersion && component.latestVersion !== component.currentVersion
 						? `${component.package}@${component.latestVersion}`
 						: component.package!;
-				const result = await exec('npm', ['install', '-g', packageSpec], {timeout: 120000});
+				const args = ['install', '-g', packageSpec];
+				onProgress?.({
+					level: 'info',
+					message: formatCommandInstruction('npm', args),
+					componentId: component.id,
+					instruction: formatCommandInstruction('npm', args)
+				});
+				const result = await exec('npm', args, {timeout: 120000});
 				if (result.code !== 0) {
 					throw new Error(`npm install 失败 (exit ${result.code})`);
 				}
@@ -626,7 +639,9 @@ export async function applyUpdates(
 				}
 
 				onProgress?.({level: 'success', message: `${component.name} 已更新`, componentId: component.id});
-				updatedItems.push(`updated::${component.id}::${component.currentVersion || 'none'}->${component.latestVersion || 'latest'}`);
+				updatedItems.push(
+					`updated::${component.id}::${component.currentVersion || 'none'}->${component.latestVersion || 'latest'}`
+				);
 			} else if (component.type === 'cli') {
 				onProgress?.({level: 'warning', message: '无法自动检测远程版本，请运行 agy update', componentId: component.id});
 				updatedItems.push(`noop::${component.id}::manual-update-required`);

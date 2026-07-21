@@ -1,5 +1,5 @@
 import {readFileSync, existsSync} from 'node:fs';
-import {execCommand, type ProgressCallback} from './exec.js';
+import {execCommand, formatCommandInstruction, type ProgressCallback} from './exec.js';
 import {atomicWrite} from './fs-utils.js';
 import {claudeDir, claudeJsonPath, settingsPath} from './paths.js';
 import type {AgentContext} from '../state/manage-state.js';
@@ -168,7 +168,11 @@ function isTimeoutError(error: unknown): boolean {
 	return error instanceof Error && /命令超时|timed out|timeout/i.test(error.message);
 }
 
-async function execVersionCommand(command: string, args: readonly string[], exec: typeof execCommand = execCommand): Promise<{readonly code: number; readonly stdout: string; readonly stderr: string}> {
+async function execVersionCommand(
+	command: string,
+	args: readonly string[],
+	exec: typeof execCommand = execCommand
+): Promise<{readonly code: number; readonly stdout: string; readonly stderr: string}> {
 	try {
 		return await exec(command, args, {timeout: DETECT_TIMEOUT_MS});
 	} catch (error) {
@@ -213,13 +217,23 @@ function friendlyError(text: string, fallback: string): string {
 }
 
 /** npm install -g <package>。 */
-async function installNpmPackage(definition: ToolDefinition, onProgress?: ProgressCallback, exec: typeof execCommand = execCommand): Promise<void> {
+async function installNpmPackage(
+	definition: ToolDefinition,
+	onProgress?: ProgressCallback,
+	exec: typeof execCommand = execCommand
+): Promise<void> {
 	if (!definition.npmPackage) {
 		throw new Error(`${definition.id} 缺少 npm 包名`);
 	}
 
-	onProgress?.({level: 'info', message: `npm install -g ${definition.npmPackage}`, componentId: definition.id});
-	const result = await exec('npm', ['install', '-g', definition.npmPackage], {timeout: INSTALL_TIMEOUT_MS});
+	const args = ['install', '-g', definition.npmPackage];
+	onProgress?.({
+		level: 'info',
+		message: `npm install -g ${definition.npmPackage}`,
+		componentId: definition.id,
+		instruction: formatCommandInstruction('npm', args)
+	});
+	const result = await exec('npm', args, {timeout: INSTALL_TIMEOUT_MS});
 	if (result.code !== 0) {
 		throw new Error(friendlyError(result.stderr || result.stdout, `npm install 失败 (exit ${result.code})`));
 	}
@@ -227,10 +241,18 @@ async function installNpmPackage(definition: ToolDefinition, onProgress?: Progre
 	await refreshNpmGlobalBinPath(onProgress, definition.id, exec);
 }
 
-async function ensureCodeGraphCli(definition: ToolDefinition, onProgress?: ProgressCallback, exec: typeof execCommand = execCommand): Promise<void> {
+async function ensureCodeGraphCli(
+	definition: ToolDefinition,
+	onProgress?: ProgressCallback,
+	exec: typeof execCommand = execCommand
+): Promise<void> {
 	const status = await detectTool(definition, exec);
 	if (status.installed) {
-		onProgress?.({level: 'success', message: `CodeGraph CLI 已存在，跳过 npm install${status.version ? ` (${status.version})` : ''}`, componentId: definition.id});
+		onProgress?.({
+			level: 'success',
+			message: `CodeGraph CLI 已存在，跳过 npm install${status.version ? ` (${status.version})` : ''}`,
+			componentId: definition.id
+		});
 		return;
 	}
 
@@ -238,13 +260,22 @@ async function ensureCodeGraphCli(definition: ToolDefinition, onProgress?: Progr
 }
 
 /** CodeGraph 后置：CLI 就绪后非交互接入当前 Agent（agentContext → --target=claude|codex）。 */
-async function postInstallCodeGraph(context: AgentContext, onProgress?: ProgressCallback, exec: typeof execCommand = execCommand): Promise<void> {
+async function postInstallCodeGraph(
+	context: AgentContext,
+	onProgress?: ProgressCallback,
+	exec: typeof execCommand = execCommand
+): Promise<void> {
 	const [command] = codeGraphInstallCommands(context);
 	if (!command) {
 		return;
 	}
 
-	onProgress?.({level: 'info', message: `${command.cmd} ${command.args.join(' ')}`, componentId: 'CodeGraph'});
+	onProgress?.({
+		level: 'info',
+		message: `${command.cmd} ${command.args.join(' ')}`,
+		componentId: 'CodeGraph',
+		instruction: formatCommandInstruction(command.cmd, command.args)
+	});
 	const result = await exec(command.cmd, [...command.args], {timeout: INSTALL_TIMEOUT_MS});
 	if (result.code !== 0) {
 		const label = context === 'cx' ? 'Codex' : 'Claude Code';
@@ -278,7 +309,11 @@ async function postInstallCcline(onProgress?: ProgressCallback): Promise<void> {
 			atomicWrite(path, JSON.stringify(settings, null, 2));
 			onProgress?.({level: 'success', message: '已写入 statusLine 配置', componentId: 'Ccline'});
 		} catch (error) {
-			onProgress?.({level: 'warning', message: `statusLine 写入失败: ${error instanceof Error ? error.message : String(error)}`, componentId: 'Ccline'});
+			onProgress?.({
+				level: 'warning',
+				message: `statusLine 写入失败: ${error instanceof Error ? error.message : String(error)}`,
+				componentId: 'Ccline'
+			});
 		}
 	}
 }
@@ -303,7 +338,11 @@ export function readMcpSnapshot(): string | null {
 }
 
 /** CcgWorkflow 安装：Claude Code init + mcpServers 快照保护；Codex Mode 走官方非交互命令。 */
-async function installCcgWorkflow(context: AgentContext, onProgress?: ProgressCallback, exec: typeof execCommand = execCommand): Promise<string | undefined> {
+async function installCcgWorkflow(
+	context: AgentContext,
+	onProgress?: ProgressCallback,
+	exec: typeof execCommand = execCommand
+): Promise<string | undefined> {
 	// mcpServers 快照仅适用于 Claude Code init 路径；Codex Mode 不应触碰 ~/.claude.json。
 	const mcpBefore = context === 'cc' ? readMcpSnapshot() : null;
 	const [command] = ccgWorkflowInstallCommands(context, claudeDir());
@@ -311,7 +350,12 @@ async function installCcgWorkflow(context: AgentContext, onProgress?: ProgressCa
 		return;
 	}
 
-	onProgress?.({level: 'info', message: `${command.cmd} ${command.args.join(' ')}（远程下载，请稍候）`, componentId: 'CcgWorkflow'});
+	onProgress?.({
+		level: 'info',
+		message: `${command.cmd} ${command.args.join(' ')}（远程下载，请稍候）`,
+		componentId: 'CcgWorkflow',
+		instruction: formatCommandInstruction(command.cmd, command.args)
+	});
 	const result = await exec(command.cmd, [...command.args], {timeout: INSTALL_TIMEOUT_MS});
 	if (result.code !== 0) {
 		const label = context === 'cx' ? 'Codex Mode 安装失败' : 'CCG Workflow 初始化失败';
@@ -352,14 +396,15 @@ export function restoreMcpSnapshot(snapshot: string, onProgress?: ProgressCallba
 
 /** AntigravityCli 安装：平台 shell 脚本（Win irm|iex / mac curl|bash）。 */
 async function installAntigravity(onProgress?: ProgressCallback, exec: typeof execCommand = execCommand): Promise<void> {
-	onProgress?.({level: 'info', message: '执行 Antigravity 官方安装脚本（远程下载）', componentId: 'AntigravityCli'});
-
 	if (process.platform === 'win32') {
-		const result = await exec(
-			'powershell',
-			['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', 'irm https://antigravity.google/cli/install.ps1 | iex'],
-			{timeout: INSTALL_TIMEOUT_MS}
-		);
+		const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', 'irm https://antigravity.google/cli/install.ps1 | iex'];
+		onProgress?.({
+			level: 'info',
+			message: '执行 Antigravity 官方安装脚本（远程下载）',
+			componentId: 'AntigravityCli',
+			instruction: formatCommandInstruction('powershell', args)
+		});
+		const result = await exec('powershell', args, {timeout: INSTALL_TIMEOUT_MS});
 		if (result.code !== 0) {
 			throw new Error(friendlyError(result.stderr || result.stdout, `Antigravity 安装失败 (exit ${result.code})`));
 		}
@@ -367,7 +412,14 @@ async function installAntigravity(onProgress?: ProgressCallback, exec: typeof ex
 		return;
 	}
 
-	const result = await exec('bash', ['-c', 'curl -fsSL https://antigravity.google/cli/install.sh | bash'], {timeout: INSTALL_TIMEOUT_MS});
+	const args = ['-c', 'curl -fsSL https://antigravity.google/cli/install.sh | bash'];
+	onProgress?.({
+		level: 'info',
+		message: '执行 Antigravity 官方安装脚本（远程下载）',
+		componentId: 'AntigravityCli',
+		instruction: formatCommandInstruction('bash', args)
+	});
+	const result = await exec('bash', args, {timeout: INSTALL_TIMEOUT_MS});
 	if (result.code !== 0) {
 		throw new Error(friendlyError(result.stderr || result.stdout, `Antigravity 安装失败 (exit ${result.code})`));
 	}
@@ -380,8 +432,14 @@ async function installClaudeCode(
 	onProgress?: ProgressCallback,
 	exec: typeof execCommand = execCommand
 ): Promise<string> {
-	onProgress?.({level: 'info', message: `npm install -g ${definition.npmPackage}`, componentId: definition.id});
-	const result = await exec('npm', ['install', '-g', definition.npmPackage!], {timeout: INSTALL_TIMEOUT_MS});
+	const args = ['install', '-g', definition.npmPackage!];
+	onProgress?.({
+		level: 'info',
+		message: `npm install -g ${definition.npmPackage}`,
+		componentId: definition.id,
+		instruction: formatCommandInstruction('npm', args)
+	});
+	const result = await exec('npm', args, {timeout: INSTALL_TIMEOUT_MS});
 	if (result.code !== 0) {
 		throw new Error(friendlyError(result.stderr || result.stdout, `npm install 失败 (exit ${result.code})`));
 	}
@@ -448,13 +506,21 @@ export async function installTool(
 
 		// ClaudeCode 已在 installClaudeCode 内检测确认并产出版本，无需再 detectTool。
 		if (definition.id === 'ClaudeCode') {
-			onProgress?.({level: 'success', message: `${definition.name} 安装成功${installedVersion ? ` (${installedVersion})` : ''}`, componentId: id});
+			onProgress?.({
+				level: 'success',
+				message: `${definition.name} 安装成功${installedVersion ? ` (${installedVersion})` : ''}`,
+				componentId: id
+			});
 			return {id, success: true, version: installedVersion};
 		}
 
 		const status = await detectTool(definition, exec);
 		if (status.installed) {
-			onProgress?.({level: 'success', message: `${definition.name} 安装成功${status.version ? ` (${status.version})` : ''}`, componentId: id});
+			onProgress?.({
+				level: 'success',
+				message: `${definition.name} 安装成功${status.version ? ` (${status.version})` : ''}`,
+				componentId: id
+			});
 			return {id, success: true, version: status.version};
 		}
 

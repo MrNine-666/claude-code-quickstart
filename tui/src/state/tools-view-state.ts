@@ -18,11 +18,7 @@ export function computeColumns(contentWidth: number): number {
 	return Math.max(1, Math.floor((contentWidth + CARD_GAP) / (CARD_WIDTH + CARD_GAP)));
 }
 
-export type ToolsViewMode =
-	| 'grid'
-	| 'select-inject-target'
-	| 'confirm-uninstall'
-	| 'busy';
+export type ToolsViewMode = 'grid' | 'select-inject-target' | 'confirm-uninstall' | 'busy';
 
 export type ComponentAction = 'install' | 'update' | 'uninstall';
 export type ComponentItemStatus = 'idle' | 'installing' | 'updating' | 'uninstalling';
@@ -58,6 +54,7 @@ export type ToolsViewState = {
 	readonly errorText?: string;
 	readonly progressByComponent: Readonly<Record<string, string>>;
 	readonly progressLevelByComponent: Readonly<Record<string, ProgressLevel>>;
+	readonly latestProgressId?: string;
 };
 
 export type ComponentPatch = {
@@ -81,6 +78,7 @@ export type ToolsViewAction =
 	| {readonly type: 'request-uninstall'}
 	| {readonly type: 'confirm-uninstall'}
 	| {readonly type: 'cancel'}
+	| {readonly type: 'cancel-busy'}
 	| {readonly type: 'item-start'; readonly id: ComponentId; readonly action: ComponentAction}
 	| {readonly type: 'item-done'; readonly id: ComponentId; readonly components: readonly ManagedComponent[]}
 	| {readonly type: 'item-patched'; readonly id: ComponentId; readonly patch: ComponentPatch}
@@ -100,7 +98,8 @@ export function createInitialToolsViewState(): ToolsViewState {
 		itemError: {},
 		injectTargetIndex: 0,
 		progressByComponent: {},
-		progressLevelByComponent: {}
+		progressLevelByComponent: {},
+		latestProgressId: undefined
 	};
 }
 
@@ -153,31 +152,23 @@ export function initialInjectDraft(component: SharedManagedComponent): Record<Ag
 	};
 }
 
-function actionTenseLabel(status: ComponentItemStatus): string {
-	switch (status) {
-		case 'installing':
-			return '安装中…';
-		case 'updating':
-			return '更新中…';
-		case 'uninstalling':
-			return '卸载中…';
-		default:
-			return '处理中…';
+export function latestActiveProgressTask(
+	state: ToolsViewState
+): {readonly id: string; readonly name: string; readonly message: string; readonly level: ProgressLevel} | undefined {
+	const isActive = (component: ManagedComponent): boolean => PROGRESS_STATUSES.has(state.itemStatus[component.id] ?? 'idle');
+	const component =
+		state.components.find(item => item.id === state.latestProgressId && isActive(item)) ?? state.components.find(isActive);
+	const message = component ? state.progressByComponent[component.id] : undefined;
+	if (!component || !message) {
+		return undefined;
 	}
-}
 
-export function activeProgressTasks(state: ToolsViewState): readonly {readonly id: string; readonly name: string; readonly message: string; readonly level: ProgressLevel}[] {
-	return state.components
-		.filter(component => PROGRESS_STATUSES.has(state.itemStatus[component.id] ?? 'idle'))
-		.map(component => {
-			const status = state.itemStatus[component.id] ?? 'idle';
-			return {
-				id: component.id,
-				name: component.name,
-				message: state.progressByComponent[component.id] ?? actionTenseLabel(status),
-				level: state.progressLevelByComponent[component.id] ?? 'info'
-			};
-		});
+	return {
+		id: component.id,
+		name: component.name,
+		message,
+		level: state.progressLevelByComponent[component.id] ?? 'info'
+	};
 }
 
 function patchComponent(components: readonly ManagedComponent[], id: ComponentId, patch: ComponentPatch): readonly ManagedComponent[] {
@@ -292,12 +283,28 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				...state,
 				mode: 'busy',
 				busyAction: 'uninstall',
+				latestProgressId: state.uninstallTarget,
 				errorText: undefined,
 				itemStatus: state.uninstallTarget ? {...state.itemStatus, [state.uninstallTarget]: 'uninstalling'} : state.itemStatus
 			};
 
 		case 'cancel':
 			return cancel(state);
+
+		case 'cancel-busy':
+			return {
+				...state,
+				mode: 'grid',
+				busyAction: undefined,
+				uninstallTarget: undefined,
+				injectTargetIndex: 0,
+				injectDraft: undefined,
+				itemStatus: {},
+				progressByComponent: {},
+				progressLevelByComponent: {},
+				latestProgressId: undefined,
+				errorText: undefined
+			};
 
 		case 'item-start':
 			// 生命周期开始即关闭任何打开的 Modal（inject 开关 Modal 经此路径进入执行态）：
@@ -309,6 +316,7 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				injectTargetIndex: 0,
 				injectDraft: undefined,
 				itemStatus: {...state.itemStatus, [action.id]: progressTense(action.action)},
+				latestProgressId: action.id,
 				itemError: omit(state.itemError, action.id),
 				errorText: undefined
 			};
@@ -325,7 +333,8 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				components: action.components,
 				itemStatus: {...state.itemStatus, [action.id]: 'idle'},
 				progressByComponent: omit(state.progressByComponent, action.id),
-				progressLevelByComponent: omit(state.progressLevelByComponent, action.id)
+				progressLevelByComponent: omit(state.progressLevelByComponent, action.id),
+				latestProgressId: state.latestProgressId === action.id ? undefined : state.latestProgressId
 			};
 
 		case 'item-patched':
@@ -341,6 +350,7 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				itemError: omit(state.itemError, action.id),
 				progressByComponent: omit(state.progressByComponent, action.id),
 				progressLevelByComponent: omit(state.progressLevelByComponent, action.id),
+				latestProgressId: state.latestProgressId === action.id ? undefined : state.latestProgressId,
 				errorText: undefined
 			};
 
@@ -358,6 +368,7 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				itemError: {...state.itemError, [action.id]: action.error},
 				progressByComponent: omit(state.progressByComponent, action.id),
 				progressLevelByComponent: omit(state.progressLevelByComponent, action.id),
+				latestProgressId: state.latestProgressId === action.id ? undefined : state.latestProgressId,
 				errorText: action.error
 			};
 
@@ -366,6 +377,7 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				...state,
 				mode: 'busy',
 				busyAction: action.action,
+				latestProgressId: action.ids[0],
 				errorText: undefined,
 				itemStatus: {
 					...state.itemStatus,
@@ -383,7 +395,8 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				itemStatus: {},
 				itemError: {},
 				progressByComponent: {},
-				progressLevelByComponent: {}
+				progressLevelByComponent: {},
+				latestProgressId: undefined
 			};
 
 		case 'batch-failed':
@@ -397,6 +410,7 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				itemError: {},
 				progressByComponent: {},
 				progressLevelByComponent: {},
+				latestProgressId: undefined,
 				errorText: action.error
 			};
 
@@ -404,7 +418,8 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 			return {
 				...state,
 				progressByComponent: {...state.progressByComponent, [action.id]: action.message},
-				progressLevelByComponent: {...state.progressLevelByComponent, [action.id]: action.level}
+				progressLevelByComponent: {...state.progressLevelByComponent, [action.id]: action.level},
+				latestProgressId: action.id
 			};
 
 		default:

@@ -89,6 +89,7 @@ const {
 	reduceToolsViewState,
 	createInitialToolsViewState,
 	initialInjectDraft,
+	latestActiveProgressTask,
 	resolveToolsPrimaryAction,
 	updatableComponents
 } = await import('../src/state/tools-view-state.ts');
@@ -135,6 +136,49 @@ assert.equal(codegraphDuringDraft.injectByAgent.cx.integrated, false, '草稿切
 const cancelled = reduceToolsViewState(modal, {type: 'cancel'});
 assert.equal(cancelled.mode, 'grid', 'Esc 取消回 grid');
 assert.equal(cancelled.injectDraft, undefined, 'Esc 取消清空草稿');
+
+let rollingProgress = reduceToolsViewState(gridState, {
+	type: 'batch-start',
+	action: 'update',
+	ids: ['CodeGraph', 'OpenSpec']
+});
+rollingProgress = reduceToolsViewState(rollingProgress, {
+	type: 'progress',
+	id: 'CodeGraph',
+	message: 'codegraph update',
+	level: 'info'
+});
+rollingProgress = reduceToolsViewState(rollingProgress, {
+	type: 'progress',
+	id: 'OpenSpec',
+	message: 'npm install -g @fission-ai/openspec',
+	level: 'info'
+});
+assert.equal(latestActiveProgressTask(rollingProgress)?.id, 'OpenSpec', 'BusyOverlay 应切到最后上报 progress 的组件');
+rollingProgress = reduceToolsViewState(rollingProgress, {
+	type: 'progress',
+	id: 'CodeGraph',
+	message: 'codegraph install --target=codex',
+	level: 'info'
+});
+assert.equal(latestActiveProgressTask(rollingProgress)?.message, 'codegraph install --target=codex', '新 progress 应替换旧指令');
+
+const busyCancelled = reduceToolsViewState(
+	{
+		...gridState,
+		mode: 'busy',
+		busyAction: 'update',
+		itemStatus: {CodeGraph: 'updating'},
+		progressByComponent: {CodeGraph: '下载中'},
+		progressLevelByComponent: {CodeGraph: 'info'},
+		errorText: '旧错误'
+	},
+	{type: 'cancel-busy'}
+);
+assert.equal(busyCancelled.mode, 'grid', '取消 busy 后回到工具网格');
+assert.equal(busyCancelled.busyAction, undefined, '取消 busy 后清空动作');
+assert.deepEqual(busyCancelled.itemStatus, {}, '取消 busy 后清空进行中状态');
+assert.equal(busyCancelled.errorText, undefined, '用户取消不得显示为失败');
 console.log('[PASS] 空格切换草稿 + Enter 前不落盘 + Esc 取消清空草稿');
 
 const toolsModalViewSource = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');

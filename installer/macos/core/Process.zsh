@@ -702,6 +702,20 @@ ccq_get_executable_path() {
   printf '%s/.local/bin/ccq' "${HOME}"
 }
 
+ccq_normalize_version() {
+  # 规范化 ccq 命令输出或 Release tag，供安装器比较版本。
+  local version="${1:-}"
+  version="${version#"${version%%[![:space:]]*}"}"
+  version="${version%"${version##*[![:space:]]}"}"
+  case "${version}" in
+    ccq\ *) version="${version#ccq }" ;;
+  esac
+  case "${version}" in
+    v[0-9]*) version="${version#v}" ;;
+  esac
+  printf '%s' "${version}"
+}
+
 ccq_test_executable_installed() {
   # 检测 ccq 可执行文件是否已安装且可用
   # 输出 JSON: {"isInstalled":true/false,"version":"x.y.z","path":"..."}
@@ -727,7 +741,7 @@ ccq_test_executable_installed() {
       version="$(head -n 1 "${version_file}" 2>/dev/null || true)"
       if [ -n "${version}" ]; then
         is_installed=1
-        version="${version#ccq }"
+        version="$(ccq_normalize_version "${version}")"
       fi
     fi
     rm -f "${version_file}" 2>/dev/null || true

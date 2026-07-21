@@ -34,7 +34,8 @@ import {
 	displaySkillName,
 	searchInstallItems,
 	selectedSearchResults,
-	pendingInstallResults
+	pendingInstallResults,
+	SKILLS_GRID_COLUMNS
 } from '../src/state/skills-view-state.ts';
 
 // Skills 首次检测复用 Tools 的全局加载组件，避免各视图维护不同的 loading 布局与文案。
@@ -276,6 +277,11 @@ import {
 		assert.equal(captured.length, 1, '批量安装应单次调用');
 		const skillArgs = captured[0].filter((value, index, arr) => arr[index - 1] === '--skill');
 		assert.equal(skillArgs.length, 3, '三个 --skill 一次传入');
+		assert.equal(
+			multiEvents.find(event => event.instruction)?.instruction,
+			'npx --yes skills@1.5.19 add org/repo --yes --agent claude-code -g --skill a --skill b --skill c',
+			'Skills progress 必须上报实际批量安装命令'
+		);
 		assert.ok(multiEvents.some(event => event.level === 'success'));
 		// 空名单直接失败不 spawn
 		let emptyCalled = false;
@@ -291,12 +297,18 @@ import {
 		const updateRes = await updateSkills([], event => updateEvents.push(event), failExec);
 		assert.equal(updateRes.success, false);
 		assert.ok(updateRes.error.includes('网络'));
+		assert.equal(updateEvents.find(event => event.instruction)?.instruction, 'npx --yes skills@1.5.19 update -g -y', 'Skills update progress 必须上报实际命令');
 		assert.ok(updateEvents.some(event => event.level === 'danger'));
 
 		// uninstall：成功路径
 		const uninstallEvents = [];
 		const uninstallRes = await uninstallSkills(['skill-a'], event => uninstallEvents.push(event), okExec);
 		assert.equal(uninstallRes.success, true);
+		assert.equal(
+			uninstallEvents.find(event => event.instruction)?.instruction,
+			'npx --yes skills@1.5.19 remove skill-a -g --agent claude-code --yes',
+			'Skills uninstall progress 必须上报实际命令'
+		);
 		assert.ok(uninstallEvents.length > 0);
 
 		// 空名单 uninstall 直接失败
@@ -370,6 +382,7 @@ function sharedRow(name, {claude = true, codex = true, source} = {}) {
 	const actions = [
 		{type: 'nav-up'},
 		{type: 'nav-down'},
+		{type: 'nav-grid', direction: 'right'},
 		{type: 'filter-input', value: 'a'},
 		{type: 'filter-focus'},
 		{type: 'filter-blur'},
@@ -481,6 +494,23 @@ function sharedRow(name, {claude = true, codex = true, source} = {}) {
 	const backToList = reduceSkillsViewState(backToInstall, {type: 'cancel'});
 	assert.equal(backToList.mode, 'list', '安装页 cancel 回列表页');
 	assert.equal(backToList.queryFocused, false, '回列表页 queryFocused 复位');
+
+	// 已安装页固定两列：左右移动相邻卡片，上下跨两项，奇数末行回退到唯一卡片。
+	assert.equal(SKILLS_GRID_COLUMNS, 2, 'Skills 网格固定为两列');
+	const grid = reduceSkillsViewState(createInitialSkillsViewState(), {
+		type: 'installed-loaded',
+		installed: ['apple', 'banana', 'cherry', 'date', 'elder'].map(name => sharedRow(name))
+	});
+	const gridRight = reduceSkillsViewState(grid, {type: 'nav-grid', direction: 'right'});
+	assert.equal(selectedInstalled(gridRight)?.name, 'banana', '→ 移到同行右侧卡片');
+	const gridDown = reduceSkillsViewState(gridRight, {type: 'nav-grid', direction: 'down'});
+	assert.equal(selectedInstalled(gridDown)?.name, 'date', '↓ 跨两项保持列位置');
+	const gridPartialRow = reduceSkillsViewState(gridDown, {type: 'nav-grid', direction: 'down'});
+	assert.equal(selectedInstalled(gridPartialRow)?.name, 'elder', '↓ 进入奇数末行时选中唯一卡片');
+	const gridLoop = reduceSkillsViewState(gridPartialRow, {type: 'nav-grid', direction: 'down'});
+	assert.equal(selectedInstalled(gridLoop)?.name, 'apple', '末行 ↓ 循环回首行同列');
+	const gridLoopUp = reduceSkillsViewState(grid, {type: 'nav-grid', direction: 'up'});
+	assert.equal(selectedInstalled(gridLoopUp)?.name, 'elder', '首行 ↑ 循环到末行可用卡片');
 
 	// 无已安装时禁用 update
 	const noInstalled = createInitialSkillsViewState();
@@ -1003,6 +1033,19 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 	const emptyTarget = reduceSkillsViewState({...cManage, installDraft: {cc: false, cx: false}}, {type: 'request-topology-change'});
 	assert.equal(emptyTarget.mode, 'manage-inject');
 	assert.match(emptyTarget.errorText ?? '', /d|卸载/, '零目标应引导使用全量卸载');
+
+	const busyCancelled = reduceSkillsViewState({
+		...cManage,
+		mode: 'busy',
+		busyAction: 'update',
+		busyReturnMode: 'list',
+		progress: ['更新中'],
+		errorText: '旧错误'
+	}, {type: 'cancel-busy'});
+	assert.equal(busyCancelled.mode, 'list', '取消 busy 后返回原 Skills 页面');
+	assert.equal(busyCancelled.busyAction, undefined, '取消 busy 后清空动作');
+	assert.deepEqual(busyCancelled.progress, [], '取消 busy 后清空进度');
+	assert.equal(busyCancelled.errorText, undefined, '用户取消不得显示为失败');
 
 	let replacement = reduceSkillsViewState(replacementState, {type: 'toggle-result'});
 	replacement = reduceSkillsViewState(replacement, {type: 'select-skill'});

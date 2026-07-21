@@ -1,6 +1,6 @@
-import type { Binding } from '@opentui/keymap';
-import { commandBindings } from '@opentui/keymap/extras';
-import { appShortcutKey, editingShortcutKey } from '../utils/keyboard.js';
+import type {Binding} from '@opentui/keymap';
+import {commandBindings} from '@opentui/keymap/extras';
+import {appShortcutKey, editingShortcutKey} from '../utils/keyboard.js';
 
 // ============================================================
 // Phase 1B.2：声明式键绑定配置
@@ -132,6 +132,8 @@ export const mcpBindings: Binding[] = commandBindings({
 export const SKILLS_COMMANDS = {
 	LIST_UP: 'skills:list-up',
 	LIST_DOWN: 'skills:list-down',
+	LIST_LEFT: 'skills:list-left',
+	LIST_RIGHT: 'skills:list-right',
 	TOGGLE_FOCUS: 'skills:toggle-focus',
 	INSTALL: 'skills:install',
 	// enter：列表行 → 管理安装 Modal（切 Claude Code symlink）；安装页 → 安装目标 Modal
@@ -153,6 +155,8 @@ export const SKILLS_COMMANDS = {
 export const skillsBindings: Binding[] = commandBindings({
 	[SKILLS_COMMANDS.LIST_UP]: 'up',
 	[SKILLS_COMMANDS.LIST_DOWN]: 'down',
+	[SKILLS_COMMANDS.LIST_LEFT]: 'left',
+	[SKILLS_COMMANDS.LIST_RIGHT]: 'right',
 	[SKILLS_COMMANDS.TOGGLE_FOCUS]: 'tab',
 	// 列表页：i 进安装页（footer 显示 I）；安装页 SELECT_ALL 仍用 a（不同子模式，靠视图分发隔离）
 	[SKILLS_COMMANDS.INSTALL]: 'i',
@@ -176,18 +180,18 @@ export const skillsBindings: Binding[] = commandBindings({
 // ------------------------------------------------------------
 export const PROMPTS_COMMANDS = {
 	// view 态入口（只读展示 / 空状态）
-	ADD: 'prompts:add',                          // a 新建（空白编辑器）
-	EDIT_ENTRY: 'prompts:edit-entry',            // e 编辑现有（载入磁盘内容）
+	ADD: 'prompts:add', // a 新建（空白编辑器）
+	EDIT_ENTRY: 'prompts:edit-entry', // e 编辑现有（载入磁盘内容）
 	// edit 态主操作
-	TOGGLE_PANEL: 'prompts:toggle-panel',        // Ctrl+T 开/关推荐边栏（TUI 应用功能）
-	IMPORT: 'prompts:import',                    // Ctrl+O 推荐灌入缓冲（TUI 应用功能）
-	EDITOR_SAVE: 'prompts:editor-save',          // macOS Cmd+S / 其他平台 Ctrl+S 保存（编辑语义）
-	EDITOR_CANCEL: 'prompts:editor-cancel',      // escape 取消编辑回 view
+	TOGGLE_PANEL: 'prompts:toggle-panel', // Ctrl+T 开/关推荐边栏（TUI 应用功能）
+	IMPORT: 'prompts:import', // Ctrl+O 推荐灌入缓冲（TUI 应用功能）
+	EDITOR_SAVE: 'prompts:editor-save', // macOS Cmd+S / 其他平台 Ctrl+S 保存（编辑语义）
+	EDITOR_CANCEL: 'prompts:editor-cancel', // escape 取消编辑回 view
 	// 双栏焦点切换
-	FOCUS_CYCLE: 'prompts:focus-cycle',          // tab 编辑器↔推荐边栏
+	FOCUS_CYCLE: 'prompts:focus-cycle', // tab 编辑器↔推荐边栏
 	// 滚动（view 展示 / 边栏）
-	PREVIEW_UP: 'prompts:preview-up',            // up 滚动
-	PREVIEW_DOWN: 'prompts:preview-down'         // down 滚动
+	PREVIEW_UP: 'prompts:preview-up', // up 滚动
+	PREVIEW_DOWN: 'prompts:preview-down' // down 滚动
 } as const;
 
 export const promptsBindings: Binding[] = commandBindings({
@@ -207,18 +211,18 @@ export const promptsBindings: Binding[] = commandBindings({
 // ------------------------------------------------------------
 export const CONFIG_COMMANDS = {
 	// view 态入口（只读展示 / 空状态）
-	ADD: 'config:add',                          // a 新建（空白 {} 编辑器）
-	EDIT_ENTRY: 'config:edit-entry',            // e 编辑现有（载入磁盘内容）
+	ADD: 'config:add', // a 新建（空白 {} 编辑器）
+	EDIT_ENTRY: 'config:edit-entry', // e 编辑现有（载入磁盘内容）
 	// edit 态主操作
-	TOGGLE_PANEL: 'config:toggle-panel',        // Ctrl+T 开/关推荐边栏（TUI 应用功能）
-	IMPORT: 'config:import',                    // Ctrl+O fill-missing 灌入缓冲（TUI 应用功能，仅补缺失）
-	EDITOR_SAVE: 'config:editor-save',          // macOS Cmd+S / 其他平台 Ctrl+S 保存（编辑语义）
-	EDITOR_CANCEL: 'config:editor-cancel',      // escape 取消编辑回 view
+	TOGGLE_PANEL: 'config:toggle-panel', // Ctrl+T 开/关推荐边栏（TUI 应用功能）
+	IMPORT: 'config:import', // Ctrl+O fill-missing 灌入缓冲（TUI 应用功能，仅补缺失）
+	EDITOR_SAVE: 'config:editor-save', // macOS Cmd+S / 其他平台 Ctrl+S 保存（编辑语义）
+	EDITOR_CANCEL: 'config:editor-cancel', // escape 取消编辑回 view
 	// 双栏焦点切换
-	FOCUS_CYCLE: 'config:focus-cycle',          // tab 编辑器↔推荐边栏
+	FOCUS_CYCLE: 'config:focus-cycle', // tab 编辑器↔推荐边栏
 	// 滚动（view 展示 / 边栏）
-	PREVIEW_UP: 'config:preview-up',            // up 滚动
-	PREVIEW_DOWN: 'config:preview-down'         // down 滚动
+	PREVIEW_UP: 'config:preview-up', // up 滚动
+	PREVIEW_DOWN: 'config:preview-down' // down 滚动
 } as const;
 
 export const configBindings: Binding[] = commandBindings({

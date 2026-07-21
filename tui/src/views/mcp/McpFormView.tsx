@@ -43,7 +43,7 @@ export function McpFormView({mode, serverId, initialJson, active, onSaved, onCan
 		? [
 				{id: 'template', type: 'radio', label: '模板', value: CUSTOM_TEMPLATE, options: templateOptions},
 				{id: 'id', type: 'text', label: 'Server ID', value: '', helpText: '英文 ID，如 my-server'}
-		  ]
+			]
 		: [];
 
 	const [focusedIndex, setFocusedIndex] = useState(0);
@@ -87,7 +87,7 @@ export function McpFormView({mode, serverId, initialJson, active, onSaved, onCan
 
 	// 字段间焦点切换（含 JSON 虚拟字段 = fields.length）：↑/↓ 跳过只读，循环。与供应商表单同构。
 	function handleMoveFocus(direction: 1 | -1): void {
-		setFocusedIndex((current) => {
+		setFocusedIndex(current => {
 			if (current === fields.length) {
 				// textarea 按 ↑/↓ 切回紧邻的真实字段（越界 → nextEditableIndex 返回末位/首位）。
 				return direction > 0 ? firstEditableIndex(fields) : nextEditableIndex(fields, fields.length, -1);
@@ -112,7 +112,10 @@ export function McpFormView({mode, serverId, initialJson, active, onSaved, onCan
 			return;
 		}
 
-		const currentIndex = Math.max(0, templateOptions.findIndex((option) => option.value === templateId));
+		const currentIndex = Math.max(
+			0,
+			templateOptions.findIndex(option => option.value === templateId)
+		);
 		const nextIndex = (currentIndex + direction + templateOptions.length) % templateOptions.length;
 		const next = templateOptions[nextIndex];
 		if (next) {
@@ -175,18 +178,16 @@ export function McpFormView({mode, serverId, initialJson, active, onSaved, onCan
 
 	// JSON 区全局键位：保存按编辑语义触发 · Ctrl+Z/Y 撤销重做 · 复制按编辑语义触发（OSC52）；Esc 取消整个表单。
 	// 与供应商表单 JSON 区完全一致（复用 handleTextareaEditKeys）。
-	useKeyboard((keyEvent) => {
+	useKeyboard(keyEvent => {
 		if (!active || !jsonFocused) {
 			return;
 		}
 
-		if (handleTextareaEditKeys(
-			keyEvent,
-			textareaRef.current,
-			renderer,
-			handleSubmit,
-			() => handleJsonChange(textareaRef.current?.plainText ?? jsonText)
-		)) {
+		if (
+			handleTextareaEditKeys(keyEvent, textareaRef.current, renderer, handleSubmit, () =>
+				handleJsonChange(textareaRef.current?.plainText ?? jsonText)
+			)
+		) {
 			return;
 		}
 
@@ -228,10 +229,14 @@ export function McpFormView({mode, serverId, initialJson, active, onSaved, onCan
 				/>
 			</box>
 
-			{/* 凭据获取提示（选内置模板带出 / edit env-file 提示）*/}
+			{/* 凭据获取提示：按行渲染，URL 独占一行，避免窄宽软换行把链接路径拆断 */}
 			{credHint ? (
-				<box marginBottom={1} flexShrink={0}>
-					<text fg={colors.muted} attributes={TextAttributes.DIM}>{`凭据获取：${credHint}`}</text>
+				<box marginBottom={1} flexShrink={0} flexDirection="column">
+					{credHint.split(/\r?\n/).map((line, index) => (
+						<text key={`cred-hint-${index}`} fg={colors.muted} attributes={TextAttributes.DIM}>
+							{index === 0 ? `凭据获取：${line}` : line}
+						</text>
+					))}
 				</box>
 			) : null}
 
@@ -240,7 +245,12 @@ export function McpFormView({mode, serverId, initialJson, active, onSaved, onCan
 				<text flexShrink={0} fg={jsonFocused ? colors.primary : colors.text} attributes={jsonFocused ? TextAttributes.BOLD : 0}>
 					{`${jsonFocused ? '› ' : '  '}配置 JSON（直接编辑，保存时以此为准）`}
 				</text>
-				<box flexGrow={1} minHeight={0} borderStyle="rounded" borderColor={jsonFocused ? borderColors.active : borderColors.inactive}>
+				<box
+					flexGrow={1}
+					minHeight={0}
+					borderStyle="rounded"
+					borderColor={jsonFocused ? borderColors.active : borderColors.inactive}
+				>
 					<textarea
 						ref={textareaRef}
 						initialValue={jsonText}

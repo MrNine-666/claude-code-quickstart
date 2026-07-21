@@ -510,6 +510,119 @@ function Test-CanonicalSourceLayout {
     }
 }
 
+function Test-CcqVersionHandoffContract {
+    $normalizer = Get-Command -Name ConvertTo-CcqComparableVersion -ErrorAction SilentlyContinue
+    if (-not $normalizer) {
+        Add-Issue 'Windows ccq handoff 缺少 ConvertTo-CcqComparableVersion'
+    } else {
+        Assert-Equal 'ccq.version.normalize.release-tag' '1.2.3' (ConvertTo-CcqComparableVersion -Version 'v1.2.3')
+        Assert-Equal 'ccq.version.normalize-command-output' '1.2.3-rc.1' (ConvertTo-CcqComparableVersion -Version 'ccq v1.2.3-rc.1')
+    }
+
+    $windowsInstall = Get-Content -Path (Join-Path $script:WindowsRoot 'Install.ps1') -Raw -Encoding UTF8
+    foreach ($requiredPattern in @(
+        'function\s+Get-CcqReleaseTargetVersion',
+        '版本一致，无需覆盖',
+        '检测到 ccq 版本不一致',
+        '是否覆盖现有文件',
+        '-DefaultIndex\s+1',
+        '无法确定安装器目标版本，已保留现有 ccq'
+    )) {
+        if ($windowsInstall -notmatch $requiredPattern) {
+            Add-Issue "Windows ccq version handoff 缺少契约片段: $requiredPattern"
+        }
+    }
+
+    $macInstallPath = Join-Path $script:InstallerRoot 'macos\Install.zsh'
+    $macProcessPath = Join-Path $script:InstallerRoot 'macos\core\Process.zsh'
+    $macInstall = Get-Content -Path $macInstallPath -Raw -Encoding UTF8
+    $macProcess = Get-Content -Path $macProcessPath -Raw -Encoding UTF8
+    foreach ($requiredPattern in @(
+        'ccq_get_release_target_version\(\)',
+        '版本一致，无需覆盖',
+        '检测到 ccq 版本不一致',
+        '是否覆盖现有文件',
+        'ccq_prompt_single[^\r\n]+\s1\s',
+        '无法确定安装器目标版本，已保留现有 ccq'
+    )) {
+        if ($macInstall -notmatch $requiredPattern) {
+            Add-Issue "macOS ccq version handoff 缺少契约片段: $requiredPattern"
+        }
+    }
+    if ($macProcess -notmatch 'ccq_normalize_version\(\)') {
+        Add-Issue 'macOS ccq handoff 缺少 ccq_normalize_version'
+    }
+
+    $parseTokens = $null
+    $parseErrors = $null
+    $windowsAst = [System.Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $script:WindowsRoot 'Install.ps1'),
+        [ref]$parseTokens,
+        [ref]$parseErrors
+    )
+    $confirmFunction = $windowsAst.Find({
+        param($Node)
+        $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $Node.Name -eq 'Confirm-CcqExecutableDownload'
+    }, $true)
+    if ($parseErrors.Count -gt 0 -or -not $confirmFunction) {
+        Add-Issue 'Windows ccq handoff 行为探针无法解析 Confirm-CcqExecutableDownload'
+        return
+    }
+
+    Invoke-Expression $confirmFunction.Extent.Text
+    $script:CcqHandoffCurrentVersion = '1.2.3'
+    $script:CcqHandoffTargetVersion = '1.2.3'
+    $script:CcqHandoffDecision = 1
+    $script:CcqHandoffMenuCount = 0
+    $script:CcqHandoffDefaultIndex = -1
+    $script:CcqHandoffInstallCalled = $false
+
+    function Test-CcqExecutableInstalled {
+        return @{ IsInstalled = $true; Version = $script:CcqHandoffCurrentVersion; Path = 'C:\fake\ccq.exe' }
+    }
+    function Get-CcqReleaseTargetVersion { return $script:CcqHandoffTargetVersion }
+    function Get-CcqArchitecture { return 'windows-x64' }
+    function Get-CcqReleaseDownloadBaseUrl { return 'https://example.invalid/release' }
+    function Show-SingleSelectMenu {
+        param([string]$Title, [string[]]$Options, [int]$DefaultIndex)
+        $script:CcqHandoffMenuCount++
+        $script:CcqHandoffDefaultIndex = $DefaultIndex
+        return $script:CcqHandoffDecision
+    }
+    function Install-CcqExecutable {
+        param([string]$DownloadUrl)
+        $script:CcqHandoffInstallCalled = $true
+        return @{ Success = $true; ErrorMessage = ''; Path = 'C:\fake\ccq.exe' }
+    }
+    function Write-Host { param([Parameter(ValueFromRemainingArguments)][object[]]$Object) }
+    function Write-UiPrimary { param([string]$Message, [string]$Level) }
+    function Write-UiInfo { param([string]$Message, [string]$Level) }
+    function Write-UiDim { param([string]$Message, [string]$Level) }
+    function Write-UiSuccess { param([string]$Message, [string]$Level) }
+    function Write-UiWarning { param([string]$Message, [string]$Level) }
+
+    Confirm-CcqExecutableDownload | Out-Null
+    Assert-Equal 'ccq.handoff.same.menu-count' 0 $script:CcqHandoffMenuCount
+    Assert-Equal 'ccq.handoff.same.install-called' $false $script:CcqHandoffInstallCalled
+
+    $script:CcqHandoffCurrentVersion = '1.2.2'
+    $script:CcqHandoffMenuCount = 0
+    $script:CcqHandoffInstallCalled = $false
+    $script:CcqHandoffDecision = 1
+    Confirm-CcqExecutableDownload | Out-Null
+    Assert-Equal 'ccq.handoff.different.menu-count' 1 $script:CcqHandoffMenuCount
+    Assert-Equal 'ccq.handoff.different.default-preserve' 1 $script:CcqHandoffDefaultIndex
+    Assert-Equal 'ccq.handoff.preserve.install-called' $false $script:CcqHandoffInstallCalled
+
+    $script:CcqHandoffMenuCount = 0
+    $script:CcqHandoffInstallCalled = $false
+    $script:CcqHandoffDecision = 0
+    Confirm-CcqExecutableDownload | Out-Null
+    Assert-Equal 'ccq.handoff.overwrite.menu-count' 1 $script:CcqHandoffMenuCount
+    Assert-Equal 'ccq.handoff.overwrite.install-called' $true $script:CcqHandoffInstallCalled
+}
+
 # dot-source 必须发生在脚本作用域；若放在函数内，Registry 等函数会随函数返回而失效。
 # 注意：claude-config 现为纯 TUI 链契约（runtime 实现在 tui/src/core/config-recommend.ts，
 #       由 tui/scripts/verify-contracts.mjs 校验），installer 侧不再 dot-source 已删除的
@@ -560,6 +673,7 @@ function Main {
     }
 
     Test-CanonicalSourceLayout
+    Test-CcqVersionHandoffContract
     # installer 契约（installer/contracts/）
     Test-StepsContract -Contract (Read-ContractJson 'steps.json')
     Test-BuildManifestContract -Contract (Read-ContractJson 'build.json')

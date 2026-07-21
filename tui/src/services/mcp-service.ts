@@ -92,8 +92,9 @@ export function saveMcpServer(serverId: string, text: string, agentContext: Agen
 		return {ok: false, error: parsed.error};
 	}
 
-	const {serverId: id, config} = parsed.payload;
-	const credentials = extractEnvCredentials(config);
+	const {serverId: id, config, credentials: parsedCredentials} = parsed.payload;
+	// url-embedded 占位符替换后 env 已剥离，凭据来自 parse 期提取；其余走 env/headers。
+	const credentials = {...extractEnvCredentials(config), ...parsedCredentials};
 	const definitionHashValue = getBuiltinDefinitionHash(id);
 
 	try {
@@ -177,8 +178,8 @@ function persistParsed(
 		return {ok: false, error: parsed.error};
 	}
 
-	const {serverId: id, config} = parsed.payload;
-	const credentials = extractEnvCredentials(config);
+	const {serverId: id, config, credentials: parsedCredentials} = parsed.payload;
+	const credentials = {...extractEnvCredentials(config), ...parsedCredentials};
 	const definitionHashValue = getBuiltinDefinitionHash(id);
 
 	try {

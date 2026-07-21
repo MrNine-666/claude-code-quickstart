@@ -58,6 +58,14 @@ export type DownloadedSelfUpdate = {
 	readonly tempPath: string;
 };
 
+export type DownloadUpdateProgress = {
+	readonly downloadedBytes: number;
+	readonly totalBytes: number;
+	readonly percentage: number;
+};
+
+export type DownloadProgressCallback = (progress: DownloadUpdateProgress) => void;
+
 export type SelfUpdateStage = 'check' | 'download' | 'apply';
 
 export type SelfUpdateError = {
@@ -71,7 +79,13 @@ export type SelfUpdateError = {
 
 export type CheckLatestVersionResult =
 	| {readonly ok: true; readonly hasUpdate: false; readonly currentVersion: string; readonly latestVersion: string}
-	| {readonly ok: true; readonly hasUpdate: true; readonly currentVersion: string; readonly latestVersion: string; readonly plan: SelfUpdatePlan}
+	| {
+			readonly ok: true;
+			readonly hasUpdate: true;
+			readonly currentVersion: string;
+			readonly latestVersion: string;
+			readonly plan: SelfUpdatePlan;
+	  }
 	| {readonly ok: false; readonly error: SelfUpdateError};
 
 export type DownloadUpdateResult =
@@ -80,12 +94,12 @@ export type DownloadUpdateResult =
 
 export type ApplySelfUpdateResult =
 	| {
-		readonly ok: true;
-		readonly state: 'applied' | 'scheduled';
-		readonly targetPath: string;
-		readonly restartStarted: boolean;
-		readonly helperPath?: string;
-	}
+			readonly ok: true;
+			readonly state: 'applied' | 'scheduled';
+			readonly targetPath: string;
+			readonly restartStarted: boolean;
+			readonly helperPath?: string;
+	  }
 	| {readonly ok: false; readonly error: SelfUpdateError};
 
 export type CheckLatestVersionDeps = {
@@ -101,6 +115,7 @@ export type DownloadUpdateDeps = {
 	readonly targetPath?: string;
 	readonly platform?: NodeJS.Platform;
 	readonly timeoutMs?: number;
+	readonly onProgress?: DownloadProgressCallback;
 };
 
 export type ApplyUpdateOptions = {
@@ -190,7 +205,7 @@ export async function checkLatestVersion(deps: CheckLatestVersionDeps = {}): Pro
 			return {ok: false, error: makeSelfUpdateError('check', 'GitHub Release API 请求失败', {status: response.status})};
 		}
 
-		const data = await response.json() as LatestReleaseResponse;
+		const data = (await response.json()) as LatestReleaseResponse;
 		const latestVersion = data.tag_name?.trim().replace(/^v/i, '');
 		if (!latestVersion) {
 			return {ok: false, error: makeSelfUpdateError('check', 'GitHub Release 响应缺少 tag_name')};
@@ -242,10 +257,7 @@ export async function checkLatestVersion(deps: CheckLatestVersionDeps = {}): Pro
 }
 
 function uniqueTempUpdatePath(targetPath: string): string {
-	return join(
-		dirname(targetPath),
-		'.' + basename(targetPath) + '.update-' + process.pid + '-' + randomBytes(6).toString('hex') + '.tmp'
-	);
+	return join(dirname(targetPath), '.' + basename(targetPath) + '.update-' + process.pid + '-' + randomBytes(6).toString('hex') + '.tmp');
 }
 
 function writeChunk(fd: number, chunk: Uint8Array): void {
@@ -280,15 +292,32 @@ export async function downloadUpdate(
 	signal?.addEventListener('abort', abortFromCaller, {once: true});
 	if (signal?.aborted) controller.abort();
 	let fd: number | null = null;
+	let lastReportedPercentage = -1;
+	const reportProgress = (downloadedBytes: number): void => {
+		const percentage = Math.min(100, Math.floor((downloadedBytes / plan.expectedSize) * 100));
+		if (percentage === lastReportedPercentage) return;
+		lastReportedPercentage = percentage;
+		deps.onProgress?.(
+			Object.freeze({
+				downloadedBytes,
+				totalBytes: plan.expectedSize,
+				percentage
+			})
+		);
+	};
 	try {
+		reportProgress(0);
 		mkdirSync(dirname(targetPath), {recursive: true, mode: 0o700});
 		const response = await fetchAsset(plan.downloadUrl, {signal: controller.signal});
 		if (!response.ok) {
-			return {ok: false, error: makeSelfUpdateError('download', '下载 Release asset 失败', {
-				status: response.status,
-				targetPath,
-				tempPath
-			})};
+			return {
+				ok: false,
+				error: makeSelfUpdateError('download', '下载 Release asset 失败', {
+					status: response.status,
+					targetPath,
+					tempPath
+				})
+			};
 		}
 		if (!response.body) {
 			return {ok: false, error: makeSelfUpdateError('download', '下载响应没有可读取内容', {targetPath, tempPath})};
@@ -308,6 +337,7 @@ export async function downloadUpdate(
 			}
 			hash.update(value);
 			writeChunk(fd, value);
+			reportProgress(size);
 		}
 		fsyncSync(fd);
 		closeSync(fd);
@@ -324,17 +354,22 @@ export async function downloadUpdate(
 		return {ok: true, transaction: Object.freeze({plan, targetPath, tempPath})};
 	} catch (error) {
 		if (fd !== null) {
-			try { closeSync(fd); } catch {}
+			try {
+				closeSync(fd);
+			} catch {}
 		}
 		removeFileBestEffort(tempPath);
 		const cancelled = signal?.aborted === true;
 		const timedOut = controller.signal.aborted && !cancelled;
-		const message = cancelled ? '下载已取消' : (timedOut ? '下载超时' : '下载或写入更新文件失败');
-		return {ok: false, error: makeSelfUpdateError('download', message, {
-			cause: errorCause(error),
-			targetPath,
-			tempPath
-		})};
+		const message = cancelled ? '下载已取消' : timedOut ? '下载超时' : '下载或写入更新文件失败';
+		return {
+			ok: false,
+			error: makeSelfUpdateError('download', message, {
+				cause: errorCause(error),
+				targetPath,
+				tempPath
+			})
+		};
 	} finally {
 		clearTimeout(timeout);
 		signal?.removeEventListener('abort', abortFromCaller);
@@ -414,48 +449,87 @@ export function buildWindowsUpdateHelperScript(): string {
 		'    $stream.Dispose()',
 		'  }',
 		'}',
-		'Write-UpdateLog "helper start: parent=$ParentPid restart=$RestartAfterApply"',
-		'if ($ReadyPath) { Set-Content -LiteralPath $ReadyPath -Value $PID -NoNewline }',
-		'Wait-Process -Id $ParentPid -ErrorAction SilentlyContinue',
-		'if (-not (Test-Path -LiteralPath $TempPath)) { Write-UpdateLog "temp missing"; Exit-Update 1 }',
-		'$tempSize = (Get-Item -LiteralPath $TempPath).Length',
-		'$tempHash = Get-Sha256 $TempPath',
-		'if ($tempSize -ne $ExpectedSize -or $tempHash -ne $ExpectedSha256.ToLowerInvariant()) {',
-		'  Write-UpdateLog "temp verification failed"',
-		'  Exit-Update 1',
-		'}',
-		'$targetDir = Split-Path -Parent $TargetPath',
-		'if (-not (Test-Path -LiteralPath $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir | Out-Null }',
-		'$copied = $false',
-		'for ($i = 1; $i -le ' + WINDOWS_HELPER_MAX_ATTEMPTS + '; $i++) {',
+		'$BackupPath = $PSCommandPath + ".backup"',
+		'function Test-ExpectedFile($Path) {',
 		'  try {',
-		'    Copy-Item -LiteralPath $TempPath -Destination $TargetPath -Force',
-		'    $copied = $true',
-		'    Write-UpdateLog "copy succeeded on attempt $i"',
-		'    break',
+		'    if (-not (Test-Path -LiteralPath $Path)) { return $false }',
+		'    return ((Get-Item -LiteralPath $Path).Length -eq $ExpectedSize -and (Get-Sha256 $Path) -eq $ExpectedSha256.ToLowerInvariant())',
 		'  } catch {',
-		'    Write-UpdateLog "copy attempt $i failed"',
-		'    Start-Sleep -Milliseconds ' + WINDOWS_HELPER_INTERVAL_MS,
+		'    return $false',
 		'  }',
 		'}',
-		'if (-not $copied) { Write-UpdateLog "copy failed after all attempts, keeping temp file"; Exit-Update 1 }',
-		'$targetSize = (Get-Item -LiteralPath $TargetPath).Length',
-		'$targetHash = Get-Sha256 $TargetPath',
-		'if ($targetSize -ne $ExpectedSize -or $targetHash -ne $ExpectedSha256.ToLowerInvariant()) {',
-		'  Write-UpdateLog "target verification failed, keeping temp file"',
+		'function Restore-Target {',
+		'  if (-not (Test-Path -LiteralPath $BackupPath)) { return $false }',
+		'  try {',
+		'    if (Test-Path -LiteralPath $TargetPath) {',
+		'      [System.IO.File]::Replace($BackupPath, $TargetPath, $null, $true)',
+		'    } else {',
+		'      [System.IO.File]::Move($BackupPath, $TargetPath)',
+		'    }',
+		'    Write-UpdateLog "target restore succeeded"',
+		'    return $true',
+		'  } catch {',
+		'    Write-UpdateLog "target restore failed"',
+		'    return $false',
+		'  }',
+		'}',
+		'try {',
+		'  Write-UpdateLog "helper start: parent=$ParentPid restart=$RestartAfterApply"',
+		'  if ($ReadyPath) { Set-Content -LiteralPath $ReadyPath -Value $PID -NoNewline }',
+		'  Wait-Process -Id $ParentPid -ErrorAction SilentlyContinue',
+		'  if (-not (Test-Path -LiteralPath $TempPath)) { Write-UpdateLog "temp missing"; Exit-Update 1 }',
+		'  $tempSize = (Get-Item -LiteralPath $TempPath).Length',
+		'  $tempHash = Get-Sha256 $TempPath',
+		'  if ($tempSize -ne $ExpectedSize -or $tempHash -ne $ExpectedSha256.ToLowerInvariant()) {',
+		'    Write-UpdateLog "temp verification failed"',
+		'    Exit-Update 1',
+		'  }',
+		'  $targetDir = Split-Path -Parent $TargetPath',
+		'  if (-not (Test-Path -LiteralPath $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir | Out-Null }',
+		'  $replaced = $false',
+		'  for ($i = 1; $i -le ' + WINDOWS_HELPER_MAX_ATTEMPTS + '; $i++) {',
+		'    try {',
+		'      if (Test-Path -LiteralPath $TargetPath) {',
+		'        [System.IO.File]::Replace($TempPath, $TargetPath, $BackupPath, $true)',
+		'      } else {',
+		'        [System.IO.File]::Move($TempPath, $TargetPath)',
+		'      }',
+		'      $replaced = $true',
+		'      Write-UpdateLog "replace succeeded on attempt $i"',
+		'      break',
+		'    } catch {',
+		'      if (Test-ExpectedFile $TargetPath) {',
+		'        $replaced = $true',
+		'        Write-UpdateLog "replace completed despite reported error"',
+		'        break',
+		'      }',
+		'      Write-UpdateLog "replace attempt $i failed"',
+		'      Start-Sleep -Milliseconds ' + WINDOWS_HELPER_INTERVAL_MS,
+		'    }',
+		'  }',
+		'  if (-not $replaced) { Write-UpdateLog "replace failed after all attempts, keeping temp file"; Exit-Update 1 }',
+		'  if (-not (Test-ExpectedFile $TargetPath)) {',
+		'    Write-UpdateLog "target verification failed, restoring old target"',
+		'    [void](Restore-Target)',
+		'    Exit-Update 1',
+		'  }',
+		'  Remove-Item -LiteralPath $TempPath -Force -ErrorAction SilentlyContinue',
+		'  Remove-Item -LiteralPath $BackupPath -Force -ErrorAction SilentlyContinue',
+		'  if ($RestartAfterApply) {',
+		'    Write-UpdateLog "starting updated executable"',
+		'    if ($WorkingDirectory -and (Test-Path -LiteralPath $WorkingDirectory)) {',
+		'      Start-Process -FilePath $TargetPath -WorkingDirectory $WorkingDirectory',
+		'    } else {',
+		'      Start-Process -FilePath $TargetPath',
+		'    }',
+		'  }',
+		'  Write-UpdateLog "update completed"',
+		'  Exit-Update 0',
+		'} catch {',
+		'  Write-UpdateLog "helper failed"',
+		'  [void](Restore-Target)',
 		'  Exit-Update 1',
 		'}',
-		'Remove-Item -LiteralPath $TempPath -Force -ErrorAction SilentlyContinue',
-		'if ($RestartAfterApply) {',
-		'  Write-UpdateLog "starting updated executable"',
-		'  if ($WorkingDirectory -and (Test-Path -LiteralPath $WorkingDirectory)) {',
-		'    Start-Process -FilePath $TargetPath -WorkingDirectory $WorkingDirectory',
-		'  } else {',
-		'    Start-Process -FilePath $TargetPath',
-		'  }',
-		'}',
-		'Write-UpdateLog "update completed"',
-		'Exit-Update 0',
 		''
 	].join('\r\n');
 }
@@ -469,12 +543,18 @@ async function startWindowsUpdateHelper(
 	try {
 		writeFileSync(helperPath, buildWindowsUpdateHelperScript(), {encoding: 'utf8', flag: 'wx'});
 		const args = [
-			'-ParentPid', String(process.pid),
-			'-TempPath', transaction.tempPath,
-			'-TargetPath', transaction.targetPath,
-			'-WorkingDirectory', process.cwd(),
-			'-ExpectedSize', String(transaction.plan.expectedSize),
-			'-ExpectedSha256', transaction.plan.expectedSha256
+			'-ParentPid',
+			String(process.pid),
+			'-TempPath',
+			transaction.tempPath,
+			'-TargetPath',
+			transaction.targetPath,
+			'-WorkingDirectory',
+			process.cwd(),
+			'-ExpectedSize',
+			String(transaction.plan.expectedSize),
+			'-ExpectedSha256',
+			transaction.plan.expectedSha256
 		];
 		if (restartAfterApply) args.push('-RestartAfterApply');
 		await spawnDetachedPowerShell(helperPath, args, spawnProcess);
@@ -487,27 +567,23 @@ async function startWindowsUpdateHelper(
 		};
 	} catch (error) {
 		removeFileBestEffort(helperPath);
-		return {ok: false, error: makeSelfUpdateError('apply', '启动 Windows 更新 helper 失败', {
-			cause: errorCause(error),
-			targetPath: transaction.targetPath,
-			tempPath: transaction.tempPath
-		})};
+		return {
+			ok: false,
+			error: makeSelfUpdateError('apply', '启动 Windows 更新 helper 失败', {
+				cause: errorCause(error),
+				targetPath: transaction.targetPath,
+				tempPath: transaction.tempPath
+			})
+		};
 	}
 }
 
-export async function applyUpdate(
-	transaction: DownloadedSelfUpdate,
-	options: ApplyUpdateOptions = {}
-): Promise<ApplySelfUpdateResult> {
+export async function applyUpdate(transaction: DownloadedSelfUpdate, options: ApplyUpdateOptions = {}): Promise<ApplySelfUpdateResult> {
 	const platform = options.platform ?? process.platform;
 	try {
 		validateTransaction(transaction);
 		if (platform === 'win32') {
-			return startWindowsUpdateHelper(
-				transaction,
-				options.restartAfterApply ?? false,
-				options.spawnProcess
-			);
+			return startWindowsUpdateHelper(transaction, options.restartAfterApply ?? false, options.spawnProcess);
 		}
 		const chmodFile = options.chmodFile ?? chmodSync;
 		const openFile = options.openFile ?? ((filePath: string, flags: string) => openSync(filePath, flags));
@@ -529,11 +605,14 @@ export async function applyUpdate(
 			restartStarted: false
 		};
 	} catch (error) {
-		return {ok: false, error: makeSelfUpdateError('apply', '替换 ccq 可执行文件失败', {
-			cause: errorCause(error),
-			targetPath: transaction.targetPath,
-			tempPath: transaction.tempPath
-		})};
+		return {
+			ok: false,
+			error: makeSelfUpdateError('apply', '替换 ccq 可执行文件失败', {
+				cause: errorCause(error),
+				targetPath: transaction.targetPath,
+				tempPath: transaction.tempPath
+			})
+		};
 	}
 }
 
@@ -558,9 +637,12 @@ export async function restartExecutable(
 		child.unref();
 		return {ok: true, state: 'scheduled', targetPath, restartStarted: true};
 	} catch (error) {
-		return {ok: false, error: makeSelfUpdateError('apply', '重启 ccq 失败，请手动重新运行 ccq', {
-			cause: errorCause(error),
-			targetPath
-		})};
+		return {
+			ok: false,
+			error: makeSelfUpdateError('apply', '重启 ccq 失败，请手动重新运行 ccq', {
+				cause: errorCause(error),
+				targetPath
+			})
+		};
 	}
 }

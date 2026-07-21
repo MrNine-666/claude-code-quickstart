@@ -17,13 +17,23 @@ function gitLines(args) {
 	return result.stdout.split(/\r?\n/).filter(Boolean);
 }
 
+const gitPrefix = gitLines(['rev-parse', '--show-prefix']).join('').replaceAll('\\', '/');
+function relativeToTuiRoot(file) {
+	const normalized = file.replaceAll('\\', '/');
+	return gitPrefix && normalized.startsWith(gitPrefix)
+		? normalized.slice(gitPrefix.length)
+		: normalized;
+}
+
 const candidates = new Set();
 const trackedArgs = base
 	? ['diff', '--name-only', '--diff-filter=ACMR', `${base}...HEAD`, '--', 'src', 'tests']
 	: ['diff', '--cached', '--name-only', '--diff-filter=ACMR', '--', 'src', 'tests'];
 
-for (const file of gitLines(trackedArgs)) candidates.add(file);
-for (const file of gitLines(['ls-files', '--others', '--exclude-standard', '--', 'src', 'tests'])) candidates.add(file);
+for (const file of gitLines(trackedArgs)) candidates.add(relativeToTuiRoot(file));
+for (const file of gitLines(['ls-files', '--others', '--exclude-standard', '--', 'src', 'tests'])) {
+	candidates.add(relativeToTuiRoot(file));
+}
 
 const files = [...candidates].filter(file => formattable.test(file)).sort();
 if (files.length === 0) {

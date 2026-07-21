@@ -14,13 +14,17 @@ export function listBuiltinMcpOptions(): {value: string; label: string}[] {
 		.sort((a, b) => a.label.localeCompare(b.label));
 }
 
-/** 收集契约中 env 类凭据键（single-key/multi-field/url-embedded），用于模板预填占位。 */
+/**
+ * 收集契约中 env 类凭据键（single-key / multi-field），用于模板预填占位。
+ * url-embedded 凭据嵌在 URL 占位符里（如 `?tavilyApiKey={TAVILY_API_KEY}`），
+ * 不应写入 env——远程 HTTP MCP 不会读 env，用户应直接改 URL。
+ */
 function collectEnvCredentialKeys(def: McpServerDefinition): Record<string, string> {
 	const env: Record<string, string> = {};
 	const credentialType = def.CredentialType;
 	if (credentialType === 'single-key' && def.ApiKeyName) {
 		env[def.ApiKeyName] = '';
-	} else if (credentialType === 'multi-field' || credentialType === 'url-embedded') {
+	} else if (credentialType === 'multi-field') {
 		for (const cred of def.Credentials ?? []) {
 			if (cred.Name) {
 				env[cred.Name] = '';
@@ -43,36 +47,55 @@ function collectOptionalHeaderKeys(def: McpServerDefinition): Record<string, str
 	return headers;
 }
 
-/** 收集凭据获取地址提示（按字段拼成「字段: URL」分号串）。 */
+/**
+ * 收集凭据获取地址提示。
+ * 多段用换行拼接（不用「；」同行）：TUI 窄宽软换行会把同行 URL 从中截断，
+ * 终端/OSC8 链接触发时路径就不对；URL 独占一行可避免被中文说明挤断。
+ */
 function collectCredentialHint(def: McpServerDefinition): string | undefined {
 	const parts: string[] = [];
+
+	// url-embedded：凭据嵌在 URL 占位符中，明确提示用户把 {NAME} 换成真实 key。
+	if (def.CredentialType === 'url-embedded') {
+		const placeholders = (def.Credentials ?? []).map(cred => (cred.Name ? `{${cred.Name}}` : '')).filter(Boolean);
+		if (placeholders.length > 0) {
+			parts.push(`请将 URL 中的 ${placeholders.join('、')} 替换为真实 API Key`);
+		}
+	}
+
 	if (def.ApiKeyUrl) {
-		parts.push(`${def.ApiKeyName ?? 'API Key'}: ${def.ApiKeyUrl}`);
+		// URL 单独成行，避免「标签: url」在窄终端被软换行拆断
+		parts.push(`${def.ApiKeyName ?? 'API Key'}：`);
+		parts.push(String(def.ApiKeyUrl));
 	}
 
 	for (const cred of def.Credentials ?? []) {
 		if (cred.Url) {
-			parts.push(`${cred.Label ?? cred.Name ?? '凭据'}: ${cred.Url}`);
+			parts.push(`${cred.Label ?? cred.Name ?? '凭据'}：`);
+			parts.push(String(cred.Url));
 		}
 	}
 
 	for (const cred of def.ArgsCredentials ?? []) {
 		if (cred.Url) {
-			parts.push(`${cred.Label ?? cred.ArgName ?? '参数'}: ${cred.Url}`);
+			parts.push(`${cred.Label ?? cred.ArgName ?? '参数'}：`);
+			parts.push(String(cred.Url));
 		}
 	}
 
 	if (def.TokenUrl) {
-		parts.push(`${def.TokenLabel ?? 'Token'}: ${def.TokenUrl}`);
+		parts.push(`${def.TokenLabel ?? 'Token'}：`);
+		parts.push(String(def.TokenUrl));
 	}
 
 	for (const header of def.OptionalHeaders ?? []) {
 		if (header.Url) {
-			parts.push(`${header.Label ?? header.HeaderName}: ${header.Url}`);
+			parts.push(`${header.Label ?? header.HeaderName}：`);
+			parts.push(String(header.Url));
 		}
 	}
 
-	return parts.length > 0 ? parts.join('；') : undefined;
+	return parts.length > 0 ? parts.join('\n') : undefined;
 }
 
 /**
@@ -106,7 +129,8 @@ export type McpTemplateResult = {readonly json: string; readonly credHint?: stri
 /**
  * 内置 MCP 模板：从契约 definition 派生初始 config JSON + 凭据提示。
  * - stdio：{ command, args, env(凭据键占位) }
- * - http：{ type:'http', url, env(凭据键占位) }
+ * - http single-key/multi-field：{ type:'http', url, env(凭据键占位) }
+ * - http url-embedded：{ type:'http', url(含 {NAME} 占位) }，无 env；用户直接改 URL
  * - software / 无契约：返回 null（自定义场景由调用方给空白模板）
  */
 export function getMcpTemplateJson(serverId: string): McpTemplateResult | null {
@@ -163,11 +187,14 @@ function stringifyConfig(config: unknown): string {
 	return `${JSON.stringify(config, null, 2)}\n`;
 }
 
-export type McpFormPayload = {readonly serverId: string; readonly config: McpConfigEntry};
+export type McpFormPayload = {
+	readonly serverId: string;
+	readonly config: McpConfigEntry;
+	/** 解析期从 URL 占位符/env 兼容路径提取的 vault 凭据（url-embedded）。 */
+	readonly credentials?: Record<string, string>;
+};
 
-export type McpFormParseResult =
-	| {readonly ok: true; readonly payload: McpFormPayload}
-	| {readonly ok: false; readonly error: string};
+export type McpFormParseResult = {readonly ok: true; readonly payload: McpFormPayload} | {readonly ok: false; readonly error: string};
 
 export type McpJsonFormatResult =
 	| {readonly ok: true; readonly value: Record<string, unknown>}
@@ -243,6 +270,8 @@ function applyBucketOrDelete(config: McpConfigEntry, key: string, value: unknown
  * - JSON 必须为对象
  * - 类型由内容判定：type==='http' 或含 url → http（需 url）；否则 stdio（需 command）
  * - env 规整为 string→string，args 过滤为 string[]，headers 过滤空值
+ * - http URL 若含 `{NAME}` 占位符：优先用 env[NAME] 做 encodeURIComponent 替换（兼容旧模板），
+ *   成功后剥离对应 env；仍有未替换占位符则报错
  */
 export function parseMcpFormInput(serverId: string, json: string): McpFormParseResult {
 	const trimmedId = serverId.trim();
@@ -261,9 +290,79 @@ export function parseMcpFormInput(serverId: string, json: string): McpFormParseR
 		return {ok: false, error: result.error};
 	}
 
-	return {ok: true, payload: {serverId: trimmedId, config: result.config}};
+	const resolved = resolveUrlEmbeddedPlaceholders(result.config);
+	if (!resolved.ok) {
+		return {ok: false, error: resolved.error};
+	}
+
+	const payload: McpFormPayload = {
+		serverId: trimmedId,
+		config: resolved.config,
+		...(Object.keys(resolved.credentials).length > 0 ? {credentials: resolved.credentials} : {})
+	};
+	return {ok: true, payload};
 }
 
+const URL_PLACEHOLDER_RE = /\{([A-Za-z0-9_]+)\}/g;
+
+type ResolveUrlResult =
+	| {readonly ok: true; readonly config: McpConfigEntry; readonly credentials: Record<string, string>}
+	| {readonly ok: false; readonly error: string};
+
+/**
+ * http URL 占位符解析（url-embedded 安全网）。
+ * - 无 `{NAME}`：原样返回
+ * - 有占位符：若 env[NAME] 非空，用 encodeURIComponent 替换并收集 credentials，再从 env 移除该键
+ * - 替换后仍有占位符：返回明确错误（提示用户把 {NAME} 换成真实 API Key）
+ * 对齐 buildMcpConfig 的 url-embedded 替换语义，但不依赖契约定义。
+ */
+function resolveUrlEmbeddedPlaceholders(config: McpConfigEntry): ResolveUrlResult {
+	const url = config.url;
+	if (typeof url !== 'string' || !URL_PLACEHOLDER_RE.test(url)) {
+		// 重置 lastIndex：全局正则 test 会推进状态
+		URL_PLACEHOLDER_RE.lastIndex = 0;
+		return {ok: true, config, credentials: {}};
+	}
+
+	URL_PLACEHOLDER_RE.lastIndex = 0;
+	const names = new Set<string>();
+	for (const match of url.matchAll(URL_PLACEHOLDER_RE)) {
+		names.add(match[1]!);
+	}
+
+	let resolvedUrl = url;
+	const credentials: Record<string, string> = {};
+	const env: Record<string, string> = {...(config.env ?? {})};
+
+	for (const name of names) {
+		const value = env[name];
+		if (value == null || String(value).trim() === '') {
+			continue;
+		}
+
+		credentials[name] = String(value);
+		resolvedUrl = resolvedUrl.split(`{${name}}`).join(encodeURIComponent(String(value)));
+		delete env[name];
+	}
+
+	const remaining = [...resolvedUrl.matchAll(/\{([A-Za-z0-9_]+)\}/g)].map(match => `{${match[1]!}}`);
+	if (remaining.length > 0) {
+		const unique = [...new Set(remaining)];
+		return {
+			ok: false,
+			error: `URL 仍包含未替换占位符，请把 ${unique.join('、')} 换成真实 API Key`
+		};
+	}
+
+	const next: McpConfigEntry = {...config, url: resolvedUrl};
+	if (Object.keys(env).length > 0) {
+		next.env = env;
+	} else {
+		delete next.env;
+	}
+
+	return {ok: true, config: next, credentials};
+}
 
 function normalizeEnv(value: unknown): Record<string, string> | undefined {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) {

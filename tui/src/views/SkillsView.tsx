@@ -1,18 +1,33 @@
-import React, {useEffect, useReducer} from 'react';
-import {TextAttributes} from '@opentui/core';
+import React, {useCallback, useEffect, useMemo, useReducer, useRef} from 'react';
+import {TextAttributes, type KeyEvent, type ScrollBoxRenderable} from '@opentui/core';
 import {useKeyboard} from '@opentui/react';
-import type {KeyEvent} from '@opentui/core';
-import {Checkbox, ErrorPanel, ListEmptyState, ListLoadingState, Modal, ProgressLog, ScrollList, SingleLineInput, ThemedScrollbox, ViewHeader, toast} from '../components/index.js';
+import {
+	Card,
+	Checkbox,
+	ErrorPanel,
+	ListEmptyState,
+	ListLoadingState,
+	Modal,
+	ScrollList,
+	SingleLineInput,
+	ThemedScrollbox,
+	ViewHeader,
+	busyActionTitle,
+	toast,
+	type BusyOverlayState
+} from '../components/index.js';
 import {colors} from '../theme/index.js';
 import type {DetectionState} from '../services/async-detection.js';
 import type {DetectionCache} from '../hooks/use-detection-cache.js';
 import type {InstalledSkill, SearchSkillResult, SkillSharedRow} from '../core/skills.js';
 import {projectSharedSkills, searchSkillIdentity, skillSourcesEquivalent} from '../core/skills.js';
 import type {ProgressCallback} from '../core/exec.js';
+import {abortable, throwIfAborted} from '../core/exec.js';
 import type {SkillsBatchExecution, SkillsReplacementExecution} from '../services/skills-service.js';
 import {targetTopologyOfDraft, topologyOfInspection, type SkillTopology} from '../core/skills-storage.js';
 import type {SkillsAdoptionResult} from '../services/skills-adoption.js';
 import {AGENT_CONTEXT_LABELS, AGENT_CONTEXT_ORDER, type AgentContext} from '../state/manage-state.js';
+import {useTaskCancellation, type TaskCancellation} from '../hooks/use-task-cancellation.js';
 import {viewShortcuts} from '../state/shortcuts.js';
 import {
 	createInitialSkillsViewState,
@@ -24,6 +39,7 @@ import {
 	searchInstallItems,
 	selectedInstalled,
 	shouldRunSearch,
+	SKILLS_GRID_COLUMNS,
 	uninstallTargets,
 	type InstallDraft,
 	type SkillsViewAction,
@@ -34,7 +50,7 @@ import {
 type Dispatch = React.Dispatch<SkillsViewAction>;
 
 // Skills 视图（OpenTUI 适配）：共享本体 + 双侧注入架构（shared-resource-injection-ui Section 18）。
-// 列表页：本地过滤框 + 共享列表（一行一 skill name + Claude Code/Codex 双态徽章）；
+// 列表页：本地过滤框 + 两列共享网格（每张卡片一个 skill name + Claude Code/Codex 双态徽章）；
 //   Enter 管理安装（切 Claude Code symlink）/ A 更新全部 / U 更新当前 / d 全量卸载（所有 Agent）/ r 刷新。
 // 安装页：远程搜索框 + 扁平 skill 列表；Enter 弹安装目标 Modal（Codex 只读恒勾）。
 // Modal（安装目标 / 管理安装 / 全量卸载确认）统一绝对定位居中覆盖，不挤占列表布局。
@@ -51,11 +67,13 @@ function skillsModalHint(mode: SkillsViewMode): string {
 }
 
 function skillsModalOpen(mode: SkillsViewMode): boolean {
-	return mode === 'select-install-target'
-		|| mode === 'manage-inject'
-		|| mode === 'confirm-topology-change'
-		|| mode === 'confirm-source-replacement'
-		|| mode === 'confirm-uninstall';
+	return (
+		mode === 'select-install-target' ||
+		mode === 'manage-inject' ||
+		mode === 'confirm-topology-change' ||
+		mode === 'confirm-source-replacement' ||
+		mode === 'confirm-uninstall'
+	);
 }
 
 export type SkillsViewServices = {
@@ -67,19 +85,36 @@ export type SkillsViewServices = {
 		results: readonly SearchSkillResult[],
 		targets: readonly AgentContext[],
 		onProgress?: ProgressCallback,
-		installed?: readonly SkillSharedRow[]
+		installed?: readonly SkillSharedRow[],
+		signal?: AbortSignal
 	) => Promise<SkillsBatchExecution>;
 	readonly finalizeReplacementSnapshots: (
 		replacements: readonly SkillsReplacementExecution[],
 		confirmedKeys: readonly string[]
 	) => Promise<void>;
-	readonly transitionTopology: (skill: SkillSharedRow, target: SkillTopology, onProgress?: ProgressCallback) => Promise<SkillsAdoptionResult>;
+	readonly transitionTopology: (
+		skill: SkillSharedRow,
+		target: SkillTopology,
+		onProgress?: ProgressCallback,
+		signal?: AbortSignal
+	) => Promise<SkillsAdoptionResult>;
 	// 更新两侧（A）：单次全局 update，由 skills lock 更新所有注入侧。
-	readonly updateBothSides: (onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string; noChange?: boolean}>;
+	readonly updateBothSides: (
+		onProgress?: ProgressCallback,
+		signal?: AbortSignal
+	) => Promise<{success: boolean; error?: string; noChange?: boolean}>;
 	// 更新单个（U）：skills update <name>，只更新列表页当前光标 skill。
-	readonly updateOne: (name: string, onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string; noChange?: boolean}>;
+	readonly updateOne: (
+		name: string,
+		onProgress?: ProgressCallback,
+		signal?: AbortSignal
+	) => Promise<{success: boolean; error?: string; noChange?: boolean}>;
 	// 全量卸载（d）：单条 skills remove 省略 --agent，由 CLI 默认从所有 Agent 删除。
-	readonly uninstallAllAgents: (name: string, onProgress?: ProgressCallback) => Promise<{success: boolean; error?: string}>;
+	readonly uninstallAllAgents: (
+		name: string,
+		onProgress?: ProgressCallback,
+		signal?: AbortSignal
+	) => Promise<{success: boolean; error?: string}>;
 	readonly createDetectionRunner: (
 		onChange: import('../services/detection-runner.js').DetectionStateSink<InstalledSkill[]>
 	) => import('../services/detection-runner.js').DetectionRunner<InstalledSkill[]>;
@@ -91,18 +126,24 @@ export type SkillsViewProps = {
 	readonly cache: DetectionCache<InstalledSkill[]>;
 	readonly active?: boolean;
 	readonly onSubModeChange?: (subMode: string) => void;
+	readonly onBusyStateChange?: (state: BusyOverlayState | null) => void;
 	readonly onExitToNav?: () => void;
 };
 
-export function SkillsView({
-	services,
-	cache,
-	active = true,
-	onSubModeChange,
-	onExitToNav
-}: SkillsViewProps) {
+export function SkillsView({services, cache, active = true, onSubModeChange, onBusyStateChange, onExitToNav}: SkillsViewProps) {
 	const [view, dispatch] = useReducer(reduceSkillsViewState, createInitialSkillsViewState());
 	const detection = cache.state;
+	const taskCancellation = useTaskCancellation();
+	const cancelBusyTask = useCallback(() => {
+		if (!taskCancellation.cancel()) {
+			return;
+		}
+
+		dispatch({type: 'cancel-busy'});
+		toast.info('已取消任务，正在刷新状态');
+		cache.refresh();
+	}, [cache, taskCancellation]);
+	const busyOverlayState = useMemo(() => createSkillsBusyOverlayState(view, cancelBusyTask), [view, cancelBusyTask]);
 
 	// 缓存检测成功时投影为双侧共享行灌入视图 reducer（一次 list 派生 Claude Code / Codex 双态）。
 	useEffect(() => {
@@ -118,13 +159,19 @@ export function SkillsView({
 		}
 	}, [active, view.mode, view.busyAction, onSubModeChange]);
 
+	useEffect(() => {
+		onBusyStateChange?.(busyOverlayState);
+	}, [busyOverlayState, onBusyStateChange]);
+
+	useEffect(() => () => onBusyStateChange?.(null), [onBusyStateChange]);
+
 	// 键盘输入处理（OpenTUI useKeyboard 回调参数是 KeyEvent 对象，键名取 .name）
-	useKeyboard((keyEvent) => {
+	useKeyboard(keyEvent => {
 		if (!active) {
 			return;
 		}
 
-		handleKey(keyEvent, view, dispatch, services, cache, onExitToNav);
+		handleKey(keyEvent, view, dispatch, services, cache, onExitToNav, taskCancellation);
 	});
 
 	return (
@@ -132,25 +179,29 @@ export function SkillsView({
 			<ViewHeader title="Skills 技能管理" subtitle="共享维护 Claude Code 与 Codex 两侧的 Skills（搜索、安装、更新、卸载）" />
 			{renderDetectionNotice(detection)}
 			{renderPage(view, detection, active && !skillsModalOpen(view.mode), dispatch)}
-			{view.batchSummary ? (
-				<box marginTop={1} flexShrink={0}>
-					<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{view.batchSummary}</text>
-				</box>
-			) : null}
-			{view.busyAction ? <ProgressLog title="执行进度" messages={view.progress} /> : null}
 			{view.errorText ? (
 				<box marginTop={1}>
 					<ErrorPanel message={view.errorText} />
 				</box>
 			) : null}
-			{view.mode === 'select-install-target' || view.mode === 'manage-inject' ? (
-				<InstallTargetModal view={view} />
-			) : null}
+			{view.mode === 'select-install-target' || view.mode === 'manage-inject' ? <InstallTargetModal view={view} /> : null}
 			{view.mode === 'confirm-topology-change' ? <TopologyConfirmModal view={view} /> : null}
 			{view.mode === 'confirm-source-replacement' ? <SourceReplacementConfirmModal view={view} /> : null}
 			{view.mode === 'confirm-uninstall' ? renderConfirm(view) : null}
 		</box>
 	);
+}
+
+function createSkillsBusyOverlayState(view: SkillsViewState, onCancel: () => void): BusyOverlayState | null {
+	if (!view.busyAction) {
+		return null;
+	}
+
+	return {
+		title: view.batchStage === 'reconciling' ? '正在同步 Skills 状态' : busyActionTitle(view.busyAction, ' Skill'),
+		message: view.progress.at(-1),
+		onCancel
+	};
 }
 
 // ── 按键总分发 ─────────────────────────────────────────────────────────────
@@ -161,7 +212,8 @@ function handleKey(
 	dispatch: Dispatch,
 	services: SkillsViewServices,
 	cache: DetectionCache<InstalledSkill[]>,
-	onExitToNav?: () => void
+	onExitToNav: (() => void) | undefined,
+	taskCancellation: TaskCancellation
 ): void {
 	// busy 进行中：忽略一切输入
 	if (view.mode === 'busy') {
@@ -170,12 +222,12 @@ function handleKey(
 
 	// 安装目标 / 管理安装 Modal：↑/↓ 选侧、空格切草稿（仅 Claude Code）、Enter 提交、Esc 取消
 	if (view.mode === 'select-install-target' || view.mode === 'manage-inject') {
-		handleTargetModalKey(keyEvent, view, dispatch, services, cache);
+		handleTargetModalKey(keyEvent, view, dispatch, services, cache, taskCancellation);
 		return;
 	}
 
 	if (view.mode === 'confirm-topology-change' || view.mode === 'confirm-source-replacement') {
-		handleLifecycleConfirmKey(keyEvent, view, dispatch, services, cache);
+		handleLifecycleConfirmKey(keyEvent, view, dispatch, services, cache, taskCancellation);
 		return;
 	}
 
@@ -184,7 +236,7 @@ function handleKey(
 		const mapped = mapActionKey(keyEvent.name);
 		if (mapped === 'enter') {
 			dispatch({type: 'confirm'});
-			runConfirmedUninstall(view, services, dispatch, cache);
+			runConfirmedUninstall(view, services, dispatch, cache, taskCancellation);
 		} else if (mapped === 'escape') {
 			dispatch({type: 'cancel'});
 		}
@@ -198,7 +250,7 @@ function handleKey(
 	}
 
 	// mode === 'list'
-	handleListKey(keyEvent, view, dispatch, services, cache, onExitToNav);
+	handleListKey(keyEvent, view, dispatch, services, cache, onExitToNav, taskCancellation);
 }
 
 /** 安装目标 / 管理安装 Modal 按键：复用 Tools InjectTargetModal 范式。 */
@@ -207,7 +259,8 @@ function handleTargetModalKey(
 	view: SkillsViewState,
 	dispatch: Dispatch,
 	services: SkillsViewServices,
-	cache: DetectionCache<InstalledSkill[]>
+	cache: DetectionCache<InstalledSkill[]>,
+	taskCancellation: TaskCancellation
 ): void {
 	const k = keyEvent.name.toLowerCase();
 	if (k === 'up' || k === 'arrowup') {
@@ -235,11 +288,11 @@ function handleTargetModalKey(
 			if (pendingSourceReplacements(view).length > 0) {
 				dispatch({type: 'request-source-replacement'});
 			} else {
-				runInstallToTargets(view, services, dispatch, cache);
+				runInstallToTargets(view, services, dispatch, cache, taskCancellation);
 			}
-			} else {
-				dispatch({type: 'request-topology-change'});
-			}
+		} else {
+			dispatch({type: 'request-topology-change'});
+		}
 	}
 }
 
@@ -248,7 +301,8 @@ function handleLifecycleConfirmKey(
 	view: SkillsViewState,
 	dispatch: Dispatch,
 	services: SkillsViewServices,
-	cache: DetectionCache<InstalledSkill[]>
+	cache: DetectionCache<InstalledSkill[]>,
+	taskCancellation: TaskCancellation
 ): void {
 	const mapped = mapActionKey(keyEvent.name);
 	if (mapped === 'escape') {
@@ -261,9 +315,9 @@ function handleLifecycleConfirmKey(
 	}
 
 	if (view.mode === 'confirm-topology-change') {
-		runTopologyTransition(view, services, dispatch, cache);
+		runTopologyTransition(view, services, dispatch, cache, taskCancellation);
 	} else {
-		runInstallToTargets(view, services, dispatch, cache);
+		runInstallToTargets(view, services, dispatch, cache, taskCancellation);
 	}
 }
 
@@ -274,7 +328,8 @@ function handleListKey(
 	dispatch: Dispatch,
 	services: SkillsViewServices,
 	cache: DetectionCache<InstalledSkill[]>,
-	onExitToNav?: () => void
+	onExitToNav: (() => void) | undefined,
+	taskCancellation: TaskCancellation
 ): void {
 	const name = keyEvent.name;
 
@@ -295,7 +350,7 @@ function handleListKey(
 		const nav = mapNavKey(name);
 		if (nav) {
 			keyEvent.preventDefault?.();
-			dispatch({type: nav === 'up' ? 'nav-up' : 'nav-down'});
+			dispatch({type: 'nav-grid', direction: nav});
 			return;
 		}
 
@@ -306,20 +361,30 @@ function handleListKey(
 		return;
 	}
 
-	// 浏览态：Esc/← 退回左侧导航
-	if (name === 'escape' || name === 'left' || name === 'arrowleft') {
+	// 浏览态：Esc 退回左侧导航；网格首项 ← 与 Esc 等效。
+	if (name === 'escape' || ((name === 'left' || name === 'arrowleft') && view.installedIndex === 0)) {
 		onExitToNav?.();
+		return;
+	}
+
+	if (name === 'left' || name === 'arrowleft') {
+		dispatch({type: 'nav-grid', direction: 'left'});
+		return;
+	}
+
+	if (name === 'right' || name === 'arrowright') {
+		dispatch({type: 'nav-grid', direction: 'right'});
 		return;
 	}
 
 	const mapped = mapActionKey(name);
 	switch (mapped) {
 		case 'up':
-			// Skills 隐藏 Header：列表 ↑/↓ 首尾循环，不退回 header。
-			dispatch({type: 'nav-up'});
+			// Skills 隐藏 Header：网格 ↑/↓ 按列移动并在首尾行循环，不退回 header。
+			dispatch({type: 'nav-grid', direction: 'up'});
 			return;
 		case 'down':
-			dispatch({type: 'nav-down'});
+			dispatch({type: 'nav-grid', direction: 'down'});
 			return;
 		case 'tab':
 			dispatch({type: 'filter-focus'});
@@ -337,12 +402,12 @@ function handleListKey(
 		case 'update-all':
 			// A：更新全部（skills update，空名单）。
 			dispatch({type: 'request-update'});
-			runUpdateIfReady(view, services, dispatch);
+			runUpdateIfReady(view, services, dispatch, cache, taskCancellation);
 			return;
 		case 'update-one':
 			// U：更新当前光标单个 skill（skills update <name>）。
 			dispatch({type: 'request-update-one'});
-			runUpdateOneIfReady(view, services, dispatch);
+			runUpdateOneIfReady(view, services, dispatch, cache, taskCancellation);
 			return;
 		case 'uninstall':
 			dispatch({type: 'request-uninstall'});
@@ -521,11 +586,15 @@ function mapNavKey(key: string): 'up' | 'down' | null {
 // ── 异步动作（经 service，进度回填 reducer） ─────────────────────────────────
 
 function progressSink(dispatch: Dispatch): ProgressCallback {
-	return (event) => dispatch({type: 'progress', message: event.message});
+	return event => {
+		if (event.instruction) {
+			dispatch({type: 'progress', message: event.instruction});
+		}
+	};
 }
 
 function runSearch(query: string, services: SkillsViewServices, dispatch: Dispatch): void {
-	void services.searchSkills(query).then((outcome) => {
+	void services.searchSkills(query).then(outcome => {
 		if (outcome.ok) {
 			dispatch({type: 'search-done', results: outcome.results});
 			if (outcome.results.length === 0) {
@@ -542,7 +611,8 @@ function runInstallToTargets(
 	view: SkillsViewState,
 	services: SkillsViewServices,
 	dispatch: Dispatch,
-	cache: DetectionCache<InstalledSkill[]>
+	cache: DetectionCache<InstalledSkill[]>,
+	taskCancellation: TaskCancellation
 ): void {
 	const skills = pendingInstallResults(view);
 	if (skills.length === 0) {
@@ -552,13 +622,16 @@ function runInstallToTargets(
 	}
 
 	const targets = AGENT_CONTEXT_ORDER.filter(ctx => view.installDraft[ctx]);
+	const signal = taskCancellation.start();
+	if (!signal) return;
 	dispatch({type: 'confirm'});
 	void (async () => {
 		try {
-			const execution = await services.installBatchToTargets(skills, targets, progressSink(dispatch), view.installed);
+			const execution = await services.installBatchToTargets(skills, targets, progressSink(dispatch), view.installed, signal);
+			throwIfAborted(signal);
 			dispatch({type: 'install-execution-done'});
-			dispatch({type: 'progress', message: '正在核对最终安装状态'});
-			const refreshed = await cache.refreshAndWait();
+			const refreshed = await abortable(cache.refreshAndWait(), signal);
+			throwIfAborted(signal);
 			if (refreshed?.status !== 'success') {
 				const failedSources = execution.batches
 					.filter(batch => !batch.result.success)
@@ -575,12 +648,15 @@ function runInstallToTargets(
 			const installed = projectSharedSkills(refreshed.result ?? []);
 			const confirmedKeys = confirmedInstallKeys(skills, view.installed, installed, execution, targets);
 			await services.finalizeReplacementSnapshots(execution.replacements, confirmedKeys);
+			throwIfAborted(signal);
 			const confirmedCount = confirmedKeys.length;
 			const missingCount = skills.length - confirmedCount;
 			const confirmed = new Set(confirmedKeys);
 			const replacementErrors = execution.replacements.flatMap(item => {
 				if (!item.success) {
-					return [`${item.skillName}: ${item.error ?? '来源替换失败'}${item.recoveryPath ? `（恢复快照：${item.recoveryPath}）` : ''}`];
+					return [
+						`${item.skillName}: ${item.error ?? '来源替换失败'}${item.recoveryPath ? `（恢复快照：${item.recoveryPath}）` : ''}`
+					];
 				}
 
 				return confirmed.has(item.key)
@@ -599,7 +675,11 @@ function runInstallToTargets(
 				toast.info(`安装结果：已确认 ${confirmedCount}，仍未安装 ${missingCount}`);
 			}
 		} catch (error) {
+			if (signal.aborted) return;
 			dispatch({type: 'action-failed', error: errorMessage(error)});
+		} finally {
+			taskCancellation.finish(signal);
+			if (signal.aborted) cache.refresh();
 		}
 	})();
 }
@@ -645,7 +725,8 @@ function runTopologyTransition(
 	view: SkillsViewState,
 	services: SkillsViewServices,
 	dispatch: Dispatch,
-	cache: DetectionCache<InstalledSkill[]>
+	cache: DetectionCache<InstalledSkill[]>,
+	taskCancellation: TaskCancellation
 ): void {
 	const current = selectedInstalled(view);
 	const target = targetTopologyOfDraft(view.installDraft);
@@ -654,19 +735,20 @@ function runTopologyTransition(
 		return;
 	}
 
+	const signal = taskCancellation.start();
+	if (!signal) return;
 	dispatch({type: 'confirm'});
 	void (async () => {
 		try {
-			const result = await services.transitionTopology(current, target, progressSink(dispatch));
-			await finishTopologyLifecycle(
-				result,
-				cache,
-				dispatch,
-				current.name,
-				target
-			);
+			const result = await services.transitionTopology(current, target, progressSink(dispatch), signal);
+			throwIfAborted(signal);
+			await finishTopologyLifecycle(result, cache, dispatch, current.name, target, signal);
 		} catch (error) {
+			if (signal.aborted) return;
 			dispatch({type: 'action-failed', error: `拓扑切换失败：${errorMessage(error)}`});
+		} finally {
+			taskCancellation.finish(signal);
+			if (signal.aborted) cache.refresh();
 		}
 	})();
 }
@@ -676,7 +758,8 @@ async function finishTopologyLifecycle(
 	cache: DetectionCache<InstalledSkill[]>,
 	dispatch: Dispatch,
 	name: string,
-	target: SkillTopology
+	target: SkillTopology,
+	signal: AbortSignal
 ): Promise<void> {
 	const recovery = result.recoveryPath ? `\n恢复快照：${result.recoveryPath}` : '';
 	const error = result.success ? undefined : `${result.error ?? '拓扑切换失败'}${recovery}`;
@@ -685,18 +768,24 @@ async function finishTopologyLifecycle(
 		return;
 	}
 
-	await reconcileManagedLifecycle(cache, dispatch, {
-		message: result.outcome === 'complete'
-			? `${name} 已切换为${topologyLabel(target)}`
-			: result.outcome === 'partial'
-				? `${name} 内容可用，但共享投影尚未完成`
-				: result.outcome === 'restored'
-					? `${name} 切换失败，已恢复原拓扑`
-					: undefined,
-		warning: result.outcome === 'partial' || result.outcome === 'restored',
-		error,
-		...(result.outcome === 'complete' ? {expected: {name, target}} : {})
-	});
+	await reconcileManagedLifecycle(
+		cache,
+		dispatch,
+		{
+			message:
+				result.outcome === 'complete'
+					? `${name} 已切换为${topologyLabel(target)}`
+					: result.outcome === 'partial'
+						? `${name} 内容可用，但共享投影尚未完成`
+						: result.outcome === 'restored'
+							? `${name} 切换失败，已恢复原拓扑`
+							: undefined,
+			warning: result.outcome === 'partial' || result.outcome === 'restored',
+			error,
+			...(result.outcome === 'complete' ? {expected: {name, target}} : {})
+		},
+		signal
+	);
 }
 
 async function reconcileManagedLifecycle(
@@ -707,10 +796,11 @@ async function reconcileManagedLifecycle(
 		readonly warning?: boolean;
 		readonly error?: string;
 		readonly expected?: {readonly name: string; readonly target: SkillTopology};
-	}
+	},
+	signal: AbortSignal
 ): Promise<void> {
-	dispatch({type: 'progress', message: '正在核对最终安装状态'});
-	const refreshed = await cache.refreshAndWait();
+	const refreshed = await abortable(cache.refreshAndWait(), signal);
+	throwIfAborted(signal);
 	if (refreshed?.status !== 'success') {
 		const detectionError = refreshed?.error ?? '安装状态检测未完成';
 		dispatch({
@@ -748,7 +838,8 @@ function runConfirmedUninstall(
 	view: SkillsViewState,
 	services: SkillsViewServices,
 	dispatch: Dispatch,
-	cache: DetectionCache<InstalledSkill[]>
+	cache: DetectionCache<InstalledSkill[]>,
+	taskCancellation: TaskCancellation
 ): void {
 	const names = uninstallTargets(view);
 	if (names.length === 0) {
@@ -757,51 +848,95 @@ function runConfirmedUninstall(
 	}
 
 	const name = names[0]!;
-	void services.uninstallAllAgents(name, progressSink(dispatch)).then((res) => {
-		if (res.success) {
-			toast.success(`已从所有 Agent 卸载 ${name}`);
-			dispatch({type: 'action-uninstall-done', names});
-			cache.refresh();
-		} else {
-			dispatch({type: 'action-failed', error: res.error ?? '卸载失败'});
-		}
-	});
+	const signal = taskCancellation.start();
+	if (!signal) return;
+	void services
+		.uninstallAllAgents(name, progressSink(dispatch), signal)
+		.then(res => {
+			if (signal.aborted) return;
+			if (res.success) {
+				toast.success(`已从所有 Agent 卸载 ${name}`);
+				dispatch({type: 'action-uninstall-done', names});
+				cache.refresh();
+			} else {
+				dispatch({type: 'action-failed', error: res.error ?? '卸载失败'});
+			}
+		})
+		.catch(error => {
+			if (!signal.aborted) dispatch({type: 'action-failed', error: `卸载失败：${errorMessage(error)}`});
+		})
+		.finally(() => {
+			taskCancellation.finish(signal);
+			if (signal.aborted) cache.refresh();
+		});
 }
 
-function runUpdateIfReady(view: SkillsViewState, services: SkillsViewServices, dispatch: Dispatch): void {
+function runUpdateIfReady(
+	view: SkillsViewState,
+	services: SkillsViewServices,
+	dispatch: Dispatch,
+	cache: DetectionCache<InstalledSkill[]>,
+	taskCancellation: TaskCancellation
+): void {
 	if (view.installed.length === 0) {
 		return;
 	}
 
-	void services.updateBothSides(progressSink(dispatch)).then((res) => {
-		if (res.success) {
-			toast.success(res.noChange ? 'skill 已是最新版本' : '已更新 skill');
-			dispatch({type: 'action-done'});
-		} else {
-			dispatch({type: 'action-failed', error: res.error ?? '更新失败'});
-		}
-	}).catch((error: unknown) => {
-		dispatch({type: 'action-failed', error: `更新失败：${errorMessage(error)}`});
-	});
+	const signal = taskCancellation.start();
+	if (!signal) return;
+	void services
+		.updateBothSides(progressSink(dispatch), signal)
+		.then(res => {
+			if (signal.aborted) return;
+			if (res.success) {
+				toast.success(res.noChange ? 'skill 已是最新版本' : '已更新 skill');
+				dispatch({type: 'action-done'});
+			} else {
+				dispatch({type: 'action-failed', error: res.error ?? '更新失败'});
+			}
+		})
+		.catch((error: unknown) => {
+			if (!signal.aborted) dispatch({type: 'action-failed', error: `更新失败：${errorMessage(error)}`});
+		})
+		.finally(() => {
+			taskCancellation.finish(signal);
+			if (signal.aborted) cache.refresh();
+		});
 }
 
 /** 更新当前光标单个 skill（U）：取列表页光标项 name，走 skills update <name>。 */
-function runUpdateOneIfReady(view: SkillsViewState, services: SkillsViewServices, dispatch: Dispatch): void {
+function runUpdateOneIfReady(
+	view: SkillsViewState,
+	services: SkillsViewServices,
+	dispatch: Dispatch,
+	cache: DetectionCache<InstalledSkill[]>,
+	taskCancellation: TaskCancellation
+): void {
 	const current = selectedInstalled(view);
 	if (!current?.source) {
 		return;
 	}
 
-	void services.updateOne(current.name, progressSink(dispatch)).then((res) => {
-		if (res.success) {
-			toast.success(res.noChange ? `选中的 ${current.name} 已是最新版本` : `已更新选中的 ${current.name}`);
-			dispatch({type: 'action-done'});
-		} else {
-			dispatch({type: 'action-failed', error: res.error ?? `更新 ${current.name} 失败`});
-		}
-	}).catch((error: unknown) => {
-		dispatch({type: 'action-failed', error: `更新 ${current.name} 失败：${errorMessage(error)}`});
-	});
+	const signal = taskCancellation.start();
+	if (!signal) return;
+	void services
+		.updateOne(current.name, progressSink(dispatch), signal)
+		.then(res => {
+			if (signal.aborted) return;
+			if (res.success) {
+				toast.success(res.noChange ? `选中的 ${current.name} 已是最新版本` : `已更新选中的 ${current.name}`);
+				dispatch({type: 'action-done'});
+			} else {
+				dispatch({type: 'action-failed', error: res.error ?? `更新 ${current.name} 失败`});
+			}
+		})
+		.catch((error: unknown) => {
+			if (!signal.aborted) dispatch({type: 'action-failed', error: `更新 ${current.name} 失败：${errorMessage(error)}`});
+		})
+		.finally(() => {
+			taskCancellation.finish(signal);
+			if (signal.aborted) cache.refresh();
+		});
 }
 
 // ── 渲染 ───────────────────────────────────────────────────────────────────
@@ -819,7 +954,6 @@ function pageOf(mode: SkillsViewMode, busyReturnMode?: 'list' | 'install'): 'lis
 
 	return 'list';
 }
-
 
 function renderDetectionNotice(detection: DetectionState<InstalledSkill[]>): React.ReactNode {
 	const {status} = detection;
@@ -844,7 +978,9 @@ function renderConfirm(view: SkillsViewState): React.ReactNode {
 	return (
 		<Modal active title="确认卸载 Skill" hint={skillsModalHint('confirm-uninstall')} tone="danger" width={SKILLS_MODAL_WIDTH}>
 			<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-				{names.length > 0 ? `将在所有 Agent 中卸载 ${names.join(', ')}：移除 Claude Code symlink 与共享本体，此操作不可撤销。` : '无卸载目标'}
+				{names.length > 0
+					? `将在所有 Agent 中卸载 ${names.join(', ')}：移除 Claude Code symlink 与共享本体，此操作不可撤销。`
+					: '无卸载目标'}
 			</text>
 		</Modal>
 	);
@@ -857,13 +993,25 @@ function TopologyConfirmModal({view}: {readonly view: SkillsViewState}) {
 	const target = targetTopologyOfDraft(view.installDraft);
 	const otherAgents = current?.otherAgents ?? [];
 	return (
-		<Modal active title={`确认切换安装拓扑：${current?.name ?? ''}`} hint={skillsModalHint('confirm-topology-change')} tone="warning" width={SKILLS_MODAL_WIDTH}>
+		<Modal
+			active
+			title={`确认切换安装拓扑：${current?.name ?? ''}`}
+			hint={skillsModalHint('confirm-topology-change')}
+			tone="warning"
+			width={SKILLS_MODAL_WIDTH}
+		>
 			<box flexDirection="column">
-				<text fg={colors.text}>{`${topologyLabel(currentTopology)} → ${target === 'empty' ? '无目标' : topologyLabel(target)}`}</text>
+				<text
+					fg={colors.text}
+				>{`${topologyLabel(currentTopology)} → ${target === 'empty' ? '无目标' : topologyLabel(target)}`}</text>
 				<text fg={colors.muted}>{`Claude 路径：${storage?.claudePath ?? '未知'}`}</text>
 				<text fg={colors.muted}>{`Codex 本体：${storage?.canonicalPath ?? '未知'}`}</text>
-				<text fg={colors.warning}>内容会先快照；目标树删除、物化和投影均由官方 Skills CLI 完成。targeted remove 可能移除远程 lock，使结果转为本地来源。</text>
-				{target === 'claude-only' ? <text fg={colors.warning}>Codex 及直接读取 .agents/skills 的消费者将失去此 Skill。</text> : null}
+				<text fg={colors.warning}>
+					内容会先快照；目标树删除、物化和投影均由官方 Skills CLI 完成。targeted remove 可能移除远程 lock，使结果转为本地来源。
+				</text>
+				{target === 'claude-only' ? (
+					<text fg={colors.warning}>Codex 及直接读取 .agents/skills 的消费者将失去此 Skill。</text>
+				) : null}
 				{otherAgents.length > 0 ? <text fg={colors.danger}>{`其它 Agent：${otherAgents.join('、')}`}</text> : null}
 			</box>
 		</Modal>
@@ -871,23 +1019,41 @@ function TopologyConfirmModal({view}: {readonly view: SkillsViewState}) {
 }
 
 function topologyLabel(topology: SkillTopology | undefined): string {
-	return topology === 'claude-only' ? '仅 Claude Code' : topology === 'codex-only' ? '仅 Codex' : topology === 'shared' ? '双侧共享' : '部分完成';
+	return topology === 'claude-only'
+		? '仅 Claude Code'
+		: topology === 'codex-only'
+			? '仅 Codex'
+			: topology === 'shared'
+				? '双侧共享'
+				: '部分完成';
 }
 
 function SourceReplacementConfirmModal({view}: {readonly view: SkillsViewState}) {
 	const replacements = pendingSourceReplacements(view);
-	const targets = AGENT_CONTEXT_ORDER.filter(ctx => view.installDraft[ctx]).map(ctx => AGENT_CONTEXT_LABELS[ctx]).join('、');
+	const targets = AGENT_CONTEXT_ORDER.filter(ctx => view.installDraft[ctx])
+		.map(ctx => AGENT_CONTEXT_LABELS[ctx])
+		.join('、');
 	const height = Math.max(3, Math.min(12, replacements.length * 4));
 	return (
-		<Modal active title="确认覆盖同名 Skill" hint={skillsModalHint('confirm-source-replacement')} tone="danger" width={SKILLS_MODAL_WIDTH}>
+		<Modal
+			active
+			title="确认覆盖同名 Skill"
+			hint={skillsModalHint('confirm-source-replacement')}
+			tone="danger"
+			width={SKILLS_MODAL_WIDTH}
+		>
 			<box flexDirection="column">
-				<text fg={colors.warning}>新来源将直接覆盖同名共享本体与 lock 来源；只有 postflight 成功后才清理未选择的旧 Claude 投影。</text>
+				<text fg={colors.warning}>
+					新来源将直接覆盖同名共享本体与 lock 来源；只有 postflight 成功后才清理未选择的旧 Claude 投影。
+				</text>
 				<text fg={colors.text}>{`最终安装目标：${targets}`}</text>
 				<box height={height} minHeight={0} marginTop={1}>
 					<ThemedScrollbox style={{flexGrow: 1, minHeight: 0}} scrollY scrollX={false}>
 						{replacements.map(item => (
 							<box key={item.identity.key} flexDirection="column" marginBottom={1}>
-								<text fg={colors.text} attributes={TextAttributes.BOLD}>{item.identity.skillName}</text>
+								<text fg={colors.text} attributes={TextAttributes.BOLD}>
+									{item.identity.skillName}
+								</text>
 								<text fg={colors.muted}>{`当前来源：${item.installed.source}`}</text>
 								<text fg={colors.primary}>{`新来源：${item.identity.source}`}</text>
 							</box>
@@ -911,19 +1077,34 @@ function InstallTargetModal({view}: {readonly view: SkillsViewState}) {
 	return (
 		<Modal active title={title} hint={skillsModalHint(view.mode)} width={SKILLS_MODAL_WIDTH}>
 			<box flexDirection="column">
-				{AGENT_CONTEXT_ORDER.map((ctx) => {
+				{AGENT_CONTEXT_ORDER.map(ctx => {
 					const checked = Boolean(view.installDraft[ctx]);
 					const focused = ctx === selected;
 					const readonly = isManage ? managedTargetReadonly(managed, ctx) : ctx === 'cx';
 					const stateLabel = isManage
 						? managedTargetLabel(managed, ctx, checked)
-						: (readonly ? '● 安装' : checked ? '● 安装' : '○ 不安装');
+						: readonly
+							? '● 安装'
+							: checked
+								? '● 安装'
+								: '○ 不安装';
 					return (
 						<box key={ctx} flexDirection="row">
-							<text fg={focused ? colors.primary : colors.muted} attributes={focused ? TextAttributes.BOLD : 0} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} flexGrow={1}>
+							<text
+								fg={focused ? colors.primary : colors.muted}
+								attributes={focused ? TextAttributes.BOLD : 0}
+								selectionBg={colors.selectionBg}
+								selectionFg={colors.selectionFg}
+								flexGrow={1}
+							>
 								{`${focused ? '›' : ' '} ${AGENT_CONTEXT_LABELS[ctx]}${readonly ? '（只读）' : ''} `}
 							</text>
-							<text fg={checked ? colors.success : colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} flexShrink={0}>
+							<text
+								fg={checked ? colors.success : colors.muted}
+								selectionBg={colors.selectionBg}
+								selectionFg={colors.selectionFg}
+								flexShrink={0}
+							>
 								{stateLabel}
 							</text>
 						</box>
@@ -985,6 +1166,71 @@ function InstalledSkillBody({skill}: {readonly skill: SkillSharedRow}) {
 	);
 }
 
+function installedSkillCardId(index: number): string {
+	return `skills-grid-item-${index}`;
+}
+
+function InstalledSkillsGrid({
+	skills,
+	cursor,
+	active
+}: {
+	readonly skills: readonly SkillSharedRow[];
+	readonly cursor: number;
+	readonly active: boolean;
+}) {
+	const scrollRef = useRef<ScrollBoxRenderable>(null);
+	const safeCursor = skills.length === 0 ? 0 : Math.min(Math.max(cursor, 0), skills.length - 1);
+	const activeSkill = skills[safeCursor];
+	const activeCardId = activeSkill ? installedSkillCardId(safeCursor) : null;
+	const rows = Array.from({length: Math.ceil(skills.length / SKILLS_GRID_COLUMNS)}, (_, rowIndex) => {
+		const start = rowIndex * SKILLS_GRID_COLUMNS;
+		return skills.slice(start, start + SKILLS_GRID_COLUMNS).map((skill, offset) => ({skill, index: start + offset}));
+	});
+
+	useEffect(() => {
+		if (!scrollRef.current || !activeCardId) {
+			return;
+		}
+
+		scrollRef.current.scrollChildIntoView(activeCardId);
+	}, [activeCardId, activeSkill?.name]);
+
+	return (
+		<box flexDirection="column" flexGrow={1} minHeight={0} marginTop={0}>
+			<ThemedScrollbox ref={scrollRef} style={{flexGrow: 1, minHeight: 0}} viewportCulling scrollY scrollX={false}>
+				<box flexDirection="column">
+					{rows.map((row, rowIndex) => (
+						<box key={`skills-grid-row-${rowIndex}`} flexDirection="row" alignItems="stretch">
+							{row.map(({skill, index}) => (
+								<box
+									key={skill.name}
+									id={installedSkillCardId(index)}
+									flexBasis={0}
+									flexGrow={1}
+									minWidth={0}
+									marginRight={index % SKILLS_GRID_COLUMNS === 0 ? 1 : 0}
+								>
+									<Card title={skill.name} focused={active && index === safeCursor} minHeight={3} multiLine>
+										<InstalledSkillBody skill={skill} />
+									</Card>
+								</box>
+							))}
+							{row.length < SKILLS_GRID_COLUMNS ? <box flexBasis={0} flexGrow={1} minWidth={0} /> : null}
+						</box>
+					))}
+				</box>
+			</ThemedScrollbox>
+			<text
+				flexShrink={0}
+				fg={colors.muted}
+				selectionBg={colors.selectionBg}
+				selectionFg={colors.selectionFg}
+			>{`(${safeCursor + 1}/${skills.length})`}</text>
+		</box>
+	);
+}
+
 function storageWarning(skill: SkillSharedRow): string | undefined {
 	switch (skill.storage?.kind) {
 		case 'shared-copy':
@@ -1028,12 +1274,6 @@ function renderPage(
 /** 列表页：顶部本地过滤框 + 已装列表（过滤后）。 */
 function renderListPage(view: SkillsViewState, active: boolean, dispatch: Dispatch): React.ReactNode {
 	const filtered = filteredInstalled(view);
-	const items = filtered.map((skill) => ({
-		key: skill.name,
-		title: skill.name,
-		body: <InstalledSkillBody skill={skill} />,
-		multiLine: true
-	}));
 
 	return (
 		<box flexDirection="column" flexGrow={1} minHeight={0}>
@@ -1050,7 +1290,7 @@ function renderListPage(view: SkillsViewState, active: boolean, dispatch: Dispat
 					hint={view.installed.length === 0 ? {label: '进入安装页搜索安装', enabled: true} : undefined}
 				/>
 			) : (
-				<ScrollList items={items} cursor={view.installedIndex} active={active} />
+				<InstalledSkillsGrid skills={filtered} cursor={view.installedIndex} active={active} />
 			)}
 		</box>
 	);
@@ -1080,13 +1320,26 @@ function renderInstallPage(
 			title: titleText,
 			titleColor: active && index === view.resultIndex ? colors.primary : colors.text,
 			titleAttrs: TextAttributes.BOLD,
-			titleRight: statusLabel || installCountText ? (
-				<box flexDirection="row">
-					{statusLabel ? <text fg={item.status === 'source-replacement' ? colors.warning : item.status === 'installed' ? colors.success : colors.muted}>{statusLabel}</text> : null}
-					{statusLabel && installCountText ? <text fg={colors.muted}>{'  '}</text> : null}
-					{installCountText ? <text fg={colors.muted}>{installCountText}</text> : null}
-				</box>
-			) : undefined,
+			titleRight:
+				statusLabel || installCountText ? (
+					<box flexDirection="row">
+						{statusLabel ? (
+							<text
+								fg={
+									item.status === 'source-replacement'
+										? colors.warning
+										: item.status === 'installed'
+											? colors.success
+											: colors.muted
+								}
+							>
+								{statusLabel}
+							</text>
+						) : null}
+						{statusLabel && installCountText ? <text fg={colors.muted}>{'  '}</text> : null}
+						{installCountText ? <text fg={colors.muted}>{installCountText}</text> : null}
+					</box>
+				) : undefined,
 			leading: (
 				<Checkbox
 					checked={item.selected}
@@ -1094,23 +1347,37 @@ function renderInstallPage(
 					focused={active && index === view.resultIndex}
 				/>
 			),
-			body: bodyParts.length > 0 ? (
-				<box flexDirection="column">
-					{bodyParts.map((part, partIndex) => (
-						<text key={`${item.identity?.key ?? skill.name}:${partIndex}`} fg={colors.muted} attributes={TextAttributes.DIM} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{part}</text>
-					))}
-				</box>
-			) : undefined,
+			body:
+				bodyParts.length > 0 ? (
+					<box flexDirection="column">
+						{bodyParts.map((part, partIndex) => (
+							<text
+								key={`${item.identity?.key ?? skill.name}:${partIndex}`}
+								fg={colors.muted}
+								attributes={TextAttributes.DIM}
+								selectionBg={colors.selectionBg}
+								selectionFg={colors.selectionFg}
+							>
+								{part}
+							</text>
+						))}
+					</box>
+				) : undefined,
 			multiLine: true
 		};
 	});
 
-	const header = items.length > 0 ? (
-		<box flexDirection="row" justifyContent="space-between" paddingX={2} marginBottom={0}>
-			<text fg={colors.muted} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>名称</text>
-			<text fg={colors.muted} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>状态 / 下载量</text>
-		</box>
-	) : undefined;
+	const header =
+		items.length > 0 ? (
+			<box flexDirection="row" justifyContent="space-between" paddingX={2} marginBottom={0}>
+				<text fg={colors.muted} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+					名称
+				</text>
+				<text fg={colors.muted} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+					状态 / 下载量
+				</text>
+			</box>
+		) : undefined;
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
@@ -1125,13 +1392,7 @@ function renderInstallPage(
 				<ListLoadingState message="正在搜索..." />
 			) : items.length > 0 ? (
 				<box marginTop={1} flexGrow={1} flexDirection="column">
-					<ScrollList
-						items={items}
-						cursor={view.resultIndex}
-						header={header}
-						active={active}
-						focusIndicator="leading"
-					/>
+					<ScrollList items={items} cursor={view.resultIndex} header={header} active={active} focusIndicator="leading" />
 				</box>
 			) : (
 				<ListEmptyState message="输入关键词开始搜索" />

@@ -1,10 +1,15 @@
-import type {DownloadedSelfUpdate, SelfUpdatePlan} from '../core/self-update.js';
+import type {DownloadedSelfUpdate, DownloadUpdateProgress, SelfUpdatePlan} from '../core/self-update.js';
 
 export type SelfUpdateScreen =
 	| {readonly kind: 'checking'}
 	| {readonly kind: 'latest'}
 	| {readonly kind: 'available'; readonly plan: SelfUpdatePlan}
-	| {readonly kind: 'updating'; readonly stage: 'downloading' | 'cancelling'; readonly plan: SelfUpdatePlan}
+	| {
+			readonly kind: 'updating';
+			readonly stage: 'downloading' | 'cancelling';
+			readonly plan: SelfUpdatePlan;
+			readonly progress: DownloadUpdateProgress;
+	  }
 	| {readonly kind: 'updating'; readonly stage: 'applying'; readonly transaction: DownloadedSelfUpdate}
 	| {readonly kind: 'readyToRestart'; readonly transaction: DownloadedSelfUpdate}
 	| {readonly kind: 'updated'; readonly version: string}
@@ -15,16 +20,14 @@ export type SelfUpdateScreenAction =
 	| {readonly type: 'latestConfirmed'}
 	| {readonly type: 'updateAvailable'; readonly plan: SelfUpdatePlan}
 	| {readonly type: 'downloadStarted'; readonly plan: SelfUpdatePlan}
+	| {readonly type: 'downloadProgress'; readonly progress: DownloadUpdateProgress}
 	| {readonly type: 'cancelRequested'}
 	| {readonly type: 'downloadReady'; readonly transaction: DownloadedSelfUpdate}
 	| {readonly type: 'applyStarted'; readonly transaction: DownloadedSelfUpdate}
 	| {readonly type: 'applyCompleted'; readonly version: string}
 	| {readonly type: 'failed'; readonly message: string};
 
-export function reduceSelfUpdateScreen(
-	state: SelfUpdateScreen,
-	action: SelfUpdateScreenAction
-): SelfUpdateScreen {
+export function reduceSelfUpdateScreen(state: SelfUpdateScreen, action: SelfUpdateScreenAction): SelfUpdateScreen {
 	switch (action.type) {
 		case 'checkStarted':
 			return {kind: 'checking'};
@@ -33,7 +36,15 @@ export function reduceSelfUpdateScreen(
 		case 'updateAvailable':
 			return {kind: 'available', plan: action.plan};
 		case 'downloadStarted':
-			return {kind: 'updating', stage: 'downloading', plan: action.plan};
+			return {
+				kind: 'updating',
+				stage: 'downloading',
+				plan: action.plan,
+				progress: {downloadedBytes: 0, totalBytes: action.plan.expectedSize, percentage: 0}
+			};
+		case 'downloadProgress':
+			if (state.kind !== 'updating' || state.stage === 'applying') return state;
+			return {...state, progress: action.progress};
 		case 'cancelRequested':
 			return isSelfUpdateCancellable(state) ? {...state, stage: 'cancelling'} : state;
 		case 'downloadReady':
@@ -51,12 +62,11 @@ export function isSelfUpdateCancellable(screen: SelfUpdateScreen): screen is {
 	readonly kind: 'updating';
 	readonly stage: 'downloading';
 	readonly plan: SelfUpdatePlan;
+	readonly progress: DownloadUpdateProgress;
 } {
 	return screen.kind === 'updating' && screen.stage === 'downloading';
 }
 
-export function selfUpdateScreenVersion(
-	screen: Extract<SelfUpdateScreen, {readonly kind: 'updating'}>
-): string {
+export function selfUpdateScreenVersion(screen: Extract<SelfUpdateScreen, {readonly kind: 'updating'}>): string {
 	return screen.stage === 'applying' ? screen.transaction.plan.version : screen.plan.version;
 }

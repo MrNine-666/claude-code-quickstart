@@ -1,6 +1,6 @@
 import {existsSync, readFileSync, rmSync} from 'node:fs';
 import {join} from 'node:path';
-import {execCommand, type ProgressCallback} from './exec.js';
+import {execCommand, formatCommandInstruction, type ProgressCallback} from './exec.js';
 import {
 	getNpmOutdatedGlobal,
 	checkCliToolUpdates,
@@ -21,8 +21,15 @@ import {
 	type LifecycleCommand
 } from './tools-lifecycle.js';
 import {hasUpdate} from './semver.js';
-import {hasCodeGraphIntegration, hasClaudeCodeGraphIntegration, hasCodexCodeGraphIntegration, hasClaudeCcgWorkflowMode, hasCodexCcgWorkflowMode, readCodexCcgWorkflowVersion, removeCodeGraphIntegration} from './tools-integrations.js';
-
+import {
+	hasCodeGraphIntegration,
+	hasClaudeCodeGraphIntegration,
+	hasCodexCodeGraphIntegration,
+	hasClaudeCcgWorkflowMode,
+	hasCodexCcgWorkflowMode,
+	readCodexCcgWorkflowVersion,
+	removeCodeGraphIntegration
+} from './tools-integrations.js';
 
 // tools-manage core：tools 域的门面/编排层（design TDR-11）。
 // 与 tools-install.ts（registry + 安装原语）同属一个逻辑模块「tools 域」，仅按体量分文件。
@@ -80,10 +87,7 @@ export const COMPONENT_DEFINITIONS: readonly ComponentDefinition[] = TOOL_DEFINI
 export type ToolGroup = 'agent' | 'companion' | 'tool';
 
 /** 共享列表呈现分类（COMPONENT_META 单一事实源）。 */
-export type ResourceSharingKind =
-	| 'shared-cli-per-agent-inject'
-	| 'fully-shared-no-inject'
-	| 'agent-exclusive';
+export type ResourceSharingKind = 'shared-cli-per-agent-inject' | 'fully-shared-no-inject' | 'agent-exclusive';
 
 export type ToolGroupDisplayMeta = {
 	readonly label: string;
@@ -174,13 +178,11 @@ export function sortComponentsByToolGroup<T extends {readonly id: ComponentId}>(
 /** 将组件整理为“分组 label + grid”视图结构，空组自动隐藏。 */
 export function groupComponentsByToolGroup<T extends {readonly id: ComponentId}>(components: readonly T[]): readonly ToolGroupSection<T>[] {
 	const sorted = sortComponentsByToolGroup(components);
-	return TOOL_GROUP_ORDER
-		.map(group => ({
-			group,
-			label: TOOL_GROUP_META[group].label,
-			components: sorted.filter(component => COMPONENT_META[component.id].group === group)
-		}))
-		.filter(section => section.components.length > 0);
+	return TOOL_GROUP_ORDER.map(group => ({
+		group,
+		label: TOOL_GROUP_META[group].label,
+		components: sorted.filter(component => COMPONENT_META[component.id].group === group)
+	})).filter(section => section.components.length > 0);
 }
 
 /** 某组件是否在给定 agentContext 下可见。 */
@@ -198,10 +200,7 @@ export function visibleComponentDefinitions(context: AgentContext): readonly Com
  * 保留供 verify-tools-context / verify-tools-manage 等 legacy 门禁与 CLI 兼容路径。
  * 按 agentContext 过滤可见运行时组件，并对齐分组展示顺序。
  */
-export function filterVisibleComponents(
-	components: readonly ManagedComponent[],
-	context: AgentContext
-): readonly ManagedComponent[] {
+export function filterVisibleComponents(components: readonly ManagedComponent[], context: AgentContext): readonly ManagedComponent[] {
 	return sortComponentsByToolGroup(
 		components
 			.filter(component => isComponentVisible(component.id, context))
@@ -213,9 +212,7 @@ export function filterVisibleComponents(
  * Tools 共享列表投影：不按 Header agentContext 过滤；始终返回 COMPONENT_DEFINITIONS 全集顺序。
  * inject 类附 injectByAgent 双侧快照；对侧状态互不塌缩。
  */
-export function projectSharedToolComponents(
-	detected: readonly ManagedComponent[]
-): readonly SharedManagedComponent[] {
+export function projectSharedToolComponents(detected: readonly ManagedComponent[]): readonly SharedManagedComponent[] {
 	const byId = new Map(detected.map(component => [component.id, component]));
 	const projected = COMPONENT_DEFINITIONS.map(def => {
 		const base = byId.get(def.id) ?? {
@@ -271,13 +268,12 @@ function projectOneSharedComponent(component: ManagedComponent): SharedManagedCo
 			cx: {
 				context: 'cx' as const,
 				integrated: cxIntegrated,
-				version: cxIntegrated ? (cxVersion || undefined) : undefined
+				version: cxIntegrated ? cxVersion || undefined : undefined
 			}
 		};
-		const installedVersions = [
-			ccIntegrated ? component.currentVersion : '',
-			cxIntegrated ? cxVersion : ''
-		].filter(version => version !== '');
+		const installedVersions = [ccIntegrated ? component.currentVersion : '', cxIntegrated ? cxVersion : ''].filter(
+			version => version !== ''
+		);
 		const installed = ccIntegrated || cxIntegrated;
 		const currentVersion = installedVersions[0] ?? '';
 		const latestVersion = component.latestVersion || currentVersion;
@@ -286,9 +282,7 @@ function projectOneSharedComponent(component: ManagedComponent): SharedManagedCo
 			installed,
 			currentVersion,
 			latestVersion,
-			hasUpdate: installed
-				? Boolean(latestVersion && installedVersions.some(version => hasUpdate(version, latestVersion)))
-				: null,
+			hasUpdate: installed ? Boolean(latestVersion && installedVersions.some(version => hasUpdate(version, latestVersion))) : null,
 			sharingKind,
 			applicableContexts,
 			sharedInstalled: false,
@@ -367,10 +361,7 @@ function withAgentIntegration(component: ManagedComponent, integrated: boolean, 
  */
 // 卸载影响提示：inject 类恒全量卸载（fullUninstall=true），走 isInjectableComponent 分支；
 // 非 inject 组件走下方 switch（按 id 定制，无 per-Agent 语义，不需要 agentContext）。
-export function uninstallImpactNotice(
-	id: ComponentId,
-	options: {readonly fullUninstall?: boolean} = {}
-): string {
+export function uninstallImpactNotice(id: ComponentId, options: {readonly fullUninstall?: boolean} = {}): string {
 	if (options.fullUninstall && isInjectableComponent(id)) {
 		switch (id) {
 			case 'CodeGraph':
@@ -569,11 +560,7 @@ export async function uninstallComponent(
 }
 
 /** inject 类全量卸载：两侧注入 + 共享体。 */
-async function fullUninstallInjectable(
-	id: ComponentId,
-	exec: typeof execCommand,
-	onProgress?: ProgressCallback
-): Promise<void> {
+async function fullUninstallInjectable(id: ComponentId, exec: typeof execCommand, onProgress?: ProgressCallback): Promise<void> {
 	if (id === 'CodeGraph') {
 		// 全量：先直删两侧集成配置（不走官方命令，避免其误删 CLI 打乱顺序），再统一 npm uninstall -g 移除 CLI。
 		if (hasCodeGraphIntegration('cc')) {
@@ -626,10 +613,7 @@ export async function ejectComponent(
 	return uninstallComponent(id, onProgress, {...deps, agentContext: target, fullUninstall: false});
 }
 
-async function uninstallCodeGraph(
-	context: AgentContext,
-	onProgress?: ProgressCallback
-): Promise<void> {
+async function uninstallCodeGraph(context: AgentContext, onProgress?: ProgressCallback): Promise<void> {
 	// 逐 Agent 关闭（Enter eject / inject 开关）只解除当前 Agent 集成，共享 codegraph CLI 永不在此路径移除。
 	// 关键：实测官方 `codegraph uninstall --target=xxx` 会连带卸掉共享 CLI（与其文档不符），
 	// 因此这里绝不调官方命令，改为直接删配置文件（见 removeCodeGraphIntegration），
@@ -656,8 +640,14 @@ async function uninstallNpmPackage(
 		throw new Error(`${definition.id} 缺少 npm 包名`);
 	}
 
-	onProgress?.({level: 'info', message: `npm uninstall -g ${definition.npmPackage}`, componentId: definition.id});
-	const result = await exec('npm', ['uninstall', '-g', definition.npmPackage], {timeout: INSTALL_TIMEOUT_MS});
+	const args = ['uninstall', '-g', definition.npmPackage];
+	onProgress?.({
+		level: 'info',
+		message: `npm uninstall -g ${definition.npmPackage}`,
+		componentId: definition.id,
+		instruction: formatCommandInstruction('npm', args)
+	});
+	const result = await exec('npm', args, {timeout: INSTALL_TIMEOUT_MS});
 	if (result.code !== 0) {
 		throw new Error(friendlyError(result.stderr || result.stdout, `npm uninstall 失败 (exit ${result.code})`));
 	}
@@ -671,7 +661,12 @@ async function runLifecycleCommands(
 	onProgress?: ProgressCallback
 ): Promise<void> {
 	for (const command of commands) {
-		onProgress?.({level: 'info', message: `${command.cmd} ${command.args.join(' ')}`, componentId});
+		onProgress?.({
+			level: 'info',
+			message: `${command.cmd} ${command.args.join(' ')}`,
+			componentId,
+			instruction: formatCommandInstruction(command.cmd, command.args)
+		});
 		const result = await exec(command.cmd, [...command.args], {timeout: INSTALL_TIMEOUT_MS});
 		if (result.code !== 0) {
 			throw new Error(friendlyError(result.stderr || result.stdout, `${componentId} 命令失败 (exit ${result.code})`));
@@ -718,7 +713,11 @@ function restoreCclineStatusLine(onProgress?: ProgressCallback): void {
 		atomicWrite(path, JSON.stringify(settings, null, 2));
 		onProgress?.({level: 'success', message: '已移除受管 statusLine 配置', componentId: 'Ccline'});
 	} catch (error) {
-		onProgress?.({level: 'warning', message: `statusLine 还原失败: ${error instanceof Error ? error.message : String(error)}`, componentId: 'Ccline'});
+		onProgress?.({
+			level: 'warning',
+			message: `statusLine 还原失败: ${error instanceof Error ? error.message : String(error)}`,
+			componentId: 'Ccline'
+		});
 	}
 }
 

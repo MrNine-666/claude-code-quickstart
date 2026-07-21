@@ -76,6 +76,20 @@ pwsh -File installer/build.ps1
 - 共享 Trellis 规范、任务、工作流和配置纳入版本控制；运行时、缓存和个人
   workspace 保持本地。
 
+## Agent skills
+
+### Issue tracker
+
+Issues 与 PRD 以 GitHub issue 形式存放，通过 `gh` CLI 操作。详见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+沿用五个标准 triage 标签（`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`）。详见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单上下文布局：根级 `CONTEXT.md` + `docs/adr/`。详见 `docs/agents/domain.md`。
+
 <!-- TRELLIS:START -->
 # Trellis Instructions
 

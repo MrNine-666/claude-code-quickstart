@@ -154,6 +154,12 @@ try {
 	let screen = reduceSelfUpdateScreen({kind: 'checking'}, {type: 'updateAvailable', plan});
 	screen = reduceSelfUpdateScreen(screen, {type: 'downloadStarted', plan});
 	assert.equal(isSelfUpdateCancellable(screen), true);
+	assert.deepEqual(screen.progress, {downloadedBytes: 0, totalBytes: plan.expectedSize, percentage: 0});
+	screen = reduceSelfUpdateScreen(screen, {
+		type: 'downloadProgress',
+		progress: {downloadedBytes: plan.expectedSize, totalBytes: plan.expectedSize, percentage: 100}
+	});
+	assert.equal(screen.progress.percentage, 100, '下载进度 action 必须更新屏幕状态');
 	screen = reduceSelfUpdateScreen(screen, {type: 'cancelRequested'});
 	assert.equal(screen.kind === 'updating' ? screen.stage : '', 'cancelling');
 	screen = reduceSelfUpdateScreen(screen, {type: 'downloadReady', transaction: stateTransaction});
@@ -164,6 +170,8 @@ try {
 	screen = reduceSelfUpdateScreen(screen, {type: 'applyCompleted', version: plan.version});
 	assert.deepEqual(screen, {kind: 'updated', version: plan.version});
 	const appSource = readFileSync(new URL('../src/app.tsx', import.meta.url), 'utf8');
+	assert.match(appSource, /onProgress:\s*progress =>/, 'TUI 下载必须把 core 进度接入 reducer');
+	assert.match(appSource, /<UpdateProgressBar[^>]*progress=\{screen\.progress\}/, '更新 Modal 必须渲染下载进度条');
 	assert.match(appSource, /const restartUpdatedApp[\s\S]*?renderer\?\.destroy\(\);[\s\S]*?await restartExecutable\(\)/,
 		'TUI POSIX restart 必须先 destroy renderer 再 spawn');
 	const fetchBinary = async () => new Response(binary, {status: 200});
@@ -174,6 +182,22 @@ try {
 	assert.equal(first.ok ? Object.isFrozen(first.transaction) : false, true);
 	assert.notEqual(first.ok ? first.transaction.tempPath : '', second.ok ? second.transaction.tempPath : '');
 	assert.equal(first.ok ? readFileSync(first.transaction.tempPath).equals(binary) : false, true);
+	const progressEvents = [];
+	const progressTarget = join(targetDir, 'ccq-progress');
+	const progressDownload = await downloadUpdate(plan, undefined, {
+		fetch: fetchBinary,
+		targetPath: progressTarget,
+		platform: 'darwin',
+		onProgress: progress => progressEvents.push(progress)
+	});
+	assert.equal(progressDownload.ok, true);
+	assert.equal(progressEvents[0]?.downloadedBytes, 0, '下载进度必须从 0 字节开始');
+	assert.equal(progressEvents.at(-1)?.downloadedBytes, plan.expectedSize, '下载完成必须上报完整字节数');
+	assert.equal(progressEvents.at(-1)?.percentage, 100, '下载完成必须上报 100%');
+	for (let index = 1; index < progressEvents.length; index++) {
+		assert.ok(progressEvents[index].downloadedBytes >= progressEvents[index - 1].downloadedBytes, '下载字节进度不得倒退');
+	}
+	if (progressDownload.ok) rmSync(progressDownload.transaction.tempPath, {force: true});
 	if (legacyFixedTempIsSymlink) {
 		assert.equal(lstatSync(legacyFixedTemp).isSymbolicLink(), true, '不得跟随或覆盖旧固定 temp symlink');
 	} else {
@@ -323,6 +347,11 @@ try {
 	assert.equal(/Get-FileHash/.test(helper), false, 'PS5.1 helper 不得依赖模块自动加载的 Get-FileHash');
 	assert.match(helper, /Set-Content -LiteralPath \$ReadyPath/, 'helper 必须在等待父进程前报告 ready');
 	assert.match(helper, /if \(\$RestartAfterApply\)/);
+	assert.match(helper, /\[System\.IO\.File\]::Replace\(\$TempPath, \$TargetPath, \$BackupPath, \$true\)/,
+		'Windows helper 必须使用同目录原子 Replace，避免原地 Copy-Item 破坏旧目标');
+	assert.doesNotMatch(helper, /Copy-Item -LiteralPath \$TempPath -Destination \$TargetPath -Force/,
+		'Windows helper 不得用 Copy-Item -Force 原地覆盖正在更新的目标');
+	assert.match(helper, /target restore/, '替换后校验失败必须尝试恢复旧目标');
 
 	const windowsTarget = join(targetDir, 'ccq.exe');
 	writeFileSync(windowsTarget, 'old-windows-binary', 'utf8');
@@ -411,6 +440,27 @@ try {
 	assert.equal(applyOptions?.restartAfterApply, false, 'CLI update 必须显式禁止 helper 重启 TUI');
 	assert.equal(cliOutput.some(line => line.includes('已安排更新')), true);
 	assert.equal(cliOutput.some(line => line.includes('替换并重启')), false);
+
+	const React = (await import('react')).default;
+	const {act} = await import('react');
+	const {testRender} = await import('@opentui/react/test-utils');
+	const {UpdateProgressBar} = await import('../src/app.tsx');
+	const progressSetup = await testRender(
+		React.createElement(UpdateProgressBar, {
+			progress: {downloadedBytes: 5, totalBytes: 10, percentage: 50}
+		}),
+		{width: 40, height: 4}
+	);
+	try {
+		const frame = await progressSetup.waitForFrame(output => output.includes('50%'));
+		assert.match(frame, /\[============------------\]\s+50%/, '进度条必须使用固定 24 列轨道展示 50%');
+		assert.match(frame, /5 B \/ 10 B/, '进度条必须展示已下载与总字节');
+	} finally {
+		await act(async () => {
+			progressSetup.renderer.destroy();
+		});
+	}
+	console.log('[PASS] OpenTUI 更新进度条真实渲染');
 	console.log('[PASS] ccq 自更新：Windows helper 完整性与可选重启契约');
 } finally {
 	rmSync(tempHome, {recursive: true, force: true});
