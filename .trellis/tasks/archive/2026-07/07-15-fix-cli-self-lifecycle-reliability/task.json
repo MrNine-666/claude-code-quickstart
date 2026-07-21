@@ -1,0 +1,29 @@
+{
+  "id": "fix-cli-self-lifecycle-reliability",
+  "name": "fix-cli-self-lifecycle-reliability",
+  "title": "修复 CLI 与 ccq 自生命周期可靠性问题",
+  "description": "统一修复 CLI 参数与工具管理契约、自更新事务完整性、Windows 自更新/自卸载和 TUI 重启时序问题。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "MrNine",
+  "assignee": "MrNine",
+  "createdAt": "2026-07-15",
+  "completedAt": "2026-07-18",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-15-fix-cli-command-contracts",
+    "07-15-harden-ccq-self-lifecycle"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

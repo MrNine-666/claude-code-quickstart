@@ -1,0 +1,8 @@
+/*
+!/spec/
+!/spec/**
+!/tasks/
+!/tasks/**
+!/workflow.md
+!/config.yaml
+!/.gitignore
