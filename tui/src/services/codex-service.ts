@@ -29,7 +29,7 @@ import {
 import {CODEX_OFFICIAL_LOGIN_KEY} from '../core/codex.js';
 import type {ProviderDisplayData} from '../core/provider.js';
 import type {ProviderServiceResult} from './provider-service.js';
-import type {ProviderFormAdapter} from '../views/provider-form.js';
+import type {ProviderFormAdapter} from '../types/provider-form-adapter.js';
 
 // Codex service：把 Codex profile core 包装为 ProviderView 可消费的 service，视图不直接读写 ~/.codex。
 

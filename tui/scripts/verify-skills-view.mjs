@@ -40,13 +40,18 @@ import {
 
 // Skills 首次检测复用 Tools 的全局加载组件，避免各视图维护不同的 loading 布局与文案。
 {
-	const toolsViewSource = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
-	const skillsViewSource = readFileSync(new URL('../src/views/SkillsView.tsx', import.meta.url), 'utf8');
+	const toolsViewSource = readFileSync(new URL('../src/views/tools/ToolsHomeView.tsx', import.meta.url), 'utf8');
+	const skillsViewSource = [
+		'skills/SkillsView.tsx',
+		'skills/SkillsHomeView.tsx',
+		'skills/SkillsInstallView.tsx',
+		'skills/SkillsModals.tsx'
+	].map(file => readFileSync(new URL(`../src/views/${file}`, import.meta.url), 'utf8')).join('\n');
 	const checkboxSource = readFileSync(new URL('../src/components/checkbox.tsx', import.meta.url), 'utf8');
 	const cardSource = readFileSync(new URL('../src/components/card.tsx', import.meta.url), 'utf8');
-	const sharedLoadingRender = 'return <ListLoadingState message="检测中..." />;';
-	assert.equal(toolsViewSource.includes(sharedLoadingRender), true, 'ToolsView 应使用共享全局 loading');
-	assert.equal(skillsViewSource.includes(sharedLoadingRender), true, 'SkillsView 应复用 ToolsView 的共享全局 loading');
+	const sharedLoadingRender = /<ListLoadingState message="检测中\.\.\." \/>/;
+	assert.match(toolsViewSource, sharedLoadingRender, 'ToolsView 应使用共享全局 loading');
+	assert.match(skillsViewSource, sharedLoadingRender, 'SkillsView 应复用 ToolsView 的共享全局 loading');
 	assert.match(skillsViewSource, /将在所有 Agent 中卸载/, 'Skills 卸载 Modal 应明确影响所有 Agent');
 	assert.doesNotMatch(
 		skillsViewSource,
@@ -1053,7 +1058,10 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 	assert.equal(replacementConfirm.mode, 'confirm-source-replacement', '来源替换必须经过独立强确认');
 	assert.equal(reduceSkillsViewState(replacementConfirm, {type: 'cancel'}).mode, 'select-install-target');
 
-	const skillsViewSource = readFileSync(new URL('../src/views/SkillsView.tsx', import.meta.url), 'utf8');
+	const skillsViewSource = [
+		'skills/SkillsInstallView.tsx',
+		'skills/SkillsModals.tsx'
+	].map(file => readFileSync(new URL(`../src/views/${file}`, import.meta.url), 'utf8')).join('\n');
 	assert.match(skillsViewSource, /已有同名/, '同名异来源列表文案固定为“已有同名”');
 	assert.match(skillsViewSource, /当前来源[\s\S]*新来源/, '来源替换确认必须展示旧/新 source');
 	assert.match(skillsViewSource, /共享本体[\s\S]*lock/, '来源替换确认必须说明 canonical 与 lock 覆盖影响');

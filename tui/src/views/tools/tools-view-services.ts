@@ -1,20 +1,18 @@
 import {
 	detectComponents,
-	installComponent,
-	updateComponents,
-	uninstallComponent,
-	injectComponent,
 	ejectComponent,
+	injectComponent,
+	installComponent,
 	type ComponentId,
 	type ComponentInstallOutcome,
-	type ComponentUninstallOutcome
-} from '../core/tools-manage.js';
-import {bindExecSignal, type ProgressCallback} from '../core/exec.js';
-import type {AgentContext} from '../state/manage-state.js';
-import {createToolsDetectionRunner, runToolsDetection} from '../services/view-detection.js';
-import type {ToolsViewServices} from './ToolsView.js';
+	uninstallComponent,
+	updateComponents
+} from '../../core/tools-manage.js';
+import {bindExecSignal, type ProgressCallback} from '../../core/exec.js';
+import {createToolsDetectionRunner, runToolsDetection} from '../../services/view-detection.js';
+import type {AgentContext} from '../../state/manage-state.js';
+import type {ToolsViewServices} from './tools-view-types.js';
 
-// 工具管理视图默认 service 装配：共享列表 + 显式 target inject/eject + 全量卸载。
 export function createToolsViewServices(): ToolsViewServices {
 	return {
 		detectComponents: () => detectComponents(),

@@ -77,9 +77,9 @@ assert.doesNotMatch(
 );
 
 // ToolsView / McpView / SkillsView 顶行 ↑ 不再退回 header：不引用 onExitToHeader。
-const toolsViewSource = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
-const mcpViewSource = readFileSync(new URL('../src/views/mcp/McpView.tsx', import.meta.url), 'utf8');
-const skillsViewSource = readFileSync(new URL('../src/views/SkillsView.tsx', import.meta.url), 'utf8');
+const toolsViewSource = readFileSync(new URL('../src/views/tools/tools-view-input.ts', import.meta.url), 'utf8');
+const mcpViewSource = readFileSync(new URL('../src/views/mcp/McpHomeView.tsx', import.meta.url), 'utf8');
+const skillsViewSource = readFileSync(new URL('../src/views/skills/SkillsView.tsx', import.meta.url), 'utf8');
 assert.doesNotMatch(
 	toolsViewSource,
 	/onExitToHeader/,
@@ -88,7 +88,7 @@ assert.doesNotMatch(
 assert.doesNotMatch(
 	mcpViewSource,
 	/onExitToHeader/,
-	'McpView 不得引用 onExitToHeader（列表内循环，不进 header）'
+	'McpHomeView 不得引用 onExitToHeader（列表内循环，不进 header）'
 );
 assert.doesNotMatch(
 	skillsViewSource,

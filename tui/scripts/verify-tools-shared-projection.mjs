@@ -181,10 +181,10 @@ assert.deepEqual(busyCancelled.itemStatus, {}, '取消 busy 后清空进行中�
 assert.equal(busyCancelled.errorText, undefined, '用户取消不得显示为失败');
 console.log('[PASS] 空格切换草稿 + Enter 前不落盘 + Esc 取消清空草稿');
 
-const toolsModalViewSource = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
+const toolsModalViewSource = readFileSync(new URL('../src/views/tools/ToolsView.tsx', import.meta.url), 'utf8');
 assert.match(
 	toolsModalViewSource,
-	/renderGrid\(view, scrollRef, active && view\.mode === 'grid'\)/,
+	/<ToolsHomeView[\s\S]{0,180}active=\{active && view\.mode === 'grid'\}/,
 	'Tools Modal 打开时背景网格必须失焦'
 );
 
@@ -210,7 +210,7 @@ const {
 	successfulUpdatePatch,
 	toolStatusDot,
 	uninstallSuccessPatch
-} = await import('../src/views/ToolsView.tsx');
+} = await import('../src/views/tools/tools-view-actions.ts');
 const injectResult = await runInjectChanges(
 	pendingCodegraph,
 	[{ctx: 'cc', desired: true}],
@@ -366,8 +366,8 @@ assert.deepEqual(toolStatusDot(brokenCodegraph, 'idle'), {kind: 'failed', label:
 console.log('[PASS] CodeGraph 配置残留但 CLI 缺失显示「CLI 不可用」');
 
 // ── updateAll：成功/失败检测结果都必须先走共享投影，失败后仍刷新 ───────────────
-const toolsViewSource = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
-const updateAllSource = toolsViewSource.slice(toolsViewSource.indexOf('function updateAll'), toolsViewSource.indexOf('// ── 卸载确认'));
+const toolsViewSource = readFileSync(new URL('../src/views/tools/tools-view-actions.ts', import.meta.url), 'utf8');
+const updateAllSource = toolsViewSource.slice(toolsViewSource.indexOf('export function updateAll'), toolsViewSource.indexOf('export function runUninstall'));
 const settledBatch = settleBatchUpdateComponents(
 	[installedWithUpdate, {...openSpec, installed: true, currentVersion: '1.0.0', latestVersion: '1.1.0', hasUpdate: true}],
 	[installedWithUpdate],

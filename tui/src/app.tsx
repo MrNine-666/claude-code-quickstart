@@ -57,16 +57,16 @@ import {
 	type SelfUpdateScreen
 } from './state/self-update-state.js';
 // 导入 6 个视图组件
-import {ProviderView} from './views/provider-view.js';
+import {ProviderView} from './views/provider/ProviderView.js';
 import McpView from './views/mcp/McpView.js';
-import {SkillsView} from './views/SkillsView.js';
-import {PromptsView} from './views/PromptsView.js';
-import {ConfigView} from './views/ConfigView.js';
-import {ToolsView} from './views/ToolsView.js';
+import {SkillsView} from './views/skills/SkillsView.js';
+import {PromptsView} from './views/prompts/PromptsView.js';
+import {ConfigView} from './views/config/ConfigView.js';
+import {ToolsView} from './views/tools/ToolsView.js';
 
 // 导入视图 services
-import {createSkillsViewServices} from './views/skills-view-services.js';
-import {createToolsViewServices} from './views/tools-view-services.js';
+import {createSkillsViewServices} from './views/skills/skills-view-services.js';
+import {createToolsViewServices} from './views/tools/tools-view-services.js';
 
 // logo 每行 13 列宽（块面风格），侧边栏内宽 = SIDEBAR_WIDTH - 2(边框) - 2(paddingX) = 20，菜单标签充裕。
 const SIDEBAR_WIDTH = 24;

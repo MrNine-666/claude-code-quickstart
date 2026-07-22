@@ -100,21 +100,23 @@ assert.match(updateSource, /COMMAND_COMPONENTS[^\n]*=\s*Object\.fromEntries\(\s*
 console.log('[PASS] 1.1 CodexCli 使用 @openai/codex 与 codex --version（maps 派生自 registry）');
 
 // ── r 手动刷新必须绕过 npm 远程版本缓存，避免 latest 卡在旧缓存（如 Claude Code 1.0.199）──
-const toolsViewSource = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
+const toolsViewSource = readFileSync(new URL('../src/views/tools/ToolsView.tsx', import.meta.url), 'utf8');
+const toolsHomeSource = readFileSync(new URL('../src/views/tools/ToolsHomeView.tsx', import.meta.url), 'utf8');
+const toolsActionsSource = readFileSync(new URL('../src/views/tools/tools-view-actions.ts', import.meta.url), 'utf8');
 const toolsManageSource = readFileSync(new URL('../src/core/tools-manage.ts', import.meta.url), 'utf8');
 const viewDetectionSource = readFileSync(new URL('../src/services/view-detection.ts', import.meta.url), 'utf8');
 const detectionCacheSource = readFileSync(new URL('../src/hooks/use-detection-cache.ts', import.meta.url), 'utf8');
 assert.match(toolsViewSource, /cache\.refresh\(\{forceRefresh:\s*true\}\)/, 'ToolsView r 刷新传 forceRefresh');
 assert.match(detectionCacheSource, /if \(services\.refreshDetection\)/, 'useDetectionCache 仅在服务提供 refreshDetection 时消费 refresh options');
 assert.match(detectionCacheSource, /services\.runDetection\(runner\)/, '无 refreshDetection 时不把 options 误传给 runDetection');
-const toolsServicesSource = readFileSync(new URL('../src/views/tools-view-services.ts', import.meta.url), 'utf8');
+const toolsServicesSource = readFileSync(new URL('../src/views/tools/tools-view-services.ts', import.meta.url), 'utf8');
 assert.match(toolsServicesSource, /refreshDetection:\s*\(runner,\s*options\)\s*=>\s*runToolsDetection\(runner,\s*options\)/, 'Tools service 为手动刷新提供专用 refreshDetection');
 assert.match(viewDetectionSource, /detectComponents\(undefined,\s*options\.forceRefresh === true\)/, 'runToolsDetection 透传 forceRefresh');
 assert.match(toolsManageSource, /getNpmOutdatedGlobal\(forceRefresh\)/, 'detectComponents 强刷 npm outdated 缓存');
 assert.match(updateSource, /resolveNpmViewLatest\(Object\.values\(NPM_COMPONENT_MAP\),\s*forceRefresh\)/, 'checkCliToolUpdates 强刷 npm view 缓存');
-assert.match(toolsViewSource, /groupComponentsByToolGroup\(view\.components\)/, 'ToolsView 按分组结构渲染 label + grid');
-assert.match(toolsViewSource, /<text[\s\S]{0,500}>\s*\{section\.label\}\s*<\/text>/, 'ToolsView 渲染分组 label');
-assert.doesNotMatch(toolsViewSource, /label:\s*['"]Agent['"]/, 'ToolsView 不硬编码 Agent 分组 label');
+assert.match(toolsHomeSource, /groupToolsForHome\(view\.components\)/, 'ToolsHomeView 按领域分组结构渲染 label + grid');
+assert.match(toolsHomeSource, /<text[\s\S]{0,500}>\s*\{section\.label\}\s*<\/text>/, 'ToolsHomeView 渲染分组 label');
+assert.doesNotMatch(toolsHomeSource, /label:\s*['"]Agent['"]/, 'ToolsHomeView 不硬编码 Agent 分组 label');
 console.log('[PASS] r 手动刷新绕过 npm outdated/npm view 缓存');
 
 // 单项 install/update/uninstall 成功后必须同步 App 层检测缓存，否则切换 Header 时
@@ -128,17 +130,17 @@ function sourceSection(source, startMarker, endMarker) {
 }
 
 assert.match(
-	sourceSection(toolsViewSource, 'function installOne', 'function updateOne'),
+	sourceSection(toolsActionsSource, 'function installOne', 'function updateOne'),
 	/cache\.refresh\(\)/,
 	'单项安装成功后刷新检测缓存，避免切换 Agent 回退版本/安装态'
 );
 assert.match(
-	sourceSection(toolsViewSource, 'function updateOne', 'function updateAll'),
+	sourceSection(toolsActionsSource, 'function updateOne', 'export function updateAll'),
 	/cache\.refresh\(\)/,
 	'单项更新成功后刷新检测缓存，避免切换 Agent 回退到旧版本号'
 );
 assert.match(
-	sourceSection(toolsViewSource, 'function runUninstall', 'function renderDetectionNotice'),
+	sourceSection(toolsActionsSource, 'export function runUninstall', 'export function uninstallSuccessPatch'),
 	/cache\.refresh\(\)/,
 	'单项卸载成功后刷新检测缓存，避免切换 Agent 回退安装态'
 );

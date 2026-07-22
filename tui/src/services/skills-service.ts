@@ -38,7 +38,7 @@ import {
 import type {ProgressCallback} from '../core/exec.js';
 
 // Skills service：TUI 视图唯一入口。搜索数据源固定为 skills find，不回退 catalogue（design D11）。
-// 纯 service 函数，不依赖 view 层类型（createSkillsViewServices 装配在 views/skills-view-services.ts）。
+// 纯 service 函数，不依赖 view 层类型（createSkillsViewServices 装配在 views/skills/skills-view-services.ts）。
 
 export function searchSkillCatalogue(query: string): Promise<SkillsSearchOutcome> {
 	return searchSkills(query);

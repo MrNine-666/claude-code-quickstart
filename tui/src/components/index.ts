@@ -25,6 +25,15 @@ export {TextareaEditor, type TextareaEditorProps, type EditorFiletype, type Text
 export {CodePreview, type CodePreviewProps, type CodePreviewFiletype} from './code-preview.js';
 export {ListEmptyState, ListLoadingState} from './list-state.js';
 export {SingleLineInput, normalizeSingleLineValue, singleLineInputKeyBindings, type SingleLineInputProps} from './single-line-input.js';
+export {ManagedDocumentView, type ManagedDocumentViewProps} from './managed-document/ManagedDocumentView.js';
+export {DocumentHomeView, type DocumentHomeViewProps} from './managed-document/DocumentHomeView.js';
+export {DocumentFormView, type DocumentFormViewProps} from './managed-document/DocumentFormView.js';
+export type {
+	ManagedDocumentAdapter,
+	ManagedDocumentImportResult,
+	ManagedDocumentSaveResult,
+	ManagedDocumentSnapshot
+} from './managed-document/document-types.js';
 
 // Form 组件导出
 export type {FormField, SelectOption, KeyValueEntry} from './form/field-types.js';

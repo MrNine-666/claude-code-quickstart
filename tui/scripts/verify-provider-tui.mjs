@@ -40,15 +40,17 @@ const {
 	loadCodexProviderProfile
 } = await import('../src/services/codex-service.ts');
 
-const providerViewSource = readFileSync(new URL('../src/views/provider-view.tsx', import.meta.url), 'utf8');
+const providerViewSource = readFileSync(new URL('../src/views/provider/ProviderView.tsx', import.meta.url), 'utf8');
+const providerAdapterSource = readFileSync(new URL('../src/views/provider/provider-view-adapter.ts', import.meta.url), 'utf8');
 assert.match(providerViewSource, /agentContext:\s*AgentContext/, 'ProviderView props 必须接收 agentContext');
-assert.match(providerViewSource, /const isCodex = agentContext === 'cx'/, 'ProviderView 必须由 agentContext 切换 Codex 模式');
-assert.match(providerViewSource, /isCodex \? loadCodexProviderDisplay\(\) : loadProviderDisplay\(\)/, 'ProviderView 列表必须按 agentContext 切换数据源');
-assert.match(providerViewSource, /setScreen\(\{kind: 'list'\}\);\r?\n\t\}, \[isCodex\]\);/, '切换 agentContext 时必须重置列表屏，避免表单脏状态写入错误目标');
+assert.match(providerViewSource, /createProviderViewAdapter\(agentContext\)/, 'ProviderView 必须由 agentContext 构造领域 adapter');
+assert.match(providerAdapterSource, /const isCodex = agentContext === 'cx'/, 'Provider adapter 必须由 agentContext 切换 Codex 模式');
+assert.match(providerAdapterSource, /loadDisplay: isCodex \? loadCodexProviderDisplay : loadProviderDisplay/, 'Provider adapter 列表必须按 agentContext 切换数据源');
+assert.match(providerViewSource, /setScreen\(\{kind: 'list'\}\);\r?\n\t\}, \[adapter\]\);/, '切换 agentContext 时必须重置列表屏，避免表单脏状态写入错误目标');
 assert.match(providerViewSource, /adapter=\{codexProviderFormAdapter\}/, 'Codex Provider 表单必须保留真实 TOML textarea adapter');
 assert.match(providerViewSource, /save=\{saveCodexProviderForm\}/, 'Codex Provider 新增必须走 Codex service/core，不得复用 Claude provider');
-assert.match(providerViewSource, /isCodex \? switchActiveCodexProvider\(current\.key\) : switchActiveProvider\(current\.key\)/, '设置默认必须按 agentContext 路由');
-assert.match(providerViewSource, /isCodex \? removeCodexProvider\(current\.key\) : removeProvider\(current\.key\)/, '删除必须按 agentContext 路由');
+assert.match(providerAdapterSource, /switchActive: isCodex \? switchActiveCodexProvider : switchActiveProvider/, '设置默认必须按 agentContext 路由');
+assert.match(providerAdapterSource, /remove: isCodex \? removeCodexProvider : removeProvider/, '删除必须按 agentContext 路由');
 console.log('[PASS] 6.10 ProviderView agentContext 切换 + Codex profile 表单源码不变量');
 
 function readSettings() {

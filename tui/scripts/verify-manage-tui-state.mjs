@@ -131,9 +131,9 @@ console.log(`[PASS] Manage TUI 状态机 PBT 门禁通过（${seeds.length} 种�
 //   2) ToolsView / McpView：顶行 ↑ 不再调用 onExitToHeader；MCP 交给 clampMove 首尾循环。
 const {readFileSync} = await import('node:fs');
 const appSrc = readFileSync(new URL('../src/app.tsx', import.meta.url), 'utf8');
-const toolsSrc = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
-const mcpSrc = readFileSync(new URL('../src/views/mcp/McpView.tsx', import.meta.url), 'utf8');
-const skillsSrc = readFileSync(new URL('../src/views/SkillsView.tsx', import.meta.url), 'utf8');
+const toolsSrc = readFileSync(new URL('../src/views/tools/tools-view-input.ts', import.meta.url), 'utf8');
+const mcpSrc = readFileSync(new URL('../src/views/mcp/McpHomeView.tsx', import.meta.url), 'utf8');
+const skillsSrc = readFileSync(new URL('../src/views/skills/SkillsView.tsx', import.meta.url), 'utf8');
 const indexSrc = readFileSync(new URL('../src/index.tsx', import.meta.url), 'utf8');
 
 assert.match(appSrc, /AGENT_HEADER_HIDDEN_MODULES\s*=\s*new Set<ManageModuleId>\(\[\s*'tools',\s*'mcp',\s*'skills'\s*\]\)/, 'HIDDEN_MODULES 含 tools + mcp + skills');
@@ -142,9 +142,9 @@ assert.match(appSrc, /AGENT_HEADER_HIDDEN_MODULES\.has\(displayMenuId\) && state
 // 隐藏 Header 不占布局行由 flex 自适应天然保证（hideAgentHeader ? null : <AgentHeader> 不渲染即不占位），
 // 无需再断言 reserved-rows 算高（flex-height-unify 已移除 AGENT_HEADER_ROWS 等算高常量）。
 assert.doesNotMatch(toolsSrc, /onExitToHeader/, 'ToolsView 不得再引用 onExitToHeader（顶行 ↑ 停首项，不进 header）');
-assert.doesNotMatch(mcpSrc, /onExitToHeader/, 'McpView 不得再引用 onExitToHeader（列表内循环，不进 header）');
-assert.doesNotMatch(mcpSrc, /\batTop\b/, 'McpView 不得在顶行拦截上键，列表导航应交给 clampMove 首尾循环');
-assert.match(mcpSrc, /case 'arrowup':[\s\S]{0,160}onMove\(-1\)/, 'McpView 上键应始终进入循环移动');
+assert.doesNotMatch(mcpSrc, /onExitToHeader/, 'McpHomeView 不得再引用 onExitToHeader（列表内循环，不进 header）');
+assert.doesNotMatch(mcpSrc, /\batTop\b/, 'McpHomeView 不得在顶行拦截上键，列表导航应交给 clampMove 首尾循环');
+assert.match(mcpSrc, /case 'arrowup':[\s\S]{0,160}onMove\(-1\)/, 'McpHomeView 上键应始终进入循环移动');
 assert.doesNotMatch(skillsSrc, /onExitToHeader/, 'SkillsView 不得再引用 onExitToHeader（顶行 ↑ 停首项，不进 header）');
 assert.doesNotMatch(appSrc, /<ToolsView[^>]*onExitToHeader/, 'app.tsx 渲染 ToolsView 时不得再传 onExitToHeader');
 assert.doesNotMatch(appSrc, /<McpView[^>]*onExitToHeader/, 'app.tsx 渲染 McpView 时不得再传 onExitToHeader');

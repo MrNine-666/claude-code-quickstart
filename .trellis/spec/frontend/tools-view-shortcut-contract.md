@@ -8,7 +8,8 @@ The contract prevents three sources of truth from drifting:
 
 - `src/config/keybindings.ts` owns physical key bindings.
 - `src/state/shortcuts.ts` derives contextual footer labels.
-- `src/views/ToolsView.tsx` executes the selected component action.
+- `src/views/tools/tools-view-input.ts` resolves the key intent and
+  `src/views/tools/tools-view-actions.ts` executes the selected component action.
 
 ## 2. Signatures
 

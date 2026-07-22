@@ -101,7 +101,7 @@ assert.deepEqual(
 	[['Enter', '确认执行'], ['Esc', '取消']],
 	'Skills 收编确认 Modal 应复用确认态快捷键'
 );
-const skillsViewSource = readFileSync(new URL('../src/views/SkillsView.tsx', import.meta.url), 'utf8');
+const skillsViewSource = readFileSync(new URL('../src/views/skills/SkillsModals.tsx', import.meta.url), 'utf8');
 assert.match(skillsViewSource, /viewShortcuts\('skills', mode\)/, 'Skills Modal hint 应从统一快捷键解析器生成');
 assert.match(skillsViewSource, /hint=\{skillsModalHint\('confirm-topology-change'\)\}/, '拓扑切换确认 Modal 应展示统一快捷键提示');
 console.log('[PASS] Skills Modal 快捷键提示与 footer 共用统一 registry');
@@ -124,9 +124,12 @@ assert.deepEqual(
 	[['Enter', '管理开关'], ['U', '更新']],
 	'Tools 管理型卡片 footer 应显示 Enter 管理开关与 u 更新'
 );
-const toolsViewSource = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
-assert.match(toolsViewSource, /if \(k === 'enter' \|\| k === 'return'\) \{\s*runPrimaryAction\(/, 'ToolsView Enter 应调用统一主操作分派');
-assert.match(toolsViewSource, /if \(k === 'u'\) \{\s*updateInjectableCurrent\(/, 'ToolsView u 应只走管理型工具更新入口');
+const toolsViewSource = readFileSync(new URL('../src/views/tools/ToolsView.tsx', import.meta.url), 'utf8');
+const toolsInputSource = readFileSync(new URL('../src/views/tools/tools-view-input.ts', import.meta.url), 'utf8');
+assert.match(toolsInputSource, /normalized === 'enter' \|\| normalized === 'return'\) return \{kind: 'primary'\}/, 'Tools input Enter 应解析为统一主操作意图');
+assert.match(toolsInputSource, /normalized === 'u'\) return \{kind: 'update-one'\}/, 'Tools input u 应只解析为管理型工具更新意图');
+assert.match(toolsViewSource, /case 'primary':\s*runPrimaryAction\(/, 'ToolsView 主操作意图必须调用统一分派');
+assert.match(toolsViewSource, /case 'update-one':\s*updateInjectableCurrent\(/, 'ToolsView 更新意图必须调用管理型工具更新入口');
 console.log('[PASS] Tools 普通/管理型卡片快捷键按上下文统一到 Enter 主操作');
 
 // ── 卸载文案：统一使用简洁动作名，不在 footer 重复强调底层全量语义 ────────
@@ -141,7 +144,13 @@ assert.equal(toolsConfirmLabels.includes('确认卸载'), true, 'Tools 确认态
 assert.equal([...skillsListLabels, ...skillsConfirmLabels, ...toolsGridLabels, ...toolsConfirmLabels].some(label => label.includes('全量卸载')), false, 'TUI footer 不应再显示“全量卸载”');
 
 // ── 视图源码：页面内不硬编码快捷键提示 ───────────────────────────────
-for (const file of ['src/views/ConfigView.tsx', 'src/views/PromptsView.tsx']) {
+for (const file of [
+	'src/views/config/ConfigView.tsx',
+	'src/views/prompts/PromptsView.tsx',
+	'src/components/managed-document/ManagedDocumentView.tsx',
+	'src/components/managed-document/DocumentHomeView.tsx',
+	'src/components/managed-document/DocumentFormView.tsx'
+]) {
 	const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
 	assert.equal(/按\s*a|Ctrl\+|Cmd\+|\[[A-Za-z]\]/.test(source), false, `${file} 不应硬编码快捷键提示`);
 }

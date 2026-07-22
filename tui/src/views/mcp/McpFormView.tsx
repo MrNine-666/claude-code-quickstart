@@ -4,9 +4,12 @@ import {useKeyboard, useRenderer} from '@opentui/react';
 import {FormPanel, firstEditableIndex, nextEditableIndex} from '../../components/form/FormPanel.js';
 import {handleTextareaEditKeys, handleTextareaIndentKey} from '../../components/editor/textarea-edit-keys.js';
 import type {FormField} from '../../components/form/field-types.js';
-import {addSharedMcpServer, getDefinition, saveEditedMcpServer} from '../../services/mcp-service.js';
-import {getMcpTemplateJson, listBuiltinMcpOptions, parseMcpJsonFormat} from '../../core/mcp-form.js';
 import {borderColors, colors} from '../../theme/index.js';
+import type {
+	McpFormModel,
+	McpFormSubmitInput,
+	McpViewActionResult
+} from './mcp-view-actions.js';
 
 // McpFormView：MCP 表单屏（配置即真源范式，复用 FormPanel 与供应商表单同构）
 // - add：模板（radio，←/→ 或 Tab 切换；选内置即带出配置 + Server ID + 凭据提示）+ Server ID（可填）+ 配置编辑区
@@ -22,19 +25,18 @@ const CUSTOM_TEMPLATE = '';
 const BLANK_JSON = '{}\n';
 
 export type McpFormViewProps = {
-	readonly mode: 'add' | 'edit';
-	// edit 模式的只读 Server ID；add 模式忽略（用户在表单内填）。
-	readonly serverId: string;
-	// 初始 JSON：edit=现有 config，add=空白。
-	readonly initialJson: string;
+	readonly model: McpFormModel;
 	readonly active: boolean;
+	readonly validateJson: (text: string) => string | undefined;
+	readonly onSubmit: (input: McpFormSubmitInput) => McpViewActionResult;
 	readonly onSaved: (message: string) => void;
 	readonly onCancel: () => void;
 };
 
-export function McpFormView({mode, serverId, initialJson, active, onSaved, onCancel}: McpFormViewProps) {
+export function McpFormView({model, active, validateJson, onSubmit, onSaved, onCancel}: McpFormViewProps) {
+	const {mode, serverId, initialJson} = model;
 	// 模板选项：自定义（空白）+ 内置 MCP 列表。useRef 固定一次构造，避免重渲染重建。
-	const templateOptions = useRef([{value: CUSTOM_TEMPLATE, label: '自定义'}, ...listBuiltinMcpOptions()]).current;
+	const templateOptions = useRef([{value: CUSTOM_TEMPLATE, label: '自定义'}, ...model.templates.map(({value, label}) => ({value, label}))]).current;
 
 	const isAdd = mode === 'add';
 
@@ -51,11 +53,7 @@ export function McpFormView({mode, serverId, initialJson, active, onSaved, onCan
 	const [serverIdText, setServerIdText] = useState(isAdd ? '' : serverId);
 	const [jsonText, setJsonText] = useState(initialJson);
 	// edit 模式：若为 env-file 类内置 MCP（原由安装链管理），提示用户修改将直接写入 config。
-	const [credHint, setCredHint] = useState<string | undefined>(() =>
-		mode === 'edit' && getDefinition(serverId)?.CredentialType === 'env-file'
-			? '该 MCP 原由安装链用 env-file 管理，此处修改直接写入 config.env'
-			: undefined
-	);
+	const [credHint, setCredHint] = useState<string | undefined>(model.credHint);
 	const [errors, setErrors] = useState<string[]>([]);
 	const textareaRef = useRef<TextareaRenderable>(null);
 	const renderer = useRenderer();
@@ -77,7 +75,7 @@ export function McpFormView({mode, serverId, initialJson, active, onSaved, onCan
 			return;
 		}
 
-		const tpl = getMcpTemplateJson(id);
+		const tpl = model.templates.find(template => template.value === id);
 		if (tpl) {
 			setServerIdText(id);
 			setJsonText(tpl.json);
@@ -135,8 +133,8 @@ export function McpFormView({mode, serverId, initialJson, active, onSaved, onCan
 	// 编辑区：配置即真源，更新文本 + 实时校验 JSON 格式（对齐供应商表单：编辑即提示，无需等保存）。
 	function handleJsonChange(content: string): void {
 		setJsonText(content);
-		const format = parseMcpJsonFormat(content);
-		setErrors(format.ok ? [] : [format.error]);
+		const error = validateJson(content);
+		setErrors(error ? [error] : []);
 	}
 
 	// 切模板（或编辑回填）后把 jsonText 推到 textarea；用户在 textarea 内编辑产生的同值 setJsonText 不会触发 setText（plainText 已等）。
@@ -199,14 +197,13 @@ export function McpFormView({mode, serverId, initialJson, active, onSaved, onCan
 
 	function handleSubmit(): void {
 		const id = (isAdd ? serverIdText : serverId).trim();
-		// add：仅写 vault 共享定义，不开启任何侧；edit：写 vault + 同步已开启侧。
-		const result = isAdd ? addSharedMcpServer(id, jsonText) : saveEditedMcpServer(id, jsonText);
+		const result = onSubmit({mode, serverId: id, jsonText});
 		if (!result.ok) {
 			setErrors([result.error]);
 			return;
 		}
 
-		onSaved(`已保存 MCP Server ${id}`);
+		onSaved(result.message);
 	}
 
 	const title = isAdd ? '新增 MCP Server' : `编辑 ${serverId}`;

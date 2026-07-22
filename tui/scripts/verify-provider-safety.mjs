@@ -301,17 +301,20 @@ console.log('[PASS] Codex TOML 契约 + 损坏 profile 容错 + partial success'
 }
 console.log('[PASS] Provider/Codex 敏感文件安全权限');
 
-const providerViewSource = readFileSync(new URL('../src/views/provider-view.tsx', import.meta.url), 'utf8');
+const providerViewSource = readFileSync(new URL('../src/views/provider/ProviderView.tsx', import.meta.url), 'utf8');
 assert.match(providerViewSource, /if \(warning\) \{\s*toast\.warning\(warning\);/, 'ProviderView 必须展示 partial-success warning');
-assert.match(providerViewSource, /loadFailures\.length > 0[\s\S]*<ErrorPanel/, 'ProviderView 必须展示 Codex profile 加载失败');
-const providerFormSource = readFileSync(new URL('../src/views/provider-form.tsx', import.meta.url), 'utf8');
+const providerHomeSource = readFileSync(new URL('../src/views/provider/ProviderHomeView.tsx', import.meta.url), 'utf8');
+assert.match(providerHomeSource, /loadFailures\.length > 0[\s\S]*<ErrorPanel/, 'ProviderHomeView 必须展示 Codex profile 加载失败');
+const providerFormSource = readFileSync(new URL('../src/views/provider/ProviderFormView.tsx', import.meta.url), 'utf8');
 assert.match(providerFormSource, /errorKind === 'conflict'[\s\S]*toast\.error\(result\.error\)/, 'ProviderForm 必须用 error toast 展示同名冲突');
 
 const codexUserSurfaceSources = [
 	'../src/core/codex-provider-form.ts',
 	'../src/core/codex.ts',
 	'../src/services/codex-service.ts',
-	'../src/views/provider-view.tsx',
+	'../src/views/provider/ProviderView.tsx',
+	'../src/views/provider/ProviderHomeView.tsx',
+	'../src/views/provider/ProviderFormView.tsx',
 	'../src/cli/help.ts',
 	'../src/cli/index.ts',
 	'../src/cli/commands/cc.ts',

@@ -11,13 +11,14 @@ import {Spinner, busyActionTitle} from '../src/components/spinner.tsx';
 
 const appSource = readFileSync(new URL('../src/app.tsx', import.meta.url), 'utf8');
 const themeSource = readFileSync(new URL('../src/theme/index.ts', import.meta.url), 'utf8');
-const configViewSource = readFileSync(new URL('../src/views/ConfigView.tsx', import.meta.url), 'utf8');
-const promptsViewSource = readFileSync(new URL('../src/views/PromptsView.tsx', import.meta.url), 'utf8');
+const documentFormSource = readFileSync(new URL('../src/components/managed-document/DocumentFormView.tsx', import.meta.url), 'utf8');
 const spinnerSource = readFileSync(new URL('../src/components/spinner.tsx', import.meta.url), 'utf8');
 const execSource = readFileSync(new URL('../src/core/exec.ts', import.meta.url), 'utf8');
 const componentsIndexSource = readFileSync(new URL('../src/components/index.ts', import.meta.url), 'utf8');
-const toolsViewSource = readFileSync(new URL('../src/views/ToolsView.tsx', import.meta.url), 'utf8');
-const skillsViewSource = readFileSync(new URL('../src/views/SkillsView.tsx', import.meta.url), 'utf8');
+const toolsViewSource = readFileSync(new URL('../src/views/tools/ToolsView.tsx', import.meta.url), 'utf8');
+const toolsActionsSource = readFileSync(new URL('../src/views/tools/tools-view-actions.ts', import.meta.url), 'utf8');
+const skillsViewSource = readFileSync(new URL('../src/views/skills/SkillsView.tsx', import.meta.url), 'utf8');
+const skillsActionsSource = readFileSync(new URL('../src/views/skills/skills-view-actions.ts', import.meta.url), 'utf8');
 
 assert.match(
 	appSource,
@@ -52,15 +53,15 @@ assert.equal(
 
 // split 横向等分：推荐列/编辑列用 flexGrow={1} + flexBasis={0} + minWidth={0}；
 // 纵向溢出：推荐列内边框与 scrollbox 用 minHeight={0}，避免内容撑大父容器、挤掉标题 marginBottom。
-for (const [name, source] of [['ConfigView', configViewSource], ['PromptsView', promptsViewSource]]) {
+for (const [name, source] of [['ConfigView', documentFormSource], ['PromptsView', documentFormSource]]) {
 	assert.match(
 		source,
-		/<box(?=[^>]*key='recommend-panel')(?=[^>]*flexGrow=\{1\})(?=[^>]*flexBasis=\{0\})(?=[^>]*minWidth=\{0\})[^>]*>/,
+		/<box(?=[^>]*key="recommend-panel")(?=[^>]*flexGrow=\{1\})(?=[^>]*flexBasis=\{0\})(?=[^>]*minWidth=\{0\})[^>]*>/,
 		`${name} split 推荐列必须用 flexGrow={1} + flexBasis={0} + minWidth={0} 保持横向等分`
 	);
 	assert.match(
 		source,
-		/<box(?=[^>]*key='editor-panel')(?=[^>]*flexGrow=\{1\})(?=[^>]*flexBasis=\{0\})(?=[^>]*minWidth=\{0\})[^>]*>/,
+		/<box(?=[^>]*key="editor-panel")(?=[^>]*flexGrow=\{1\})(?=[^>]*flexBasis=\{0\})(?=[^>]*minWidth=\{0\})[^>]*>/,
 		`${name} split 编辑列必须用 flexGrow={1} + flexBasis={0} + minWidth={0} 保持横向等分`
 	);
 	assert.match(
@@ -84,10 +85,10 @@ assert.match(appSource, /ownsViewInput = busyOverlay !== null \|\| updateDialogO
 assert.match(appSource, /active=\{effectiveFocus === 'view' && busyOverlay === null && !updateDialogOpen\}/, '全局蒙层或更新 Modal 显示时必须让底层视图失活');
 assert.match(appSource, /<Spinner[\s\S]{0,180}variant="overlay"[\s\S]{0,180}label=\{busyOverlay\.title\}/, 'App 根节点必须复用 Spinner 的 overlay 模式');
 assert.match(execSource, /readonly instruction\?: string/, '结构化 progress 必须单独携带当前真实指令');
-for (const [name, source] of [['ToolsView', toolsViewSource], ['SkillsView', skillsViewSource]]) {
-	assert.match(source, /onBusyStateChange\?\./, `${name} 必须把执行状态上报 App`);
-	assert.doesNotMatch(source, /<ProgressLog\b/, `${name} 不得继续在页面底部渲染执行日志`);
-	assert.match(source, /if \(event\.instruction\)[\s\S]{0,180}message: event\.instruction/, `${name} 的 overlay 只能投影外部组件上报的真实指令`);
+for (const [name, rootSource, actionSource] of [['ToolsView', toolsViewSource, toolsActionsSource], ['SkillsView', skillsViewSource, skillsActionsSource]]) {
+	assert.match(rootSource, /onBusyStateChange\?\./, `${name} 必须把执行状态上报 App`);
+	assert.doesNotMatch(`${rootSource}\n${actionSource}`, /<ProgressLog\b/, `${name} 不得继续在页面底部渲染执行日志`);
+	assert.match(actionSource, /if \(event\.instruction\)[\s\S]{0,180}message: event\.instruction/, `${name} 的 overlay 只能投影外部组件上报的真实指令`);
 }
 assert.equal(existsSync(new URL('../src/components/progress-log.tsx', import.meta.url)), false, '旧 ProgressLog 组件文件必须删除');
 assert.doesNotMatch(componentsIndexSource, /ProgressLog|progress-log/, '共享组件出口不得继续导出旧 ProgressLog');

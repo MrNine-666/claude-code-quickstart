@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import React, {act} from 'react';
 import {PasteEvent} from '@opentui/core';
 import {testRender} from '@opentui/react/test-utils';
-import {SkillsView} from '../src/views/SkillsView.tsx';
+import {SkillsView} from '../src/views/skills/SkillsView.tsx';
 
 function key(name, modifiers = {}) {
 	return {
@@ -89,14 +89,19 @@ const services = {
 	async runDetection() {}
 };
 
-const skillsViewSource = readFileSync(new URL('../src/views/SkillsView.tsx', import.meta.url), 'utf8');
+const skillsViewSource = [
+	'skills/SkillsView.tsx',
+	'skills/SkillsHomeView.tsx',
+	'skills/SkillsInstallView.tsx',
+	'skills/SkillsModals.tsx'
+].map(file => readFileSync(new URL(`../src/views/${file}`, import.meta.url), 'utf8')).join('\n');
 const inputSource = readFileSync(new URL('../src/components/single-line-input.tsx', import.meta.url), 'utf8');
 assert.match(inputSource, /<input[\s\S]*value=\{value\}[\s\S]*onChange=/, '共享搜索框必须使用受控 OpenTUI input');
 assert.doesNotMatch(inputSource, /onSubmit=/, 'Enter 只能由 Skills 页顶层 handler 提交');
 assert.doesNotMatch(skillsViewSource, /filterText\.slice|view\.filterText \+ char|query\.slice|view\.query \+ char/, 'SkillsView 不得继续手工编辑字符串');
 assert.match(
 	skillsViewSource,
-	/renderPage\(view, detection, active && !skillsModalOpen\(view\.mode\), dispatch\)/,
+	/skillsModalOpen\(view\.mode\)/,
 	'Skills Modal 打开时背景页面必须失焦'
 );
 

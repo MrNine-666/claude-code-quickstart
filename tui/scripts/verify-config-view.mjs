@@ -108,30 +108,36 @@ assert.equal(mergedClaudeJson.env.ANTHROPIC_AUTH_TOKEN, 'sk-secret', 'Claude Con
 console.log('[PASS] ConfigView Claude ownership 过滤展示 + 保存合并保护');
 
 // ── 6.10 Codex ConfigView：agentContext 源码不变量 + TOML 结构化保存 ─────────────
-const configViewSource = readFileSync(new URL('../src/views/ConfigView.tsx', import.meta.url), 'utf8');
-assert.match(configViewSource, /const target: ConfigTarget = agentContext/, 'ConfigView 必须从 agentContext 派生 target');
+const configViewSource = [
+	'../src/views/config/ConfigView.tsx',
+	'../src/views/config/config-document-adapter.ts',
+	'../src/components/managed-document/ManagedDocumentView.tsx',
+	'../src/components/managed-document/DocumentHomeView.tsx',
+	'../src/components/managed-document/DocumentFormView.tsx'
+].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
+assert.match(configViewSource, /createConfigDocumentAdapter\(props\.agentContext\)/, 'ConfigView 必须从 agentContext 派生 adapter');
 assert.match(configViewSource, /loadRecommendationAnnotated\(target\)/, '推荐配置必须按 target 加载');
 assert.match(configViewSource, /getConfigPath\(target\)/, '目标路径必须按 target 切换');
 assert.match(configViewSource, /readCurrentConfigText\(target\)/, '读取配置必须按 target 切换');
 assert.match(configViewSource, /configFileExists\(target\)/, '空状态必须区分目标文件存在与过滤后内容为空');
-assert.match(configViewSource, /const hasContent = fileExists \|\| viewContent\.trim\(\)\.length > 0;/, '存在 config.toml 时即使过滤后为空也必须展示预览态');
+assert.match(configViewSource, /hasContent: fileExists \|\| content\.trim\(\)\.length > 0/, '存在 config.toml 时即使过滤后为空也必须展示预览态');
 assert.match(configViewSource, /fillMissingIntoText\([^\n]+target\)/, 'Ctrl+O fill-missing 必须按 target 路由');
 assert.match(configViewSource, /saveConfigText\(content, target\)/, '保存必须按 target 路由');
-assert.match(configViewSource, /isJson=\{!isCodex\}/, 'Codex Config 编辑器不得启用 JSON 校验，应交给 TOML service 校验');
-assert.match(configViewSource, /filetype=\{isCodex \? 'text' : 'json'\}/, 'Codex Config 编辑器不应声明为 JSON filetype');
-assert.match(configViewSource, /<CodePreview content=\{previewContent\} filetype=\{isCodex \? 'toml' : 'json'\} \/>/, 'Codex 当前配置预览必须使用 TOML 样式');
-assert.match(configViewSource, /<CodePreview content=\{recommendationContent\} filetype=\{isCodex \? 'toml' : 'jsonc'\} \/>/, 'Codex 推荐配置预览必须使用 TOML 样式');
-assert.match(configViewSource, /title='配置文件管理'/, '编辑态 Header 标题统一为「配置文件管理」（Codex 上下文经由 Header 全称区分，配置文件页不再重复 Codex 前缀）');
-assert.match(configViewSource, /subtitle=\{isCodex \? '查看、补全与编辑 ~\/\.codex\/config\.toml' : '查看、补全与编辑 ~\/\.claude\/settings\.json'\}/, '编辑态 Header 必须随 agentContext 切换副标题');
-assert.match(configViewSource, /if \(dirty\) toast\.info\('已放弃未保存的编辑'\);/, '取消编辑必须识别 dirty 状态');
-assert.match(configViewSource, /\}, \[target\]\);/, 'agentContext/target 切换时必须重载视图状态，避免旧配置页内容残留');
+assert.match(configViewSource, /editorIsJson: !isCodex/, 'Codex Config 编辑器不得启用 JSON 校验，应交给 TOML service 校验');
+assert.match(configViewSource, /editorFiletype: isCodex \? 'text' : 'json'/, 'Codex Config 编辑器不应声明为 JSON filetype');
+assert.match(configViewSource, /previewFiletype: isCodex \? 'toml' : 'json'/, 'Codex 当前配置预览必须使用 TOML 样式');
+assert.match(configViewSource, /recommendationFiletype: isCodex \? 'toml' : 'jsonc'/, 'Codex 推荐配置预览必须使用 TOML 样式');
+assert.match(configViewSource, /title: '配置文件管理'/, 'Header 标题统一为「配置文件管理」');
+assert.match(configViewSource, /subtitle: isCodex \? '查看、补全与编辑 ~\/\.codex\/config\.toml' : '查看、补全与编辑 ~\/\.claude\/settings\.json'/, 'Header 必须随 agentContext 切换副标题');
+assert.match(configViewSource, /if \(dirty\) \{[\s\S]{0,80}toast\.info\('已放弃未保存的编辑'\)/, '取消编辑必须识别 dirty 状态');
+assert.match(configViewSource, /useEffect\(\(\) => \{[\s\S]{0,120}reset\(adapter\.load\(\)\);[\s\S]{0,40}\}, \[adapter\]\);/, 'agentContext adapter 切换时必须重载视图状态，避免旧配置页内容残留');
 assert.match(configViewSource, /setDirty\(false\);/, '保存/取消/切换后必须清理 dirty 状态，避免跨上下文误写');
 // HC-EDITOR-PANEL-STABLE：editor 面板容器父路径必须恒定（始终 row 容器内的 key='editor-panel'），
 // 推荐边栏作为带 key 的兄弟条件插入/移除。否则 split↔editor 切换会改变 editorEl 父路径，React 卸载重挂
 // TextareaEditor，<textarea initialValue> 用 editInitial 重新初始化、丢失用户编辑（关闭推荐边栏内容回退 bug）。
 // 注：React key 仅在同一父节点的兄弟间保证复用；跨父路径的 key 无效，故必须靠稳定结构而非给 TextareaEditor 加 key。
-assert.match(configViewSource, /key='editor-panel'/, 'ConfigView editor 面板必须有稳定 key，父路径恒定避免 textarea 重挂丢内容');
-assert.match(configViewSource, /key='recommend-panel'/, 'ConfigView 推荐边栏必须作为带 key 的兄弟节点条件渲染，不改变 editor 面板父路径');
+assert.match(configViewSource, /key="editor-panel"/, 'ConfigView editor 面板必须有稳定 key，父路径恒定避免 textarea 重挂丢内容');
+assert.match(configViewSource, /key="recommend-panel"/, 'ConfigView 推荐边栏必须作为带 key 的兄弟节点条件渲染，不改变 editor 面板父路径');
 assert.doesNotMatch(configViewSource, /\?\s*\([\s\S]{0,200}\{editorEl\}[\s\S]{0,200}\)\s*:\s*\(\s*editorEl\s*\)/, 'editor 不得再走 split/非 split 两分支渲染（会改变父路径导致重挂）');
 console.log('[PASS] 6.10 ConfigView agentContext + Codex TOML 编辑源码不变量');
 

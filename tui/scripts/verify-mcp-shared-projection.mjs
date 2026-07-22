@@ -116,15 +116,15 @@ const React = (await import('react')).default;
 const {act} = await import('react');
 const {testRender} = await import('@opentui/react/test-utils');
 const {default: McpView} = await import('../src/views/mcp/McpView.tsx');
-const mcpViewSource = readFileSync(new URL('../src/views/mcp/McpView.tsx', import.meta.url), 'utf8');
+const mcpHomeSource = readFileSync(new URL('../src/views/mcp/McpHomeView.tsx', import.meta.url), 'utf8');
 assert.match(
-	mcpViewSource,
-	/screen\.kind === 'list' \? \([\s\S]{0,160}<ListInput/,
+	mcpHomeSource,
+	/<McpListInput[\s\S]{0,160}active=\{active && mode === 'list'\}/,
 	'MCP 列表输入处理器只应在 list 模式挂载'
 );
 assert.match(
-	mcpViewSource,
-	/screen\.kind === 'select-toggle-target' \? \([\s\S]{0,160}<ToggleModalInput/,
+	mcpHomeSource,
+	/<ToggleModalInput[\s\S]{0,160}active=\{active && mode === 'select-toggle-target'\}/,
 	'MCP 目标 Modal 输入处理器只应在对应模式挂载'
 );
 const setup = await testRender(
