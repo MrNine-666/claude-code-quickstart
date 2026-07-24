@@ -286,7 +286,7 @@ export type SkillSharedRow = {
  */
 export function projectSharedSkills(installed: readonly InstalledSkill[]): readonly SkillSharedRow[] {
 	return installed.map(skill => {
-		// skills 1.5.19 在隔离 HOME 的真实双 Agent add 后，list --json 可能只列 Claude Code，
+		// 官方 skills 在隔离 HOME 的真实双 Agent add 后，list --json 可能只列 Claude Code，
 		// 即使 canonical 已存在且 Codex 已可直读。因此有物理检查时以路径事实为准；旧调用无 storage 时兼容 agents 投影。
 		const sharedInstalled = skill.storage ? skill.storage.canonicalValid : skillInstalledOn(skill, 'cx');
 		const claudeInjected = skill.storage ? skill.storage.claudeValid : skillInstalledOn(skill, 'cc');

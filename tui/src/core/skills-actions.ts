@@ -19,7 +19,8 @@ export type SkillsExecFn = (command: string, args: readonly string[], options?: 
 const INSTALL_TIMEOUT_MS = 600000;
 const UPDATE_TIMEOUT_MS = 600000;
 const UNINSTALL_TIMEOUT_MS = 300000;
-export const SKILLS_CLI_PACKAGE = 'skills@1.5.19';
+// 不钉死小版本：始终走官方 skills 最新包；拓扑/恢复契约以 CLI 语义 + 文件系统对账为准。
+export const SKILLS_CLI_PACKAGE = 'skills@latest';
 
 export type SkillsActionResult = {
 	readonly success: boolean;

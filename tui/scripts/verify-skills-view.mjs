@@ -284,7 +284,7 @@ import {
 		assert.equal(skillArgs.length, 3, '三个 --skill 一次传入');
 		assert.equal(
 			multiEvents.find(event => event.instruction)?.instruction,
-			'npx --yes skills@1.5.19 add org/repo --yes --agent claude-code -g --skill a --skill b --skill c',
+			'npx --yes skills@latest add org/repo --yes --agent claude-code -g --skill a --skill b --skill c',
 			'Skills progress 必须上报实际批量安装命令'
 		);
 		assert.ok(multiEvents.some(event => event.level === 'success'));
@@ -302,7 +302,7 @@ import {
 		const updateRes = await updateSkills([], event => updateEvents.push(event), failExec);
 		assert.equal(updateRes.success, false);
 		assert.ok(updateRes.error.includes('网络'));
-		assert.equal(updateEvents.find(event => event.instruction)?.instruction, 'npx --yes skills@1.5.19 update -g -y', 'Skills update progress 必须上报实际命令');
+		assert.equal(updateEvents.find(event => event.instruction)?.instruction, 'npx --yes skills@latest update -g -y', 'Skills update progress 必须上报实际命令');
 		assert.ok(updateEvents.some(event => event.level === 'danger'));
 
 		// uninstall：成功路径
@@ -311,7 +311,7 @@ import {
 		assert.equal(uninstallRes.success, true);
 		assert.equal(
 			uninstallEvents.find(event => event.instruction)?.instruction,
-			'npx --yes skills@1.5.19 remove skill-a -g --agent claude-code --yes',
+			'npx --yes skills@latest remove skill-a -g --agent claude-code --yes',
 			'Skills uninstall progress 必须上报实际命令'
 		);
 		assert.ok(uninstallEvents.length > 0);

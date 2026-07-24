@@ -130,7 +130,7 @@ jobs:
           # （@opentui/core 经平台子包分发 Zig 原生内核，交叉编译时必须全部存在）
           bun install --frozen-lockfile --os=* --cpu=*
 
-          # 固定上游 1.5.19，在隔离 HOME 验证 C/X/B 六向转换与单实体结果。
+          # 使用官方 skills@latest，在隔离 HOME 验证 C/X/B 六向转换与单实体结果。
           bun run test:skills-topology
 
           # 发布版本以 git tag 为唯一数据源：仓库内 package.json 保持开发态版本，tag 构建时自动注入。

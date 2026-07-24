@@ -101,7 +101,7 @@ async function removeTargets(
 	return runSkillsRemove({
 		skillNames: [name],
 		agents,
-		// 即使只撤销 Claude 投影，也必须让 1.5.19 检测到 Codex 正在使用 canonical，
+		// 即使只撤销 Claude 投影，也必须让官方 skills 检测到 Codex 正在使用 canonical，
 		// 否则 remove 会把“无人使用”的 ~/.agents/skills 本体一并删除。
 		env: topologyEnv(options, true)
 	}, onProgress, exec);
@@ -267,7 +267,7 @@ export async function transitionSkillTopology(
 		} else if ((original === 'shared' || original === 'shared-copy') && target === 'codex-only') {
 			action = await removeTargets(skill.name, ['cc'], onProgress, exec, options);
 		} else {
-			// C/X/shared-copy -> B：官方 1.5.19 按 codex、claude-code 顺序完成 X 物化与 C 投影。
+			// C/X/shared-copy -> B：官方 skills 按 codex、claude-code 顺序完成 X 物化与 C 投影。
 			action = await addFromSnapshot(skill.name, snapshot, target, onProgress, exec, options);
 		}
 

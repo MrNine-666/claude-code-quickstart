@@ -76,14 +76,14 @@ cleanupConfirmedReplacementSnapshots(
 
 - Detection runs one `skills list -g --json` command, then performs read-only filesystem inspection. It must not run a second list command or mutate storage.
 - When storage inspection is present, `projectSharedSkills()` derives Codex availability from a valid `~/.agents/skills/<name>` canonical and Claude availability from a valid Claude path. CLI `agents` is only the compatibility fallback when storage is absent.
-- Official `skills` 1.5.19 may return only `Claude Code` in `agents` after a successful two-Agent local add, even though canonical exists. Never hide Codex availability solely because the badge omitted Codex.
+- Official `skills` may return only `Claude Code` in `agents` after a successful two-Agent local add, even though canonical exists. Never hide Codex availability solely because the badge omitted Codex.
 - Strict Claude-only means a valid real Claude directory and no physical canonical object. A CLI badge alone is only a candidate.
 - Browsing, page entry, automatic detection, and `r` refresh never adopt, copy, move, link, or repair Skills.
 - The only successful topologies are C = Claude real directory only, X = canonical real directory only, and B = canonical real directory plus Claude symlink/junction projection. Two real copies are never B.
 - C/X/B and recoverable `shared-copy` rows initialize two editable management targets. A non-no-op draft enters `confirm-topology-change`; zero targets are rejected with guidance to use `d`; exact C/X/B no-op closes without snapshot, process, or refresh.
 - ccq may copy validated content into an OS temp directory. Only the official CLI may create, replace, or remove objects below `.agents/skills` or `.claude/skills`.
-- Every target-tree mutation is pinned to official `skills@1.5.19`. C materialization uses Claude Code plus `--copy`; X uses Codex plus `--copy`; B uses ordered Codex then Claude Code without `--copy`.
-- All topology child processes set `HOME`, `USERPROFILE`, and `CLAUDE_CONFIG_DIR=<home>/.claude`. Codex add and every topology targeted remove also set `CODEX_HOME=<home>/.agents`. This includes `remove --agent claude-code`: without `CODEX_HOME`, 1.5.19 may decide canonical is unused and delete it during B -> X.
+- Every target-tree mutation uses official `skills@latest` (no pinned minor). C materialization uses Claude Code plus `--copy`; X uses Codex plus `--copy`; B uses ordered Codex then Claude Code without `--copy`.
+- All topology child processes set `HOME`, `USERPROFILE`, and `CLAUDE_CONFIG_DIR=<home>/.claude`. Codex add and every topology targeted remove also set `CODEX_HOME=<home>/.agents`. This includes `remove --agent claude-code`: without `CODEX_HOME`, the official CLI may decide canonical is unused and delete it during B -> X.
 - Transition order is fixed:
 
   | Transition | Official CLI sequence |
@@ -98,7 +98,7 @@ cleanupConfirmedReplacementSnapshots(
 - A valid canonical plus Claude real copy is `partial`, not complete. Keep both copies and offer projection repair.
 - After a mutation failure, perform at most one official-CLI recovery: targeted cleanup of C/X, then rebuild the original topology from the same snapshot. Manifest-equivalent recovery returns non-success `restored` and cleans the snapshot; failed recovery retains `recoveryPath`.
 - `SkillSharedRow` preserves raw `agents` plus `otherAgents`. A target C transition is blocked before spawn when explicit third-party agents remain; other transitions only target Claude Code/Codex.
-- Local-source adoption must not invent remote provenance. The 1.5.19 real CLI smoke leaves global lock absent for local sources; the UI therefore exposes no remote update source.
+- Local-source adoption must not invent remote provenance. Real CLI smoke leaves global lock absent for local sources; the UI therefore exposes no remote update source.
 - Same-source or unknown-source rows stay disabled regardless of whether storage is Claude-only, canonical-only, shared-copy, or fully shared; physical shape alone never enables install-page migration. Only a valid recoverable row with a known, provably different source becomes `source-replacement` and displays exactly `已有同名`; invalid/conflict rows remain blocked.
 - Source replacement order is snapshot old content -> direct official add -> filesystem and lock postflight -> optional Claude-only remove. Never remove first.
 - Add or postflight failure must not run the optional remove. Preserve the old-content snapshot and report its path.
@@ -134,7 +134,7 @@ cleanupConfirmedReplacementSnapshots(
 | Recovery restores original topology and manifest | `restored`, `success=false`, clean snapshot |
 | Recovery cannot prove original topology and manifest | `failed`, keep snapshot and expose path |
 | Target C with explicit third-party Agent | Block before snapshot/spawn |
-| B -> X remove without scoped `CODEX_HOME` | Forbidden; 1.5.19 can delete canonical as apparently unused |
+| B -> X remove without scoped `CODEX_HOME` | Forbidden; official CLI can delete canonical as apparently unused |
 
 ## 5. Good / Base / Bad Cases
 
@@ -174,7 +174,7 @@ cleanupConfirmedReplacementSnapshots(
   - old/new source, target, canonical, and lock impact text.
 - `verify-skills-render.mjs`: drive both real OpenTUI inputs for cursor insertion, newline-stripped paste, selection/cut, undo/redo, single Enter ownership, and narrow layout.
 - Run `verify-skills-agent.mjs`, `verify-shortcuts.mjs`, TypeScript typecheck, and the full `bun run verify` gate.
-- `test-skills-topology-smoke.mjs`: isolated temporary HOME against pinned 1.5.19, all six transitions, all no-ops, X canonical location, and B single entity.
+- `test-skills-topology-smoke.mjs`: isolated temporary HOME against official `skills@latest`, all six transitions, all no-ops, X canonical location, and B single entity.
 
 ## 7. Wrong vs Correct
 

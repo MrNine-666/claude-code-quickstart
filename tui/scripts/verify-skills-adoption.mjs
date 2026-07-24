@@ -136,7 +136,7 @@ async function verifyActionContracts() {
 	await runSkillsRemove({skillNames: ['demo'], agents: ['cc', 'cx'], env}, undefined, exec);
 
 	assert.equal(calls[0].args.includes('--copy'), true, '单侧物化必须显式 --copy');
-	assert.equal(calls.every(call => call.args.includes('skills@1.5.19')), true, '所有 mutation 必须固定官方 skills@1.5.19');
+	assert.equal(calls.every(call => call.args.includes('skills@latest')), true, '所有 mutation 必须使用官方 skills@latest');
 	assert.equal(calls[1].args.includes('--copy'), false, '双侧投影不得使用 --copy');
 	assert.deepEqual(agentsFromArgs(calls[1].args), ['codex', 'claude-code']);
 	assert.deepEqual(agentsFromArgs(calls[2].args), ['claude-code', 'codex'], 'remove 必须支持重复 --agent');

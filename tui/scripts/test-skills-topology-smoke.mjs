@@ -92,7 +92,7 @@ try {
 		assert.equal(spawned, false);
 	}
 
-	console.log('[PASS] skills@1.5.19 isolated HOME：C/X/B 六向转换、三种 no-op、B 单实体');
+	console.log('[PASS] skills@latest isolated HOME：C/X/B 六向转换、三种 no-op、B 单实体');
 } finally {
 	if (previousNpmCache === undefined) {
 		delete process.env.npm_config_cache;
