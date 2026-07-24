@@ -561,20 +561,18 @@ function Write-FileAtomically {
     }
 }
 
-function Get-FnmSubsectionLines {
+function Get-LegacyCcqFunctionRemovalPlan {
     <#
     .SYNOPSIS
-    从标记块内容中提取 fnm 启动命令行（剥离 [CCQ:FNM:BEGIN/END] 子段标记）
+    为历史 ccq Profile 函数生成最小删除计划。
     .DESCRIPTION
-    历史上 fnm provider 通过 Write-ProfileSubsection 把 `fnm env --use-on-cd | Out-String
-    | Invoke-Expression` 包在 `# [CCQ:FNM:BEGIN]` / `# [CCQ:FNM:END]` 子段里，再嵌入 CCQ
-    标记块。清理标记块时若整块删除会连带删掉 fnm 环境初始化，导致 fnm 管理的 Node.js
-    在新终端失效。本函数只提取子段内部的裸命令行（不含子段标记），供保留使用；无 fnm
-    子段时返回空数组。
+    通用 CCQ 标记块历史上同时承载过 fnm 初始化和 ccq 快捷函数，不能看到标记就整块删除。
+    这里只通过 PowerShell AST 定位名为 ccq 的函数，并要求函数正文同时包含历史 install/manage
+    Release URL。解析失败、匹配不唯一或不是整行函数定义时一律拒绝修改。
     .PARAMETER BlockLines
     标记块内部内容行（Get-ManagedBlockContent 返回的 Content）
     .RETURNS
-    fnm 子段内部的裸命令行数组（不含 [CCQ:FNM:*] 标记）
+    包含 SafeToModify、Found 和 RemainingLines 的哈希表。
     #>
     param(
         [Parameter(Mandatory = $true)]
@@ -582,30 +580,165 @@ function Get-FnmSubsectionLines {
         [object[]]$BlockLines
     )
 
-    $fnmBeginMarker = "# [CCQ:FNM:BEGIN]"
-    $fnmEndMarker = "# [CCQ:FNM:END]"
-    $collected = [System.Collections.ArrayList]::new()
-    $inFnm = $false
-
+    $sourceLines = [System.Collections.ArrayList]::new()
     foreach ($line in $BlockLines) {
         $lineText = if ($null -eq $line) { "" } else { [string]$line }
-        $trimmed = $lineText.Trim()
+        $null = $sourceLines.Add($lineText)
+    }
 
-        if ($trimmed -eq $fnmBeginMarker) {
-            $inFnm = $true
-            continue
-        }
-        if ($trimmed -eq $fnmEndMarker) {
-            $inFnm = $false
-            continue
-        }
-        if ($inFnm) {
-            $null = $collected.Add($lineText)
+    $sourceText = [string]::Join("`n", [string[]]$sourceLines.ToArray())
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput(
+        $sourceText,
+        [ref]$tokens,
+        [ref]$parseErrors
+    )
+
+    if (@($parseErrors).Count -gt 0) {
+        return @{
+            SafeToModify  = $false
+            Found         = $false
+            RemainingLines = @($sourceLines.ToArray())
         }
     }
 
-    # HC-13：逗号阻止 pipeline 展开，确保空/单元素数组在调用点不退化为 $null/标量
-    return ,$collected.ToArray()
+    $ccqFunctions = @($ast.FindAll({
+        param($Node)
+        $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $Node.Name -ieq 'ccq'
+    }, $true))
+
+    $legacyFunctions = @($ccqFunctions | Where-Object {
+        $functionText = $_.Extent.Text
+        $functionText.IndexOf(
+            'MrNine-666/claude-code-quickstart/releases/latest/download/install.ps1',
+            [System.StringComparison]::OrdinalIgnoreCase
+        ) -ge 0 -and
+        $functionText.IndexOf(
+            'MrNine-666/claude-code-quickstart/releases/latest/download/manage.ps1',
+            [System.StringComparison]::OrdinalIgnoreCase
+        ) -ge 0
+    })
+
+    if ($legacyFunctions.Count -eq 0) {
+        return @{
+            SafeToModify  = $true
+            Found         = $false
+            RemainingLines = @($sourceLines.ToArray())
+        }
+    }
+    if ($legacyFunctions.Count -ne 1) {
+        return @{
+            SafeToModify  = $false
+            Found         = $false
+            RemainingLines = @($sourceLines.ToArray())
+        }
+    }
+
+    $legacyFunction = $legacyFunctions[0]
+    $startIndex = $legacyFunction.Extent.StartLineNumber - 1
+    $endIndex = $legacyFunction.Extent.EndLineNumber - 1
+    if ($startIndex -lt 0 -or $endIndex -lt $startIndex -or $endIndex -ge $sourceLines.Count) {
+        return @{
+            SafeToModify  = $false
+            Found         = $false
+            RemainingLines = @($sourceLines.ToArray())
+        }
+    }
+
+    # 仅删除独占完整行的函数定义，避免截断同一行上的用户表达式。
+    $startLine = [string]$sourceLines[$startIndex]
+    $endLine = [string]$sourceLines[$endIndex]
+    $startPrefix = $startLine.Substring(0, $legacyFunction.Extent.StartColumnNumber - 1)
+    $endSuffix = $endLine.Substring($legacyFunction.Extent.EndColumnNumber - 1)
+    if (-not [string]::IsNullOrWhiteSpace($startPrefix) -or
+        -not [string]::IsNullOrWhiteSpace($endSuffix)) {
+        return @{
+            SafeToModify  = $false
+            Found         = $false
+            RemainingLines = @($sourceLines.ToArray())
+        }
+    }
+
+    $remaining = [System.Collections.ArrayList]::new()
+    for ($i = 0; $i -lt $sourceLines.Count; $i++) {
+        if ($i -ge $startIndex -and $i -le $endIndex) {
+            continue
+        }
+
+        $lineText = [string]$sourceLines[$i]
+        $null = $remaining.Add($lineText)
+    }
+
+    return @{
+        SafeToModify  = $true
+        Found         = $true
+        RemainingLines = @($remaining.ToArray())
+    }
+}
+
+function Remove-LegacyCcqFunctionFromFile {
+    <#
+    .SYNOPSIS
+    仅移除安装器历史版本注入的 ccq Profile 函数。
+    .DESCRIPTION
+    对包含 fnm 或其他内容的通用托管块做最小修改；无法确认旧函数身份时保持文件不变。
+    .RETURNS
+    包含 Success 和 Changed 的哈希表。
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath
+    )
+
+    $result = @{
+        Success = $false
+        Changed = $false
+    }
+
+    if (-not (Test-Path $FilePath)) {
+        $result.Success = $true
+        return $result
+    }
+
+    try {
+        $blockInfo = Get-ManagedBlockContent -FilePath $FilePath
+        if (-not $blockInfo.Found) {
+            $result.Success = $true
+            return $result
+        }
+
+        $blockLines = @($blockInfo.Content.ToArray())
+        $plan = Get-LegacyCcqFunctionRemovalPlan -BlockLines $blockLines
+        if (-not $plan.SafeToModify) {
+            Write-UiWarning "Profile 标记块无法安全解析，已保持原文件不变: $FilePath" -Level Detail
+            $result.Success = $true
+            return $result
+        }
+        if (-not $plan.Found) {
+            $result.Success = $true
+            return $result
+        }
+
+        $remainingLines = @($plan.RemainingLines)
+        $meaningfulLines = @($remainingLines | Where-Object {
+            -not [string]::IsNullOrWhiteSpace([string]$_)
+        })
+
+        if ($meaningfulLines.Count -eq 0) {
+            $success = Remove-ManagedBlockFromFile -FilePath $FilePath
+        } else {
+            $success = Set-ManagedBlockInFile -FilePath $FilePath -Content $remainingLines
+        }
+
+        $result.Success = $success
+        $result.Changed = $success
+        return $result
+    } catch {
+        Write-UiWarning "清理旧 ccq Profile 函数失败: $($_.Exception.Message)" -Level Detail
+        return $result
+    }
 }
 
 function Remove-ManagedBlockFromFile {
@@ -618,9 +751,6 @@ function Remove-ManagedBlockFromFile {
     开始标记（可选，使用默认标记）
     .PARAMETER EndMarker
     结束标记（可选，使用默认标记）
-    .PARAMETER PreserveFnmSubsection
-    移除标记块时保留其中的 fnm 启动命令（[CCQ:FNM:*] 子段），剥离子段标记后作为普通
-    profile 行留在原块位置。用于清理旧 ccq 快捷函数残留时不误删 fnm 环境初始化。
     .RETURNS
     操作成功返回 $true，失败返回 $false
     #>
@@ -630,9 +760,7 @@ function Remove-ManagedBlockFromFile {
 
         [string]$StartMarker = $script:ManagedBlockStartMarker,
 
-        [string]$EndMarker = $script:ManagedBlockEndMarker,
-
-        [switch]$PreserveFnmSubsection
+        [string]$EndMarker = $script:ManagedBlockEndMarker
     )
 
     if (-not (Test-Path $FilePath)) {
@@ -652,28 +780,11 @@ function Remove-ManagedBlockFromFile {
             return $true
         }
 
-        # 提取需保留的 fnm 启动命令（在块位置原地保留，剥离 [CCQ:FNM:*] 子段标记）
-        $preservedFnmLines = @()
-        if ($PreserveFnmSubsection) {
-            $blockLines = @($blockInfo.Content.ToArray())
-            $preservedFnmLines = @(Get-FnmSubsectionLines -BlockLines $blockLines)
-            if ($preservedFnmLines.Count -gt 0) {
-                Write-UiDim "保留 fnm 启动命令（$($preservedFnmLines.Count) 行）" -Level Detail
-            }
-        }
-
         # 构建新内容（移除标记块）
         $newContent = [System.Collections.ArrayList]::new()
 
         if ($blockInfo.BeforeBlock -and $blockInfo.BeforeBlock.Count -gt 0) {
             foreach ($line in $blockInfo.BeforeBlock) {
-                $null = $newContent.Add($line)
-            }
-        }
-
-        # 在原块位置保留 fnm 启动命令
-        if ($preservedFnmLines.Count -gt 0) {
-            foreach ($line in $preservedFnmLines) {
                 $null = $newContent.Add($line)
             }
         }

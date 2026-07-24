@@ -859,13 +859,11 @@ function Invoke-ProfileLegacyCleanup {
                 continue
             }
 
-            Write-UiDim "检测到旧 CCQ 标记块: $profilePath" -Level Detail
-            # 只清理旧 ccq 快捷函数残留，保留块内 [CCQ:FNM:*] fnm 启动命令
-            # （老用户的 fnm 环境初始化写在同一标记块里，整块删除会导致 fnm 管理的 Node.js 在新终端失效）
-            $removed = Remove-ManagedBlockFromFile -FilePath $profilePath -PreserveFnmSubsection
-            if ($removed) {
+            # 通用标记块历史上也承载 fnm 初始化；只有确认命中旧 ccq 函数时才做最小删除。
+            $cleanupResult = Remove-LegacyCcqFunctionFromFile -FilePath $profilePath
+            if ($cleanupResult.Success -and $cleanupResult.Changed) {
                 Write-UiSuccess "✓ 已清理旧 ccq 快捷函数残留: $profilePath"
-            } else {
+            } elseif (-not $cleanupResult.Success) {
                 Write-UiWarning "清理旧 CCQ 标记块失败: $profilePath"
             }
         } catch {

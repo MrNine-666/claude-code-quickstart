@@ -73,8 +73,13 @@ Profile edits use exactly these markers:
 
 Backups live under `%TEMP%\ClaudeEnvInstaller\Backups`. Use
 `Write-FileAtomically -FilePath ... -Content ...`; do not introduce a `-Path`
-alias or direct destructive replacement. `Update.ps1` depends on Profile and
-provides `Read-UpdateManifest`, `Write-UpdateManifest`,
+alias or direct destructive replacement. The shared marker block historically
+contained both fnm initialization and the obsolete `ccq` Profile function, so
+legacy cleanup must not delete a block based on markers alone. It may remove
+only an AST-parsed `ccq` function that matches both historical Release URLs;
+all other lines stay in place, and parse/identity uncertainty must cause a
+zero-write skip. `Update.ps1` depends on Profile and provides
+`Read-UpdateManifest`, `Write-UpdateManifest`,
 `Get-StringFingerprint`, `New-UpdateSnapshot` and `Clear-OldUpdateSnapshots`.
 The manifest is user runtime state and is not the installer step state.
 
@@ -101,7 +106,12 @@ supported architectures to `windows-x64`. `Install-CcqExecutable` downloads to
 a temporary file, checks it is non-empty, atomically replaces
 `%USERPROFILE%\.local\bin\ccq.exe`, and calls `Add-DirectoryToUserPath`.
 The PATH update is user-level (`HKCU\Environment`) and must not inject a
-Profile wrapper. A failed download must leave an existing ccq executable intact.
+Profile wrapper. `Add-DirectoryToUserPath` must read the raw registry value with
+`DoNotExpandEnvironmentNames`, append without expanding existing entries, and
+write with the original `RegistryValueKind`; it must not round-trip the complete
+user PATH through `Environment.GetEnvironmentVariable` /
+`Environment.SetEnvironmentVariable`. A failed download must leave an existing
+ccq executable intact.
 `ConvertTo-CcqComparableVersion` removes the `ccq ` command prefix and a leading
 Release-tag `v`. `Get-CcqReleaseTargetVersion` accepts only a comparable `v*`
 Release tag. `Confirm-CcqExecutableDownload` skips equal versions, presents a
@@ -120,6 +130,8 @@ existing executable when the target version is unavailable.
 | ccq installed version equals target | Report current; do not prompt or download |
 | ccq installed version differs | Show both versions; default menu selection preserves current |
 | target Release tag unavailable | Preserve current executable; do not guess that `latest` differs |
+| User PATH is `REG_EXPAND_SZ` with `%NVM_HOME%` / `%NVM_SYMLINK%` | Append the ccq directory while preserving the raw tokens and registry type |
+| Profile marker block contains fnm or unknown user content | Remove only a positively identified historical `ccq` function; otherwise do not write |
 | Non-admin pipeline execution | Do not attempt `-File` relaunch; instruct the user to rerun elevated |
 
 ## 5. Good / Base / Bad Cases
@@ -144,6 +156,12 @@ existing executable when the target version is unavailable.
   output handling, atomic Profile writes and ccq temp-file replacement.
 - `installer/contracts/Test-Contracts.ps1` behavior-probes same, preserve and
   overwrite decisions in the real Windows handoff function.
+- Behavior-probe `Add-DirectoryToUserPath` through mocked registry boundaries;
+  assert raw nvm tokens and `REG_EXPAND_SZ` survive and an existing entry causes
+  no registry write.
+- Behavior-probe Profile legacy cleanup with marked fnm, unmarked fnm, fnm-only,
+  legacy-function-only and malformed blocks; fnm stays line-preserving and
+  uncertain blocks cause no write.
 - Run `git diff --check` after changing PowerShell or generated artifact inputs.
 
 ## 7. Wrong vs Correct

@@ -1753,6 +1753,85 @@ function Install-CcqExecutable {
     return $result
 }
 
+function Get-UserPathRegistryState {
+    <#
+    .SYNOPSIS
+    读取用户 PATH 的原始注册表值及其类型，不展开环境变量。
+    .DESCRIPTION
+    HKCU\Environment\Path 常见为 REG_EXPAND_SZ。必须保留原始的
+    %NVM_HOME%/%NVM_SYMLINK% 等表达式，不能通过
+    [Environment]::GetEnvironmentVariable(..., "User") 读取展开后的值。
+    #>
+    param()
+
+    $key = $null
+    try {
+        $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $false)
+        if (-not $key) {
+            return @{
+                Exists = $false
+                Value   = ""
+                Kind    = [Microsoft.Win32.RegistryValueKind]::String
+            }
+        }
+
+        $pathExists = @($key.GetValueNames()) -contains "Path"
+        if (-not $pathExists) {
+            return @{
+                Exists = $false
+                Value   = ""
+                Kind    = [Microsoft.Win32.RegistryValueKind]::String
+            }
+        }
+
+        return @{
+            Exists = $true
+            Value   = [string]$key.GetValue(
+                "Path",
+                "",
+                [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
+            )
+            Kind    = $key.GetValueKind("Path")
+        }
+    } finally {
+        if ($key) {
+            $key.Close()
+        }
+    }
+}
+
+function Set-UserPathRegistryValue {
+    <#
+    .SYNOPSIS
+    按指定注册表类型写入用户 PATH。
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Value,
+
+        [Parameter(Mandatory = $true)]
+        [Microsoft.Win32.RegistryValueKind]$Kind
+    )
+
+    $key = $null
+    try {
+        $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
+        if (-not $key) {
+            $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Environment")
+        }
+        if (-not $key) {
+            throw "无法打开用户环境变量注册表项"
+        }
+
+        $key.SetValue("Path", $Value, $Kind)
+    } finally {
+        if ($key) {
+            $key.Close()
+        }
+    }
+}
+
 function Add-DirectoryToUserPath {
     <#
     .SYNOPSIS
@@ -1775,10 +1854,19 @@ function Add-DirectoryToUserPath {
     }
 
     try {
-        # 1. 读取当前用户 PATH
-        $currentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+        # 1. 读取用户 PATH 原始值；不能读取展开后的值，否则会破坏 nvm 变量引用。
+        $pathState = Get-UserPathRegistryState
+        $currentPath = [string]$pathState.Value
         if ([string]::IsNullOrWhiteSpace($currentPath)) {
             $currentPath = ""
+        }
+
+        $pathKind = [Microsoft.Win32.RegistryValueKind]$pathState.Kind
+        if ($pathKind -notin @(
+                [Microsoft.Win32.RegistryValueKind]::String,
+                [Microsoft.Win32.RegistryValueKind]::ExpandString
+            )) {
+            throw "用户 PATH 注册表类型不受支持: $pathKind"
         }
 
         # 2. 检查是否已存在（兼容 %USERPROFILE%\.local\bin 这类未展开写法）
@@ -1804,8 +1892,8 @@ function Add-DirectoryToUserPath {
             "${currentPath};${DirectoryPath}"
         }
 
-        # 4. 写入注册表
-        [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
+        # 4. 按原始注册表类型写回，保留 %NVM_HOME%/%NVM_SYMLINK% 等表达式。
+        Set-UserPathRegistryValue -Value $newPath -Kind $pathKind
         Write-Verbose "已将 $DirectoryPath 添加到用户 PATH"
 
         $result.Success = $true

@@ -667,6 +667,246 @@ function Test-CleanupPolicyContract {
     }
 }
 
+function Test-UserPathPreservationContract {
+    <#
+    验证 ccq PATH 追加不会展开 nvm 变量或降级用户 PATH 的注册表类型。
+    通过覆盖注册表边界函数隔离真实 HKCU，避免契约测试修改测试机环境。
+    #>
+    param()
+
+    $processSource = Get-Content -Path (Join-Path $script:CoreRoot 'Process.ps1') -Raw -Encoding UTF8
+    if ($processSource -notmatch 'DoNotExpandEnvironmentNames') {
+        Add-Issue 'user-path.source 缺少原始注册表值读取保护'
+    }
+    if ($processSource -notmatch '\.SetValue\("Path",\s*\$Value,\s*\$Kind\)') {
+        Add-Issue 'user-path.source 缺少 RegistryValueKind 保持写入'
+    }
+
+    $pathFunctionTokens = $null
+    $pathFunctionErrors = $null
+    $processAst = [System.Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $script:CoreRoot 'Process.ps1'),
+        [ref]$pathFunctionTokens,
+        [ref]$pathFunctionErrors
+    )
+    $addPathFunction = $processAst.Find({
+        param($Node)
+        $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $Node.Name -eq 'Add-DirectoryToUserPath'
+    }, $true)
+    if ($pathFunctionErrors.Count -gt 0 -or -not $addPathFunction) {
+        Add-Issue 'user-path.source 无法解析 Add-DirectoryToUserPath'
+    } elseif ($addPathFunction.Extent.Text -match 'SetEnvironmentVariable') {
+        Add-Issue 'user-path.source 禁止通过 SetEnvironmentVariable 覆盖完整用户 PATH'
+    }
+
+    $script:UserPathProbeState = @{
+        Exists = $true
+        Value = '%NVM_HOME%;%NVM_SYMLINK%;C:\Windows\System32'
+        Kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+    }
+    $script:UserPathProbeWrites = @()
+
+    function Get-UserPathRegistryState {
+        return $script:UserPathProbeState
+    }
+    function Set-UserPathRegistryValue {
+        param(
+            [string]$Value,
+            [Microsoft.Win32.RegistryValueKind]$Kind
+        )
+        $script:UserPathProbeWrites += @{
+            Value = $Value
+            Kind = $Kind
+        }
+    }
+
+    $result = Add-DirectoryToUserPath -DirectoryPath 'C:\Users\ccq-test\.local\bin'
+    Assert-Equal 'user-path.preserve.success' $true $result.Success
+    Assert-Equal 'user-path.preserve.added' $true $result.Added
+    Assert-Equal 'user-path.preserve.value' '%NVM_HOME%;%NVM_SYMLINK%;C:\Windows\System32;C:\Users\ccq-test\.local\bin' $script:UserPathProbeWrites[0].Value
+    Assert-Equal 'user-path.preserve.kind' 'ExpandString' $script:UserPathProbeWrites[0].Kind.ToString()
+
+    $script:UserPathProbeState = @{
+        Exists = $true
+        Value = 'C:\ccq-test\.local\bin;%NVM_HOME%'
+        Kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+    }
+    $script:UserPathProbeWrites = @()
+    $result = Add-DirectoryToUserPath -DirectoryPath 'C:\ccq-test\.local\bin'
+    Assert-Equal 'user-path.existing.success' $true $result.Success
+    Assert-Equal 'user-path.existing.already-present' $true $result.AlreadyPresent
+    Assert-Equal 'user-path.existing.no-write' 0 $script:UserPathProbeWrites.Count
+}
+
+function Test-ProfileLegacyCleanupContract {
+    <#
+    验证旧 ccq 函数清理只删除可确认的历史函数，不删除或折叠 fnm/用户 Profile 内容。
+    所有读写均限制在独立临时目录，原子写与备份边界在函数作用域内替换。
+    #>
+    param()
+
+    $installSource = Get-Content -Path (Join-Path $script:WindowsRoot 'Install.ps1') -Raw -Encoding UTF8
+    if ($installSource -notmatch 'Remove-LegacyCcqFunctionFromFile') {
+        Add-Issue 'profile-cleanup.source 未使用精确旧 ccq 函数清理入口'
+    }
+    if ($installSource -match 'Remove-ManagedBlockFromFile[^\r\n]*PreserveFnmSubsection') {
+        Add-Issue 'profile-cleanup.source 禁止按通用标记块整体清理 Profile'
+    }
+
+    $probeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ccq-profile-contract-" + [Guid]::NewGuid().ToString('N'))
+    $null = New-Item -Path $probeRoot -ItemType Directory -Force
+    $script:ProfileProbeWriteCount = 0
+
+    function Backup-FileWithTimestamp {
+        param([string]$FilePath, [string]$BackupReason)
+        return $null
+    }
+    function Write-FileAtomically {
+        param(
+            [string]$FilePath,
+            [AllowEmptyString()]
+            [AllowEmptyCollection()]
+            [string[]]$Content,
+            [string]$Encoding = 'UTF8'
+        )
+
+        $script:ProfileProbeWriteCount++
+        [System.IO.File]::WriteAllLines(
+            $FilePath,
+            $Content,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        return $true
+    }
+    function Write-ProfileProbeFile {
+        param([string]$FilePath, [string[]]$Lines)
+
+        [System.IO.File]::WriteAllLines(
+            $FilePath,
+            $Lines,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+    }
+
+    $legacyCcqFunction = @(
+        'function ccq {'
+        '    $installUrl = "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/install.ps1"'
+        '    $manageUrl = "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/manage.ps1"'
+        '    Invoke-RestMethod $installUrl | Invoke-Expression'
+        '}'
+    )
+    $fnmLines = @(
+        '# Node.js 环境初始化（fnm）'
+        'if (Get-Command fnm -ErrorAction SilentlyContinue) {'
+        '    fnm env --use-on-cd | Out-String | Invoke-Expression'
+        '}'
+    )
+
+    try {
+        $markedPath = Join-Path $probeRoot 'marked.ps1'
+        $markedInput = @(
+            'before'
+            '# >>> Claude Code Quickstart >>>'
+            '# [CCQ:FNM:BEGIN]'
+        ) + $fnmLines + @('# [CCQ:FNM:END]') + $legacyCcqFunction + @(
+            '# <<< Claude Code Quickstart <<<'
+            'after'
+        )
+        Write-ProfileProbeFile -FilePath $markedPath -Lines $markedInput
+        $script:ProfileProbeWriteCount = 0
+        $markedResult = Remove-LegacyCcqFunctionFromFile -FilePath $markedPath
+        $markedExpected = @(
+            'before'
+            '# >>> Claude Code Quickstart >>>'
+            '# [CCQ:FNM:BEGIN]'
+        ) + $fnmLines + @(
+            '# [CCQ:FNM:END]'
+            '# <<< Claude Code Quickstart <<<'
+            'after'
+        )
+        Assert-Equal 'profile-cleanup.marked.success' $true $markedResult.Success
+        Assert-Equal 'profile-cleanup.marked.changed' $true $markedResult.Changed
+        Assert-Equal 'profile-cleanup.marked.write-count' 1 $script:ProfileProbeWriteCount
+        Assert-Equal 'profile-cleanup.marked.preserved-lines' $markedExpected @(Get-Content -Path $markedPath -Encoding UTF8)
+
+        $unmarkedPath = Join-Path $probeRoot 'unmarked.ps1'
+        $unmarkedInput = @(
+            'before'
+            '# >>> Claude Code Quickstart >>>'
+        ) + $fnmLines + $legacyCcqFunction + @(
+            '# <<< Claude Code Quickstart <<<'
+            'after'
+        )
+        Write-ProfileProbeFile -FilePath $unmarkedPath -Lines $unmarkedInput
+        $script:ProfileProbeWriteCount = 0
+        $unmarkedResult = Remove-LegacyCcqFunctionFromFile -FilePath $unmarkedPath
+        $unmarkedExpected = @(
+            'before'
+            '# >>> Claude Code Quickstart >>>'
+        ) + $fnmLines + @(
+            '# <<< Claude Code Quickstart <<<'
+            'after'
+        )
+        Assert-Equal 'profile-cleanup.unmarked.success' $true $unmarkedResult.Success
+        Assert-Equal 'profile-cleanup.unmarked.changed' $true $unmarkedResult.Changed
+        Assert-Equal 'profile-cleanup.unmarked.preserved-lines' $unmarkedExpected @(Get-Content -Path $unmarkedPath -Encoding UTF8)
+
+        $fnmOnlyPath = Join-Path $probeRoot 'fnm-only.ps1'
+        $fnmOnlyInput = @(
+            'before'
+            '# >>> Claude Code Quickstart >>>'
+        ) + $fnmLines + @(
+            '# <<< Claude Code Quickstart <<<'
+            'after'
+        )
+        Write-ProfileProbeFile -FilePath $fnmOnlyPath -Lines $fnmOnlyInput
+        $script:ProfileProbeWriteCount = 0
+        $fnmOnlyResult = Remove-LegacyCcqFunctionFromFile -FilePath $fnmOnlyPath
+        Assert-Equal 'profile-cleanup.fnm-only.success' $true $fnmOnlyResult.Success
+        Assert-Equal 'profile-cleanup.fnm-only.changed' $false $fnmOnlyResult.Changed
+        Assert-Equal 'profile-cleanup.fnm-only.no-write' 0 $script:ProfileProbeWriteCount
+        Assert-Equal 'profile-cleanup.fnm-only.unchanged' $fnmOnlyInput @(Get-Content -Path $fnmOnlyPath -Encoding UTF8)
+
+        $legacyOnlyPath = Join-Path $probeRoot 'legacy-only.ps1'
+        $legacyOnlyInput = @(
+            'before'
+            '# >>> Claude Code Quickstart >>>'
+        ) + $legacyCcqFunction + @(
+            '# <<< Claude Code Quickstart <<<'
+            'after'
+        )
+        Write-ProfileProbeFile -FilePath $legacyOnlyPath -Lines $legacyOnlyInput
+        $script:ProfileProbeWriteCount = 0
+        $legacyOnlyResult = Remove-LegacyCcqFunctionFromFile -FilePath $legacyOnlyPath
+        Assert-Equal 'profile-cleanup.legacy-only.success' $true $legacyOnlyResult.Success
+        Assert-Equal 'profile-cleanup.legacy-only.changed' $true $legacyOnlyResult.Changed
+        Assert-Equal 'profile-cleanup.legacy-only.removed-block' @('before', 'after') @(Get-Content -Path $legacyOnlyPath -Encoding UTF8)
+
+        $invalidPath = Join-Path $probeRoot 'invalid.ps1'
+        $invalidInput = @(
+            'before'
+            '# >>> Claude Code Quickstart >>>'
+            'function ccq {'
+            '    $installUrl = "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/install.ps1"'
+            '    $manageUrl = "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/manage.ps1"'
+            '# <<< Claude Code Quickstart <<<'
+            'after'
+        )
+        Write-ProfileProbeFile -FilePath $invalidPath -Lines $invalidInput
+        $script:ProfileProbeWriteCount = 0
+        $invalidResult = Remove-LegacyCcqFunctionFromFile -FilePath $invalidPath
+        Assert-Equal 'profile-cleanup.invalid.successful-skip' $true $invalidResult.Success
+        Assert-Equal 'profile-cleanup.invalid.changed' $false $invalidResult.Changed
+        Assert-Equal 'profile-cleanup.invalid.no-write' 0 $script:ProfileProbeWriteCount
+        Assert-Equal 'profile-cleanup.invalid.unchanged' $invalidInput @(Get-Content -Path $invalidPath -Encoding UTF8)
+    } finally {
+        if (Test-Path $probeRoot) {
+            Remove-Item -LiteralPath $probeRoot -Recurse -Force
+        }
+    }
+}
+
 function Main {
     if (-not (Test-Path $script:InstallerRoot -PathType Container)) {
         throw "InstallerRoot 不是有效目录: $script:InstallerRoot"
@@ -682,6 +922,8 @@ function Main {
     Test-McpContract -Contract (Read-TuiContractJson 'mcp-servers.json')
     Test-ClaudeConfigContract -Contract (Read-TuiContractJson 'claude-config.json')
     Test-TemplatesContract -Contract (Read-TuiContractJson 'templates/index.json')
+    Test-UserPathPreservationContract
+    Test-ProfileLegacyCleanupContract
 
     if ($script:Issues.Count -gt 0) {
         Write-Host "[FAIL] contracts 一致性检查失败 ($($script:Issues.Count) 项)" -ForegroundColor Red
