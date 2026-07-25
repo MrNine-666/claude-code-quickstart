@@ -235,6 +235,17 @@ export function parseCodexProfileToml(key: string, content: string, profilePath 
 	};
 }
 
+/** 从真实 TOML 提取明文 apiKey（experimental_bearer_token），供 edit 态回填 secret 字段。无则返回空串。 */
+export function extractCodexApiKeyFromToml(key: string, content: string): string {
+	const safe = safeCodexProfileKey(key);
+	try {
+		const provider = getPath(parse(content), ['model_providers', safe]);
+		return isRecord(provider) && typeof provider[API_KEY_FIELD] === 'string' ? provider[API_KEY_FIELD] : '';
+	} catch {
+		return '';
+	}
+}
+
 export function readCodexProfile(key: string): CodexProfile {
 	const safe = safeCodexProfileKey(key);
 	const profilePath = codexProfilePath(safe);

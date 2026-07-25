@@ -110,6 +110,25 @@ try {
 	}
 	console.log('[PASS] 5.5/5.6 Codex provider 字段 + TOML 双向同步与 API key 策略');
 
+	// ── edit 态回填：secret 字段应显示 TOML 中的明文 token（对齐 Claude 侧编辑回显）──
+	const editModel = buildCodexProviderFormModel({
+		mode: 'edit',
+		providerType: 'custom',
+		profile: {key: 'deepseek', providerType: 'apiKey', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', hasApiKey: true, profilePath: ''},
+		rawToml: toml
+	});
+	const editApiKeyField = editModel.fields.find(field => field.id === 'apiKey');
+	assert.equal(editApiKeyField?.value, 'sk-secret-should-never-leak', 'edit 态 API Key 字段应回填 TOML 中的明文 token');
+	assert.equal(editModel.values.apiKey, 'sk-secret-should-never-leak', 'edit 态 values.apiKey 应为明文 token');
+	// 无 rawToml（无法提取）时回退空串，不崩溃。
+	const editNoToml = buildCodexProviderFormModel({
+		mode: 'edit',
+		providerType: 'custom',
+		profile: {key: 'deepseek', providerType: 'apiKey', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', hasApiKey: true, profilePath: ''}
+	});
+	assert.equal(editNoToml.values.apiKey, '', '无 rawToml 时 edit 态 apiKey 回退空串');
+	console.log('[PASS] 5.5b Codex edit 态 secret 字段回填明文 token（对齐 Claude 编辑回显）');
+
 	// ── parse error：不允许保存无效 TOML ────────────────────────────────────────
 	const invalid = codexProviderValuesFromToml(apiValues, 'not = [valid');
 	assert.equal(invalid.ok, false, '无效 TOML 应返回错误，不回填字段');

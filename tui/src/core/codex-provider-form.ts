@@ -1,6 +1,7 @@
 import {existsSync, readFileSync} from 'node:fs';
 import {
 	buildCodexProfileToml,
+	extractCodexApiKeyFromToml,
 	parseCodexProfileToml,
 	readCodexAuthJsonRaw,
 	testCodexProfileKey,
@@ -146,12 +147,14 @@ function makeValues(input: {
 	if (input.mode === 'edit' && input.profile) {
 		const providerType = input.profile.providerType === 'officialLogin' ? CODEX_OFFICIAL_LOGIN_TYPE : (input.providerType ?? CODEX_CUSTOM_TYPE);
 		const editingOfficial = isOfficialLogin(providerType);
+		// 从真实 TOML 回填明文 apiKey，让 secret 字段展示密码格式（与 Claude 侧一致）；official 无 TOML。
+		const editApiKey = editingOfficial || !input.rawToml ? '' : extractCodexApiKeyFromToml(input.profile.key, input.rawToml);
 		return {
 			profileKey: input.profile.key,
 			providerType,
 			baseUrl: input.profile.baseUrl,
 			model: input.profile.model,
-			apiKey: '',
+			apiKey: editApiKey,
 			// official 编辑态无 profile TOML（虚拟条目，靠 auth.json）；仅真实 provider 生成 TOML。
 			toml: editingOfficial ? '' : (input.rawToml ?? valuesToToml({
 				profileKey: input.profile.key,
