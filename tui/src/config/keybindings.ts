@@ -95,6 +95,8 @@ export const providerBindings: Binding[] = commandBindings({
 export const MCP_COMMANDS = {
 	LIST_UP: 'mcp:list-up',
 	LIST_DOWN: 'mcp:list-down',
+	LIST_LEFT: 'mcp:list-left',
+	LIST_RIGHT: 'mcp:list-right',
 	// enter：打开开关目标 Modal（管理开关），取代原「切换状态」单侧语义
 	MANAGE_TOGGLE: 'mcp:manage-toggle',
 	ADD: 'mcp:add',
@@ -113,6 +115,8 @@ export const MCP_COMMANDS = {
 export const mcpBindings: Binding[] = commandBindings({
 	[MCP_COMMANDS.LIST_UP]: 'up',
 	[MCP_COMMANDS.LIST_DOWN]: 'down',
+	[MCP_COMMANDS.LIST_LEFT]: 'left',
+	[MCP_COMMANDS.LIST_RIGHT]: 'right',
 	[MCP_COMMANDS.MANAGE_TOGGLE]: 'enter',
 	[MCP_COMMANDS.ADD]: 'a',
 	[MCP_COMMANDS.EDIT]: 'e',

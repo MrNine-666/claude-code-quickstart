@@ -1,6 +1,5 @@
 import React, {useEffect, useState} from 'react';
 import {toast} from '../../components/index.js';
-import {clampMove} from '../../core/list-utils.js';
 import {AGENT_CONTEXT_ORDER, type AgentContext} from '../../state/manage-state.js';
 import {McpFormView} from './McpFormView.js';
 import {McpHomeView} from './McpHomeView.js';
@@ -9,6 +8,7 @@ import {
 	createMcpAddFormModel,
 	createMcpEditFormModel,
 	loadMcpRowsAction,
+	moveMcpGridCursor,
 	removeMcpServerAction,
 	submitMcpFormAction,
 	validateMcpJsonAction,
@@ -89,7 +89,8 @@ export default function McpView({active, onSubModeChange, onExitToNav}: McpViewP
 			active={active}
 			toggleDraft={toggleDraft}
 			toggleIndex={toggleIndex}
-			onMove={delta => setSelected(previous => clampMove(previous, delta, rows.length))}
+			onMove={delta => setSelected(previous => moveMcpGridCursor(previous, rows.length, delta < 0 ? 'up' : 'down'))}
+			onMoveHorizontal={direction => setSelected(previous => moveMcpGridCursor(previous, rows.length, direction))}
 			onOpenToggle={() => {
 				if (!current) return;
 				setToggleDraft({cc: current.injectByAgent.cc.active, cx: current.injectByAgent.cx.active});

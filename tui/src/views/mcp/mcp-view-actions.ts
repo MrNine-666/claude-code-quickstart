@@ -14,6 +14,40 @@ import {
 export type McpViewRow = McpSharedRow;
 export type McpToggleDraft = Readonly<Record<AgentContext, boolean>>;
 
+export const MCP_GRID_COLUMNS = 2;
+export type McpGridDirection = 'up' | 'down' | 'left' | 'right';
+
+/** 两列 MCP 网格导航；上下保持列位置，并在首尾行循环。 */
+export function moveMcpGridCursor(index: number, length: number, direction: McpGridDirection, columns = MCP_GRID_COLUMNS): number {
+	if (length <= 0) {
+		return 0;
+	}
+
+	const columnCount = Math.max(1, columns);
+	const cursor = Math.min(Math.max(index, 0), length - 1);
+	if (direction === 'left') {
+		return Math.max(0, cursor - 1);
+	}
+
+	if (direction === 'right') {
+		return Math.min(length - 1, cursor + 1);
+	}
+
+	const column = cursor % columnCount;
+	const lastRowStart = Math.floor((length - 1) / columnCount) * columnCount;
+	if (direction === 'up') {
+		const previousRow = cursor - columnCount;
+		return previousRow >= 0 ? previousRow : Math.min(lastRowStart + column, length - 1);
+	}
+
+	const nextRow = cursor + columnCount;
+	if (nextRow < length) {
+		return nextRow;
+	}
+
+	return cursor < lastRowStart ? length - 1 : Math.min(column, length - 1);
+}
+
 export type McpFormTemplate = {
 	readonly value: string;
 	readonly label: string;

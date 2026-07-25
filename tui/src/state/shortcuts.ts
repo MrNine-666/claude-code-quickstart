@@ -185,6 +185,8 @@ function mcpShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	return buildShortcuts([
 		{command: MCP_COMMANDS.LIST_UP, label: '选择'},
 		{command: MCP_COMMANDS.LIST_DOWN, label: '选择'},
+		{command: MCP_COMMANDS.LIST_LEFT, label: '选择'},
+		{command: MCP_COMMANDS.LIST_RIGHT, label: '选择'},
 		{command: MCP_COMMANDS.MANAGE_TOGGLE, label: '管理开关'},
 		{command: MCP_COMMANDS.ADD, label: '新增'},
 		{command: MCP_COMMANDS.EDIT, label: '编辑'},

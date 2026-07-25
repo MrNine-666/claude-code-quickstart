@@ -1,10 +1,10 @@
-import React from 'react';
-import {TextAttributes} from '@opentui/core';
+import React, {useEffect, useRef} from 'react';
+import {TextAttributes, type ScrollBoxRenderable} from '@opentui/core';
 import {useKeyboard} from '@opentui/react';
-import {ListEmptyState, Modal, ScrollList, ViewHeader, type ScrollListItem} from '../../components/index.js';
+import {Card, ListEmptyState, Modal, ThemedScrollbox, ViewHeader} from '../../components/index.js';
 import {AGENT_CONTEXT_LABELS, AGENT_CONTEXT_ORDER, type AgentContext} from '../../state/manage-state.js';
 import {colors} from '../../theme/index.js';
-import type {McpToggleDraft, McpViewRow} from './mcp-view-actions.js';
+import {MCP_GRID_COLUMNS, type McpGridDirection, type McpToggleDraft, type McpViewRow} from './mcp-view-actions.js';
 
 const TOGGLE_MODAL_WIDTH = 56;
 
@@ -19,6 +19,7 @@ export type McpHomeViewProps = {
 	readonly toggleDraft: McpToggleDraft;
 	readonly toggleIndex: number;
 	readonly onMove: (delta: number) => void;
+	readonly onMoveHorizontal: (direction: McpGridDirection) => void;
 	readonly onOpenToggle: () => void;
 	readonly onAdd: () => void;
 	readonly onEdit: () => void;
@@ -40,6 +41,7 @@ export function McpHomeView({
 	toggleDraft,
 	toggleIndex,
 	onMove,
+	onMoveHorizontal,
 	onOpenToggle,
 	onAdd,
 	onEdit,
@@ -51,20 +53,13 @@ export function McpHomeView({
 	onCancelModal,
 	onConfirmRemove
 }: McpHomeViewProps) {
-	const items: ScrollListItem[] = rows.map(row => ({
-		key: row.Id,
-		title: row.Id,
-		body: <DualStateBadges cc={row.injectByAgent.cc} cx={row.injectByAgent.cx} />,
-		multiLine: true
-	}));
-
 	return (
 		<box flexDirection="column" flexGrow={1} minHeight={0}>
 			<ViewHeader title="MCP Server 管理" subtitle="共享维护 Claude Code 与 Codex 两侧的 MCP Server 连接" />
 			{rows.length === 0 ? (
 				<ListEmptyState message="暂无 MCP Server" />
 			) : (
-				<ScrollList items={items} cursor={selectedIndex} active={active && mode === 'list'} />
+				<McpGrid rows={rows} cursor={selectedIndex} active={active && mode === 'list'} />
 			)}
 			{mode === 'select-toggle-target' && current ? (
 				<ToggleTargetModal name={current.Id} draft={toggleDraft} focusedIndex={toggleIndex} />
@@ -81,7 +76,9 @@ export function McpHomeView({
 			<McpListInput
 				active={active && mode === 'list'}
 				hasCurrent={current !== null}
+				atFirst={selectedIndex === 0}
 				onMove={onMove}
+				onMoveHorizontal={onMoveHorizontal}
 				onToggle={onOpenToggle}
 				onAdd={onAdd}
 				onEdit={onEdit}
@@ -98,6 +95,66 @@ export function McpHomeView({
 			<ConfirmInput active={active && mode === 'confirm-remove'} onCancel={onCancelModal} onConfirm={onConfirmRemove} />
 		</box>
 	);
+}
+
+function McpGrid({
+	rows,
+	cursor,
+	active
+}: {
+	readonly rows: readonly McpViewRow[];
+	readonly cursor: number;
+	readonly active: boolean;
+}) {
+	const scrollRef = useRef<ScrollBoxRenderable>(null);
+	const safeCursor = rows.length === 0 ? 0 : Math.min(Math.max(cursor, 0), rows.length - 1);
+	const activeCardId = rows[safeCursor] ? mcpCardId(safeCursor) : null;
+	const gridRows = Array.from({length: Math.ceil(rows.length / MCP_GRID_COLUMNS)}, (_, rowIndex) => {
+		const start = rowIndex * MCP_GRID_COLUMNS;
+		return rows.slice(start, start + MCP_GRID_COLUMNS).map((row, offset) => ({row, index: start + offset}));
+	});
+
+	useEffect(() => {
+		if (scrollRef.current && activeCardId) scrollRef.current.scrollChildIntoView(activeCardId);
+	}, [activeCardId]);
+
+	return (
+		<box flexDirection="column" flexGrow={1} minHeight={0}>
+			<ThemedScrollbox ref={scrollRef} style={{flexGrow: 1, minHeight: 0}} viewportCulling scrollY scrollX={false}>
+				<box flexDirection="column">
+					{gridRows.map((row, rowIndex) => (
+						<box key={`mcp-grid-row-${rowIndex}`} flexDirection="row" alignItems="stretch">
+							{row.map(({row: server, index}) => (
+								<box
+									key={server.Id}
+									id={mcpCardId(index)}
+									flexBasis={0}
+									flexGrow={1}
+									minWidth={0}
+									marginRight={index % MCP_GRID_COLUMNS === 0 ? 1 : 0}
+								>
+									<Card title={server.Id} focused={active && index === safeCursor} minHeight={3} multiLine>
+										<DualStateBadges cc={server.injectByAgent.cc} cx={server.injectByAgent.cx} />
+									</Card>
+								</box>
+							))}
+							{row.length < MCP_GRID_COLUMNS ? <box flexBasis={0} flexGrow={1} minWidth={0} /> : null}
+						</box>
+					))}
+				</box>
+			</ThemedScrollbox>
+			<text
+				flexShrink={0}
+				fg={colors.muted}
+				selectionBg={colors.selectionBg}
+				selectionFg={colors.selectionFg}
+			>{`(${safeCursor + 1}/${rows.length})`}</text>
+		</box>
+	);
+}
+
+function mcpCardId(index: number): string {
+	return `mcp-grid-item-${index}`;
 }
 
 function DualStateBadges({cc, cx}: {readonly cc: McpViewRow['injectByAgent']['cc']; readonly cx: McpViewRow['injectByAgent']['cx']}) {
@@ -164,7 +221,9 @@ function ToggleTargetModal({
 function McpListInput({
 	active,
 	hasCurrent,
+	atFirst,
 	onMove,
+	onMoveHorizontal,
 	onToggle,
 	onAdd,
 	onEdit,
@@ -173,7 +232,9 @@ function McpListInput({
 }: {
 	readonly active: boolean;
 	readonly hasCurrent: boolean;
+	readonly atFirst: boolean;
 	readonly onMove: (delta: number) => void;
+	readonly onMoveHorizontal: (direction: McpGridDirection) => void;
 	readonly onToggle: () => void;
 	readonly onAdd: () => void;
 	readonly onEdit: () => void;
@@ -191,10 +252,15 @@ function McpListInput({
 			case 'arrowdown':
 				onMove(1);
 				break;
+			case 'right':
+			case 'arrowright':
+				onMoveHorizontal('right');
+				break;
 			case 'escape':
 			case 'left':
 			case 'arrowleft':
-				onExit();
+				if (keyEvent.name.toLowerCase() === 'escape' || atFirst) onExit();
+				else onMoveHorizontal('left');
 				break;
 			case 'enter':
 			case 'return':

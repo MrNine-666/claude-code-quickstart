@@ -116,6 +116,11 @@ const React = (await import('react')).default;
 const {act} = await import('react');
 const {testRender} = await import('@opentui/react/test-utils');
 const {default: McpView} = await import('../src/views/mcp/McpView.tsx');
+const {MCP_GRID_COLUMNS, moveMcpGridCursor} = await import('../src/views/mcp/mcp-view-actions.ts');
+assert.equal(MCP_GRID_COLUMNS, 2, 'MCP 网格固定为两列');
+assert.equal(moveMcpGridCursor(0, 4, 'right'), 1, 'MCP 网格右移到同行第二列');
+assert.equal(moveMcpGridCursor(1, 4, 'down'), 3, 'MCP 网格下移保持列位置');
+assert.equal(moveMcpGridCursor(3, 4, 'down'), 1, 'MCP 网格末行下移循环到首行同列');
 const mcpHomeSource = readFileSync(new URL('../src/views/mcp/McpHomeView.tsx', import.meta.url), 'utf8');
 assert.match(
 	mcpHomeSource,
@@ -149,11 +154,15 @@ try {
 		});
 	};
 
-	await setup.waitForFrame(frame => /\(1\/\d+\)/.test(frame));
+	const initialFrame = await setup.waitForFrame(frame => /\(1\/\d+\)/.test(frame));
+	const initialGridRow = initialFrame
+		.split('\n')
+		.find(line => line.includes('alpha') && line.includes('beta'));
+	assert.ok(initialGridRow, 'MCP 网格首行应并排显示两个 Server 卡片');
 	await press('down');
-	const selectedFrame = await setup.waitForFrame(frame => /\(2\/\d+\)/.test(frame));
-	const selectedCounter = selectedFrame.match(/\(2\/\d+\)/)?.[0];
-	assert.ok(selectedCounter, 'MCP 列表应先移动到第二项');
+	const selectedFrame = await setup.waitForFrame(frame => /\(3\/\d+\)/.test(frame));
+	const selectedCounter = selectedFrame.match(/\(3\/\d+\)/)?.[0];
+	assert.ok(selectedCounter, 'MCP 网格下键应移动到下一行同列');
 	await press('enter');
 	await setup.waitForFrame(frame => frame.includes('管理开关'));
 	await press('down');
