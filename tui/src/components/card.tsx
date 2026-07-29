@@ -29,6 +29,8 @@ export type CardProps = {
 	readonly selected?: boolean;
 	// body 多行自由换行；默认固定单行截断防溢出
 	readonly multiLine?: boolean;
+	// 分组标题等轻量列表行可关闭 Card 边框，仍复用标题/leading 布局。
+	readonly bordered?: boolean;
 };
 
 export function Card({
@@ -42,7 +44,8 @@ export function Card({
 	minHeight,
 	children,
 	selected,
-	multiLine = false
+	multiLine = false,
+	bordered = true
 }: CardProps) {
 	const body = children === undefined || children === null ? null : (
 		<box height={multiLine ? undefined : 1} overflow={multiLine ? 'visible' : 'hidden'}>
@@ -57,8 +60,8 @@ export function Card({
 		return (
 			<box
 				flexDirection="row"
-				borderStyle="rounded"
-				borderColor={focused ? borderColors.active : borderColors.inactive}
+				borderStyle={bordered ? 'rounded' : undefined}
+				borderColor={bordered ? (focused ? borderColors.active : borderColors.inactive) : undefined}
 				backgroundColor={focused ? colors.focusedBackground : undefined}
 				paddingX={1}
 				width={width}
@@ -87,8 +90,8 @@ export function Card({
 	return (
 		<box
 			flexDirection="column"
-			borderStyle="rounded"
-			borderColor={focused ? borderColors.active : borderColors.inactive}
+			borderStyle={bordered ? 'rounded' : undefined}
+			borderColor={bordered ? (focused ? borderColors.active : borderColors.inactive) : undefined}
 			backgroundColor={focused ? colors.focusedBackground : undefined}
 			paddingX={1}
 			width={width}

@@ -7,10 +7,10 @@ import {
 	listRepoSkills,
 	groupByRepo,
 	getInstalledSkills,
-	projectSharedSkills,
 	skillsAgentOf,
 	searchSkillIdentity
 } from '../src/core/skills.ts';
+import {detectInstalledSkillItems, groupInstalledSkillItems, normalizeSkillSourceIdentity} from '../src/core/skills-installed.ts';
 import {installSkill, installMultipleSkills, updateSkills, uninstallSkills} from '../src/core/skills-actions.ts';
 import {createSkillsDetectionRunner, runSkillsDetection} from '../src/services/view-detection.ts';
 import {
@@ -19,15 +19,17 @@ import {
 	installSearchResultsToTargets,
 	planSkillInstallBatches,
 	toggleClaudeInstall,
-	updateAllSkillsBothSides,
 	uninstallSkillAllAgents
 } from '../src/services/skills-service.ts';
 import {
 	createInitialSkillsViewState,
 	reduceSkillsViewState,
 	filteredInstalled,
+	groupInstalledBySource,
+	skillsHomeRows,
 	shouldRunSearch,
-	canManageInstalled,
+	selectedOrCurrentInstalled,
+	pendingBatchInstances,
 	uninstallTargets,
 	selectedResult,
 	selectedInstalled,
@@ -35,7 +37,7 @@ import {
 	searchInstallItems,
 	selectedSearchResults,
 	pendingInstallResults,
-	SKILLS_GRID_COLUMNS
+	pendingSourceReplacements
 } from '../src/state/skills-view-state.ts';
 
 // Skills 首次检测复用 Tools 的全局加载组件，避免各视图维护不同的 loading 布局与文案。
@@ -52,13 +54,16 @@ import {
 	const sharedLoadingRender = /<ListLoadingState message="检测中\.\.\." \/>/;
 	assert.match(toolsViewSource, sharedLoadingRender, 'ToolsView 应使用共享全局 loading');
 	assert.match(skillsViewSource, sharedLoadingRender, 'SkillsView 应复用 ToolsView 的共享全局 loading');
-	assert.match(skillsViewSource, /将在所有 Agent 中卸载/, 'Skills 卸载 Modal 应明确影响所有 Agent');
+	// task 07-28 R7：D 删除当前逻辑实例的全部投影，但同名其它来源必须保持不变，
+	// 因此确认文案从「所有 Agent」改为实例作用域 + 同名其它来源提示。
+	assert.match(skillsViewSource, /的全部 Agent 与存储投影/, 'Skills 卸载 Modal 必须说明删除范围是当前实例的全部投影');
+	assert.match(skillsViewSource, /同名其它来源的 \$\{sameNameOthers\} 个实例不受影响/, 'Skills 卸载 Modal 必须声明同名其它来源不受影响');
 	assert.doesNotMatch(
 		skillsViewSource,
 		/case 'install':[\s\S]{0,160}cache\.refresh\(\)/,
 		'进入安装页应复用 App 缓存，不得仅因页面切换再次刷新'
 	);
-	assert.doesNotMatch(checkboxSource, /TextAttributes\.INVERSE/, 'Checkbox active 只应改变括号颜色，不得反转为背景色');
+	assert.doesNotMatch(checkboxSource, /TextAttributes\.INVERSE/, 'Checkbox active/checked 应使用主题前景色，不得反转为背景色');
 	assert.match(skillsViewSource, /focusIndicator="leading"/, 'Skills 安装页 active 应仅使用 leading Checkbox 作为焦点指示');
 	assert.match(
 		skillsViewSource,
@@ -335,11 +340,17 @@ import {
 	const states = [];
 	const okExec = async () => {
 		runCount++;
-		return {code: 0, stdout: JSON.stringify([{name: 'installed-x', scope: 'global'}]), stderr: ''};
+		return {
+			code: 0,
+			stdout: JSON.stringify([
+				{name: 'installed-x', path: '/home/.agents/skills/installed-x', scope: 'global', agents: ['Codex']}
+			]),
+			stderr: ''
+		};
 	};
 	const runner = createSkillsDetectionRunner(state => states.push(state));
-	const first = runner.run(() => getInstalledSkills(okExec));
-	const second = await runner.run(() => getInstalledSkills(okExec));
+	const first = runner.run(() => detectInstalledSkillItems(okExec));
+	const second = await runner.run(() => detectInstalledSkillItems(okExec));
 	assert.equal(second.status, 'loading', '检测进行中第二次触发应复用 loading');
 	const final = await first;
 	assert.equal(final.status, 'success');
@@ -361,33 +372,45 @@ import {
 }
 
 // ── 视图状态机有界性 + 共享投影 + 安装目标/管理安装 Modal 不变量 ──────────────
-// 共享行 fixture：一行一 skill name，携带 sharedInstalled/claudeInjected/codexAvailable。
-function sharedRow(name, {claude = true, codex = true, source} = {}) {
+// 已安装 fixture 使用逻辑实例契约（task 07-28）：身份为 (name, sourceIdentity)，
+// Agent 侧只由 agents 派生，存储位置只由 path 派生。
+function sharedRow(name, over = {}) {
+	const {claude = true, codex = true, path} = over;
+	// 显式传 `source: undefined` 表示未知来源；ES 默认参数会激活默认值，故用 `in` 判定。
+	const source = 'source' in over ? over.source : `own/${name}`;
+	const agents = [...(claude ? ['Claude Code'] : []), ...(codex ? ['Codex'] : [])];
+	const resolvedPath = path ?? `/home/.agents/skills/${name}`;
+	const root = resolvedPath.includes('.claude') ? 'claude' : resolvedPath.includes('.codex') ? 'codex' : 'agents';
+	const identity = normalizeSkillSourceIdentity(source);
+	const provenance = identity ? {kind: 'known', identity, source, installSource: source} : {kind: 'unknown'};
+	const known = provenance.kind === 'known';
 	return {
+		id: JSON.stringify(known ? ['known', name, identity] : ['unknown', name, resolvedPath]),
 		name,
-		path: '',
-		scope: 'g',
-		...(source ? {source} : {}),
-		sharedInstalled: codex,
-		claudeInjected: claude,
-		codexAvailable: codex
+		provenance,
+		agents,
+		projections: [{path: resolvedPath, root, scope: 'global', agents}],
+		capabilities: {update: known, manageAgents: known, migrate: known, delete: true}
 	};
 }
 {
-	const [projected] = projectSharedSkills([{
+	const [projected] = groupInstalledSkillItems([{
 		name: 'multi-agent',
-		path: '',
+		path: '/home/.agents/skills/multi-agent',
 		scope: 'global',
-		agents: ['Claude Code', 'Codex', 'Cursor', 'Cline']
+		agents: ['Claude Code', 'Codex', 'Cursor', 'Cline'],
+		source: 'own/multi'
 	}]);
 	assert.deepEqual(projected.agents, ['Claude Code', 'Codex', 'Cursor', 'Cline']);
-	assert.deepEqual(projected.otherAgents, ['Cursor', 'Cline'], '共享行必须保留第三方 Agent 事实供 C 目标阻断');
 }
 {
 	const actions = [
 		{type: 'nav-up'},
 		{type: 'nav-down'},
-		{type: 'nav-grid', direction: 'right'},
+		{type: 'toggle-home-layout'},
+		{type: 'toggle-all-source-groups'},
+		{type: 'toggle-installed-selection'},
+		{type: 'select-all-installed'},
 		{type: 'filter-input', value: 'a'},
 		{type: 'filter-focus'},
 		{type: 'filter-blur'},
@@ -500,31 +523,85 @@ function sharedRow(name, {claude = true, codex = true, source} = {}) {
 	assert.equal(backToList.mode, 'list', '安装页 cancel 回列表页');
 	assert.equal(backToList.queryFocused, false, '回列表页 queryFocused 复位');
 
-	// 已安装页固定两列：左右移动相邻卡片，上下跨两项，奇数末行回退到唯一卡片。
-	assert.equal(SKILLS_GRID_COLUMNS, 2, 'Skills 网格固定为两列');
-	const grid = reduceSkillsViewState(createInitialSkillsViewState(), {
+	// 已安装页默认平铺单列；分组只是展示投影，不改写 Item identity。
+	const installedItems = [
+		sharedRow('apple', {source: 'own/a'}),
+		sharedRow('banana', {source: 'own/a'}),
+		sharedRow('cherry', {source: 'own/b'}),
+		sharedRow('unknown-one', {source: undefined, path: '/home/.agents/skills/unknown-one'}),
+		sharedRow('unknown-two', {source: undefined, path: '/home/.codex/skills/unknown-two'})
+	];
+	const flat = reduceSkillsViewState(createInitialSkillsViewState(), {
 		type: 'installed-loaded',
-		installed: ['apple', 'banana', 'cherry', 'date', 'elder'].map(name => sharedRow(name))
+		installed: installedItems
 	});
-	const gridRight = reduceSkillsViewState(grid, {type: 'nav-grid', direction: 'right'});
-	assert.equal(selectedInstalled(gridRight)?.name, 'banana', '→ 移到同行右侧卡片');
-	const gridDown = reduceSkillsViewState(gridRight, {type: 'nav-grid', direction: 'down'});
-	assert.equal(selectedInstalled(gridDown)?.name, 'date', '↓ 跨两项保持列位置');
-	const gridPartialRow = reduceSkillsViewState(gridDown, {type: 'nav-grid', direction: 'down'});
-	assert.equal(selectedInstalled(gridPartialRow)?.name, 'elder', '↓ 进入奇数末行时选中唯一卡片');
-	const gridLoop = reduceSkillsViewState(gridPartialRow, {type: 'nav-grid', direction: 'down'});
-	assert.equal(selectedInstalled(gridLoop)?.name, 'apple', '末行 ↓ 循环回首行同列');
-	const gridLoopUp = reduceSkillsViewState(grid, {type: 'nav-grid', direction: 'up'});
-	assert.equal(selectedInstalled(gridLoopUp)?.name, 'elder', '首行 ↑ 循环到末行可用卡片');
+	assert.equal(flat.homeLayout, 'flat', '首次加载必须默认平铺');
+	assert.equal(skillsHomeRows(flat).length, installedItems.length);
+	assert.equal(skillsHomeRows(flat).every(row => row.kind === 'skill'), true, '平铺投影不应混入组标题');
+	const grouped = reduceSkillsViewState(flat, {type: 'toggle-home-layout'});
+	assert.equal(grouped.homeLayout, 'grouped');
+	const groups = groupInstalledBySource(grouped.installed);
+	assert.equal(groups.length, 3, '两个已知来源加一个未知来源展示组');
+	const unknownGroup = groups.find(group => group.key === 'unknown');
+	assert.equal(unknownGroup?.label, '未知来源');
+	assert.equal(unknownGroup?.items.length, 2, '所有 unknown Item 应进入同一展示组');
+	assert.notEqual(unknownGroup?.items[0].id, unknownGroup?.items[1].id, '未知来源展示合组不得合并路径限定 identity');
+	assert.equal(skillsHomeRows(grouped).filter(row => row.kind === 'group').length, 3);
+	const bananaIndex = skillsHomeRows(grouped).findIndex(row => row.kind === 'skill' && row.item.name === 'banana');
+	const allCollapsed = reduceSkillsViewState({...grouped, installedIndex: bananaIndex}, {type: 'toggle-all-source-groups'});
+	assert.deepEqual(new Set(allCollapsed.collapsedSourceKeys), new Set(groups.map(group => group.key)), 'e 应收起全部来源组');
+	assert.equal(skillsHomeRows(allCollapsed).every(row => row.kind === 'group'), true, '全部收起后只保留组标题');
+	const collapsedAnchor = skillsHomeRows(allCollapsed)[allCollapsed.installedIndex];
+	assert.equal(collapsedAnchor?.kind, 'group', '收起全部后光标应落在原 Skill 所属组');
+	assert.equal(collapsedAnchor?.kind === 'group' && collapsedAnchor.group.items.some(item => item.name === 'banana'), true);
+	const allExpanded = reduceSkillsViewState(allCollapsed, {type: 'toggle-all-source-groups'});
+	assert.equal(allExpanded.collapsedSourceKeys.length, 0, '全部已收起时再次按 e 应全部展开');
+	const filteredCollapse = reduceSkillsViewState({...grouped, filterText: 'unknown'}, {type: 'toggle-all-source-groups'});
+	assert.deepEqual(new Set(filteredCollapse.collapsedSourceKeys), new Set(groups.map(group => group.key)), '过滤不得缩窄全部收起范围');
+	assert.strictEqual(reduceSkillsViewState(flat, {type: 'toggle-all-source-groups'}), flat, '平铺模式下 e 必须 no-op');
 
-	// 无已安装时禁用 update
+	const unknownHeaderIndex = skillsHomeRows(grouped).findIndex(row => row.kind === 'group' && row.group.key === 'unknown');
+	const collapsed = reduceSkillsViewState({...grouped, installedIndex: unknownHeaderIndex}, {type: 'toggle-source-group'});
+	assert.equal(collapsed.collapsedSourceKeys.includes('unknown'), true);
+	assert.equal(skillsHomeRows(collapsed).some(row => row.kind === 'skill' && row.item.name.startsWith('unknown-')), false);
+	const selectedWhileCollapsed = reduceSkillsViewState(
+		{...collapsed, filterText: 'unknown', installedIndex: 0},
+		{type: 'select-all-installed'}
+	);
+	assert.deepEqual(
+		new Set(selectedWhileCollapsed.pickedInstalledIds),
+		new Set(unknownGroup.items.map(item => item.id)),
+		'收缩组中的匹配 Item 仍必须进入 a 的当前过滤范围'
+	);
+	const deselectedWhileCollapsed = reduceSkillsViewState(selectedWhileCollapsed, {type: 'select-all-installed'});
+	assert.equal(deselectedWhileCollapsed.pickedInstalledIds.length, 0, '当前过滤范围已全选时 a 应只取消该范围');
+
+	const picked = {...flat, pickedInstalledIds: [installedItems[0].id, installedItems[3].id]};
+	assert.deepEqual(selectedOrCurrentInstalled(picked).map(item => item.id), picked.pickedInstalledIds, '批量动作应优先显式多选');
+	const requestedUpdate = reduceSkillsViewState(picked, {type: 'request-update'});
+	assert.equal(requestedUpdate.mode, 'busy');
+	assert.deepEqual(pendingBatchInstances(requestedUpdate).map(item => item.id), picked.pickedInstalledIds, '更新必须锁定选中快照');
+	const requestedBatchUninstall = reduceSkillsViewState(picked, {type: 'request-uninstall'});
+	assert.deepEqual(uninstallTargets(requestedBatchUninstall).map(item => item.id), picked.pickedInstalledIds, '卸载确认必须锁定选中快照');
+	const reconciled = reduceSkillsViewState(
+		{...requestedUpdate, homeLayout: 'grouped', collapsedSourceKeys: ['unknown'], filterText: 'app'},
+		{type: 'lifecycle-reconciled', installed: installedItems.slice(0, 3)}
+	);
+	assert.deepEqual(reconciled.pickedInstalledIds, [installedItems[0].id], '复检后多选只保留仍存在的 Item id');
+	assert.equal(reconciled.homeLayout, 'grouped');
+	assert.deepEqual(reconciled.collapsedSourceKeys, ['unknown']);
+	assert.equal(reconciled.filterText, 'app');
+
+	// 无已安装时不启动 update；未知来源不得进入批量更新。
 	const noInstalled = createInitialSkillsViewState();
-	assert.equal(canManageInstalled(noInstalled), false);
 	const reqUpdate = reduceSkillsViewState(noInstalled, {type: 'request-update'});
 	assert.equal(reqUpdate.mode, 'list', '无已安装时 update 不进入 busy');
-	const localOnlyUpdate = reduceSkillsViewState({...noInstalled, installed: [sharedRow('local-only')]}, {type: 'request-update-one'});
-	assert.equal(localOnlyUpdate.mode, 'list', '无 lock/source 的本地 Skill 不得进入单项更新');
-	assert.match(localOnlyUpdate.errorText ?? '', /本地来源/);
+	const localOnlyUpdate = reduceSkillsViewState(
+		{...noInstalled, installed: [sharedRow('local-only', {source: undefined})]},
+		{type: 'request-update'}
+	);
+	assert.equal(localOnlyUpdate.mode, 'list', '未知来源的 Skill 不得进入更新');
+	assert.match(localOnlyUpdate.errorText ?? '', /未知来源/);
 
 	// 管理安装 Modal（列表行 Enter）：草稿预置当前安装态，cx 只读恒勾
 	const mixedList = reduceSkillsViewState(createInitialSkillsViewState(), {
@@ -551,7 +628,7 @@ function sharedRow(name, {claude = true, codex = true, source} = {}) {
 	assert.equal(selectedInstalled(installedLoopDown)?.name, 'apple', '已安装列表末项向下应 loop 回首项');
 	const installedLoopUp = reduceSkillsViewState(twoInstalled, {type: 'nav-up'});
 	assert.equal(selectedInstalled(installedLoopUp)?.name, 'banana', '已安装列表首项向上应 loop 到末项');
-	assert.deepEqual(uninstallTargets(cursorDown), ['banana'], '卸载目标为当前光标项');
+	assert.equal(selectedOrCurrentInstalled(cursorDown)[0].name, 'banana', '无多选时卸载目标回退当前光标项');
 	const reqUninstall = reduceSkillsViewState(twoInstalled, {type: 'request-uninstall'});
 	assert.equal(reqUninstall.mode, 'confirm-uninstall', 'request-uninstall 进确认');
 	const uninstallBusy = reduceSkillsViewState(reqUninstall, {type: 'confirm'});
@@ -679,9 +756,10 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 		{name: 'org/c@installed-one', source: 'org/c', description: ''},
 		{name: 'org/b@gamma', source: 'org/b', description: ''}
 	];
+	// 已安装项与搜索结果同名同来源（org/c），因此判定为已安装而非同名覆盖（task 07-28 R4）。
 	let state = reduceSkillsViewState(createInitialSkillsViewState(), {
 		type: 'installed-loaded',
-		installed: [sharedRow('installed-one')]
+		installed: [sharedRow('installed-one', {source: 'org/c'})]
 	});
 	state = reduceSkillsViewState(state, {type: 'open-install'});
 	state = reduceSkillsViewState(state, {type: 'search-done', results});
@@ -698,13 +776,15 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 		'installed',
 		'GitHub sourceUrl 与 owner/repo 简写应识别为同一来源'
 	);
+	// prd R4：同名异来源在搜索页仍可选（source-replacement），只有选定目标且目标根冲突
+	// 才显示「已有同名」覆盖确认；搜索页未选目标时不能预先判 name-occupied。
 	assert.equal(
 		searchInstallItems({
 			...equivalentSourceState,
 			installed: [sharedRow('langchain-rag', {source: 'https://github.com/other/repo.git'})]
 		})[0]?.status,
-		'name-occupied',
-		'同名但真正不同仓库仍应显示同名已占用'
+		'source-replacement',
+		'同名异来源在搜索页应可选，目标根占用留待选定目标后判定'
 	);
 	const selectAll = reduceSkillsViewState(state, {type: 'select-all-results'});
 	assert.deepEqual(
@@ -738,7 +818,7 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 	assert.equal(reconciling.batchStage, 'reconciling');
 	const reconciled = reduceSkillsViewState(reconciling, {
 		type: 'install-reconciled',
-		installed: [sharedRow('installed-one'), sharedRow('alpha'), sharedRow('beta')]
+		installed: [sharedRow('installed-one', {source: 'org/c'}), sharedRow('alpha', {source: 'org/a'}), sharedRow('beta', {source: 'org/a'})]
 	});
 	assert.equal(reconciled.mode, 'install', '批量完成后必须停留在安装页');
 	assert.equal(reconciled.query, state.query, '对账应保留查询');
@@ -768,7 +848,7 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 	);
 	const allSucceeded = reduceSkillsViewState(reconciling, {
 		type: 'install-reconciled',
-		installed: [sharedRow('installed-one'), sharedRow('alpha'), sharedRow('beta'), sharedRow('gamma')]
+		installed: [sharedRow('installed-one', {source: 'org/c'}), sharedRow('alpha', {source: 'org/a'}), sharedRow('beta', {source: 'org/a'}), sharedRow('gamma', {source: 'org/b'})]
 	});
 	assert.equal(selectedSearchResults(allSucceeded).length, 0, '全部成功后应清空整批选择');
 	const allFailed = reduceSkillsViewState(reconciling, {
@@ -949,15 +1029,6 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 	assert.equal(removeArgs[0].includes('remove'), true, 'toggleClaudeInstall(false) 走 remove');
 	assert.equal(agentOf(removeArgs[0]), 'claude-code', '单侧撤销走 --agent claude-code');
 
-	// updateAllSkillsBothSides：CLI 的全局 update 本身覆盖所有 Agent，故只调一次且省略 --agent。
-	const updBothArgs = [];
-	await updateAllSkillsBothSides(undefined, async (_cmd, args) => {
-		updBothArgs.push(args);
-		return {code: 0, stdout: 'all skills up to date', stderr: ''};
-	});
-	assert.equal(updBothArgs.length, 1, '全局 update 只能调用一次');
-	assert.equal(updBothArgs[0].includes('--agent'), false, '全局 update 必须省略 --agent');
-
 	// uninstallSkillAllAgents：单条 skills remove（省略 --agent，CLI 默认全 agent + 清本体；非挨个 agent）。
 	// CLI 1.5.16 的 remove 不接受 --agent '*'（报 Invalid agents: * 并 exit 1），故全量删靠省略 --agent。
 	const delArgs = [];
@@ -1002,7 +1073,7 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 
 	const unknownSourceItem = searchInstallItems({
 		...replacementState,
-		installed: [{...sharedRow('same'), source: undefined, storage: storage('canonical-only', 'same')}]
+		installed: [{...sharedRow('same', {source: undefined}), storage: storage('canonical-only', 'same')}]
 	})[0];
 	assert.equal(unknownSourceItem.selectable, false, '旧来源未知不得猜测为可替换');
 
@@ -1058,13 +1129,33 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 	assert.equal(replacementConfirm.mode, 'confirm-source-replacement', '来源替换必须经过独立强确认');
 	assert.equal(reduceSkillsViewState(replacementConfirm, {type: 'cancel'}).mode, 'select-install-target');
 
+	const multiRootReplacement = {
+		...replacement,
+		installed: [
+			sharedRow('same', {source: 'old/agents', claude: false, path: '/home/.agents/skills/same'}),
+			sharedRow('same', {source: 'old/claude', codex: false, path: '/home/.claude/skills/same'})
+		]
+	};
+	const multiRootConflicts = pendingSourceReplacements(multiRootReplacement);
+	assert.equal(multiRootConflicts.length, 2, 'Shared 目标覆盖两个根的异源实例时确认列表必须展示两项');
+	assert.deepEqual(
+		multiRootConflicts.map(item => item.installed.provenance.installSource).sort(),
+		['old/agents', 'old/claude']
+	);
+	assert.deepEqual(
+		multiRootConflicts.map(item => item.projections.map(projection => projection.root)),
+		[['agents'], ['claude']],
+		'确认项只展示本次会被覆盖的目标根投影'
+	);
+
 	const skillsViewSource = [
 		'skills/SkillsInstallView.tsx',
 		'skills/SkillsModals.tsx'
 	].map(file => readFileSync(new URL(`../src/views/${file}`, import.meta.url), 'utf8')).join('\n');
 	assert.match(skillsViewSource, /已有同名/, '同名异来源列表文案固定为“已有同名”');
 	assert.match(skillsViewSource, /当前来源[\s\S]*新来源/, '来源替换确认必须展示旧/新 source');
-	assert.match(skillsViewSource, /共享本体[\s\S]*lock/, '来源替换确认必须说明 canonical 与 lock 覆盖影响');
+	assert.match(skillsViewSource, /目标根[\s\S]*完整 CLI 检测/, '来源替换确认必须说明目标根覆盖与最终复检');
+	assert.match(skillsViewSource, /item\.installed\.id/, '同一新来源对应多个旧实例时 Modal key 必须区分旧实例');
 
 	console.log('[PASS] Skills 同名来源替换资格、固定文案与 C/X/B 统一强确认状态机');
 }

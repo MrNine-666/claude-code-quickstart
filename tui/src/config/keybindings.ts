@@ -136,18 +136,18 @@ export const mcpBindings: Binding[] = commandBindings({
 export const SKILLS_COMMANDS = {
 	LIST_UP: 'skills:list-up',
 	LIST_DOWN: 'skills:list-down',
-	LIST_LEFT: 'skills:list-left',
-	LIST_RIGHT: 'skills:list-right',
 	TOGGLE_FOCUS: 'skills:toggle-focus',
 	INSTALL: 'skills:install',
 	// enter：列表行 → 管理安装 Modal（切 Claude Code symlink）；安装页 → 安装目标 Modal
 	MANAGE_INSTALL: 'skills:manage-install',
 	SELECT_TARGET: 'skills:select-target',
 	TOGGLE_RESULT: 'skills:toggle-result',
+	TOGGLE_INSTALLED: 'skills:toggle-installed',
 	SELECT_ALL: 'skills:select-all',
-	UPDATE_ALL: 'skills:update-all',
-	// u：列表页更新当前光标单个 skill（skills update <name>）
-	UPDATE_ONE: 'skills:update-one',
+	TOGGLE_LAYOUT: 'skills:toggle-layout',
+	TOGGLE_ALL_GROUPS: 'skills:toggle-all-groups',
+	OPEN_SOURCE: 'skills:open-source',
+	UPDATE_SELECTED: 'skills:update-selected',
 	UNINSTALL: 'skills:uninstall',
 	REFRESH: 'skills:refresh',
 	// 安装目标 / 管理安装 Modal：空格切草稿（仅 Claude Code），Enter 应用，Esc 取消
@@ -159,18 +159,18 @@ export const SKILLS_COMMANDS = {
 export const skillsBindings: Binding[] = commandBindings({
 	[SKILLS_COMMANDS.LIST_UP]: 'up',
 	[SKILLS_COMMANDS.LIST_DOWN]: 'down',
-	[SKILLS_COMMANDS.LIST_LEFT]: 'left',
-	[SKILLS_COMMANDS.LIST_RIGHT]: 'right',
 	[SKILLS_COMMANDS.TOGGLE_FOCUS]: 'tab',
 	// 列表页：i 进安装页（footer 显示 I）；安装页 SELECT_ALL 仍用 a（不同子模式，靠视图分发隔离）
 	[SKILLS_COMMANDS.INSTALL]: 'i',
 	[SKILLS_COMMANDS.MANAGE_INSTALL]: 'enter',
 	[SKILLS_COMMANDS.SELECT_TARGET]: 'enter',
 	[SKILLS_COMMANDS.TOGGLE_RESULT]: 'space',
+	[SKILLS_COMMANDS.TOGGLE_INSTALLED]: 'space',
 	[SKILLS_COMMANDS.SELECT_ALL]: 'a',
-	// 列表页：a 更新全部（footer 显示 A）、u 更新当前单个（footer 显示 U）
-	[SKILLS_COMMANDS.UPDATE_ALL]: 'a',
-	[SKILLS_COMMANDS.UPDATE_ONE]: 'u',
+	[SKILLS_COMMANDS.TOGGLE_LAYOUT]: 'v',
+	[SKILLS_COMMANDS.TOGGLE_ALL_GROUPS]: 'e',
+	[SKILLS_COMMANDS.OPEN_SOURCE]: 'o',
+	[SKILLS_COMMANDS.UPDATE_SELECTED]: 'u',
 	[SKILLS_COMMANDS.UNINSTALL]: 'd',
 	[SKILLS_COMMANDS.REFRESH]: 'r',
 	// 目标 / 管理 Modal（与 list 复用按键，靠视图子模式控制生效时机）

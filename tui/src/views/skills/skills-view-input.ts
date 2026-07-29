@@ -2,23 +2,29 @@ import type {KeyEvent} from '@opentui/core';
 import {toast} from '../../components/index.js';
 import type {DetectionCache} from '../../hooks/use-detection-cache.js';
 import type {TaskCancellation} from '../../hooks/use-task-cancellation.js';
-import {pendingSourceReplacements, selectedInstalled, shouldRunSearch, type SkillsViewState} from '../../state/skills-view-state.js';
+import {
+	pendingSourceReplacements,
+	selectedHomeRow,
+	selectedInstalled,
+	shouldRunSearch,
+	type SkillsViewState
+} from '../../state/skills-view-state.js';
 import {
 	runConfirmedUninstallAction,
 	runInstallToTargetsAction,
+	openCurrentSkillSourceAction,
 	runSearchAction,
 	runTopologyTransitionAction,
-	runUpdateIfReadyAction,
-	runUpdateOneIfReadyAction
+	runUpdateSelectedIfReadyAction
 } from './skills-view-actions.js';
-import type {InstalledSkill, SkillsViewDispatch, SkillsViewServices} from './skills-view-types.js';
+import type {SkillsDetection, SkillsViewDispatch, SkillsViewServices} from './skills-view-types.js';
 
 export function handleSkillsKey(
 	keyEvent: KeyEvent,
 	view: SkillsViewState,
 	dispatch: SkillsViewDispatch,
 	services: SkillsViewServices,
-	cache: DetectionCache<InstalledSkill[]>,
+	cache: DetectionCache<SkillsDetection>,
 	onExitToNav: (() => void) | undefined,
 	taskCancellation: TaskCancellation
 ): void {
@@ -51,7 +57,7 @@ function handleTargetModalKey(
 	view: SkillsViewState,
 	dispatch: SkillsViewDispatch,
 	services: SkillsViewServices,
-	cache: DetectionCache<InstalledSkill[]>,
+	cache: DetectionCache<SkillsDetection>,
 	taskCancellation: TaskCancellation
 ): void {
 	const key = keyEvent.name.toLowerCase();
@@ -84,7 +90,7 @@ function handleLifecycleConfirmKey(
 	view: SkillsViewState,
 	dispatch: SkillsViewDispatch,
 	services: SkillsViewServices,
-	cache: DetectionCache<InstalledSkill[]>,
+	cache: DetectionCache<SkillsDetection>,
 	taskCancellation: TaskCancellation
 ): void {
 	const mapped = mapActionKey(keyEvent.name);
@@ -105,7 +111,7 @@ function handleListKey(
 	view: SkillsViewState,
 	dispatch: SkillsViewDispatch,
 	services: SkillsViewServices,
-	cache: DetectionCache<InstalledSkill[]>,
+	cache: DetectionCache<SkillsDetection>,
 	onExitToNav: (() => void) | undefined,
 	taskCancellation: TaskCancellation
 ): void {
@@ -124,55 +130,60 @@ function handleListKey(
 		const nav = mapNavKey(name);
 		if (nav) {
 			keyEvent.preventDefault?.();
-			dispatch({type: 'nav-grid', direction: nav});
+			dispatch({type: nav === 'up' ? 'nav-up' : 'nav-down'});
 			return;
 		}
 		if (name === 'enter' || name === 'return') keyEvent.preventDefault?.();
 		return;
 	}
 
-	if (name === 'escape' || ((name === 'left' || name === 'arrowleft') && view.installedIndex === 0)) {
+	if (name === 'escape' || name === 'left' || name === 'arrowleft') {
 		onExitToNav?.();
-		return;
-	}
-	if (name === 'left' || name === 'arrowleft') {
-		dispatch({type: 'nav-grid', direction: 'left'});
-		return;
-	}
-	if (name === 'right' || name === 'arrowright') {
-		dispatch({type: 'nav-grid', direction: 'right'});
 		return;
 	}
 
 	switch (mapActionKey(name)) {
 		case 'up':
-			dispatch({type: 'nav-grid', direction: 'up'});
+			dispatch({type: 'nav-up'});
 			return;
 		case 'down':
-			dispatch({type: 'nav-grid', direction: 'down'});
+			dispatch({type: 'nav-down'});
 			return;
 		case 'tab':
 			dispatch({type: 'filter-focus'});
 			return;
 		case 'enter':
-			if (selectedInstalled(view)) dispatch({type: 'manage-inject'});
+			if (selectedHomeRow(view)?.kind === 'group') dispatch({type: 'toggle-source-group'});
+			else if (selectedInstalled(view)) dispatch({type: 'manage-inject'});
+			return;
+		case 'toggle-selection':
+			if (selectedHomeRow(view)?.kind === 'group') dispatch({type: 'toggle-source-group'});
+			else dispatch({type: 'toggle-installed-selection'});
+			return;
+		case 'select-all':
+			dispatch({type: 'select-all-installed'});
 			return;
 		case 'install':
 			dispatch({type: 'open-install'});
 			return;
-		case 'update-all':
+		case 'update':
 			dispatch({type: 'request-update'});
-			runUpdateIfReadyAction(view, services, dispatch, cache, taskCancellation);
-			return;
-		case 'update-one':
-			dispatch({type: 'request-update-one'});
-			runUpdateOneIfReadyAction(view, services, dispatch, cache, taskCancellation);
+			runUpdateSelectedIfReadyAction(view, services, dispatch, cache, taskCancellation);
 			return;
 		case 'uninstall':
 			dispatch({type: 'request-uninstall'});
 			return;
 		case 'refresh':
 			cache.refresh();
+			return;
+		case 'toggle-layout':
+			dispatch({type: 'toggle-home-layout'});
+			return;
+		case 'toggle-all-groups':
+			dispatch({type: 'toggle-all-source-groups'});
+			return;
+		case 'open-source':
+			openCurrentSkillSourceAction(view);
 			return;
 	}
 }
@@ -182,7 +193,7 @@ function handleInstallKey(
 	view: SkillsViewState,
 	dispatch: SkillsViewDispatch,
 	services: SkillsViewServices,
-	cache: DetectionCache<InstalledSkill[]>
+	cache: DetectionCache<SkillsDetection>
 ): void {
 	const name = keyEvent.name;
 	if (view.queryFocused) {
@@ -246,7 +257,7 @@ function handleInstallKey(
 	}
 }
 
-function showDetectionPending(cache: DetectionCache<InstalledSkill[]>): void {
+function showDetectionPending(cache: DetectionCache<SkillsDetection>): void {
 	toast.info(cache.state.status === 'error' ? '安装状态检测失败，请刷新后重试' : '正在检测安装状态，请稍候');
 }
 
@@ -261,11 +272,15 @@ function mapActionKey(key: string): string | null {
 	if (normalized === 'enter' || normalized === 'return') return 'enter';
 	if (normalized === 'escape') return 'escape';
 	if (normalized === 'tab') return 'tab';
-	if (normalized === 'a') return 'update-all';
+	if (normalized === 'space' || key === ' ') return 'toggle-selection';
+	if (normalized === 'a') return 'select-all';
 	if (normalized === 'i') return 'install';
-	if (normalized === 'u') return 'update-one';
+	if (normalized === 'u') return 'update';
 	if (normalized === 'd') return 'uninstall';
 	if (normalized === 'r') return 'refresh';
+	if (normalized === 'v') return 'toggle-layout';
+	if (normalized === 'e') return 'toggle-all-groups';
+	if (normalized === 'o') return 'open-source';
 	return null;
 }
 

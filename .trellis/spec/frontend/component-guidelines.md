@@ -30,6 +30,16 @@ Reusable controls live in `tui/src/components/`:
   `terminalHeight - header - footer` arithmetic in each view.
 - Stable regions such as card grids, status columns, checkboxes and shortcut bars
   need fixed/min dimensions so labels or hover/focus do not shift layout.
+- Shared `Checkbox` renders unchecked idle brackets/content with `colors.muted`
+  and uses `colors.primary` for the complete bracket plus checkmark whenever it
+  is focused or checked. Do not theme only the brackets or leave the checkmark
+  at the terminal default color; Skills install and installed lists share it.
+- `RadioField compact` reuses the same option selection colors without the wide
+  form label/frame. Use it for read-only page summaries whose input remains owned
+  by a page shortcut; normal editable forms keep the default framed variant.
+- `ScrollListItem.bordered` passes through to `Card.bordered` and defaults to a
+  normal rounded Card. Use `bordered: false` for lightweight structural rows
+  such as expandable source-group headers; keep actual domain Items bordered.
 - `titleRight`/status regions stay visible; long titles shrink or clip before
   displacing status/download facts.
 - Use semantic colors from `theme/index.ts`; do not hardcode terminal colors in
@@ -182,6 +192,14 @@ onProgress(event => {
 // Correct
 <ToolsGrid active={!confirming} />
 <Modal active={confirming}>...</Modal>
+```
+
+```tsx
+// Wrong: a source-group header is visually presented as another domain Card.
+{key: group.key, title: group.label}
+
+// Correct: retain ScrollList focus/scroll behavior without a Card border.
+{key: group.key, title: group.label, bordered: false}
 ```
 
 ## Verification

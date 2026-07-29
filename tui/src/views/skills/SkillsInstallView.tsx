@@ -4,11 +4,11 @@ import {Checkbox, ListEmptyState, ListLoadingState, ScrollList, SingleLineInput}
 import type {DetectionState} from '../../services/async-detection.js';
 import {displaySkillName, searchInstallItems, type SkillsViewState} from '../../state/skills-view-state.js';
 import {colors} from '../../theme/index.js';
-import type {InstalledSkill, SkillsViewDispatch} from './skills-view-types.js';
+import type {SkillsDetection, SkillsViewDispatch} from './skills-view-types.js';
 
 export type SkillsInstallViewProps = {
 	readonly view: SkillsViewState;
-	readonly detection: DetectionState<InstalledSkill[]>;
+	readonly detection: DetectionState<SkillsDetection>;
 	readonly active: boolean;
 	readonly dispatch: SkillsViewDispatch;
 };

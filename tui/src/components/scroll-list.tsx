@@ -23,6 +23,8 @@ export type ScrollListItem = {
 	readonly selected?: boolean;
 	// body 多行自由换行（透传给 Card）；默认固定单行。
 	readonly multiLine?: boolean;
+	// 轻量标题行可关闭 Card 边框。
+	readonly bordered?: boolean;
 };
 
 export type ScrollListProps = {
@@ -88,8 +90,9 @@ export function ScrollList({
 							titleRight={item.titleRight}
 							leading={item.leading}
 							focused={focusIndicator === 'card' && active && index === safeCursor}
-							selected={item.selected}
-							multiLine={item.multiLine}
+								selected={item.selected}
+								multiLine={item.multiLine}
+								bordered={item.bordered}
 						>
 							{item.body}
 						</Card>

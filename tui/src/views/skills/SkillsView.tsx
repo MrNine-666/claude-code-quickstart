@@ -10,7 +10,7 @@ import {
 	type SkillsViewState
 } from '../../state/skills-view-state.js';
 import {handleSkillsKey} from './skills-view-input.js';
-import {createSkillsBusyOverlayState, projectSkillsAction, skillsPageOf} from './skills-view-actions.js';
+import {createSkillsBusyOverlayState, skillsPageOf} from './skills-view-actions.js';
 import {SkillsHomeView} from './SkillsHomeView.js';
 import {SkillsInstallView} from './SkillsInstallView.js';
 import {
@@ -20,15 +20,21 @@ import {
 	SkillsUninstallConfirm,
 	skillsModalOpen
 } from './SkillsModals.js';
-import type {InstalledSkill, SkillsViewProps} from './skills-view-types.js';
+import type {SkillsDetection, SkillsViewProps} from './skills-view-types.js';
 
 export type {SkillsViewProps} from './skills-view-types.js';
 export type {SkillsViewServices} from './skills-view-types.js';
+
+export function skillsSubModeOf(view: Pick<SkillsViewState, 'mode' | 'homeLayout' | 'busyAction'>): string {
+	if (view.busyAction) return 'busy';
+	return view.mode === 'list' ? `list-${view.homeLayout}` : view.mode;
+}
 
 export function SkillsView({services, cache, active = true, onSubModeChange, onBusyStateChange, onExitToNav}: SkillsViewProps) {
 	const [view, dispatch] = useReducer(reduceSkillsViewState, undefined, createInitialSkillsViewState);
 	const detection = cache.state;
 	const taskCancellation = useTaskCancellation();
+	const subMode = skillsSubModeOf(view);
 	const cancelBusyTask = useCallback(() => {
 		if (!taskCancellation.cancel()) return;
 		dispatch({type: 'cancel-busy'});
@@ -38,12 +44,12 @@ export function SkillsView({services, cache, active = true, onSubModeChange, onB
 	const busyOverlayState = useMemo(() => createSkillsBusyOverlayState(view, cancelBusyTask), [cancelBusyTask, view]);
 
 	useEffect(() => {
-		if (detection.status === 'success') dispatch({type: 'installed-loaded', installed: projectSkillsAction(detection.result ?? [])});
+		if (detection.status === 'success') dispatch({type: 'installed-loaded', installed: detection.result ?? []});
 	}, [detection.result, detection.status]);
 
 	useEffect(() => {
-		if (active) onSubModeChange?.(view.busyAction ? 'busy' : view.mode);
-	}, [active, onSubModeChange, view.busyAction, view.mode]);
+		if (active) onSubModeChange?.(subMode);
+	}, [active, onSubModeChange, subMode]);
 
 	useEffect(() => {
 		onBusyStateChange?.(busyOverlayState);
@@ -75,7 +81,7 @@ export function SkillsView({services, cache, active = true, onSubModeChange, onB
 	);
 }
 
-function renderDetectionNotice(detection: DetectionState<InstalledSkill[]>): React.ReactNode {
+function renderDetectionNotice(detection: DetectionState<SkillsDetection>): React.ReactNode {
 	if (detection.status === 'idle' || detection.status === 'loading') return <ListLoadingState message="检测中..." />;
 	if (detection.status === 'error')
 		return (
@@ -88,7 +94,7 @@ function renderDetectionNotice(detection: DetectionState<InstalledSkill[]>): Rea
 
 function renderPage(
 	view: SkillsViewState,
-	detection: DetectionState<InstalledSkill[]>,
+	detection: DetectionState<SkillsDetection>,
 	active: boolean,
 	dispatch: React.Dispatch<SkillsViewAction>
 ): React.ReactNode {

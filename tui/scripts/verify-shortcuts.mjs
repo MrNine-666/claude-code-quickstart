@@ -15,6 +15,8 @@ import {
 	toolsBindings
 } from '../src/config/keybindings.ts';
 import {viewShortcuts} from '../src/state/shortcuts.ts';
+import {mapSkillsActionKey} from '../src/views/skills/skills-view-input.ts';
+import {skillsSubModeOf} from '../src/views/skills/SkillsView.tsx';
 
 function keyFor(bindings, command) {
 	return bindings.find(binding => binding.cmd === command)?.key;
@@ -73,19 +75,32 @@ assert.equal(skillsInstallLabels.includes('选择/取消'), true, 'Skills 安装
 assert.equal(skillsInstallLabels.includes('全选'), true, 'Skills 安装页 footer 应展示全选');
 console.log('[PASS] Skills 多选快捷键与 footer 来自统一 registry');
 
-// ── Skills 列表页键位：A 更新全部 / U 更新选中 / I 安装（大小写都触发，footer 显示大写） ──
-assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.UPDATE_ALL), 'a', 'Skills 列表页更新全部应绑定 a');
-assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.UPDATE_ONE), 'u', 'Skills 列表页更新选中应绑定 u');
+// ── Skills 列表页键位：单列选择、布局切换、来源链接与批量动作 ──
+assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.TOGGLE_INSTALLED), 'space', 'Skills 已安装项选择应绑定 Space');
+assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.SELECT_ALL), 'a', 'Skills 列表页全选/全部取消应绑定 a');
+assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.UPDATE_SELECTED), 'u', 'Skills 列表页更新选中应绑定 u');
+assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.TOGGLE_LAYOUT), 'v', 'Skills 列表页布局切换应绑定 v');
+assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.TOGGLE_ALL_GROUPS), 'e', 'Skills 分组全部展开/收起应绑定 e');
+assert.equal(mapSkillsActionKey('e'), 'toggle-all-groups', 'Skills 输入层应把 e 解析为全部展开/收起');
+assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.OPEN_SOURCE), 'o', 'Skills 列表页打开来源应绑定 o');
 assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.INSTALL), 'i', 'Skills 列表页安装应绑定 i');
-assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.LIST_LEFT), 'left', 'Skills 网格左移应绑定 ←');
-assert.equal(keyFor(skillsBindings, SKILLS_COMMANDS.LIST_RIGHT), 'right', 'Skills 网格右移应绑定 →');
-const skillsListShortcuts = viewShortcuts('skills', 'list');
+assert.equal(skillsSubModeOf({mode: 'list', homeLayout: 'flat'}), 'list-flat');
+assert.equal(skillsSubModeOf({mode: 'list', homeLayout: 'grouped'}), 'list-grouped');
+const skillsListShortcuts = viewShortcuts('skills', 'list-flat');
+const skillsGroupedShortcuts = viewShortcuts('skills', 'list-grouped');
 const skillsListByLabel = Object.fromEntries(skillsListShortcuts.map(shortcut => [shortcut.label, shortcut.key]));
-assert.equal(skillsListByLabel['选择'], '↑/↓/←/→', 'Skills 两列网格 footer 应展示四向选择');
-assert.equal(skillsListByLabel['更新全部'], 'A', 'Skills 列表 footer 更新全部应显示大写 A');
-assert.equal(skillsListByLabel['更新选中'], 'U', 'Skills 列表 footer 更新选中应显示大写 U');
+const skillsGroupedByLabel = Object.fromEntries(skillsGroupedShortcuts.map(shortcut => [shortcut.label, shortcut.key]));
+assert.equal(skillsListByLabel['选择'], '↑/↓', 'Skills 单列 footer 应只展示上下选择');
+assert.equal(skillsListByLabel['选择/展开'], 'Space', 'Skills 列表 footer 应展示 Item 选择/组展开的上下文语义');
+assert.equal(skillsListByLabel['全选/取消'], 'A', 'Skills 列表 footer 应展示 a 批量选择');
+assert.equal(skillsListByLabel['切换布局'], 'V', 'Skills 列表 footer 应展示 v 切换布局');
+assert.equal(skillsListByLabel['全部展开/收起'], undefined, 'Skills 平铺 footer 不应展示 e');
+assert.equal(skillsGroupedByLabel['全部展开/收起'], 'E', 'Skills 分组 footer 应展示 e 全部展开/收起');
+assert.equal(skillsListByLabel['打开来源'], 'O', 'Skills 列表 footer 应展示 o 打开来源');
+assert.equal(skillsListByLabel['更新'], 'U', 'Skills 列表 footer 批量/当前回退更新应显示大写 U');
 assert.equal(skillsListByLabel['安装'], 'I', 'Skills 列表 footer 安装应显示大写 I');
-console.log('[PASS] Skills 列表页 A 更新全部 / U 更新选中 / I 安装 键位与 footer 一致');
+assert.equal(skillsListShortcuts.some(shortcut => shortcut.label === '更新全部'), false, 'Skills 列表不得再暴露更新全部');
+console.log('[PASS] Skills 列表页单列、布局、来源链接与批量键位同 footer 一致');
 
 // ── Skills Modal：弹窗内提示与 footer 共用解析结果，不复制键位字面量 ────
 const skillsAdoptShortcuts = viewShortcuts('skills', 'confirm-topology-change');
@@ -133,12 +148,12 @@ assert.match(toolsViewSource, /case 'update-one':\s*updateInjectableCurrent\(/, 
 console.log('[PASS] Tools 普通/管理型卡片快捷键按上下文统一到 Enter 主操作');
 
 // ── 卸载文案：统一使用简洁动作名，不在 footer 重复强调底层全量语义 ────────
-const skillsListLabels = viewShortcuts('skills', 'list').map(shortcut => shortcut.label);
+const skillsListLabels = viewShortcuts('skills', 'list-flat').map(shortcut => shortcut.label);
 const skillsConfirmLabels = viewShortcuts('skills', 'confirm-uninstall').map(shortcut => shortcut.label);
 const toolsGridLabels = viewShortcuts('tools', 'grid').map(shortcut => shortcut.label);
 const toolsConfirmLabels = viewShortcuts('tools', 'confirm-uninstall').map(shortcut => shortcut.label);
 assert.equal(skillsListLabels.includes('卸载'), true, 'Skills 列表 footer 应显示“卸载”');
-assert.equal(skillsConfirmLabels.includes('确认卸载（所有 Agent）'), true, 'Skills 确认态应保留卸载范围提示');
+assert.equal(skillsConfirmLabels.includes('确认批量卸载（所有 Agent）'), true, 'Skills 确认态应保留批量卸载范围提示');
 assert.equal(toolsGridLabels.includes('卸载'), true, 'Tools footer 应显示“卸载”');
 assert.equal(toolsConfirmLabels.includes('确认卸载'), true, 'Tools 确认态 footer 应显示“确认卸载”');
 assert.equal([...skillsListLabels, ...skillsConfirmLabels, ...toolsGridLabels, ...toolsConfirmLabels].some(label => label.includes('全量卸载')), false, 'TUI footer 不应再显示“全量卸载”');

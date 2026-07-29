@@ -12,15 +12,15 @@ export type CheckboxProps = {
 
 export function Checkbox({ checked, label, focused = false, disabled = false }: CheckboxProps) {
 	const checkmark = disabled ? '—' : checked ? '✓' : ' ';
-	const bracketColor = focused ? colors.primary : disabled ? colors.muted : undefined;
-	const contentColor = disabled ? colors.muted : undefined;
+	const checkboxColor = disabled ? colors.muted : focused || checked ? colors.primary : colors.muted;
+	const labelColor = disabled ? colors.muted : undefined;
 
 	return (
 		<box flexDirection="row">
-			<text fg={bracketColor}>[</text>
-			<text fg={contentColor}>{checkmark}</text>
-			<text fg={bracketColor}>]</text>
-			{label ? <text fg={contentColor}>{` ${label}`}</text> : null}
+			<text fg={checkboxColor}>[</text>
+			<text fg={checkboxColor}>{checkmark}</text>
+			<text fg={checkboxColor}>]</text>
+			{label ? <text fg={labelColor}>{` ${label}`}</text> : null}
 		</box>
 	);
 }

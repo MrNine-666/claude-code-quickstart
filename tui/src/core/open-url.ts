@@ -7,7 +7,7 @@ import {spawn} from 'node:child_process';
 export type OpenUrlResult = {readonly ok: true} | {readonly ok: false; readonly error: string};
 
 // 仅允许 http/https，防止 spawn 注入或本地协议（file:// / javascript: 等）被外部内容利用。
-function isSafeHttpUrl(url: string): boolean {
+export function isSafeHttpUrl(url: string): boolean {
 	try {
 		const parsed = new URL(url);
 		return parsed.protocol === 'http:' || parsed.protocol === 'https:';

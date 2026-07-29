@@ -11,30 +11,35 @@ export type RadioFieldProps = {
 	readonly options: readonly SelectOption[];
 	readonly helpText?: string;
 	readonly focused: boolean;
+	readonly compact?: boolean;
 };
 
-export function RadioField({ label, value, options, helpText, focused }: RadioFieldProps) {
+export function RadioField({ label, value, options, helpText, focused, compact = false }: RadioFieldProps) {
+	const optionNodes = options.map((option) => {
+		const selected = option.value === value;
+		return (
+			<text
+				key={option.value}
+				fg={selected ? colors.navSelectedForeground : focused ? colors.primary : colors.text}
+				bg={selected ? colors.primary : undefined}
+				attributes={selected ? TextAttributes.BOLD : 0}
+			>
+				{` ${option.label} `}
+			</text>
+		);
+	});
+
 	return (
 		<box flexDirection="column">
 			<box flexDirection="row" alignItems="center">
-				<FormLabel label={label} focused={focused} />
-				<FormControlFrame>
-					<box flexDirection="row" flexWrap="wrap" minWidth={0}>
-						{options.map((option) => {
-							const selected = option.value === value;
-							return (
-								<text
-									key={option.value}
-									fg={selected ? colors.navSelectedForeground : focused ? colors.primary : colors.text}
-									bg={selected ? colors.primary : undefined}
-									attributes={selected ? TextAttributes.BOLD : 0}
-								>
-									{` ${option.label} `}
-								</text>
-							);
-						})}
-					</box>
-				</FormControlFrame>
+				{compact ? <text fg={focused ? colors.primary : colors.muted}>{label}</text> : <FormLabel label={label} focused={focused} />}
+				{compact ? (
+					<box flexDirection="row" flexWrap="wrap" minWidth={0}>{optionNodes}</box>
+				) : (
+					<FormControlFrame>
+						<box flexDirection="row" flexWrap="wrap" minWidth={0}>{optionNodes}</box>
+					</FormControlFrame>
+				)}
 			</box>
 			{helpText ? (
 				<box marginLeft={FORM_VALUE_MARGIN_LEFT}>
