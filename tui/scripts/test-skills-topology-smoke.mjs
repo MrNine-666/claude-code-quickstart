@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import {mkdir, mkdtemp, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {execCommand} from '../src/core/exec.ts';
 import {createSkillsChildEnv, runSkillsAdd} from '../src/core/skills-actions.ts';
-import {readGlobalSkillLockMetadata} from '../src/core/skills.ts';
+import {detectInstalledSkillItems} from '../src/core/skills-installed.ts';
 import {inspectSkillStorage, readSkillManifest} from '../src/core/skills-storage.ts';
 import {transitionSkillTopology} from '../src/services/skills-adoption.ts';
 
@@ -33,17 +34,39 @@ async function createFixture(label, topology) {
 	return {name, homeDir, tempDir};
 }
 
+// 把官方 list/检测命令限定到 fixture HOME，避免污染真实用户环境。
+// 包装层自行注入 env，detectInstalledSkillItems 的 ExecFn 只传 timeout 也足够。
+function scopedExec(homeDir) {
+	const env = createSkillsChildEnv(homeDir, true);
+	return (command, args, options = {}) => execCommand(command, args, {...options, env});
+}
+
+// 逻辑实例契约（task 07-28）：transitionSkillTopology 收 InstalledSkillItem，
+// 从 agents 派生当前拓扑、从 projections 派生存储根。这里由 official inspection
+// 的 claudeValid/canonicalValid 还原 Item，不重新枚举目录。fixture 均为受管根
+//（.claude/.agents），不含 .codex，故 needsManagedMigration 恒不触发收编分支。
+//
+// 注意：row() 用 known provenance 只是给迁移事务提供可证明来源；真实 CLI list 对
+// 本地 path 安装通常不返回 source/sourceUrl，检测链会把它们归为 unknown（见下方断言）。
 function row(name, storage) {
+	const agents = [
+		...(storage.claudeValid ? ['Claude Code'] : []),
+		...(storage.canonicalValid ? ['Codex'] : [])
+	];
+	const projections = [];
+	if (storage.canonicalValid) {
+		projections.push({path: storage.canonicalPath, root: 'agents', scope: 'global', agents});
+	}
+	if (storage.claudeValid) {
+		projections.push({path: storage.claudePath, root: 'claude', scope: 'global', agents});
+	}
 	return {
+		id: JSON.stringify(['known', name, 'raw:smoke']),
 		name,
-		path: '',
-		scope: 'global',
-		sharedInstalled: storage.canonicalValid,
-		claudeInjected: storage.claudeValid,
-		codexAvailable: storage.canonicalValid,
-		agents: [],
-		otherAgents: [],
-		storage
+		provenance: {kind: 'known', identity: 'raw:smoke', installSource: 'smoke'},
+		agents,
+		projections,
+		capabilities: {update: true, manageAgents: true, migrate: true, delete: true}
 	};
 }
 
@@ -74,7 +97,14 @@ try {
 			fixture.name
 		);
 		assert.deepEqual(afterManifest, beforeManifest, `${current} -> ${target} must preserve content`);
-		assert.equal((await readGlobalSkillLockMetadata(fixture.homeDir)).has(fixture.name), false, 'local topology must not retain remote lock provenance');
+		// 本地来源不得被当成远端 provenance（design §10 / R5）：检测链只解释官方 list JSON，
+		// 不再读 `.skill-lock.json`。真实 CLI 对本地 path 安装通常不返回 source/sourceUrl，
+		// 经严格解析后 provenance 为 unknown，UI 不会暴露单项远端更新。
+		const detection = await detectInstalledSkillItems(scopedExec(fixture.homeDir));
+		const smokeItem = detection.find(item => item.name === fixture.name);
+		assert.ok(smokeItem, `${current} -> ${target}: list must still report ${fixture.name}`);
+		assert.equal(smokeItem.provenance.kind, 'unknown', 'local source must not surface remote provenance');
+		assert.equal(smokeItem.capabilities.update, false, 'local source must not expose single-item remote update');
 		if (target === 'shared') {
 			assert.equal(after.canonicalValid && after.claudeValid, true);
 		}

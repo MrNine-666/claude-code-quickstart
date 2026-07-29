@@ -4,7 +4,6 @@ import {
 	inspectInstalledSkillStorage,
 	listRepoSkills,
 	projectSharedSkills,
-	readGlobalSkillLockMetadata,
 	searchSkillIdentity,
 	searchSkills,
 	skillNameFromSearchResult,
@@ -20,10 +19,22 @@ import {
 	cleanupSkillSnapshot,
 	createSkillSnapshot,
 	inspectSkillStorage,
-	preferredSkillContentPath,
+	removeSkillTarget,
 	type SkillSnapshot,
 	type SkillStorageOptions
 } from '../core/skills-storage.js';
+import {
+	officialRemovalIsolated,
+	verifySkillDeletionTarget,
+	buildSkillsDeletionOwnershipIndex,
+	buildSkillsOwnershipIndex,
+	skillDeletionCandidatePaths,
+	supportedSkillsRoots,
+	type InstalledSkillItem,
+	type SkillsOwnershipIndex,
+	type SkillsStorageRoot
+} from '../core/skills-installed.js';
+import {resolveHome} from '../core/paths.js';
 import {
 	installMultipleSkills,
 	installSkill,
@@ -92,15 +103,15 @@ export type SkillsBatchExecution = {
 };
 
 export type SkillsInstallExecutionOptions = {
-	readonly installed?: readonly SkillSharedRow[];
+	readonly installed?: readonly InstalledSkillItem[];
 	readonly storage?: SkillStorageOptions;
-	readonly readLockMetadata?: typeof readGlobalSkillLockMetadata;
 };
 
 type PreparedReplacement = {
 	readonly identity: NonNullable<ReturnType<typeof searchSkillIdentity>>;
-	readonly installed: SkillSharedRow & {readonly source: string};
+	readonly item: InstalledSkillItem;
 	readonly snapshot: SkillSnapshot;
+	readonly ownership: SkillsOwnershipIndex;
 };
 
 /**
@@ -158,9 +169,9 @@ export async function installSearchResultsToTargets(
 		throw new Error('未选择要安装的 Skill');
 	}
 
-	const installedByName = new Map((options.installed ?? []).map(skill => [skill.name, skill]));
+	const installedItems = options.installed ?? [];
 	if (options.installed) {
-		await validateInstallCandidates(results, installedByName, options.storage);
+		await validateInstallCandidates(results, installedItems, options.storage);
 	}
 
 	const plan = planSkillInstallBatches(results);
@@ -171,7 +182,7 @@ export async function installSearchResultsToTargets(
 	for (const batch of plan) {
 		let prepared: readonly PreparedReplacement[] = [];
 		try {
-			prepared = await prepareReplacements(batch, results, installedByName, options.storage);
+			prepared = await prepareReplacements(batch, results, installedItems, targets, options.storage);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			batches.push({...batch, result: {success: false, error: message}});
@@ -190,14 +201,7 @@ export async function installSearchResultsToTargets(
 			callAgents,
 			exec
 		);
-		const replacementResults = await finishReplacements(
-			prepared,
-			result,
-			targets,
-			onProgress,
-			exec,
-			options
-		);
+		const replacementResults = await finishReplacements(prepared, result, targets, options);
 		replacements.push(...replacementResults);
 		const replacementFailure = replacementResults.find(item => !item.success);
 		batches.push({
@@ -211,14 +215,19 @@ export async function installSearchResultsToTargets(
 	return {batches, replacements};
 }
 
+/** 选定目标 Agent 映射到将被官方 add 物化的受管根（design §8.1）。 */
+function installTargetRoots(targets: readonly AgentContext[]): readonly SkillsStorageRoot[] {
+	return targets.includes('cc') ? ['agents', 'claude'] : ['agents'];
+}
+
 async function validateInstallCandidates(
 	results: readonly SearchSkillResult[],
-	installedByName: ReadonlyMap<string, SkillSharedRow>,
+	installedItems: readonly InstalledSkillItem[],
 	storageOptions: SkillStorageOptions = {}
 ): Promise<void> {
 	for (const result of results) {
 		const identity = searchSkillIdentity(result);
-		if (!identity || installedByName.has(identity.skillName)) {
+		if (!identity || installedItems.some(item => item.name === identity.skillName)) {
 			continue;
 		}
 
@@ -232,9 +241,12 @@ async function validateInstallCandidates(
 async function prepareReplacements(
 	batch: SkillsInstallPlanBatch,
 	results: readonly SearchSkillResult[],
-	installedByName: ReadonlyMap<string, SkillSharedRow>,
+	installedItems: readonly InstalledSkillItem[],
+	targets: readonly AgentContext[],
 	storageOptions: SkillStorageOptions = {}
 ): Promise<readonly PreparedReplacement[]> {
+	const ownership = buildSkillsOwnershipIndex(installedItems);
+	const targetRoots = installTargetRoots(targets);
 	const prepared: PreparedReplacement[] = [];
 	try {
 		for (const result of results) {
@@ -243,27 +255,40 @@ async function prepareReplacements(
 				continue;
 			}
 
-			const installed = installedByName.get(identity.skillName);
-			if (!installed) {
+			// 一个 Shared 目标可能同时覆盖 `.agents` 与 `.claude` 中两个异源 Item；
+			// 必须在 add 前把所有目标根占用者都纳入同一预检/快照事务（design §8.1）。
+			const occupyingItems = installedItems.filter(
+				item => item.name === identity.skillName && item.projections.some(projection => targetRoots.includes(projection.root))
+			);
+			if (occupyingItems.length === 0) {
 				continue;
 			}
 
-			if (!installed.source || skillSourcesEquivalent(installed.source, identity.source)) {
-				throw new Error(`${identity.skillName} 已安装且来源无法证明为不同，拒绝覆盖`);
-			}
+			for (const installed of occupyingItems) {
+				if (installed.provenance.kind !== 'known') {
+					throw new Error(`${identity.skillName} 已安装但来源未知，拒绝自动覆盖`);
+				}
 
-			const inspection = await inspectSkillStorage(identity.skillName, storageOptions);
-			const sourcePath = preferredSkillContentPath(inspection);
-			if (!sourcePath) {
-				throw new Error(`${identity.skillName} 没有可恢复的旧内容，拒绝来源替换`);
-			}
+				if (skillSourcesEquivalent(installed.provenance.installSource, identity.source)) {
+					throw new Error(`${identity.skillName} 已安装且来源无法证明为不同，拒绝覆盖`);
+				}
 
-			prepared.push({
-				identity,
-				installed: {...installed, source: installed.source},
-				snapshot: await createSkillSnapshot(sourcePath, identity.skillName, storageOptions)
-			});
+				const sourcePath = targetRoots
+					.flatMap(root => installed.projections.filter(projection => projection.root === root))
+					.at(0)?.path;
+				if (!sourcePath) {
+					throw new Error(`${identity.skillName} 没有位于目标根的可恢复旧内容，拒绝来源替换`);
+				}
+
+				prepared.push({
+					identity,
+					item: installed,
+					snapshot: await createSkillSnapshot(sourcePath, identity.skillName, storageOptions),
+					ownership
+				});
+			}
 		}
+
 		return prepared;
 	} catch (error) {
 		await Promise.all(prepared.map(item => cleanupSkillSnapshot(item.snapshot)));
@@ -275,8 +300,6 @@ async function finishReplacements(
 	prepared: readonly PreparedReplacement[],
 	action: SkillsActionResult,
 	targets: readonly AgentContext[],
-	onProgress: ProgressCallback | undefined,
-	exec: SkillsExecFn | undefined,
 	options: SkillsInstallExecutionOptions
 ): Promise<readonly SkillsReplacementExecution[]> {
 	if (prepared.length === 0) {
@@ -289,7 +312,7 @@ async function finishReplacements(
 
 	const results: SkillsReplacementExecution[] = [];
 	for (const item of prepared) {
-		results.push(await verifyAndFinishReplacement(item, targets, onProgress, exec, options));
+		results.push(await verifyAndFinishReplacement(item, targets, options));
 	}
 
 	return results;
@@ -298,45 +321,52 @@ async function finishReplacements(
 async function verifyAndFinishReplacement(
 	prepared: PreparedReplacement,
 	targets: readonly AgentContext[],
-	onProgress: ProgressCallback | undefined,
-	exec: SkillsExecFn | undefined,
 	options: SkillsInstallExecutionOptions
 ): Promise<SkillsReplacementExecution> {
 	const storageOptions = options.storage ?? {};
-	const readLock = options.readLockMetadata ?? readGlobalSkillLockMetadata;
 	const postflight = await inspectSkillStorage(prepared.identity.skillName, storageOptions);
 	const selectedProjectionReady = targets.includes('cc')
 		? postflight.kind === 'shared-symlink' || postflight.kind === 'shared-copy'
 		: postflight.canonicalValid;
-	const lock = await readLock(storageOptions.homeDir);
-	const newLockSource = lock.get(prepared.identity.skillName)?.source;
-	if (!selectedProjectionReady || !newLockSource || !skillSourcesEquivalent(newLockSource, prepared.identity.source)) {
-		return replacementFailure(prepared, postflight.error ?? 'canonical、所选 Agent 或 lock source 对账失败');
+	if (!selectedProjectionReady) {
+		return replacementFailure(prepared, postflight.error ?? '所选 Agent 投影未物化，来源替换对账失败');
 	}
 
-	if (!targets.includes('cc') && prepared.installed.claudeInjected) {
-		const cleanup = await runSkillsRemove({
-			skillNames: [prepared.identity.skillName],
-			agents: ['cc'],
-			env: createSkillsChildEnv(storageOptions.homeDir, true)
-		}, onProgress, exec);
-		if (!cleanup.success) {
-			return replacementFailure(prepared, cleanup.error ?? '未能清理未选择的 Claude Code 旧投影');
-		}
-
-		const finalStorage = await inspectSkillStorage(prepared.identity.skillName, storageOptions);
-		const finalLock = await readLock(storageOptions.homeDir);
-		const finalLockSource = finalLock.get(prepared.identity.skillName)?.source;
-		if (
-			finalStorage.kind !== 'canonical-only'
-			|| !finalLockSource
-			|| !skillSourcesEquivalent(finalLockSource, prepared.identity.source)
-		) {
-			return replacementFailure(prepared, finalStorage.error ?? '清理旧投影后 canonical 或 lock source 对账失败');
+	// 清理未选目标根的旧投影：只定向删除当前 Item 的 Claude 投影，保留异源 Item（design §8.1）。
+	// 来源 identity 的最终确认由 view 层完整 list 刷新负责，service 层不再读取 lock。
+	if (!targets.includes('cc')) {
+		const cleanupError = await removeUntargetedClaudeProjection(prepared, storageOptions);
+		if (cleanupError) {
+			return replacementFailure(prepared, cleanupError);
 		}
 	}
 
 	return replacementSuccess(prepared);
+}
+
+async function removeUntargetedClaudeProjection(
+	prepared: PreparedReplacement,
+	storageOptions: SkillStorageOptions
+): Promise<string | undefined> {
+	const claudeProjection = prepared.item.projections.find(projection => projection.root === 'claude');
+	if (!claudeProjection) {
+		return undefined;
+	}
+
+	const homeDir = storageOptions.homeDir ?? resolveHome();
+	const roots = supportedSkillsRoots(homeDir);
+	const verdict = await verifySkillDeletionTarget(claudeProjection.path, prepared.identity.skillName, roots, prepared.ownership);
+	if (!verdict.ok) {
+		return `无法证明清理 Claude Code 旧投影安全：${verdict.reason}`;
+	}
+
+	try {
+		await removeSkillTarget(verdict.target);
+	} catch (error) {
+		return `清理未选 Claude Code 旧投影失败：${error instanceof Error ? error.message : String(error)}`;
+	}
+
+	return undefined;
 }
 
 /** 共享 detection 已确认的来源替换才提交事务并清理旧内容快照。 */
@@ -356,7 +386,7 @@ function replacementSuccess(prepared: PreparedReplacement): SkillsReplacementExe
 	return {
 		key: prepared.identity.key,
 		skillName: prepared.identity.skillName,
-		oldSource: prepared.installed.source,
+		oldSource: prepared.item.provenance.kind === 'known' ? prepared.item.provenance.installSource : '',
 		newSource: prepared.identity.source,
 		success: true,
 		recoveryPath: prepared.snapshot.skillPath,
@@ -368,7 +398,7 @@ function replacementFailure(prepared: PreparedReplacement, error: string): Skill
 	return {
 		key: prepared.identity.key,
 		skillName: prepared.identity.skillName,
-		oldSource: prepared.installed.source,
+		oldSource: prepared.item.provenance.kind === 'known' ? prepared.item.provenance.installSource : '',
 		newSource: prepared.identity.source,
 		success: false,
 		error,
@@ -476,13 +506,6 @@ export function toggleClaudeInstall(
 }
 
 /**
- * 更新共享本体与所有注入侧（Section 17.4）：单次 `skills update -g -y`，由上游 lock 恢复所有 agent。
- */
-export async function updateAllSkillsBothSides(onProgress?: ProgressCallback, exec?: SkillsExecFn): Promise<SkillsActionResult> {
-	return updateSkills([], onProgress, exec);
-}
-
-/**
  * 更新单个 skill（列表页 U）：`skills update <name> -g -y`，由上游 lock 只重装该 skill 的所有注入侧。
  * 与全量更新同走 updateSkills（无 --agent），仅名单从空改为单条，语义自洽。
  */
@@ -492,6 +515,38 @@ export async function updateSingleSkill(name: string, onProgress?: ProgressCallb
 	}
 
 	return updateSkills([name], onProgress, exec);
+}
+
+export type SkillsBatchUpdateOutcome = SkillsActionResult & {
+	readonly selectedCount: number;
+	readonly updatedNames: readonly string[];
+	readonly skippedInstanceIds: readonly string[];
+};
+
+/**
+ * 更新选中的逻辑实例。上游只有名称级 selector，因此来源感知 Item 先按能力过滤，
+ * 再按首次出现顺序把名称去重，最后只执行一次 `skills update <names...>`。
+ */
+export async function updateSkillInstances(
+	items: readonly InstalledSkillItem[],
+	onProgress?: ProgressCallback,
+	exec?: SkillsExecFn
+): Promise<SkillsBatchUpdateOutcome> {
+	const updatable = items.filter(item => item.capabilities.update);
+	const skippedInstanceIds = items.filter(item => !item.capabilities.update).map(item => item.id);
+	const updatedNames = [...new Set(updatable.map(item => item.name))];
+	if (updatedNames.length === 0) {
+		return {
+			success: false,
+			error: '选中的 Skill 均为未知来源，无法远程更新',
+			selectedCount: items.length,
+			updatedNames,
+			skippedInstanceIds
+		};
+	}
+
+	const result = await updateSkills(updatedNames, onProgress, exec);
+	return {...result, selectedCount: items.length, updatedNames, skippedInstanceIds};
 }
 
 /**
@@ -510,6 +565,123 @@ export function uninstallSkillAllAgents(name: string, onProgress?: ProgressCallb
 export async function loadSharedSkillStatus(exec?: SkillsExecFn, storageOptions: SkillStorageOptions = {}): Promise<readonly SkillSharedRow[]> {
 	const installed = exec ? await getInstalledSkills(exec) : await getInstalledSkills();
 	return projectSharedSkills(await inspectInstalledSkillStorage(installed, storageOptions));
+}
+
+export type SkillsUninstallOutcome = {
+	readonly outcome: 'complete' | 'partial' | 'failed';
+	readonly mutated: boolean;
+	readonly error?: string;
+};
+
+export type SkillsBatchUninstallItemOutcome = {
+	readonly item: InstalledSkillItem;
+	readonly result: SkillsUninstallOutcome;
+};
+
+export type SkillsBatchUninstallOutcome = {
+	readonly outcome: 'complete' | 'partial' | 'failed';
+	readonly mutated: boolean;
+	readonly items: readonly SkillsBatchUninstallItemOutcome[];
+	readonly error?: string;
+};
+
+/**
+ * 卸载单个逻辑实例（design §8.3 / Checkpoint C3）。接收 Item 快照与当前全量列表：
+ * - 官方 `skills remove <name>` 能证明不命中同名异源时优先官方命令（维护 lock）；
+ * - 否则按 Item 投影定向删除：每条路径经 `verifySkillDeletionTarget` 验证后 `removeSkillTarget`，
+ *   所有权歧义整体拒绝，绝不猜测；
+ * - 不做名称级乐观成功；返回 complete / partial / failed，最终可见状态由调用方完整复检决定。
+ */
+export async function uninstallSkillInstance(
+	item: InstalledSkillItem,
+	allItems: readonly InstalledSkillItem[],
+	onProgress?: ProgressCallback,
+	exec?: SkillsExecFn,
+	storageOptions: SkillStorageOptions = {}
+): Promise<SkillsUninstallOutcome> {
+	if (officialRemovalIsolated(item, allItems)) {
+		const result = await uninstallSkills([item.name], onProgress, '*', exec);
+		return result.success
+			? {outcome: 'complete', mutated: true}
+			: {outcome: 'failed', mutated: true, ...(result.error ? {error: result.error} : {})};
+	}
+
+	const homeDir = storageOptions.homeDir ?? resolveHome();
+	const roots = supportedSkillsRoots(homeDir);
+	const ownership = buildSkillsDeletionOwnershipIndex(allItems, homeDir);
+	const candidates = skillDeletionCandidatePaths(item, homeDir);
+	const targets: Array<Awaited<ReturnType<typeof verifySkillDeletionTarget>> & {readonly ok: true}> = [];
+	const preflightFailures: string[] = [];
+	for (const candidate of candidates) {
+		const verdict = await verifySkillDeletionTarget(candidate, item.name, roots, ownership, item.id);
+		if (verdict.ok) {
+			targets.push(verdict);
+		} else {
+			preflightFailures.push(`${candidate}: ${verdict.reason}`);
+		}
+	}
+
+	// 所有可证明投影必须先通过完整预检；不能先删一个目标，再在后续目标发现歧义。
+	if (preflightFailures.length > 0) {
+		return {outcome: 'failed', mutated: false, error: preflightFailures.join('; ')};
+	}
+
+	const failures: string[] = [];
+	let mutated = false;
+	for (const verdict of targets) {
+		try {
+			await removeSkillTarget(verdict.target);
+			mutated = true;
+		} catch (error) {
+			failures.push(`${verdict.target.path}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
+	if (failures.length === 0) {
+		return {outcome: 'complete', mutated};
+	}
+
+	const error = failures.join('; ');
+	return mutated ? {outcome: 'partial', mutated, error} : {outcome: 'failed', mutated, error};
+}
+
+/**
+ * 顺序卸载确认快照中的多个逻辑实例。每项始终使用操作前的完整 allItems 做隔离证明；
+ * 一个独立失败不阻断后续安全项，AbortError 则立即终止整批。
+ */
+export async function uninstallSkillInstances(
+	items: readonly InstalledSkillItem[],
+	allItems: readonly InstalledSkillItem[],
+	onProgress?: ProgressCallback,
+	exec?: SkillsExecFn,
+	storageOptions: SkillStorageOptions = {}
+): Promise<SkillsBatchUninstallOutcome> {
+	const outcomes: SkillsBatchUninstallItemOutcome[] = [];
+	for (const item of items) {
+		try {
+			const result = await uninstallSkillInstance(item, allItems, onProgress, exec, storageOptions);
+			outcomes.push({item, result});
+		} catch (error) {
+			if (error instanceof Error && error.name === 'AbortError') throw error;
+			outcomes.push({
+				item,
+				result: {outcome: 'failed', mutated: false, error: error instanceof Error ? error.message : String(error)}
+			});
+		}
+	}
+
+	const mutated = outcomes.some(entry => entry.result.mutated);
+	const completeCount = outcomes.filter(entry => entry.result.outcome === 'complete').length;
+	const outcome = completeCount === outcomes.length ? 'complete' : mutated ? 'partial' : 'failed';
+	const failures = outcomes
+		.filter(entry => entry.result.outcome !== 'complete')
+		.map(entry => `${entry.item.name}: ${entry.result.error ?? '卸载未完全完成'}`);
+	return {
+		outcome,
+		mutated,
+		items: outcomes,
+		...(failures.length > 0 ? {error: failures.join('\n')} : {})
+	};
 }
 
 export type {InstalledSkill, RepoSkill, RepoSkillsOutcome, SearchSkillResult, SkillSharedRow, SkillsSearchOutcome, SkillsActionResult};

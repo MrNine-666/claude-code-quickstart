@@ -35,6 +35,11 @@ export function ccqDir(): string {
 	return join(resolveHome(), '.ccq');
 }
 
+/** 自更新 transport 分片缓存：`~/.ccq/self-update`，测试通过 CCQ_HOME 隔离。 */
+export function selfUpdateCacheDir(): string {
+	return join(ccqDir(), 'self-update');
+}
+
 export function vaultPath(): string {
 	return join(ccqDir(), 'mcp-meta.json');
 }

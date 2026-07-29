@@ -1,8 +1,9 @@
 import {createHash} from 'node:crypto';
-import {cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, readlink} from 'node:fs/promises';
+import {cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, readlink, unlink} from 'node:fs/promises';
 import {isAbsolute, join, relative, resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {resolveHome} from './paths.js';
+import type {SkillDeletionTarget} from './skills-installed.js';
 
 export type SkillStorageKind =
 	| 'shared-symlink'
@@ -374,4 +375,21 @@ export async function createSkillSnapshot(
 
 export async function cleanupSkillSnapshot(snapshot: SkillSnapshot): Promise<void> {
 	await rm(snapshot.root, {recursive: true, force: true});
+}
+
+/**
+ * 删除已通过 `verifySkillDeletionTarget` 验证的精确目标（design §8.3 / §10）。
+ * symlink 只删链接本身（Node `rm` 默认不跟随符号链接），directory 才递归删该精确目录。
+ * 调用方必须先经 `verifySkillDeletionTarget` 证明目标安全；本函数不再二次猜测路径，
+ * 也不再读取 `.skill-lock.json` 或枚举目录。`force: false` 确保目标必须存在，避免静默吞错。
+ */
+export async function removeSkillTarget(target: SkillDeletionTarget): Promise<void> {
+	if (target.kind === 'symlink') {
+		// 符号链接只删链接条目本身：用 unlink 而非 rm。Node/Bun 的 rm 在部分平台对
+		// 目录符号链接会误判（如 Windows EFAULT），unlink 语义明确、永不跟随目标。
+		await unlink(target.path);
+		return;
+	}
+
+	await rm(target.path, {recursive: true, force: false});
 }

@@ -1,13 +1,22 @@
+import {lstat} from 'node:fs/promises';
 import type {ProgressCallback} from '../core/exec.js';
 import {createSkillsChildEnv, runSkillsAdd, runSkillsRemove, type SkillsCommandDiagnostic, type SkillsExecFn} from '../core/skills-actions.js';
-import {readGlobalSkillLockMetadata, type SkillSharedRow} from '../core/skills.js';
+import {resolveHome} from '../core/paths.js';
+import {
+	buildSkillsOwnershipIndex,
+	currentTopologyOfItem,
+	needsManagedMigration,
+	otherAgentsOf,
+	supportedSkillsRoots,
+	verifySkillDeletionTarget,
+	type InstalledSkillItem
+} from '../core/skills-installed.js';
 import {
 	cleanupSkillSnapshot,
 	createSkillSnapshot,
 	inspectSkillStorage,
 	preferredSkillContentPath,
-	readSkillManifest,
-	skillManifestsEqual,
+	removeSkillTarget,
 	topologyOfInspection,
 	type SkillSnapshot,
 	type SkillStorageInspection,
@@ -26,14 +35,8 @@ export type SkillsAdoptionResult = {
 	readonly recoveryPath?: string;
 };
 
-type RecoverableTopology = SkillTopology | 'shared-copy';
-
 export {targetTopologyOfDraft, topologyOfInspection} from '../core/skills-storage.js';
 export type {SkillTopology, SkillTopologyDraft} from '../core/skills-storage.js';
-
-function recoverableTopology(inspection: SkillStorageInspection): RecoverableTopology | undefined {
-	return inspection.kind === 'shared-copy' ? 'shared-copy' : topologyOfInspection(inspection);
-}
 
 function expectedStorageKind(topology: SkillTopology): SkillStorageInspection['kind'] {
 	return topology === 'claude-only'
@@ -43,33 +46,23 @@ function expectedStorageKind(topology: SkillTopology): SkillStorageInspection['k
 			: 'shared-symlink';
 }
 
+/** 目标物化只看存储 kind（path/lstat 事实），不比较内容（design §9 / §11）。 */
+function topologyMaterialized(inspection: SkillStorageInspection, target: SkillTopology): boolean {
+	return inspection.kind === expectedStorageKind(target);
+}
+
 function topologyEnv(options: SkillStorageOptions, includeCodex: boolean): NodeJS.ProcessEnv {
 	return createSkillsChildEnv(options.homeDir, includeCodex);
-}
-
-function contentPath(inspection: SkillStorageInspection, topology: SkillTopology): string {
-	return topology === 'claude-only' ? inspection.claudePath : inspection.canonicalPath;
-}
-
-async function matchesTopology(
-	inspection: SkillStorageInspection,
-	topology: SkillTopology,
-	manifest: readonly string[]
-): Promise<boolean> {
-	if (inspection.kind !== expectedStorageKind(topology)) {
-		return false;
-	}
-
-	try {
-		return skillManifestsEqual(await readSkillManifest(contentPath(inspection, topology), inspection.name), manifest);
-	} catch {
-		return false;
-	}
 }
 
 function commandError(action: SkillsCommandDiagnostic, fallback: string): string {
 	// skills CLI 会把正常交互渲染写入 stderr；原始流只保留给结构化诊断。
 	return action.error ?? fallback;
+}
+
+/** 目标拓扑对应的受管存储根（新安装与迁移目标绝不以 `.codex` 为落点，design §8.4）。 */
+function targetManagedRoots(target: SkillTopology): readonly ('claude' | 'agents')[] {
+	return target === 'claude-only' ? ['claude'] : target === 'codex-only' ? ['agents'] : ['agents', 'claude'];
 }
 
 async function addFromSnapshot(
@@ -80,15 +73,19 @@ async function addFromSnapshot(
 	exec: SkillsExecFn | undefined,
 	options: SkillStorageOptions
 ): Promise<SkillsCommandDiagnostic> {
-	const agents = target === 'claude-only' ? ['cc'] as const : target === 'codex-only' ? ['cx'] as const : ['cx', 'cc'] as const;
-	return runSkillsAdd({
-		source: snapshot.root,
-		skillNames: [name],
-		agents,
-		copy: target !== 'shared',
-		env: topologyEnv(options, target !== 'claude-only'),
-		displayName: name
-	}, onProgress, exec);
+	const agents = target === 'claude-only' ? (['cc'] as const) : target === 'codex-only' ? (['cx'] as const) : (['cx', 'cc'] as const);
+	return runSkillsAdd(
+		{
+			source: snapshot.root,
+			skillNames: [name],
+			agents,
+			copy: target !== 'shared',
+			env: topologyEnv(options, target !== 'claude-only'),
+			displayName: name
+		},
+		onProgress,
+		exec
+	);
 }
 
 async function removeTargets(
@@ -98,13 +95,17 @@ async function removeTargets(
 	exec: SkillsExecFn | undefined,
 	options: SkillStorageOptions
 ): Promise<SkillsCommandDiagnostic> {
-	return runSkillsRemove({
-		skillNames: [name],
-		agents,
-		// 即使只撤销 Claude 投影，也必须让官方 skills 检测到 Codex 正在使用 canonical，
-		// 否则 remove 会把“无人使用”的 ~/.agents/skills 本体一并删除。
-		env: topologyEnv(options, true)
-	}, onProgress, exec);
+	return runSkillsRemove(
+		{
+			skillNames: [name],
+			agents,
+			// 即使只撤销 Claude 投影，也必须让官方 skills 检测到 Codex 正在使用 canonical，
+			// 否则 remove 会把“无人使用”的 ~/.agents/skills 本体一并删除。
+			env: topologyEnv(options, true)
+		},
+		onProgress,
+		exec
+	);
 }
 
 async function failureResult(
@@ -123,19 +124,76 @@ async function failureResult(
 	};
 }
 
+/**
+ * 定位可用于快照的源内容路径。优先 official inspection 已验证的 `.agents`/`.claude` 实体；
+ * `.codex` 收编时 official inspection 看不到 `.codex`，从 Item projection 直接 lstat 定位实体目录。
+ * 只用于事务快照，不反馈到列表身份（design §8.4 / §9）。
+ */
+async function resolveSourceContentPath(
+	item: InstalledSkillItem,
+	preflight: SkillStorageInspection,
+	options: SkillStorageOptions
+): Promise<string | undefined> {
+	const managed = preferredSkillContentPath(preflight);
+	if (managed) return managed;
+
+	for (const projection of item.projections) {
+		if (projection.root !== 'codex') continue;
+		try {
+			const fact = await lstat(projection.path);
+			if (fact.isDirectory() && !fact.isSymbolicLink()) return projection.path;
+		} catch {
+			// `.codex` 投影不存在或不可 stat：继续尝试其它 projection，最终返回 undefined。
+		}
+	}
+
+	return undefined;
+}
+
+/**
+ * 删除 Item 中不属于目标受管根的旧源精确路径（design §8.3 / §8.4）。
+ * `.codex` 不是受管 canonical，官方 remove 不识别，必须经 `verifySkillDeletionTarget` 验证后
+ * 定向删除；每条路径只删已验证目标，无法证明安全的残留收集返回供 partial 诊断。
+ */
+async function deleteStaleSourcePaths(
+	item: InstalledSkillItem,
+	target: SkillTopology,
+	options: SkillStorageOptions
+): Promise<{readonly deleted: readonly string[]; readonly remaining: readonly string[]}> {
+	const homeDir = options.homeDir ?? resolveHome();
+	const roots = supportedSkillsRoots(homeDir);
+	const ownership = buildSkillsOwnershipIndex([item]);
+	const targetRoots = targetManagedRoots(target);
+	const deleted: string[] = [];
+	const remaining: string[] = [];
+	for (const projection of item.projections) {
+		if (targetRoots.includes(projection.root as 'claude' | 'agents')) continue;
+		const verdict = await verifySkillDeletionTarget(projection.path, item.name, roots, ownership);
+		if (!verdict.ok) {
+			remaining.push(projection.path);
+			continue;
+		}
+
+		try {
+			await removeSkillTarget(verdict.target);
+			deleted.push(projection.path);
+		} catch {
+			remaining.push(projection.path);
+		}
+	}
+
+	return {deleted, remaining};
+}
+
 async function restoreOriginalTopology(
 	name: string,
-	original: RecoverableTopology,
+	original: SkillTopology,
 	snapshot: SkillSnapshot,
 	message: string,
 	onProgress: ProgressCallback | undefined,
 	exec: SkillsExecFn | undefined,
 	options: SkillStorageOptions
 ): Promise<SkillsAdoptionResult> {
-	if (original === 'shared-copy') {
-		return failureResult(message, await inspectSkillStorage(name, options), snapshot, true);
-	}
-
 	await removeTargets(name, ['cc', 'cx'], onProgress, exec, options);
 	const cleared = await inspectSkillStorage(name, options);
 	if (cleared.kind !== 'missing') {
@@ -144,7 +202,7 @@ async function restoreOriginalTopology(
 
 	const restoredAction = await addFromSnapshot(name, snapshot, original, onProgress, exec, options);
 	const restored = await inspectSkillStorage(name, options);
-	if (await matchesTopology(restored, original, snapshot.manifest)) {
+	if (topologyMaterialized(restored, original)) {
 		await cleanupSkillSnapshot(snapshot);
 		return {
 			success: false,
@@ -155,7 +213,12 @@ async function restoreOriginalTopology(
 		};
 	}
 
-	return failureResult(`${message}；自动恢复失败：${commandError(restoredAction, restored.error ?? '文件事实不符')}`, restored, snapshot, true);
+	return failureResult(
+		`${message}；自动恢复失败：${commandError(restoredAction, restored.error ?? '文件事实不符')}`,
+		restored,
+		snapshot,
+		true
+	);
 }
 
 async function finishTarget(
@@ -163,7 +226,8 @@ async function finishTarget(
 	target: SkillTopology,
 	snapshot: SkillSnapshot,
 	action: SkillsCommandDiagnostic,
-	original: RecoverableTopology,
+	original: SkillTopology,
+	item: InstalledSkillItem,
 	onProgress: ProgressCallback | undefined,
 	exec: SkillsExecFn | undefined,
 	options: SkillStorageOptions
@@ -180,29 +244,45 @@ async function finishTarget(
 		};
 	}
 
-	if (await matchesTopology(postflight, target, snapshot.manifest)) {
-		const finalLock = await readGlobalSkillLockMetadata(options.homeDir);
-		if (finalLock.has(name)) {
-			return restoreOriginalTopology(
-				name,
-				original,
-				snapshot,
-				'本地 snapshot 拓扑仍残留远程 lock，拒绝报告完成',
-				onProgress,
-				exec,
-				options
-			);
-		}
+	if (!topologyMaterialized(postflight, target)) {
+		return restoreOriginalTopology(
+			name,
+			original,
+			snapshot,
+			commandError(action, postflight.error ?? 'Skill 命令后文件系统对账失败'),
+			onProgress,
+			exec,
+			options
+		);
+	}
 
+	// `.codex` 收编：目标已物化后，定向删除非受管根的旧源残留（design §8.4）。
+	if (needsManagedMigration(item, target)) {
+		const stale = await deleteStaleSourcePaths(item, target, options);
+		if (stale.remaining.length > 0) {
+			const afterStale = await inspectSkillStorage(name, options);
+			return {
+				success: false,
+				outcome: 'partial',
+				mutated: true,
+				inspection: afterStale,
+				error: `目标已物化，但旧源残留未能完全删除：${stale.remaining.join(', ')}`,
+				recoveryPath: snapshot.skillPath
+			};
+		}
+	}
+
+	const final = await inspectSkillStorage(name, options);
+	if (topologyMaterialized(final, target)) {
 		await cleanupSkillSnapshot(snapshot);
-		return {success: true, outcome: 'complete', mutated: true, inspection: postflight};
+		return {success: true, outcome: 'complete', mutated: true, inspection: final};
 	}
 
 	return restoreOriginalTopology(
 		name,
 		original,
 		snapshot,
-		commandError(action, postflight.error ?? 'Skill 命令后文件系统对账失败'),
+		commandError(action, final.error ?? '最终文件系统对账失败'),
 		onProgress,
 		exec,
 		options
@@ -210,105 +290,85 @@ async function finishTarget(
 }
 
 /**
- * C/X/B 单实体拓扑事务。目标树 mutation 全部经官方 Skills CLI；ccq 只在 OS temp 创建快照。
+ * C/X/B 单实体拓扑事务（design §8.4）。目标树 mutation 全部经官方 Skills CLI；
+ * ccq 只在 OS temp 创建快照，并在 `.codex` 收编时对非受管旧源做经验证安全的定向删除。
+ *
+ * 拓扑身份由 Item `agents` 派生（不 physical inspection 推导）；事务内 path/lstat 验证与
+ * 快照只证明事务安全，不反馈到列表身份或 Agent badge（design §9）。物化判定只看存储 kind，
+ * 不比较内容；`readGlobalSkillLockMetadata` 不再参与对账。
  */
 export async function transitionSkillTopology(
-	skill: SkillSharedRow,
+	item: InstalledSkillItem,
 	target: SkillTopology,
 	onProgress?: ProgressCallback,
 	exec?: SkillsExecFn,
 	options: SkillStorageOptions = {}
 ): Promise<SkillsAdoptionResult> {
-	const preflight = await inspectSkillStorage(skill.name, options);
-	const original = recoverableTopology(preflight);
-	if (!original) {
-		return failureResult(preflight.error ?? `${skill.name} 不是可迁移的 C/X/B Skill`, preflight, undefined, false);
+	const current = currentTopologyOfItem(item);
+	if (item.provenance.kind !== 'known') {
+		return failureResult('未知来源 Skill 无法迁移：缺少可证明的来源身份', await inspectSkillStorage(item.name, options), undefined, false);
 	}
 
-	if (original === target) {
-		return {success: true, outcome: 'complete', mutated: false, inspection: preflight};
+	if (current === target && !needsManagedMigration(item, target)) {
+		return {success: true, outcome: 'complete', mutated: false, inspection: await inspectSkillStorage(item.name, options)};
 	}
 
-	const otherAgents = skill.otherAgents ?? skill.agents?.filter(agent => agent !== 'Claude Code' && agent !== 'Codex') ?? [];
-	if (target === 'claude-only' && otherAgents.length > 0) {
-		return failureResult(`其它 Agent 仍使用 canonical：${otherAgents.join(', ')}`, preflight, undefined, false);
+	if (target === 'claude-only' && otherAgentsOf(item).length > 0) {
+		return failureResult(
+			`其它 Agent 仍使用 canonical：${otherAgentsOf(item).join(', ')}`,
+			await inspectSkillStorage(item.name, options),
+			undefined,
+			false
+		);
 	}
 
-	const sourcePath = preferredSkillContentPath(preflight);
+	const preflight = await inspectSkillStorage(item.name, options);
+	const sourcePath = await resolveSourceContentPath(item, preflight, options);
 	if (!sourcePath) {
 		return failureResult('没有可用于迁移的有效 Skill 内容', preflight, undefined, false);
 	}
 
+	// current 从 Item 派生；纯 `.codex`（无受管根记录）时 inspection 兜底为 codex-only。
+	const original: SkillTopology = current ?? topologyOfInspection(preflight) ?? 'codex-only';
+
 	let snapshot: SkillSnapshot | undefined;
 	try {
-		snapshot = await createSkillSnapshot(sourcePath, skill.name, options);
-		const currentManifest = await readSkillManifest(sourcePath, skill.name);
-		if (!skillManifestsEqual(currentManifest, snapshot.manifest)) {
-			await cleanupSkillSnapshot(snapshot);
-			return failureResult('Skill 内容在迁移前发生变化，请刷新后重试', await inspectSkillStorage(skill.name, options), undefined, false);
-		}
+		snapshot = await createSkillSnapshot(sourcePath, item.name, options);
 
 		let action: SkillsCommandDiagnostic;
-		if ((original === 'claude-only' && target === 'codex-only') || (original === 'codex-only' && target === 'claude-only')) {
-			const removeAgent = original === 'claude-only' ? ['cc'] as const : ['cx'] as const;
-			action = await removeTargets(skill.name, removeAgent, onProgress, exec, options);
-			const intermediate = await inspectSkillStorage(skill.name, options);
+		if ((current === 'claude-only' && target === 'codex-only') || (current === 'codex-only' && target === 'claude-only')) {
+			const removeAgent = current === 'claude-only' ? (['cc'] as const) : (['cx'] as const);
+			action = await removeTargets(item.name, removeAgent, onProgress, exec, options);
+			const intermediate = await inspectSkillStorage(item.name, options);
 			if (intermediate.kind !== 'missing') {
-				return restoreOriginalTopology(skill.name, original, snapshot, commandError(action, '旧实体删除后目标树仍非空'), onProgress, exec, options);
+				return restoreOriginalTopology(item.name, original, snapshot, commandError(action, '旧实体删除后目标树仍非空'), onProgress, exec, options);
 			}
-			action = await addFromSnapshot(skill.name, snapshot, target, onProgress, exec, options);
-		} else if ((original === 'shared' || original === 'shared-copy') && target === 'claude-only') {
-			action = await removeTargets(skill.name, ['cc', 'cx'], onProgress, exec, options);
-			const intermediate = await inspectSkillStorage(skill.name, options);
+
+			action = await addFromSnapshot(item.name, snapshot, target, onProgress, exec, options);
+		} else if (current === 'shared' && target === 'claude-only') {
+			action = await removeTargets(item.name, ['cc', 'cx'], onProgress, exec, options);
+			const intermediate = await inspectSkillStorage(item.name, options);
 			if (intermediate.kind !== 'missing') {
-				return restoreOriginalTopology(skill.name, original, snapshot, commandError(action, '双侧删除后目标树仍非空'), onProgress, exec, options);
+				return restoreOriginalTopology(item.name, original, snapshot, commandError(action, '双侧删除后目标树仍非空'), onProgress, exec, options);
 			}
-			action = await addFromSnapshot(skill.name, snapshot, target, onProgress, exec, options);
-		} else if ((original === 'shared' || original === 'shared-copy') && target === 'codex-only') {
-			action = await removeTargets(skill.name, ['cc'], onProgress, exec, options);
+
+			action = await addFromSnapshot(item.name, snapshot, target, onProgress, exec, options);
+		} else if (current === 'shared' && target === 'codex-only') {
+			action = await removeTargets(item.name, ['cc'], onProgress, exec, options);
 		} else {
-			// C/X/shared-copy -> B：官方 skills 按 codex、claude-code 顺序完成 X 物化与 C 投影。
-			action = await addFromSnapshot(skill.name, snapshot, target, onProgress, exec, options);
+			// -> shared（含 codex-only/claude-only 升级），或 `.codex` 收编到任一受管目标：
+			// official add 按 codex、claude-code 顺序物化受管根，`.codex` 旧源在 finishTarget 定向删除。
+			action = await addFromSnapshot(item.name, snapshot, target, onProgress, exec, options);
 		}
 
-		return finishTarget(skill.name, target, snapshot, action, original, onProgress, exec, options);
+		return finishTarget(item.name, target, snapshot, action, original, item, onProgress, exec, options);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		const inspection = await inspectSkillStorage(skill.name, options);
+		const inspection = await inspectSkillStorage(item.name, options);
 		if (!snapshot) {
 			return failureResult(message, inspection, undefined, false);
 		}
-		return restoreOriginalTopology(skill.name, original, snapshot, message, onProgress, exec, options);
-	}
-}
 
-/** 兼容旧入口：Claude-only 收编现在只是 C -> B 拓扑事务。 */
-export async function adoptClaudeOnlySkill(
-	skill: SkillSharedRow,
-	onProgress?: ProgressCallback,
-	exec?: SkillsExecFn,
-	options: SkillStorageOptions = {}
-): Promise<SkillsAdoptionResult> {
-	const preflight = await inspectSkillStorage(skill.name, options);
-	if (preflight.kind !== 'claude-only') {
-		return failureResult(preflight.error ?? `${skill.name} 不再是可收编的 Claude-only Skill`, preflight, undefined, false);
+		return restoreOriginalTopology(item.name, original, snapshot, message, onProgress, exec, options);
 	}
-	return transitionSkillTopology(skill, 'shared', onProgress, exec, options);
-}
-
-/** 兼容旧入口：canonical-only/shared-copy 修复现在只是 X/partial -> B 拓扑事务。 */
-export async function repairClaudeProjection(
-	skill: SkillSharedRow,
-	onProgress?: ProgressCallback,
-	exec?: SkillsExecFn,
-	options: SkillStorageOptions = {}
-): Promise<SkillsAdoptionResult> {
-	const preflight = await inspectSkillStorage(skill.name, options);
-	if (preflight.kind === 'shared-symlink') {
-		return {success: true, outcome: 'complete', mutated: false, inspection: preflight};
-	}
-	if (preflight.kind !== 'canonical-only' && preflight.kind !== 'shared-copy') {
-		return failureResult(preflight.error ?? `${skill.name} 没有可用于恢复 Claude Code 的 canonical 本体`, preflight, undefined, false);
-	}
-	return transitionSkillTopology(skill, 'shared', onProgress, exec, options);
 }
