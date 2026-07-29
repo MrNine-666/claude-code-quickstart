@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/ccq-self-lifecycle.md","reason":"Defines the download transaction, progress, integrity, temp ownership and Windows apply contract that implementation must preserve."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Defines typed recoverable failures, cancellation/timeout semantics and transaction-scoped cleanup."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Requires a red regression, focused self-lifecycle gates and the full runtime quality check."}
+{"file":".trellis/spec/installer/build-release.md","reason":"Defines the exact Release artifact set, build ordering and cross-platform packaging gates that must expand atomically from raw executables to raw plus gzip assets."}
+{"file":".trellis/tasks/07-28-fix-windows-self-update-download-reliability/research/diagnosis.md","reason":"Captures the exact 0% reproduction, Bun redirect evidence and proof that the Windows helper was not involved."}
+{"file":".trellis/tasks/07-28-fix-windows-self-update-download-reliability/research/update-distribution-options.md","reason":"Compares compressed full assets, true binary deltas and platform updaters using release data, local compression measurements and primary sources."}

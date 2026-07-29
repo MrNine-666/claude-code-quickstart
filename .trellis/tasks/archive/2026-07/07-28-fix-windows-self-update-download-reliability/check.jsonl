@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/ccq-self-lifecycle.md","reason":"Review source and tests against redirect, resume, integrity, progress and unchanged Windows helper requirements."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Check retry classification, abort/timeout behavior and narrow final cleanup."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Check focused gates, full bun run check and preservation of unrelated user changes."}
+{"file":".trellis/spec/installer/build-release.md","reason":"Check that contracts, build scripts, CI and Release metadata agree on the exact four-platform raw plus gzip artifact set and deterministic packaging gates."}
+{"file":".trellis/tasks/07-28-fix-windows-self-update-download-reliability/research/diagnosis.md","reason":"Verify the implementation fixes the reproduced redirect/transfer boundary rather than masking it with UI retry."}
+{"file":".trellis/tasks/07-28-fix-windows-self-update-download-reliability/research/update-distribution-options.md","reason":"Check that the selected transport strategy delivers its measured bandwidth benefit without introducing an unsupported delta/version matrix."}
