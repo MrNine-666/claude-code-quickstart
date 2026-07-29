@@ -65,14 +65,18 @@ sh installer/build.sh
 sh installer/build.sh --check
 ```
 
-默认输出到仓库根目录 `dist/`。Release 上传 6 个 artifact：
+默认输出到仓库根目录 `dist/`。Release 上传 10 个 artifact：
 
 - `install.ps1`
 - `install.sh`
 - `ccq-windows-x64.exe`
+- `ccq-windows-x64.exe.gz`
 - `ccq-windows-arm64.exe`
+- `ccq-windows-arm64.exe.gz`
 - `ccq-macos-x64`
+- `ccq-macos-x64.gz`
 - `ccq-macos-arm64`
+- `ccq-macos-arm64.gz`
 
 ---
 

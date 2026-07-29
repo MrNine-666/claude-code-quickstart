@@ -37,17 +37,34 @@ POSIX restart spawn.
 
 ## 3. Contracts
 
-`SelfUpdatePlan` is the immutable Release capability:
+`SelfUpdatePlan` is the immutable Release capability. Final executable integrity
+and network transport integrity are separate trust boundaries; neither may be
+inferred from the other or from a filename.
 
 ```typescript
-type SelfUpdatePlan = {
-  readonly version: string;
+type SelfUpdateAsset = {
   readonly assetName: string;
   readonly downloadUrl: string;
   readonly expectedSize: number;
   readonly expectedSha256: string; // normalized 64 lowercase hex
 };
+
+type SelfUpdateTransport = SelfUpdateAsset & {
+  readonly encoding: 'gzip' | 'identity';
+};
+
+type SelfUpdatePlan = {
+  readonly version: string;
+  readonly target: SelfUpdateAsset;              // always the raw executable
+  readonly transports: readonly SelfUpdateTransport[]; // priority order
+};
 ```
+
+`checkLatestVersion` fails closed without a valid raw asset and synthesizes the
+`identity` transport from it. A valid `<asset>.gz` becomes the first transport;
+a missing or malformed gzip entry is ignored so old and rolled-back Releases stay
+directly upgradable. Apply code reads integrity facts from `plan.target` only and
+never sees a compressed file.
 
 `DownloadedSelfUpdate` binds the verified plan to one unique temp file and its
 target. `applyUpdate` must consume this object; callers must not reconstruct a
@@ -62,8 +79,10 @@ type DownloadedSelfUpdate = {
 
 type DownloadUpdateProgress = {
   readonly downloadedBytes: number;
-  readonly totalBytes: number; // plan.expectedSize
-  readonly percentage: number; // integer, clamped to 0..100
+  readonly totalBytes: number;   // current transport.expectedSize
+  readonly percentage: number;   // integer, clamped to 0..100
+  readonly assetName: string;    // which transport is on the wire
+  readonly encoding: 'gzip' | 'identity';
 };
 
 type DownloadUpdateDeps = {
@@ -72,11 +91,58 @@ type DownloadUpdateDeps = {
 };
 ```
 
+### Transport Layer
+
+- Every Release transport download disables automatic redirects and follows at
+  most five HTTPS hops itself. Bun's automatic redirect from `github.com` to
+  `release-assets.githubusercontent.com` aborts before the first body chunk, so
+  each hop is issued explicitly with the Range header and AbortSignal preserved.
+  A missing `Location`, an unparsable value, a protocol downgrade, a loop or an
+  over-limit chain fails closed. Each retry restarts from the original GitHub URL
+  so a fresh signed CDN location is issued.
+- Transport partials live under `selfUpdateCacheDir()` (`~/.ccq/self-update`,
+  `CCQ_HOME`-injectable). Each entry is keyed by transport digest and holds
+  `metadata.json`, `payload.part` and `lease.json`. Metadata binds schema,
+  version, platform, asset name, encoding, transport size/digest and target
+  digest; any mismatch, oversize payload or malformed entry is discarded. Existing
+  bytes are rehashed before append, so the final digest stays authoritative.
+- At offset zero a successful full response is accepted. At offset > 0 the
+  response must be `206` with `Content-Range` start equal to the offset, end
+  equal to `expectedSize - 1` and total equal to `expectedSize`; an optional
+  `Content-Length` must equal the remaining span. A `200` that ignores Range
+  invalidates the partial and restarts from zero instead of appending.
+- Retries are bounded at four attempts with 250/500/1000ms abortable backoff for
+  network errors, body-stream errors, premature EOF, 408/429 and transient 5xx.
+  Caller cancel, invalid redirect/range, permanent 4xx and integrity failures are
+  not retried inside the same transport. A resettable no-progress timer plus a
+  60-minute overall cap replace any fixed wall clock, so a slow but advancing
+  download is not killed.
+- Cache lease creation is exclusive with heartbeat and stale reclaim, so two
+  concurrent `ccq` processes never append to the same partial and a crashed
+  owner cannot block updates forever. The writer keeps the lease through final
+  transport verification, raw materialization and cache cleanup; cleanup never
+  removes an entry owned by a live process. Explicit cancel removes the current entry;
+  network failure, timeout and normal exit preserve it for resume. A new Release
+  drops non-current digests and idle entries expire after seven days.
+- A completed transport is verified against its own size/SHA-256, then
+  materialized into `uniqueTempUpdatePath(targetPath)`: gzip streams through
+  gunzip, identity streams directly. Output is capped at
+  `plan.target.expectedSize` and must match the target size and SHA-256 exactly
+  before `DownloadedSelfUpdate` is returned. Consumed cache is deleted only after
+  a valid raw transaction exists; on materialization failure the raw temp and the
+  invalid transport entry are removed and the raw transport is selected next.
+  No archive paths are extracted, so gzip adds no path-traversal surface.
+- Progress reports current network transport bytes, not decompressed bytes, and
+  carries the transport asset name and encoding. A validated resume reports the
+  cached offset and stays monotonic within one transport; a gzip-to-raw fallback
+  is an explicit transport change that resets the total.
+
 - Temp files live in the target directory, use exclusive creation, and include
   pid plus cryptographic randomness.
 - Downloading is streamed while computing byte count and SHA-256.
-- Progress starts at zero, never decreases, and is throttled to integer
-  percentage changes. A `100%` event means all declared bytes were written; it
+- Progress starts at zero, never decreases within one transport, and is throttled
+  to integer percentage changes. A resumed offset is published only after strict
+  `206 Content-Range` validation. A `100%` event means all declared bytes were written; it
   is not success until size and SHA-256 validation complete. The TUI keeps the
   latest progress in `self-update-state.ts` during both downloading and
   cancelling, and renders a fixed-width bar plus downloaded/total bytes.
@@ -110,11 +176,14 @@ type DownloadUpdateDeps = {
 | latest is equal/lower priority | `hasUpdate=false`; zero download |
 | unsupported platform/architecture | structured `check` error |
 | missing asset, non-positive integer size, missing/invalid SHA-256 | fail closed in `check` |
-| HTTP failure, timeout, cancellation, write failure | `download` error and remove only this transaction temp |
+| Retryable HTTP/network/body failure or timeout | `download` error; preserve a valid transport partial for resume |
+| Caller cancellation | `download` cancellation; delete the current transport cache entry |
+| Disk write/fsync, invalid redirect/range or integrity failure | permanent transport failure; never append/retry unsafe bytes |
 | downloaded size/hash mismatch | `download` error; target remains byte-identical |
 | progress callback reaches `100%`, then hash mismatches | `download` error; never transition to ready/apply |
 | temp path does not belong to target directory/prefix | `apply` error before target mutation |
 | apply-time size/hash mismatch | `apply` error; preserve target and diagnostic temp |
+| apply transaction temp is missing/invalid before mutation | `apply` error with `retryStage=download`; UI must not retry the same invalid transaction forever |
 | Windows helper spawn emits asynchronous `error` | failure, never `scheduled` |
 | Windows helper bootstrap exits nonzero or ready is absent | failure, never `scheduled` |
 | `Get-FileHash` is absent or not auto-loaded | helper still verifies both files through the .NET SHA-256 implementation |

@@ -254,12 +254,12 @@ function filterZshSource(relativePath) {
   return lines;
 }
 
-function buildManageTuiPackage() {
+function buildManageTuiPackage(manifest) {
   // Phase 6：构建 TUI 可执行文件（4 平台交叉编译）到 dist/ 目录。
   // 构建 OpenTUI TUI 可执行文件（4 平台交叉编译）。流程：
   //   1. 确保 Bun 可用（>=1.2.0）；
   //   2. 在 tui/ 子项目中执行 bun run build（调用 scripts/build.ts）；
-  //   3. 产出 4 个可执行文件到 dist/。
+  //   3. 产出 4 个 raw 可执行文件和对应 4 个 gzip 更新资产到 dist/。
   // 契约已通过 src/core/embedded-contracts.ts 静态 import 内嵌进可执行文件（TDR-4）。
   // Bun 不可用时 warn 跳过（不阻断 .sh 产物；CI 通过 release artifact 校验强制可执行文件）。
 
@@ -296,10 +296,8 @@ function buildManageTuiPackage() {
 
   // macOS 构建入口只输出 macOS ccq 产物；TUI 本地构建直接输出到 repo 根 dist/。
   const tuiArtifactDir = path.join(repoRoot, 'dist');
-  const expectedFiles = [
-    'ccq-macos-x64',
-    'ccq-macos-arm64'
-  ];
+  const expectedFiles = manifest.BuildEntrypoints.MacOS.Artifacts
+    .filter((fileName) => fileName !== 'install.sh');
 
   let allSuccess = true;
   for (const fileName of expectedFiles) {
@@ -385,9 +383,9 @@ function validateMacOSArtifact(outputPath) {
   pass(`zsh 语法检查通过: ${outputPath}`);
 }
 
-function clearKnownBuildArtifacts() {
-  // macOS 构建入口只清理 macOS 产物（.sh），保留 Windows 产物（.ps1）
-  for (const fileName of ['install.sh']) {
+function clearKnownBuildArtifacts(manifest) {
+  // 清理当前 macOS 入口拥有的 install/raw/gzip，保留 Windows 产物。
+  for (const fileName of manifest.BuildEntrypoints.MacOS.Artifacts) {
     const fullPath = path.join(outputDir, fileName);
     if (fs.existsSync(fullPath)) fs.rmSync(fullPath, { force: true });
   }
@@ -406,7 +404,7 @@ function ensureExpectedOutputs(manifest) {
 const manifest = readJson('installer/contracts/build.json');
 const stepsContract = readJson(manifest.MacOS.StepContract || 'installer/contracts/steps.json');
 fs.mkdirSync(outputDir, { recursive: true });
-clearKnownBuildArtifacts();
+clearKnownBuildArtifacts(manifest);
 
 console.log('═══════════════════════════════════════════════════════════════');
 console.log('  Claude Code 安装器 - macOS 单文件构建工具');
@@ -418,7 +416,7 @@ console.log(`构建平台:     ${platform}`);
 // 构建 TUI 可执行文件（4 平台交叉编译）
 console.log('');
 console.log('─── 构建 TUI 可执行文件（4 平台） ─────────────────────────');
-buildManageTuiPackage();
+buildManageTuiPackage(manifest);
 console.log('');
 
 buildMacOSArtifact(manifest, stepsContract, 'Install');

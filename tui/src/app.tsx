@@ -54,6 +54,7 @@ import {
 	isSelfUpdateCancellable,
 	reduceSelfUpdateScreen,
 	selfUpdateScreenVersion,
+	type SelfUpdateRetry,
 	type SelfUpdateScreen
 } from './state/self-update-state.js';
 // 导入 6 个视图组件
@@ -212,7 +213,8 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 			setUpdateScreen(current =>
 				reduceSelfUpdateScreen(current, {
 					type: 'failed',
-					message: formatSelfUpdateError(info.error)
+					message: formatSelfUpdateError(info.error),
+					retry: {stage: 'check'}
 				})
 			);
 			return;
@@ -266,7 +268,7 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 		if (!downloaded.ok) {
 			const message = formatSelfUpdateError(downloaded.error);
 			toast.error(message);
-			setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'failed', message}));
+			setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'failed', message, retry: {stage: 'download', plan}}));
 			return;
 		}
 
@@ -284,7 +286,9 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 		if (!applied.ok) {
 			const message = formatSelfUpdateError(applied.error);
 			toast.error(message);
-			setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'failed', message}));
+			const retry: SelfUpdateRetry =
+				applied.error.retryStage === 'download' ? {stage: 'download', plan: transaction.plan} : {stage: 'apply', transaction};
+			setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'failed', message, retry}));
 			return;
 		}
 
@@ -299,6 +303,21 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 				version: transaction.plan.version
 			})
 		);
+	};
+
+	// 失败态重试：按失败阶段重跑对应流程，浮窗保持打开以便继续观察进度/再次失败。
+	const retryUpdate = (retry: SelfUpdateRetry): void => {
+		switch (retry.stage) {
+			case 'check':
+				void runUpdateCheck();
+				return;
+			case 'download':
+				void runUpdate(retry.plan);
+				return;
+			case 'apply':
+				void applyDownloadedUpdate(retry.transaction);
+				return;
+		}
 	};
 
 	useEffect(() => {
@@ -493,6 +512,7 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 				onApplyUpdate={transaction => void applyDownloadedUpdate(transaction)}
 				onCancelUpdate={cancelUpdate}
 				onRestart={() => void restartUpdatedApp()}
+				onRetry={retryUpdate}
 			/>
 			{busyOverlay ? (
 				<Spinner
@@ -641,14 +661,15 @@ function updateButtonLabel(status: UpdateStatus): string {
 	}
 }
 
-function UpdateDialog({
+export function UpdateDialog({
 	active,
 	screen,
 	onClose,
 	onUpdate,
 	onApplyUpdate,
 	onCancelUpdate,
-	onRestart
+	onRestart,
+	onRetry
 }: {
 	readonly active: boolean;
 	readonly screen: SelfUpdateScreen;
@@ -657,6 +678,7 @@ function UpdateDialog({
 	readonly onApplyUpdate: (transaction: DownloadedSelfUpdate) => void;
 	readonly onCancelUpdate: () => void;
 	readonly onRestart: () => void;
+	readonly onRetry: (retry: SelfUpdateRetry) => void;
 }) {
 	useManageInput(keyName => {
 		const isEnter = keyName === 'enter';
@@ -685,8 +707,10 @@ function UpdateDialog({
 			return;
 		}
 
+		// 失败态：Enter 重跑失败的那一个阶段（不是关闭），Esc 才关闭浮窗。
 		if (screen.kind === 'error') {
-			if (isEnter || isEsc) onClose();
+			if (isEnter) onRetry(screen.retry);
+			else if (isEsc) onClose();
 			return;
 		}
 
@@ -747,7 +771,9 @@ function updateDialogContent(screen: SelfUpdateScreen): {readonly title: string;
 				),
 				hint: 'Enter 更新  Esc 取消'
 			};
-		case 'updating':
+		case 'updating': {
+			const usingRawFallback =
+				screen.stage !== 'applying' && screen.plan.transports[0]?.encoding === 'gzip' && screen.progress.encoding === 'identity';
 			return {
 				title: '正在更新 ccq',
 				body: (
@@ -758,6 +784,11 @@ function updateDialogContent(screen: SelfUpdateScreen): {readonly title: string;
 							selectionBg={colors.selectionBg}
 							selectionFg={colors.selectionFg}
 						>{`  目标版本 v${selfUpdateScreenVersion(screen)}`}</text>
+						{usingRawFallback ? (
+							<text fg={colors.warning} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+								gzip 传输不可用，已回退 raw 完整包
+							</text>
+						) : null}
 						{screen.stage === 'applying' ? null : <UpdateProgressBar progress={screen.progress} />}
 					</box>
 				),
@@ -768,6 +799,7 @@ function updateDialogContent(screen: SelfUpdateScreen): {readonly title: string;
 							? '正在停止更新...'
 							: '正在应用，暂不可取消'
 			};
+		}
 		case 'readyToRestart':
 			return {
 				title: '下载完成',
@@ -806,13 +838,28 @@ function updateDialogContent(screen: SelfUpdateScreen): {readonly title: string;
 			return {
 				title: '更新失败',
 				body: (
-					<text
-						fg={colors.danger}
-						selectionBg={colors.selectionBg}
-						selectionFg={colors.selectionFg}
-					>{`✗ 更新失败：${screen.message}`}</text>
+					<box flexDirection="column">
+						<text
+							fg={colors.danger}
+							selectionBg={colors.selectionBg}
+							selectionFg={colors.selectionFg}
+						>{`✗ 更新失败：${screen.message}`}</text>
+						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+							{`  可重试：${updateRetryLabel(screen.retry)}`}
+						</text>
+					</box>
 				),
-				hint: 'Enter 关闭  Esc 取消'
+				hint: `Enter ${updateRetryLabel(screen.retry)}  Esc 关闭`
+			};
+		case 'latest':
+			return {
+				title: '检查更新',
+				body: (
+					<text fg={colors.success} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+						✓ 已是最新版本
+					</text>
+				),
+				hint: 'Enter 关闭  Esc 关闭'
 			};
 		default:
 			return {
@@ -824,6 +871,18 @@ function updateDialogContent(screen: SelfUpdateScreen): {readonly title: string;
 				),
 				hint: 'Esc 关闭'
 			};
+	}
+}
+
+// 失败态 Enter 的动作文案：按失败阶段告知用户重试会重跑什么。
+function updateRetryLabel(retry: SelfUpdateRetry): string {
+	switch (retry.stage) {
+		case 'check':
+			return '重新检查更新';
+		case 'download':
+			return '重新下载更新';
+		case 'apply':
+			return '重新应用更新';
 	}
 }
 

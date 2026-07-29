@@ -11,7 +11,9 @@
       "Artifacts": [
         "install.ps1",
         "ccq-windows-x64.exe",
-        "ccq-windows-arm64.exe"
+        "ccq-windows-x64.exe.gz",
+        "ccq-windows-arm64.exe",
+        "ccq-windows-arm64.exe.gz"
       ]
     },
     "MacOS": {
@@ -22,16 +24,42 @@
       "Artifacts": [
         "install.sh",
         "ccq-macos-x64",
-        "ccq-macos-arm64"
+        "ccq-macos-x64.gz",
+        "ccq-macos-arm64",
+        "ccq-macos-arm64.gz"
       ]
     },
     "ReleaseArtifacts": [
       "install.ps1",
       "install.sh",
       "ccq-windows-x64.exe",
+      "ccq-windows-x64.exe.gz",
       "ccq-windows-arm64.exe",
+      "ccq-windows-arm64.exe.gz",
       "ccq-macos-x64",
-      "ccq-macos-arm64"
+      "ccq-macos-x64.gz",
+      "ccq-macos-arm64",
+      "ccq-macos-arm64.gz"
+    ]
+  },
+  "UpdateTransports": {
+    "GzipAssets": [
+      {
+        "Raw": "ccq-windows-x64.exe",
+        "Gzip": "ccq-windows-x64.exe.gz"
+      },
+      {
+        "Raw": "ccq-windows-arm64.exe",
+        "Gzip": "ccq-windows-arm64.exe.gz"
+      },
+      {
+        "Raw": "ccq-macos-x64",
+        "Gzip": "ccq-macos-x64.gz"
+      },
+      {
+        "Raw": "ccq-macos-arm64",
+        "Gzip": "ccq-macos-arm64.gz"
+      }
     ]
   },
   "Windows": {

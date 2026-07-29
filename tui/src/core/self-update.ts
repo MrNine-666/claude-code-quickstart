@@ -1,6 +1,8 @@
 import {
 	chmodSync,
 	closeSync,
+	createReadStream,
+	createWriteStream,
 	existsSync,
 	fsyncSync,
 	mkdirSync,
@@ -13,10 +15,21 @@ import {
 	writeSync
 } from 'node:fs';
 import {basename, dirname, join, resolve} from 'node:path';
-import {createHash, randomBytes} from 'node:crypto';
+import {createHash, randomBytes, type Hash} from 'node:crypto';
 import {spawn as nodeSpawn} from 'node:child_process';
+import {Transform} from 'node:stream';
+import {pipeline} from 'node:stream/promises';
+import {createGunzip} from 'node:zlib';
 import {resolveHome} from './paths.js';
 import {parseSemver, semverCompare} from './semver.js';
+import {
+	cleanupTransportCache,
+	heartbeatTransportLease,
+	openTransportCache,
+	releaseTransportLease,
+	removeTransportCacheEntry,
+	type SelfUpdateTransportEncoding
+} from './self-update-cache.js';
 import {
 	spawnDetachedPowerShell,
 	uniqueWindowsHelperPath,
@@ -31,6 +44,14 @@ const RELEASE_API_URL = 'https://api.github.com/repos/' + GITHUB_REPO + '/releas
 const CHECK_TIMEOUT_MS = 15000;
 const DOWNLOAD_TIMEOUT_MS = 300000;
 const SHA256_PATTERN = /^sha256:([a-f0-9]{64})$/i;
+/** 手动重定向上限：GitHub asset -> 签名 CDN 通常只需 1 跳。 */
+export const SELF_UPDATE_MAX_REDIRECTS = 5;
+/** 单个 transport 的总尝试次数（含首次）。 */
+export const SELF_UPDATE_MAX_ATTEMPTS = 4;
+/** 可中止退避序列，对应第 2/3/4 次尝试。 */
+export const SELF_UPDATE_BACKOFF_MS: readonly number[] = [250, 500, 1000];
+/** 一次公开下载操作的总安全上限。 */
+export const SELF_UPDATE_OVERALL_CAP_MS = 60 * 60 * 1000;
 
 type ReleaseAsset = {
 	readonly name?: string;
@@ -44,12 +65,27 @@ type LatestReleaseResponse = {
 	readonly assets?: readonly ReleaseAsset[];
 };
 
-export type SelfUpdatePlan = {
-	readonly version: string;
+/** 最终落盘可执行文件的完整性事实；永远来自 raw Release asset。 */
+export type SelfUpdateAsset = {
 	readonly assetName: string;
 	readonly downloadUrl: string;
 	readonly expectedSize: number;
 	readonly expectedSha256: string;
+};
+
+/** 网络传输资产：gzip 为可选加速，identity 为必备回退。 */
+export type SelfUpdateTransport = SelfUpdateAsset & {
+	readonly encoding: SelfUpdateTransportEncoding;
+};
+
+/**
+ * Release 能力：target 是最终 raw 可执行文件，transports 按优先级排列。
+ * 两者的 size/SHA-256 是独立信任边界，不能互相推断。
+ */
+export type SelfUpdatePlan = {
+	readonly version: string;
+	readonly target: SelfUpdateAsset;
+	readonly transports: readonly SelfUpdateTransport[];
 };
 
 export type DownloadedSelfUpdate = {
@@ -58,19 +94,31 @@ export type DownloadedSelfUpdate = {
 	readonly tempPath: string;
 };
 
+/** 进度以“当前网络 transport”为总量；gzip→raw 回退是显式的 transport 变化。 */
 export type DownloadUpdateProgress = {
 	readonly downloadedBytes: number;
 	readonly totalBytes: number;
 	readonly percentage: number;
+	readonly assetName: string;
+	readonly encoding: SelfUpdateTransportEncoding;
 };
 
 export type DownloadProgressCallback = (progress: DownloadUpdateProgress) => void;
+
+/** 首选 transport：用于 reducer 初始进度总量。 */
+export function preferredTransport(plan: SelfUpdatePlan): SelfUpdateTransport {
+	const first = plan.transports[0];
+	if (first) return first;
+	return {...plan.target, encoding: 'identity'};
+}
 
 export type SelfUpdateStage = 'check' | 'download' | 'apply';
 
 export type SelfUpdateError = {
 	readonly stage: SelfUpdateStage;
 	readonly message: string;
+	/** 当前阶段的前置事务已失效时，UI 应回到哪个阶段恢复。 */
+	readonly retryStage?: SelfUpdateStage;
 	readonly cause?: string;
 	readonly status?: number;
 	readonly targetPath?: string;
@@ -114,7 +162,12 @@ export type DownloadUpdateDeps = {
 	readonly fetch?: typeof fetch;
 	readonly targetPath?: string;
 	readonly platform?: NodeJS.Platform;
+	/** 无进展超时（历史参数名保留，语义已从固定墙钟改为可重置）。 */
 	readonly timeoutMs?: number;
+	readonly noProgressTimeoutMs?: number;
+	readonly overallTimeoutMs?: number;
+	readonly maxAttempts?: number;
+	readonly backoffMs?: readonly number[];
 	readonly onProgress?: DownloadProgressCallback;
 };
 
@@ -135,6 +188,13 @@ function errorCause(error: unknown): string | undefined {
 	}
 	const text = String(error ?? '').trim();
 	return text || undefined;
+}
+
+function safeDownloadCause(error: unknown): string | undefined {
+	const cause = errorCause(error);
+	if (!cause) return undefined;
+	// fetch/stream 异常可能把带签名查询参数的 CDN URL 拼进 message；UI/日志只保留类别。
+	return cause.replace(/https?:\/\/[^\s)\]>'"]+/gi, '[已隐藏下载地址]');
 }
 
 function makeSelfUpdateError(
@@ -173,6 +233,23 @@ function getAssetName(platform: NodeJS.Platform, arch: string): string {
 function parseDigest(digest: string | undefined): string | null {
 	const match = digest?.trim().match(SHA256_PATTERN);
 	return match?.[1]?.toLowerCase() ?? null;
+}
+
+/**
+ * 把 Release asset 解析为可信资产；缺 URL/size/digest 一律返回 null。
+ * raw target 返回 null 即 check 阶段 fail closed；gzip 返回 null 只是忽略加速。
+ */
+function parseReleaseAsset(asset: ReleaseAsset | undefined): SelfUpdateAsset | null {
+	if (!asset?.name || !asset.browser_download_url) return null;
+	if (!Number.isSafeInteger(asset.size) || Number(asset.size) <= 0) return null;
+	const expectedSha256 = parseDigest(asset.digest);
+	if (!expectedSha256) return null;
+	return {
+		assetName: asset.name,
+		downloadUrl: asset.browser_download_url,
+		expectedSize: Number(asset.size),
+		expectedSha256
+	};
 }
 
 export function getCcqExecutablePath(): string {
@@ -214,6 +291,7 @@ export async function checkLatestVersion(deps: CheckLatestVersionDeps = {}): Pro
 			return {ok: false, error: makeSelfUpdateError('check', '当前版本或 Release 版本不是合法 semver')};
 		}
 		if (semverCompare(latestVersion, currentVersion) <= 0) {
+			cleanupTransportCache();
 			return {ok: true, hasUpdate: false, currentVersion, latestVersion};
 		}
 
@@ -223,31 +301,27 @@ export async function checkLatestVersion(deps: CheckLatestVersionDeps = {}): Pro
 		} catch (error) {
 			return {ok: false, error: makeSelfUpdateError('check', '不支持当前平台或架构', {cause: errorCause(error)})};
 		}
-		const asset = (data.assets ?? []).find(item => item.name === assetName);
-		if (!asset?.browser_download_url) {
+		const assets = data.assets ?? [];
+		const rawAsset = parseReleaseAsset(assets.find(item => item.name === assetName));
+		if (!rawAsset) {
 			return {ok: false, error: makeSelfUpdateError('check', 'Release 缺少当前平台产物 ' + assetName)};
 		}
-		if (!Number.isSafeInteger(asset.size) || Number(asset.size) <= 0) {
-			return {ok: false, error: makeSelfUpdateError('check', 'Release asset size 无效')};
-		}
-		const expectedSha256 = parseDigest(asset.digest);
-		if (!expectedSha256) {
-			return {ok: false, error: makeSelfUpdateError('check', 'Release asset 缺少合法 SHA-256 digest')};
-		}
 
-		return {
-			ok: true,
-			hasUpdate: true,
-			currentVersion,
-			latestVersion,
-			plan: Object.freeze({
-				version: latestVersion,
-				assetName,
-				downloadUrl: asset.browser_download_url,
-				expectedSize: Number(asset.size),
-				expectedSha256
-			})
-		};
+		// gzip 是可选加速：缺失或元数据无效时忽略，保持旧 Release 与回滚兼容。
+		const gzipAsset = parseReleaseAsset(assets.find(item => item.name === assetName + '.gz'));
+		const transports: SelfUpdateTransport[] = [];
+		if (gzipAsset) transports.push(Object.freeze({...gzipAsset, encoding: 'gzip' as const}));
+		transports.push(Object.freeze({...rawAsset, encoding: 'identity' as const}));
+
+		const plan: SelfUpdatePlan = Object.freeze({
+			version: latestVersion,
+			target: Object.freeze(rawAsset),
+			transports: Object.freeze(transports)
+		});
+		// 新 Release 出现即清理不再需要的旧 digest 分片。
+		cleanupTransportCache({keepDigests: new Set(transports.map(item => item.expectedSha256))});
+
+		return {ok: true, hasUpdate: true, currentVersion, latestVersion, plan};
 	} catch (error) {
 		const message = controller.signal.aborted ? '检查更新超时' : '无法连接 GitHub Release';
 		return {ok: false, error: makeSelfUpdateError('check', message, {cause: errorCause(error)})};
@@ -277,101 +351,448 @@ function removeFileBestEffort(filePath: string): void {
 	}
 }
 
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * 手动跟随最多 5 跳 HTTPS 重定向。Bun 自动重定向在
+ * `github.com -> release-assets.githubusercontent.com` 上会 abort/socket closed，
+ * 因此每一跳都自己发起，并保留 Range 与 AbortSignal。
+ */
+async function fetchFollowingRedirects(
+	fetchImpl: typeof fetch,
+	originalUrl: string,
+	rangeFrom: number,
+	signal: AbortSignal
+): Promise<Response> {
+	const visited = new Set<string>();
+	let currentUrl: string;
+	try {
+		const parsed = new URL(originalUrl);
+		if (parsed.protocol !== 'https:') throw new Error('protocol');
+		currentUrl = parsed.toString();
+	} catch {
+		throw new Error('Release 下载地址必须是可解析的 HTTPS URL');
+	}
+	for (let hop = 0; hop <= SELF_UPDATE_MAX_REDIRECTS; hop++) {
+		if (visited.has(currentUrl)) throw new Error('Release 下载重定向出现循环');
+		visited.add(currentUrl);
+		const headers: Record<string, string> = {'User-Agent': 'ccq-update-downloader'};
+		if (rangeFrom > 0) headers.Range = 'bytes=' + rangeFrom + '-';
+		const response = await fetchImpl(currentUrl, {redirect: 'manual', headers, signal});
+		if (!REDIRECT_STATUS.has(response.status)) return response;
+
+		const location = response.headers.get('location');
+		if (!location) {
+			await response.body?.cancel().catch(() => {});
+			throw new Error('Release 下载重定向缺少 Location');
+		}
+		let next: URL;
+		try {
+			next = new URL(location, currentUrl);
+		} catch {
+			await response.body?.cancel().catch(() => {});
+			throw new Error('Release 下载重定向 Location 无法解析');
+		}
+		if (next.protocol !== 'https:') {
+			await response.body?.cancel().catch(() => {});
+			throw new Error('Release 下载重定向协议降级被拒绝');
+		}
+		await response.body?.cancel().catch(() => {});
+		currentUrl = next.toString();
+	}
+	throw new Error('Release 下载重定向超过 ' + SELF_UPDATE_MAX_REDIRECTS + ' 跳');
+}
+
+type TransportFetchOutcome =
+	| {readonly kind: 'complete'; readonly digest: string; readonly size: number}
+	| {readonly kind: 'retryable'; readonly cause: string; readonly status?: number}
+	| {readonly kind: 'permanent'; readonly cause: string; readonly status?: number};
+
+async function waitForBackoff(delayMs: number, signal: AbortSignal): Promise<void> {
+	if (delayMs <= 0 || signal.aborted) return;
+	await new Promise<void>(settle => {
+		const onAbort = (): void => {
+			clearTimeout(timer);
+			settle();
+		};
+		const timer = setTimeout(() => {
+			signal.removeEventListener('abort', onAbort);
+			settle();
+		}, delayMs);
+		signal.addEventListener('abort', onAbort, {once: true});
+	});
+}
+
+/**
+ * 把单个 transport 下载进持久缓存分片。
+ * offset > 0 时必须取得起点/总长一致的 `206 Content-Range` 才允许追加。
+ */
+async function fetchTransportIntoCache(
+	transport: SelfUpdateTransport,
+	payloadPath: string,
+	leasePath: string,
+	startOffset: number,
+	runningHash: Hash,
+	fetchImpl: typeof fetch,
+	signal: AbortSignal,
+	onBytes: (total: number) => void
+): Promise<TransportFetchOutcome> {
+	let offset = startOffset;
+	let response: Response;
+	try {
+		response = await fetchFollowingRedirects(fetchImpl, transport.downloadUrl, offset, signal);
+	} catch (error) {
+		if (signal.aborted) return {kind: 'permanent', cause: safeDownloadCause(error) ?? '已取消'};
+		const cause = safeDownloadCause(error) ?? '网络请求失败';
+		// 重定向本身非法属于永久失败，网络抖动可重试。
+		const permanent = /重定向/.test(cause);
+		return {kind: permanent ? 'permanent' : 'retryable', cause};
+	}
+
+	if (offset > 0) {
+		if (response.status === 200) {
+			// 服务端忽略 Range：作废分片后从零重启，绝不把整体响应拼到旧字节后面。
+			await response.body?.cancel().catch(() => {});
+			return {kind: 'retryable', cause: 'Range 被忽略，需要重新下载', status: 200};
+		}
+		if (response.status !== 206) {
+			const retryable = response.status === 408 || response.status === 429 || response.status >= 500;
+			await response.body?.cancel().catch(() => {});
+			return {kind: retryable ? 'retryable' : 'permanent', cause: '续传请求被拒绝', status: response.status};
+		}
+		const contentRange = response.headers.get('content-range') ?? '';
+		const match = contentRange.match(/^bytes\s+(\d+)-(\d+)\/(\d+)$/i);
+		if (!match) {
+			await response.body?.cancel().catch(() => {});
+			return {kind: 'permanent', cause: 'Content-Range 无法解析', status: 206};
+		}
+		const start = Number(match[1]);
+		const end = Number(match[2]);
+		const total = Number(match[3]);
+		if (start !== offset || total !== transport.expectedSize || end !== transport.expectedSize - 1) {
+			await response.body?.cancel().catch(() => {});
+			return {kind: 'permanent', cause: 'Content-Range 与请求或 Release 声明不一致', status: 206};
+		}
+		const declaredLength = response.headers.get('content-length');
+		if (declaredLength !== null && Number(declaredLength) !== transport.expectedSize - offset) {
+			await response.body?.cancel().catch(() => {});
+			return {kind: 'permanent', cause: 'Content-Length 与续传区间不一致', status: 206};
+		}
+	} else if (!response.ok) {
+		const retryable = response.status === 408 || response.status === 429 || response.status >= 500;
+		await response.body?.cancel().catch(() => {});
+		return {kind: retryable ? 'retryable' : 'permanent', cause: '下载 Release asset 失败', status: response.status};
+	}
+
+	if (!response.body) return {kind: 'retryable', cause: '下载响应没有可读取内容', status: response.status};
+	// 只有严格验证过续传响应后，UI 才能把已缓存 offset 计入当前进度。
+	if (offset > 0) onBytes(offset);
+
+	let fd: number;
+	try {
+		fd = openSync(payloadPath, offset > 0 ? 'a' : 'w', 0o600);
+	} catch (error) {
+		await response.body.cancel().catch(() => {});
+		return {kind: 'permanent', cause: safeDownloadCause(error) ?? '无法打开更新缓存文件'};
+	}
+	const reader = response.body.getReader();
+	let lastHeartbeat = Date.now();
+	let bodyEnded = false;
+	try {
+		while (true) {
+			const {done, value} = await reader.read();
+			if (done) {
+				bodyEnded = true;
+				break;
+			}
+			if (!value) continue;
+			const nextOffset = offset + value.byteLength;
+			if (nextOffset > transport.expectedSize) {
+				return {kind: 'permanent', cause: '下载字节超过 Release 声明'};
+			}
+			try {
+				writeChunk(fd, value);
+			} catch (error) {
+				return {kind: 'permanent', cause: safeDownloadCause(error) ?? '写入更新缓存失败'};
+			}
+			runningHash.update(value);
+			offset = nextOffset;
+			onBytes(offset);
+			const now = Date.now();
+			if (now - lastHeartbeat >= 5000) {
+				lastHeartbeat = now;
+				try {
+					heartbeatTransportLease(leasePath);
+				} catch (error) {
+					return {kind: 'permanent', cause: safeDownloadCause(error) ?? '更新缓存 lease 已丢失'};
+				}
+			}
+		}
+		try {
+			fsyncSync(fd);
+		} catch (error) {
+			return {kind: 'permanent', cause: safeDownloadCause(error) ?? '同步更新缓存失败'};
+		}
+	} catch (error) {
+		if (signal.aborted) return {kind: 'permanent', cause: safeDownloadCause(error) ?? '已取消'};
+		// 保留已落盘分片，下次从精确 offset 续传。
+		return {kind: 'retryable', cause: safeDownloadCause(error) ?? '响应流中断'};
+	} finally {
+		if (!bodyEnded) await reader.cancel().catch(() => {});
+		try {
+			closeSync(fd);
+		} catch {
+			// 分片状态由 metadata/rehash 兜底。
+		}
+	}
+
+	if (offset !== transport.expectedSize) {
+		return {kind: 'retryable', cause: '响应提前结束，已保留可续传分片'};
+	}
+	const digest = runningHash.copy().digest('hex');
+	if (digest !== transport.expectedSha256.toLowerCase()) {
+		return {kind: 'permanent', cause: 'transport SHA-256 校验失败'};
+	}
+	return {kind: 'complete', digest, size: offset};
+}
+
+/**
+ * 把已验证的 transport 分片物化成目标目录下唯一的 raw temp。
+ * gzip 流式解压，输出超过 raw expected size 立即中止，最终必须 size/digest 双匹配。
+ */
+async function materializeRawTemp(
+	payloadPath: string,
+	encoding: SelfUpdateTransportEncoding,
+	target: SelfUpdateAsset,
+	tempPath: string,
+	signal: AbortSignal
+): Promise<{readonly ok: true} | {readonly ok: false; readonly cause: string}> {
+	const hash = createHash('sha256');
+	let written = 0;
+	const measure = new Transform({
+		transform(chunk, _encoding, callback) {
+			written += chunk.byteLength;
+			if (written > target.expectedSize) {
+				callback(new Error('解压输出超过 Release 声明的可执行文件大小'));
+				return;
+			}
+			hash.update(chunk);
+			callback(null, chunk);
+		}
+	});
+	try {
+		const source = createReadStream(payloadPath);
+		const sink = createWriteStream(tempPath, {flags: 'wx', mode: 0o700});
+		await (encoding === 'gzip' ? pipeline(source, createGunzip(), measure, sink, {signal}) : pipeline(source, measure, sink, {signal}));
+	} catch (error) {
+		return {ok: false, cause: errorCause(error) ?? '物化更新文件失败'};
+	}
+	if (written !== target.expectedSize) return {ok: false, cause: '物化后文件大小与 Release 声明不一致'};
+	if (hash.digest('hex') !== target.expectedSha256.toLowerCase()) {
+		return {ok: false, cause: '物化后文件 SHA-256 校验失败'};
+	}
+	try {
+		const fd = openSync(tempPath, 'r+');
+		try {
+			fsyncSync(fd);
+		} finally {
+			closeSync(fd);
+		}
+	} catch (error) {
+		return {ok: false, cause: errorCause(error) ?? 'fsync 更新文件失败'};
+	}
+	return {ok: true};
+}
+
 export async function downloadUpdate(
 	plan: SelfUpdatePlan,
 	signal?: AbortSignal,
 	deps: DownloadUpdateDeps = {}
 ): Promise<DownloadUpdateResult> {
-	const fetchAsset = deps.fetch ?? fetch;
+	const fetchImpl = deps.fetch ?? fetch;
 	const targetPath = deps.targetPath ?? getSelfUpdateTargetPath();
 	const platform = deps.platform ?? process.platform;
-	const tempPath = uniqueTempUpdatePath(targetPath);
+	const maxAttempts = Math.max(1, Math.floor(deps.maxAttempts ?? SELF_UPDATE_MAX_ATTEMPTS));
+	const backoffMs = deps.backoffMs ?? SELF_UPDATE_BACKOFF_MS;
+	const noProgressMs = deps.timeoutMs ?? deps.noProgressTimeoutMs ?? DOWNLOAD_TIMEOUT_MS;
+	const overallCapMs = deps.overallTimeoutMs ?? SELF_UPDATE_OVERALL_CAP_MS;
+
 	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), deps.timeoutMs ?? DOWNLOAD_TIMEOUT_MS);
+	let timedOut = false;
 	const abortFromCaller = (): void => controller.abort();
 	signal?.addEventListener('abort', abortFromCaller, {once: true});
 	if (signal?.aborted) controller.abort();
-	let fd: number | null = null;
-	let lastReportedPercentage = -1;
-	const reportProgress = (downloadedBytes: number): void => {
-		const percentage = Math.min(100, Math.floor((downloadedBytes / plan.expectedSize) * 100));
-		if (percentage === lastReportedPercentage) return;
-		lastReportedPercentage = percentage;
-		deps.onProgress?.(
-			Object.freeze({
-				downloadedBytes,
-				totalBytes: plan.expectedSize,
-				percentage
-			})
-		);
+
+	// 无进展超时可重置：慢但持续前进的下载不会被固定墙钟误杀。
+	let noProgressTimer: ReturnType<typeof setTimeout> | null = null;
+	const armNoProgress = (): void => {
+		if (noProgressTimer) clearTimeout(noProgressTimer);
+		noProgressTimer = setTimeout(() => {
+			timedOut = true;
+			controller.abort();
+		}, noProgressMs);
 	};
+	const overallTimer = setTimeout(() => {
+		timedOut = true;
+		controller.abort();
+	}, overallCapMs);
+	armNoProgress();
+
+	let lastError = '下载或写入更新文件失败';
+	let lastStatus: number | undefined;
 	try {
-		reportProgress(0);
 		mkdirSync(dirname(targetPath), {recursive: true, mode: 0o700});
-		const response = await fetchAsset(plan.downloadUrl, {signal: controller.signal});
-		if (!response.ok) {
-			return {
-				ok: false,
-				error: makeSelfUpdateError('download', '下载 Release asset 失败', {
-					status: response.status,
-					targetPath,
-					tempPath
-				})
-			};
-		}
-		if (!response.body) {
-			return {ok: false, error: makeSelfUpdateError('download', '下载响应没有可读取内容', {targetPath, tempPath})};
-		}
+		cleanupTransportCache();
+		const transports = plan.transports.length > 0 ? plan.transports : [{...plan.target, encoding: 'identity' as const}];
 
-		fd = openSync(tempPath, 'wx', 0o700);
-		const reader = response.body.getReader();
-		const hash = createHash('sha256');
-		let size = 0;
-		while (true) {
-			const {done, value} = await reader.read();
-			if (done) break;
-			if (!value) continue;
-			size += value.byteLength;
-			if (size > plan.expectedSize) {
-				throw new Error('下载文件大小超过 Release 声明');
+		for (const transport of transports) {
+			armNoProgress();
+			const opened = openTransportCache({
+				version: plan.version,
+				platform,
+				assetName: transport.assetName,
+				encoding: transport.encoding,
+				expectedSize: transport.expectedSize,
+				expectedSha256: transport.expectedSha256,
+				targetSha256: plan.target.expectedSha256
+			});
+			if (!opened.ok) {
+				lastError = opened.message;
+				if (opened.reason === 'busy') break;
+				continue;
 			}
-			hash.update(value);
-			writeChunk(fd, value);
-			reportProgress(size);
-		}
-		fsyncSync(fd);
-		closeSync(fd);
-		fd = null;
 
-		const digest = hash.digest('hex');
-		if (size !== plan.expectedSize) {
-			throw new Error('下载文件大小与 Release 声明不一致');
-		}
-		if (digest !== plan.expectedSha256.toLowerCase()) {
-			throw new Error('下载文件 SHA-256 校验失败');
-		}
-		if (platform !== 'win32') chmodSync(tempPath, 0o755);
-		return {ok: true, transaction: Object.freeze({plan, targetPath, tempPath})};
-	} catch (error) {
-		if (fd !== null) {
+			// 每个 transport 是显式的进度总量：切换时重置为该 transport 的字节数。
+			let lastPercentage = -1;
+			let lastReportedBytes = -1;
+			const report = (bytes: number): void => {
+				if (bytes < lastReportedBytes) return;
+				const percentage = Math.min(100, Math.floor((bytes / transport.expectedSize) * 100));
+				if (percentage === lastPercentage) return;
+				lastPercentage = percentage;
+				lastReportedBytes = bytes;
+				deps.onProgress?.(
+					Object.freeze({
+						downloadedBytes: bytes,
+						totalBytes: transport.expectedSize,
+						percentage,
+						assetName: transport.assetName,
+						encoding: transport.encoding
+					})
+				);
+			};
+			report(0);
+
 			try {
-				closeSync(fd);
-			} catch {}
+				let outcome: TransportFetchOutcome | null = null;
+				let offset = opened.offset;
+				let hash = opened.hash;
+				if (offset === transport.expectedSize) {
+					const digest = hash.copy().digest('hex');
+					outcome =
+						digest === transport.expectedSha256.toLowerCase()
+							? {kind: 'complete', digest, size: offset}
+							: {kind: 'permanent', cause: 'transport SHA-256 校验失败'};
+					if (outcome.kind === 'complete') report(offset);
+				} else {
+					for (let attempt = 0; attempt < maxAttempts; attempt++) {
+						outcome = await fetchTransportIntoCache(
+							transport,
+							opened.payloadPath,
+							opened.leasePath,
+							offset,
+							hash,
+							fetchImpl,
+							controller.signal,
+							bytes => {
+								offset = bytes;
+								armNoProgress();
+								report(bytes);
+							}
+						);
+						if (outcome.kind !== 'retryable') break;
+						lastError = outcome.cause;
+						lastStatus = outcome.status;
+						if (controller.signal.aborted) break;
+						if (outcome.status === 200) {
+							// Range 被忽略：作废分片，下一次尝试从零开始；公开进度保持单调。
+							removeFileBestEffort(opened.payloadPath);
+							offset = 0;
+							hash = createHash('sha256');
+						}
+						if (attempt + 1 < maxAttempts) {
+							const delay = backoffMs[Math.min(attempt, backoffMs.length - 1)] ?? 1000;
+							heartbeatTransportLease(opened.leasePath);
+							await waitForBackoff(delay, controller.signal);
+						}
+						if (controller.signal.aborted) break;
+					}
+				}
+
+				if (controller.signal.aborted) {
+					// 只有 caller cancel 删除当前 transport；timeout/进程退出保留。
+					if (signal?.aborted) removeTransportCacheEntry(transport.expectedSha256);
+					break;
+				}
+				if (!outcome || outcome.kind !== 'complete') {
+					if (outcome) {
+						lastError = outcome.cause;
+						lastStatus = outcome.status;
+						// 永久性 transport 失败（含完整性不符）作废分片，再尝试下一个 transport。
+						if (outcome.kind === 'permanent') removeTransportCacheEntry(transport.expectedSha256);
+					}
+					continue;
+				}
+
+				const tempPath = uniqueTempUpdatePath(targetPath);
+				const materialized = await materializeRawTemp(
+					opened.payloadPath,
+					transport.encoding,
+					plan.target,
+					tempPath,
+					controller.signal
+				);
+				if (!materialized.ok) {
+					removeFileBestEffort(tempPath);
+					if (controller.signal.aborted) {
+						// timeout 保留已验证 transport；caller cancel 才显式删除。
+						if (signal?.aborted) removeTransportCacheEntry(transport.expectedSha256);
+						lastError = materialized.cause;
+						break;
+					}
+					removeTransportCacheEntry(transport.expectedSha256);
+					lastError = materialized.cause;
+					continue;
+				}
+
+				if (platform !== 'win32') chmodSync(tempPath, 0o755);
+				// 只有拿到已验证 raw transaction 之后才删除已消费缓存。
+				removeTransportCacheEntry(transport.expectedSha256);
+				return {ok: true, transaction: Object.freeze({plan, targetPath, tempPath})};
+			} finally {
+				releaseTransportLease(opened.leasePath);
+			}
 		}
-		removeFileBestEffort(tempPath);
+
 		const cancelled = signal?.aborted === true;
-		const timedOut = controller.signal.aborted && !cancelled;
-		const message = cancelled ? '下载已取消' : timedOut ? '下载超时' : '下载或写入更新文件失败';
+		const message = cancelled ? '下载已取消' : timedOut ? '下载超时' : lastError;
 		return {
 			ok: false,
 			error: makeSelfUpdateError('download', message, {
-				cause: errorCause(error),
-				targetPath,
-				tempPath
+				status: lastStatus,
+				targetPath
 			})
 		};
+	} catch (error) {
+		const cancelled = signal?.aborted === true;
+		const message = cancelled ? '下载已取消' : timedOut ? '下载超时' : '下载或写入更新文件失败';
+		return {
+			ok: false,
+			error: makeSelfUpdateError('download', message, {cause: safeDownloadCause(error), targetPath})
+		};
 	} finally {
-		clearTimeout(timeout);
+		if (noProgressTimer) clearTimeout(noProgressTimer);
+		clearTimeout(overallTimer);
 		signal?.removeEventListener('abort', abortFromCaller);
 	}
 }
@@ -403,10 +824,10 @@ function validateTransaction(transaction: DownloadedSelfUpdate): void {
 		throw new Error('更新临时文件不存在，请重新下载');
 	}
 	const stat = statSync(transaction.tempPath);
-	if (stat.size !== transaction.plan.expectedSize) {
+	if (stat.size !== transaction.plan.target.expectedSize) {
 		throw new Error('更新临时文件大小校验失败');
 	}
-	if (sha256File(transaction.tempPath) !== transaction.plan.expectedSha256.toLowerCase()) {
+	if (sha256File(transaction.tempPath) !== transaction.plan.target.expectedSha256.toLowerCase()) {
 		throw new Error('更新临时文件 SHA-256 校验失败');
 	}
 }
@@ -552,9 +973,9 @@ async function startWindowsUpdateHelper(
 			'-WorkingDirectory',
 			process.cwd(),
 			'-ExpectedSize',
-			String(transaction.plan.expectedSize),
+			String(transaction.plan.target.expectedSize),
 			'-ExpectedSha256',
-			transaction.plan.expectedSha256
+			transaction.plan.target.expectedSha256
 		];
 		if (restartAfterApply) args.push('-RestartAfterApply');
 		await spawnDetachedPowerShell(helperPath, args, spawnProcess);
@@ -582,6 +1003,18 @@ export async function applyUpdate(transaction: DownloadedSelfUpdate, options: Ap
 	const platform = options.platform ?? process.platform;
 	try {
 		validateTransaction(transaction);
+	} catch (error) {
+		return {
+			ok: false,
+			error: makeSelfUpdateError('apply', '更新事务已失效，请重新下载', {
+				retryStage: 'download',
+				cause: errorCause(error),
+				targetPath: transaction.targetPath,
+				tempPath: transaction.tempPath
+			})
+		};
+	}
+	try {
 		if (platform === 'win32') {
 			return startWindowsUpdateHelper(transaction, options.restartAfterApply ?? false, options.spawnProcess);
 		}

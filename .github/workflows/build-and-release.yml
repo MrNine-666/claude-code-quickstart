@@ -159,10 +159,13 @@ jobs:
 
           bun run build
 
+      - name: 生成确定性 gzip 更新资产
+        run: bun tui/scripts/package-gzip-assets.ts dist
+
       - name: 验证 TUI 可执行文件
         run: |
           set -eu
-          expected="ccq-windows-x64.exe ccq-windows-arm64.exe ccq-macos-x64 ccq-macos-arm64"
+          expected="$(bun -e 'const c=await Bun.file("installer/contracts/build.json").json(); console.log(c.BuildEntrypoints.ReleaseArtifacts.filter(x=>x.startsWith("ccq-")).join(" "))')"
           for file in ${expected}; do
             test -f "dist/${file}" || { echo "TUI 可执行文件不存在: ${file}" >&2; exit 1; }
             size_kb="$(du -k "dist/${file}" | cut -f1)"
@@ -175,9 +178,13 @@ jobs:
           name: built-tui-${{ github.sha }}
           path: |
             dist/ccq-windows-x64.exe
+            dist/ccq-windows-x64.exe.gz
             dist/ccq-windows-arm64.exe
+            dist/ccq-windows-arm64.exe.gz
             dist/ccq-macos-x64
+            dist/ccq-macos-x64.gz
             dist/ccq-macos-arm64
+            dist/ccq-macos-arm64.gz
           retention-days: 7
 
   build-windows:
@@ -201,7 +208,10 @@ jobs:
       - name: 清理非 Windows TUI 产物
         shell: pwsh
         run: |
-          Remove-Item -Path ".\dist\ccq-macos-x64", ".\dist\ccq-macos-arm64" -Force -ErrorAction SilentlyContinue
+          $contract = Get-Content -Raw ".\installer\contracts\build.json" | ConvertFrom-Json
+          foreach ($name in @($contract.BuildEntrypoints.MacOS.Artifacts | Where-Object { $_ -ne 'install.sh' })) {
+            Remove-Item -LiteralPath (Join-Path ".\dist" $name) -Force -ErrorAction SilentlyContinue
+          }
 
       - name: 构建 Windows 单文件脚本
         shell: pwsh
@@ -212,16 +222,9 @@ jobs:
       - name: 验证 Windows 构建产物
         shell: pwsh
         run: |
-          $expected = @(
-            ".\dist\install.ps1",
-            ".\dist\ccq-windows-x64.exe",
-            ".\dist\ccq-windows-arm64.exe"
-          )
-          $forbidden = @(
-            ".\dist\install.sh",
-            ".\dist\ccq-macos-x64",
-            ".\dist\ccq-macos-arm64"
-          )
+          $contract = Get-Content -Raw ".\installer\contracts\build.json" | ConvertFrom-Json
+          $expected = @($contract.BuildEntrypoints.Windows.Artifacts | ForEach-Object { Join-Path ".\dist" $_ })
+          $forbidden = @($contract.BuildEntrypoints.MacOS.Artifacts | ForEach-Object { Join-Path ".\dist" $_ })
 
           foreach ($path in $expected) {
             if (-not (Test-Path $path -PathType Leaf)) {
@@ -242,7 +245,9 @@ jobs:
           path: |
             dist/install.ps1
             dist/ccq-windows-x64.exe
+            dist/ccq-windows-x64.exe.gz
             dist/ccq-windows-arm64.exe
+            dist/ccq-windows-arm64.exe.gz
           retention-days: 7
 
   smoke-windows:
@@ -324,7 +329,8 @@ jobs:
 
       - name: 清理非 macOS TUI 产物
         run: |
-          rm -f dist/ccq-windows-x64.exe dist/ccq-windows-arm64.exe
+          windows_assets="$(node -e 'const c=require("./installer/contracts/build.json"); console.log(c.BuildEntrypoints.Windows.Artifacts.filter(x=>x!=="install.ps1").join(" "))')"
+          for file in ${windows_assets}; do rm -f "dist/${file}"; done
 
       - name: 构建 macOS 单文件脚本
         run: |
@@ -333,11 +339,15 @@ jobs:
       - name: 验证 macOS 构建产物
         run: |
           set -eu
-          for path in dist/install.sh dist/ccq-macos-x64 dist/ccq-macos-arm64; do
+          expected="$(node -e 'const c=require("./installer/contracts/build.json"); console.log(c.BuildEntrypoints.MacOS.Artifacts.join(" "))')"
+          forbidden="$(node -e 'const c=require("./installer/contracts/build.json"); console.log(c.BuildEntrypoints.Windows.Artifacts.join(" "))')"
+          for file in ${expected}; do
+            path="dist/${file}"
             test -f "${path}" || { echo "构建产物不存在: ${path}" >&2; exit 1; }
             printf '[PASS] %s %s KB\n' "${path}" "$(du -k "${path}" | cut -f1)"
           done
-          for path in dist/install.ps1 dist/ccq-windows-x64.exe dist/ccq-windows-arm64.exe; do
+          for file in ${forbidden}; do
+            path="dist/${file}"
             if [ -f "${path}" ]; then
               echo "macOS job 不应生成 Windows 产物: ${path}" >&2
               exit 1
@@ -352,7 +362,9 @@ jobs:
           path: |
             dist/install.sh
             dist/ccq-macos-x64
+            dist/ccq-macos-x64.gz
             dist/ccq-macos-arm64
+            dist/ccq-macos-arm64.gz
           retention-days: 7
 
   smoke-macos:
@@ -432,13 +444,14 @@ jobs:
       - name: 验证 Release artifact 集合
         run: |
           set -eu
-          expected="install.ps1 install.sh ccq-windows-x64.exe ccq-windows-arm64.exe ccq-macos-x64 ccq-macos-arm64"
+          expected="$(node -e 'const c=require("./installer/contracts/build.json"); console.log(c.BuildEntrypoints.ReleaseArtifacts.join(" "))')"
+          expected_count="$(node -e 'const c=require("./installer/contracts/build.json"); console.log(c.BuildEntrypoints.ReleaseArtifacts.length)')"
           for file in ${expected}; do
             test -f "dist/${file}" || { echo "Release 缺少 artifact: ${file}" >&2; exit 1; }
           done
           count="$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')"
-          if [ "${count}" != "6" ]; then
-            echo "Release artifact 数量异常: ${count} (期望 6)" >&2
+          if [ "${count}" != "${expected_count}" ]; then
+            echo "Release artifact 数量异常: ${count} (期望 ${expected_count})" >&2
             find dist -maxdepth 1 -type f -print >&2
             exit 1
           fi
@@ -495,6 +508,10 @@ jobs:
             | `ccq-windows-arm64.exe` | Windows ARM64 | ccq 管理控制台可执行文件（Windows ARM64） |
             | `ccq-macos-x64` | macOS Intel | ccq 管理控制台可执行文件（macOS Intel） |
             | `ccq-macos-arm64` | macOS Apple Silicon | ccq 管理控制台可执行文件（macOS Apple Silicon） |
+            | `ccq-windows-x64.exe.gz` | 自更新传输 | TUI 自更新用 gzip 完整包（Windows x64） |
+            | `ccq-windows-arm64.exe.gz` | 自更新传输 | TUI 自更新用 gzip 完整包（Windows ARM64） |
+            | `ccq-macos-x64.gz` | 自更新传输 | TUI 自更新用 gzip 完整包（macOS Intel） |
+            | `ccq-macos-arm64.gz` | 自更新传输 | TUI 自更新用 gzip 完整包（macOS Apple Silicon） |
 
             **注意**：install 会自动下载对应平台的 ccq 可执行文件到 PATH 目录，开新终端即可使用 `ccq` 命令。
         env:

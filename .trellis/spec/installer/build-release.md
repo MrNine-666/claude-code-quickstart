@@ -8,16 +8,23 @@ Release CI, version injection and artifact smoke tests.
 
 ## 2. Artifact Signatures
 
-Current Release artifact set is exactly six files:
+Current Release artifact set is exactly ten files:
 
 ```text
 install.ps1
 install.sh
 ccq-windows-x64.exe
+ccq-windows-x64.exe.gz
 ccq-windows-arm64.exe
+ccq-windows-arm64.exe.gz
 ccq-macos-x64
+ccq-macos-x64.gz
 ccq-macos-arm64
+ccq-macos-arm64.gz
 ```
+
+The four `.gz` files are self-update transport assets. Installers keep
+downloading raw executables; only the in-app updater prefers gzip.
 
 TUI compile targets are `bun-windows-{x64,arm64}` and
 `bun-darwin-{x64,arm64}`. Installed binaries must run without Bun or Node.
@@ -26,6 +33,21 @@ TUI compile targets are `bun-windows-{x64,arm64}` and
 
 - `build.json` owns installer composition and artifact names. CI expected lists,
   dist counts, Release body and contract tests must match it.
+- `build.json` `UpdateTransports.GzipAssets` is the single raw-to-gzip filename
+  mapping. Contract tests, `tui/scripts/build.ts`, the packaging script and CI all
+  consume it; a second independent list is a contract violation.
+- `.gz` assets are generated only after the corresponding final raw executable
+  exists, i.e. after version and icon bytes are settled. Packaging uses gzip
+  level 9 with mtime and OS header bytes pinned, must produce byte-identical
+  output when repeated, and must prove gunzip roundtrip equality with the raw
+  file before succeeding.
+- A Release is blocked when any of the four gzip assets is missing; runtime
+  tolerance for a gzip-less Release exists only for old or rolled-back Releases.
+- Before a platform build, its entrypoint clears every file named by the
+  corresponding `BuildEntrypoints.*.Artifacts` set. Validation must observe
+  files produced by the current invocation; stale raw/gzip files from an older
+  build must not make a failed compile look successful. Other-platform artifacts
+  remain untouched so Windows and macOS jobs can still be assembled together.
 - Windows `install.ps1` is an ASCII trampoline. The real UTF-8 script is base64
   embedded and decoded locally because PS5.1 `irm | iex` may misdecode GitHub
   octet-stream bytes even with a BOM.
@@ -62,8 +84,12 @@ TUI compile targets are `bun-windows-{x64,arm64}` and
 | Embedded key missing/malformed | Named failure, no silent empty config |
 | Tag version differs from `ccq --version` | Release build failure |
 | One target failed during Release build | Do not publish partial Release |
+| Current-platform raw/gzip exists only from a previous build | Clear it before compile; current build fails if it is not reproduced |
 | Optional Windows icon cannot be embedded | Keep the executable build valid and report the skipped icon |
 | Linux artifact appears before implementation | Contract failure |
+| Repeated gzip packaging differs byte-for-byte | Packaging failure |
+| Gzip roundtrip differs from the raw executable | Packaging failure |
+| Release contains fewer or more than 10 files | CI failure |
 
 ## 5. Good / Base / Bad Cases
 
@@ -83,6 +109,7 @@ TUI compile targets are `bun-windows-{x64,arm64}` and
 cd tui
 bun run typecheck
 bun run verify
+bun scripts/verify-gzip-assets.mjs
 bun run build
 
 cd ..

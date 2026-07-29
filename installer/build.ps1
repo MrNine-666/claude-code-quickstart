@@ -148,7 +148,7 @@ function Invoke-ManageTuiPackage {
     构建 OpenTUI TUI 可执行文件（4 平台交叉编译）。流程：
       1. 确保 Bun 可用（>=1.2.0）；
       2. 在 tui/ 子项目中执行 bun run build（调用 scripts/build.ts）；
-      3. 产出 4 个可执行文件到 dist/:
+      3. 产出 4 个 raw 可执行文件和对应 4 个 gzip 更新资产到 dist/:
          - ccq-windows-x64.exe
          - ccq-windows-arm64.exe
          - ccq-macos-x64
@@ -206,9 +206,10 @@ function Invoke-ManageTuiPackage {
 
     # 验证产物并复制到 OutputDir；TUI 本地构建直接输出到 repo 根 dist/。
     $tuiArtifactDir = Join-Path $repoRoot 'dist'
+    $manifest = Get-BuildManifest
     $expectedFiles = @(
-        'ccq-windows-x64.exe',
-        'ccq-windows-arm64.exe'
+        $manifest['BuildEntrypoints']['Windows']['Artifacts'] |
+            Where-Object { [string]$_ -ne 'install.ps1' }
     )
 
     $allSuccess = $true
@@ -459,12 +460,16 @@ function Clear-KnownBuildArtifacts {
         [string]$Platform
     )
 
-    $filesToClean = if ($Platform -eq 'Windows') {
-        # Windows install 产物 + 旧 Manage/Bootstrap 残留（HC-DELETE-LEGACY）
-        @('install.ps1', 'manage.ps1', 'bootstrap.ps1', 'manage.sh', 'manage-tui.tgz')
+    $manifest = Get-BuildManifest
+    $platformKey = if ($Platform -eq 'Windows') { 'Windows' } else { 'MacOS' }
+    $platformArtifacts = @($manifest['BuildEntrypoints'][$platformKey]['Artifacts'])
+    $legacyArtifacts = if ($Platform -eq 'Windows') {
+        # 旧 Manage/Bootstrap 残留（HC-DELETE-LEGACY）
+        @('manage.ps1', 'bootstrap.ps1', 'manage.sh', 'manage-tui.tgz')
     } else {
-        @('install.sh')
+        @()
     }
+    $filesToClean = @($platformArtifacts + $legacyArtifacts)
 
     foreach ($fileName in $filesToClean) {
         $path = Join-Path $OutputDir $fileName
@@ -477,7 +482,7 @@ function Clear-KnownBuildArtifacts {
 function Assert-ExpectedWindowsOutputs {
     <#
     .SYNOPSIS
-    确认 Windows 构建入口生成了 Windows artifact（install.ps1 + 2 个 ccq 可执行文件）。
+    确认 Windows 构建入口生成了 Windows artifact（install.ps1 + 2 raw + 2 gzip）。
     .DESCRIPTION
     不再禁止 macOS 产物存在，允许两个平台产物共存。
     #>
@@ -486,7 +491,8 @@ function Assert-ExpectedWindowsOutputs {
         [string]$OutputDir
     )
 
-    $expected = @('install.ps1', 'ccq-windows-x64.exe', 'ccq-windows-arm64.exe')
+    $manifest = Get-BuildManifest
+    $expected = @($manifest['BuildEntrypoints']['Windows']['Artifacts'])
     foreach ($fileName in $expected) {
         $path = Join-Path $OutputDir $fileName
         if (-not (Test-Path $path -PathType Leaf)) {
@@ -498,7 +504,7 @@ function Assert-ExpectedWindowsOutputs {
 function Main {
     <#
     .SYNOPSIS
-    Windows 构建入口：生成 install.ps1 + 从 tui/dist 拷贝 2 个 ccq 可执行文件。
+    Windows 构建入口：生成 install.ps1 + 从 tui/dist 拷贝 2 raw + 2 gzip。
     .PARAMETER InstallerRoot
     installer/ 目录的绝对路径。
     .PARAMETER OutputDir

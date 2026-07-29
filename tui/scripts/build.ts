@@ -14,6 +14,7 @@
 
 import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
+import { gzipAssetNameForRaw, packageGzipAsset } from "./package-gzip-assets.ts";
 
 const TARGETS = [
   { platform: "windows", arch: "x64", ext: ".exe", icon: true },
@@ -93,6 +94,12 @@ async function main(): Promise<void> {
     const target = `${platform}-${arch}`;
     try {
       await buildTarget(platform, arch, ext, icon);
+      // gzip 必须在最终 raw 字节（含图标/版本注入）之后生成
+      const rawName = `ccq-${platform}-${arch}${ext}`;
+      const gzipName = gzipAssetNameForRaw(rawName);
+      const gzipResult = packageGzipAsset(join(DIST_DIR, rawName), join(DIST_DIR, gzipName));
+      const saved = ((1 - gzipResult.gzipSize / gzipResult.rawSize) * 100).toFixed(2);
+      console.log(`✓ ${gzipName} ${gzipResult.gzipSize} B (−${saved}%)`);
       results.push({ target, success: true });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
