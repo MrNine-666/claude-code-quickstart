@@ -407,21 +407,39 @@ function Test-BuildManifestContract {
     $windowsOutputs = @($windowsArtifacts | ForEach-Object { [string]$_['OutputFile'] })
     $macOSOutputs = @($macOSArtifacts | ForEach-Object { [string]$_['OutputFile'] })
     $allOutputs = @($windowsOutputs + $macOSOutputs)
-    $windowsExeArtifacts = @('ccq-windows-x64.exe', 'ccq-windows-arm64.exe')
-    $macOSExeArtifacts = @('ccq-macos-x64', 'ccq-macos-arm64')
+    $windowsExeArtifacts = @('ccq-windows-x64.exe', 'ccq-windows-x64.exe.gz', 'ccq-windows-arm64.exe', 'ccq-windows-arm64.exe.gz')
+    $macOSExeArtifacts = @('ccq-macos-x64', 'ccq-macos-x64.gz', 'ccq-macos-arm64', 'ccq-macos-arm64.gz')
     $releaseOutputs = @($allOutputs + $windowsExeArtifacts + $macOSExeArtifacts)
 
     Assert-Equal 'build.windows.outputs' @('install.ps1') $windowsOutputs
     Assert-Equal 'build.macos.outputs' @('install.sh') $macOSOutputs
-    Assert-Equal 'build.release.outputs' @('install.ps1', 'install.sh', 'ccq-windows-x64.exe', 'ccq-windows-arm64.exe', 'ccq-macos-x64', 'ccq-macos-arm64') $releaseOutputs
+    Assert-Equal 'build.release.outputs' @('install.ps1', 'install.sh', 'ccq-windows-x64.exe', 'ccq-windows-x64.exe.gz', 'ccq-windows-arm64.exe', 'ccq-windows-arm64.exe.gz', 'ccq-macos-x64', 'ccq-macos-x64.gz', 'ccq-macos-arm64', 'ccq-macos-arm64.gz') $releaseOutputs
+
+    # raw -> gzip 映射是唯一文件名来源；client 传输层与 CI 都消费它。
+    $gzipMappings = @($Contract['UpdateTransports']['GzipAssets'])
+    Assert-Equal 'build.update-transports.count' 4 $gzipMappings.Count
+    $expectedMappings = @(
+        @{ Raw = 'ccq-windows-x64.exe'; Gzip = 'ccq-windows-x64.exe.gz' },
+        @{ Raw = 'ccq-windows-arm64.exe'; Gzip = 'ccq-windows-arm64.exe.gz' },
+        @{ Raw = 'ccq-macos-x64'; Gzip = 'ccq-macos-x64.gz' },
+        @{ Raw = 'ccq-macos-arm64'; Gzip = 'ccq-macos-arm64.gz' }
+    )
+    for ($i = 0; $i -lt $expectedMappings.Count; $i++) {
+        Assert-Equal "build.update-transports.$i.raw" $expectedMappings[$i].Raw ([string]$gzipMappings[$i]['Raw'])
+        Assert-Equal "build.update-transports.$i.gzip" $expectedMappings[$i].Gzip ([string]$gzipMappings[$i]['Gzip'])
+        if ("$($gzipMappings[$i]['Raw']).gz" -ne [string]$gzipMappings[$i]['Gzip']) {
+            Add-Issue "gzip artifact 名称必须是 raw 名称加 .gz: $($gzipMappings[$i]['Gzip'])"
+        }
+    }
+    Assert-Equal 'build.release.count' 10 $releaseOutputs.Count
 
     $entrypoints = $Contract['BuildEntrypoints']
     Assert-Equal 'build.entrypoints.windows.script' 'installer/build.ps1' $entrypoints['Windows']['Script']
     Assert-Equal 'build.entrypoints.windows.allowed' @('Windows') @($entrypoints['Windows']['AllowedPlatforms'])
-    Assert-Equal 'build.entrypoints.windows.artifacts' @('install.ps1', 'ccq-windows-x64.exe', 'ccq-windows-arm64.exe') @($entrypoints['Windows']['Artifacts'])
+    Assert-Equal 'build.entrypoints.windows.artifacts' @('install.ps1', 'ccq-windows-x64.exe', 'ccq-windows-x64.exe.gz', 'ccq-windows-arm64.exe', 'ccq-windows-arm64.exe.gz') @($entrypoints['Windows']['Artifacts'])
     Assert-Equal 'build.entrypoints.macos.script' 'installer/build.sh' $entrypoints['MacOS']['Script']
     Assert-Equal 'build.entrypoints.macos.allowed' @('macos') @($entrypoints['MacOS']['AllowedPlatforms'])
-    Assert-Equal 'build.entrypoints.macos.artifacts' @('install.sh', 'ccq-macos-x64', 'ccq-macos-arm64') @($entrypoints['MacOS']['Artifacts'])
+    Assert-Equal 'build.entrypoints.macos.artifacts' @('install.sh', 'ccq-macos-x64', 'ccq-macos-x64.gz', 'ccq-macos-arm64', 'ccq-macos-arm64.gz') @($entrypoints['MacOS']['Artifacts'])
     Assert-Equal 'build.entrypoints.release-artifacts' $releaseOutputs @($entrypoints['ReleaseArtifacts'])
 
     foreach ($output in $releaseOutputs) {
@@ -473,6 +491,18 @@ function Test-BuildManifestContract {
     if ($buildSh -notmatch "readJson\('installer/contracts/build\.json'\)") {
         Add-Issue 'installer/build.sh 未读取共享构建清单 installer/contracts/build.json'
     }
+    if ($buildPs1 -notmatch "BuildEntrypoints'\]\['Windows'\]\['Artifacts") {
+        Add-Issue 'installer/build.ps1 未从 BuildEntrypoints.Windows.Artifacts 派生 raw/gzip 输出集合'
+    }
+    if ($buildSh -notmatch 'manifest\.BuildEntrypoints\.MacOS\.Artifacts') {
+        Add-Issue 'installer/build.sh 未从 BuildEntrypoints.MacOS.Artifacts 派生 raw/gzip 输出集合'
+    }
+    if ($buildPs1 -notmatch "platformArtifacts\s*=\s*@\(\`$manifest\['BuildEntrypoints'\]\[\`$platformKey\]\['Artifacts'\]\)") {
+        Add-Issue 'installer/build.ps1 清理未从当前平台 BuildEntrypoints artifacts 派生，旧 raw/gzip 可能伪装构建成功'
+    }
+    if ($buildSh -notmatch '(?s)function clearKnownBuildArtifacts\(manifest\).*?manifest\.BuildEntrypoints\.MacOS\.Artifacts') {
+        Add-Issue 'installer/build.sh 清理未覆盖当前 macOS raw/gzip，旧文件可能伪装构建成功'
+    }
 
     if ($buildPs1 -match "ValidateSet\('All'|ValidateSet\('MacOS'|Get-BuildArtifactConfig\s+-Platform\s+MacOS|Build-ZshSingleFileScript") {
         Add-Issue 'installer/build.ps1 仍包含 All/MacOS 构建路径'
@@ -499,7 +529,7 @@ function Test-CanonicalSourceLayout {
     }
 
     $distPath = Join-Path $script:RepoRoot 'dist'
-    $validReleaseArtifacts = @('ccq-windows-x64.exe', 'ccq-windows-arm64.exe', 'ccq-macos-x64', 'ccq-macos-arm64')
+    $validReleaseArtifacts = @('ccq-windows-x64.exe', 'ccq-windows-x64.exe.gz', 'ccq-windows-arm64.exe', 'ccq-windows-arm64.exe.gz', 'ccq-macos-x64', 'ccq-macos-x64.gz', 'ccq-macos-arm64', 'ccq-macos-arm64.gz')
     if (Test-Path $distPath -PathType Container) {
         foreach ($file in @(Get-ChildItem -Path $distPath -File)) {
             if ($file.Name -in $validReleaseArtifacts) { continue }

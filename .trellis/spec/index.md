@@ -15,7 +15,8 @@
 
 旧根 `openspec/` 与 `.context/` 已在迁移完成后删除。迁移时未实现的 proposal
 不会仅因曾经写得完整就成为当前契约；例如 Linux 支持仍未落地，当前 Release
-仍只有 Windows/macOS 四个可执行目标和六个 artifact。
+仍只有 Windows/macOS 四个可执行目标，以及两个安装脚本、四个 raw 和四个
+gzip 自更新资产组成的十个 artifact。
 
 ## Spec Layers
 

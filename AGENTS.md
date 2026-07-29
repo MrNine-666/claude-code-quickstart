@@ -22,7 +22,8 @@ OpenTUI 管理控制台承接。
 - `installer/`：Windows PowerShell 5.1+ 与 macOS zsh 安装链。
 - `installer/contracts/`：安装链步骤、构建和清理契约。
 - `tui/contracts/`：TUI 运行时契约；运行所需内容内嵌进单文件可执行产物。
-- Release 固定包含两个安装脚本和四个平台可执行文件，共六个 artifact。
+- Release 固定包含两个安装脚本、四个平台 raw 可执行文件和四个对应 gzip
+  自更新资产，共十个 artifact。
 - Linux 支持尚未实现，不属于当前运行时或 Release 契约。
 
 ## 规范导航
