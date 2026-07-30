@@ -217,7 +217,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "PowerShell 版本: $($PSVersionTable.PSVersion)" -ForegroundColor Cyan
-          & ".\installer\build.ps1"
+          & ".\installer\build.ps1" -SkipTuiBuild
 
       - name: 验证 Windows 构建产物
         shell: pwsh
@@ -334,7 +334,7 @@ jobs:
 
       - name: 构建 macOS 单文件脚本
         run: |
-          sh installer/build.sh
+          sh installer/build.sh --skip-tui-build
 
       - name: 验证 macOS 构建产物
         run: |

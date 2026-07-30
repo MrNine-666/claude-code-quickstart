@@ -450,6 +450,9 @@ function Clear-KnownBuildArtifacts {
     .DESCRIPTION
     Windows 构建入口清理当前 Windows install 产物与旧 Manage/Bootstrap 残留，保留 macOS install 产物。
     macOS 构建入口应只清理 macOS 产物（.sh），保留 Windows 产物（.ps1）。
+    .PARAMETER SkipTuiBuild
+    为真时只清理 install 脚本与 legacy 残留，保留已交叉编译的 ccq-* 可执行产物与 gzip 更新资产，
+    供 CI 下游 job 复用 build-tui job 下载的 artifact。
     #>
     param(
         [Parameter(Mandatory)]
@@ -457,7 +460,9 @@ function Clear-KnownBuildArtifacts {
 
         [Parameter(Mandatory)]
         [ValidateSet('Windows', 'macOS')]
-        [string]$Platform
+        [string]$Platform,
+
+        [switch]$SkipTuiBuild
     )
 
     $manifest = Get-BuildManifest
@@ -469,7 +474,17 @@ function Clear-KnownBuildArtifacts {
     } else {
         @()
     }
-    $filesToClean = @($platformArtifacts + $legacyArtifacts)
+
+    # SkipTuiBuild 模式下保留交叉编译的可执行产物与 gzip 资产，只重建 install 脚本，
+    # 因此这一层只清理 install 脚本与 legacy 残留，ccq-* 与 *.gz 留给 download-artifact 提供。
+    if ($SkipTuiBuild) {
+        $platformArtifactsConfig = @($manifest[$platformKey]['Artifacts'])
+        $installOutputFile = ($platformArtifactsConfig | Where-Object { [string]$_['Role'] -eq 'Install' } |
+            Select-Object -First 1)['OutputFile']
+        $filesToClean = @([string]$installOutputFile) + $legacyArtifacts
+    } else {
+        $filesToClean = @($platformArtifacts + $legacyArtifacts)
+    }
 
     foreach ($fileName in $filesToClean) {
         $path = Join-Path $OutputDir $fileName
@@ -511,12 +526,16 @@ function Main {
     输出目录路径。
     .PARAMETER Platform
     保留兼容参数名，但仅允许 Windows。
+    .PARAMETER SkipTuiBuild
+    为真时跳过 TUI 可执行文件交叉编译，并保留已存在的 ccq-* / gzip 产物，供 CI 下游 job
+    复用 build-tui job 通过 download-artifact 提供的现成可执行文件。本地直接运行保持默认。
     #>
     param(
         [string]$InstallerRoot = (Resolve-Path $PSScriptRoot).Path,
         [string]$OutputDir = (Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..')).Path 'dist'),
         [ValidateSet('Windows')]
-        [string]$Platform = 'Windows'
+        [string]$Platform = 'Windows',
+        [switch]$SkipTuiBuild
     )
 
     if (-not (Test-Path $InstallerRoot -PathType Container)) {
@@ -536,12 +555,16 @@ function Main {
         New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
         Write-Host "已创建输出目录: $OutputDir"
     }
-    Clear-KnownBuildArtifacts -OutputDir $OutputDir -Platform $Platform
+    Clear-KnownBuildArtifacts -OutputDir $OutputDir -Platform $Platform -SkipTuiBuild:$SkipTuiBuild
 
     # 构建 TUI 可执行文件（4 平台交叉编译）
     Write-Host ''
     Write-Host '─── 构建 TUI 可执行文件（4 平台） ─────────────────────────' -ForegroundColor Yellow
-    $null = Invoke-ManageTuiPackage -InstallerRoot $InstallerRoot -OutputDir $OutputDir
+    if ($SkipTuiBuild) {
+        Write-Host '[SKIP] SkipTuiBuild 已启用，跳过 TUI 可执行文件构建并复用现有产物' -ForegroundColor Yellow
+    } else {
+        $null = Invoke-ManageTuiPackage -InstallerRoot $InstallerRoot -OutputDir $OutputDir
+    }
 
     $builtItems = [System.Collections.Generic.List[hashtable]]::new()
     $allOk = $true

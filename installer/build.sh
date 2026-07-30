@@ -9,10 +9,11 @@ usage() {
 Usage: sh installer/build.sh [OPTIONS]
 
 Options:
-  --platform <macos>  构建平台，默认 macos
-  --output <dir>      输出目录，默认 repo 根目录 dist/
-  --check             只检查 build.sh 语法/结构，不生成 artifact
-  --help              显示帮助
+  --platform <macos>   构建平台，默认 macos
+  --output <dir>       输出目录，默认 repo 根目录 dist/
+  --skip-tui-build     跳过 TUI 可执行文件构建并复用现有产物（CI 下游 job 用）
+  --check              只检查 build.sh 语法/结构，不生成 artifact
+  --help               显示帮助
 EOF
 }
 
@@ -21,6 +22,7 @@ repo_root=$(CDPATH= cd -- "${script_dir}/.." && pwd)
 platform="macos"
 output_dir="${repo_root}/dist"
 check_only=0
+skip_tui_build=0
 
 check_build_script() {
   script_path="${script_dir}/build.sh"
@@ -55,6 +57,10 @@ while [ "$#" -gt 0 ]; do
       check_only=1
       shift
       ;;
+    --skip-tui-build)
+      skip_tui_build=1
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -86,7 +92,7 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-node - "${script_dir}" "${output_dir}" "${platform}" <<'NODE_SCRIPT'
+node - "${script_dir}" "${output_dir}" "${platform}" "${skip_tui_build}" <<'NODE_SCRIPT'
 const fs = require('fs');
 const path = require('path');
 const childProcess = require('child_process');
@@ -94,6 +100,7 @@ const childProcess = require('child_process');
 const installerRoot = path.resolve(process.argv[2]);
 const outputDir = path.resolve(process.argv[3]);
 const platform = process.argv[4];
+const skipTuiBuild = process.argv[5] === '1';
 // contracts 已上升为根级目录（与 installer/ 平级），契约/清单从 repo 根定位
 const repoRoot = path.dirname(installerRoot);
 
@@ -385,7 +392,12 @@ function validateMacOSArtifact(outputPath) {
 
 function clearKnownBuildArtifacts(manifest) {
   // 清理当前 macOS 入口拥有的 install/raw/gzip，保留 Windows 产物。
-  for (const fileName of manifest.BuildEntrypoints.MacOS.Artifacts) {
+  // skipTuiBuild 模式下只清理 install.sh，保留已交叉编译的 ccq-macos-* 与 gzip 资产，
+  // 供 CI 下游 job 复用 build-tui job 通过 download-artifact 提供的现成可执行文件。
+  const files = skipTuiBuild
+    ? manifest.BuildEntrypoints.MacOS.Artifacts.filter((f) => f === 'install.sh')
+    : manifest.BuildEntrypoints.MacOS.Artifacts;
+  for (const fileName of files) {
     const fullPath = path.join(outputDir, fileName);
     if (fs.existsSync(fullPath)) fs.rmSync(fullPath, { force: true });
   }
@@ -416,7 +428,11 @@ console.log(`构建平台:     ${platform}`);
 // 构建 TUI 可执行文件（4 平台交叉编译）
 console.log('');
 console.log('─── 构建 TUI 可执行文件（4 平台） ─────────────────────────');
-buildManageTuiPackage(manifest);
+if (skipTuiBuild) {
+  console.log('[SKIP] skip-tui-build 已启用，跳过 TUI 可执行文件构建并复用现有产物');
+} else {
+  buildManageTuiPackage(manifest);
+}
 console.log('');
 
 buildMacOSArtifact(manifest, stepsContract, 'Install');
