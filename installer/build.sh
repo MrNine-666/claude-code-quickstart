@@ -26,7 +26,9 @@ skip_tui_build=0
 
 check_build_script() {
   script_path="${script_dir}/build.sh"
+  gzip_probe_path="${script_dir}/contracts/Test-MacOSGzipTransport.zsh"
   [ -f "${script_path}" ] || { printf '%s\n' "[FAIL] build.sh 不存在: ${script_path}" >&2; exit 1; }
+  [ -f "${gzip_probe_path}" ] || { printf '%s\n' "[FAIL] macOS gzip transport probe 不存在: ${gzip_probe_path}" >&2; exit 1; }
   grep -q "^#!/bin/sh" "${script_path}" || { printf '%s\n' '[FAIL] build.sh 缺少 #!/bin/sh shebang' >&2; exit 1; }
   grep -q "readJson('installer/contracts/build.json')" "${script_path}" || { printf '%s\n' '[FAIL] build.sh 未读取共享构建清单 installer/contracts/build.json' >&2; exit 1; }
   grep -q "buildMacOSArtifact" "${script_path}" || { printf '%s\n' '[FAIL] build.sh 缺少 macOS artifact 构建函数' >&2; exit 1; }
@@ -35,8 +37,10 @@ check_build_script() {
   if command -v zsh >/dev/null 2>&1; then
     zsh -n "${script_path}"
     printf '%s\n' '[PASS] build.sh zsh 语法检查通过'
+    zsh -n "${gzip_probe_path}"
+    zsh "${gzip_probe_path}"
   else
-    printf '%s\n' '[INFO] 未检测到 zsh，已完成 build.sh 文本结构检查'
+    printf '%s\n' '[INFO] 未检测到 zsh，跳过 macOS gzip transport behavior probe'
   fi
   printf '%s\n' '[PASS] build.sh 检查通过'
 }

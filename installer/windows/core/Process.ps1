@@ -1672,6 +1672,433 @@ function Test-CcqExecutableInstalled {
     return $result
 }
 
+function Test-CcqExecutableLocked {
+    <#
+    .SYNOPSIS
+    下载前独占探测目标 ccq.exe 是否被运行中进程锁住，避免白下 104MB 才失败。
+    .DESCRIPTION
+    尝试以 ReadWrite + FileShare.None 独占打开目标路径：
+    - 文件不存在 → Locked=$false（不是占用问题，交给后续逻辑）。
+    - 打开成功 → 关闭，Locked=$false。
+    - 抛 IOException / UnauthorizedAccessException → Locked=$true，列出 ccq.exe 进程。
+    - 其他异常 → Locked=$false，Detail 记异常名，放行交给重试兜底。
+    预检是优化路径，不是门禁：探测异常一律放行，绝不能因预检误判阻断正常安装。
+    .PARAMETER Path
+    目标 ccq.exe 完整路径。
+    .OUTPUTS
+    @{ Locked = $true/$false; Processes = @(...); Detail = "..." }
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $result = @{
+        Locked    = $false
+        Processes = @()
+        Detail    = ""
+    }
+
+    # 最外层兜底：预检绝不抛错，任何未预期异常一律放行，交给后续替换逻辑与重试兜底。
+    try {
+        if (-not (Test-Path -LiteralPath $Path)) {
+            $result.Detail = "目标不存在，无需占用预检"
+            return $result
+        }
+
+        $stream = $null
+        try {
+            # 独占打开：ReadWrite + FileShare.None。能打开说明目标空闲，可被 File.Replace。
+            $stream = [System.IO.File]::Open(
+                $Path,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+            $result.Locked = $false
+            $result.Detail = "目标可独占打开，无占用"
+        } catch [System.IO.IOException] {
+            $result.Locked = $true
+            $result.Detail = "目标被占用: $($_.Exception.Message)"
+            # Get-CcqLockHolderProcesses 已用 `return , $array` 保形，此处不可再套 @()：
+            # 再套一层会把空列表包成 @(@()) 使 Count 变 1，导致输出空的「进程: 」括号。
+            $result.Processes = Get-CcqLockHolderProcesses -Path $Path
+        } catch [System.UnauthorizedAccessException] {
+            $result.Locked = $true
+            $result.Detail = "目标访问被拒绝（可能被占用或只读）: $($_.Exception.Message)"
+            $result.Processes = Get-CcqLockHolderProcesses -Path $Path
+        } catch {
+            # 其他异常一律放行，交给后续替换逻辑与重试兜底。预检不能阻断正常安装。
+            $result.Locked = $false
+            $result.Detail = "预检异常已忽略: $($_.Exception.GetType().FullName)"
+        } finally {
+            if ($null -ne $stream) {
+                $stream.Close()
+                $stream.Dispose()
+            }
+        }
+    } catch {
+        # 最外层兜底：预检绝不抛错，任何未预期异常一律放行。
+        $result.Locked = $false
+        $result.Detail = "预检兜底放行: $($_.Exception.GetType().FullName)"
+        $result.Processes = @()
+    }
+
+    return $result
+}
+
+function Get-CcqLockHolderProcesses {
+    <#
+    .SYNOPSIS
+    列出可能锁住目标的 ccq.exe 进程（PID + 命令行），帮助用户定位。
+    .DESCRIPTION
+    匹配 Name='ccq.exe' 的进程。CommandLine 可能因权限不足为空，退化到仅列 PID。
+    Get-CimInstance 不可用时返回空列表，不阻断预检判定。
+    .PARAMETER Path
+    目标可执行文件完整路径。进程名由该路径的 leaf 推导，并优先按
+    ExecutablePath/CommandLine 命中该路径精确匹配；匹配不到时退化为同名进程全列。
+    .OUTPUTS
+    @(@{ ProcessId = ...; CommandLine = "..." })
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $processes = @()
+    try {
+        # 进程名从目标路径推导，不硬编码 ccq.exe。WQL 字符串需转义单引号。
+        $leafName = Split-Path -Path $Path -Leaf
+        if ([string]::IsNullOrWhiteSpace($leafName)) { return , $processes }
+        $wqlName = $leafName.Replace("'", "''")
+
+        $rawProcs = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='$wqlName'" -ErrorAction SilentlyContinue)
+
+        # 优先精确匹配目标路径（ExecutablePath 比 CommandLine 更可靠）；
+        # 权限不足导致两者皆空时退化为同名进程全列（design.md 的退化策略）。
+        $exact = @()
+        $fallback = @()
+        foreach ($p in $rawProcs) {
+            if ($null -eq $p) { continue }
+            $entry = @{
+                ProcessId   = [int]$p.ProcessId
+                CommandLine = [string]$p.CommandLine
+            }
+            $execPath = [string]$p.ExecutablePath
+            # -like 会把路径里的 [ ] 当通配符，必须转义；同时保留 -like 的大小写不敏感
+            # 语义（Windows 路径大小写不敏感，.Contains() 反而会漏匹配）。
+            $pathPattern = '*' + [System.Management.Automation.WildcardPattern]::Escape($Path) + '*'
+            if (($execPath -and $execPath -eq $Path) -or
+                ($entry.CommandLine -and $entry.CommandLine -like $pathPattern)) {
+                $exact += , $entry
+            } else {
+                $fallback += , $entry
+            }
+        }
+        if (@($exact).Count -gt 0) {
+            $processes = $exact
+        } else {
+            $processes = $fallback
+        }
+    } catch {
+        # Get-CimInstance 不可用或失败：退化到空列表，不阻断预检判定。
+        $processes = @()
+    }
+
+    return , $processes
+}
+
+function Restore-CcqExecutableBackup {
+    <#
+    .SYNOPSIS
+    把 backup 中的旧版本可执行文件搬回 target，回滚失败时保留 backup 不删。
+    .DESCRIPTION
+    target 存在时用 [System.IO.File]::Replace 原子换回；不存在时用 Move。
+    注意：PS5.1 下 File.Replace 的 backup 形参不能传 $null（会抛「路径的格式不合法」），
+    必须传 [NullString]::Value 才能走 .NET 的「不保留 backup」语义。
+    Replace 失败时降级为 Copy —— 回滚成功比原子性更重要（绝不让用户失去可用 ccq.exe）。
+    .OUTPUTS
+    $true 表示 target 已恢复可用；$false 表示回滚未完成，调用方必须保留 backup。
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BackupPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$TargetPath
+    )
+
+    if (-not (Test-Path -LiteralPath $BackupPath)) { return $false }
+
+    try {
+        if (Test-Path -LiteralPath $TargetPath) {
+            [System.IO.File]::Replace($BackupPath, $TargetPath, [NullString]::Value, $true)
+        } else {
+            [System.IO.File]::Move($BackupPath, $TargetPath)
+        }
+        return (Test-Path -LiteralPath $TargetPath)
+    } catch {
+        # 原子回滚失败：降级为覆盖复制，backup 由调用方按结果决定是否保留。
+        try {
+            [System.IO.File]::Copy($BackupPath, $TargetPath, $true)
+            return (Test-Path -LiteralPath $TargetPath)
+        } catch {
+            return $false
+        }
+    }
+}
+
+function Replace-CcqExecutable {
+    <#
+    .SYNOPSIS
+    用 [System.IO.File]::Replace 原子替换 ccq.exe，替换运行中映像不抛 ERROR_ALREADY_EXISTS(183)。
+    .DESCRIPTION
+    - 目标不存在 → [System.IO.File]::Move。
+    - 目标存在 → [System.IO.File]::Replace(temp, target, backup, $true)（NTFS 事务性替换）。
+    - 循环 20 × 250ms（复用 self-update.ts / windows-deferred-operation.ts 已验证量级，不另发明参数）。
+    - 抛错后用「temp 已被消费 + target 尺寸匹配」二次确认（对齐 self-update.ts:922-926；
+      加 temp 判别式是因为安装器无预期 SHA256 可比，纯尺寸会误判同尺寸重装）。
+    - 彻底失败时：target 缺失且 backup 在手则回滚；否则原 target 完好不动。
+    - 核心不变量：绝不让用户失去可用的 ccq.exe。仅在确认 target 可用后才删 backup；
+      回滚未完成时保留 backup 并在错误信息中告知其路径。
+    .PARAMETER TempPath
+    下载好的临时文件路径（必须与 TargetPath 同目录以满足 File.Replace 同卷约束）。
+    .PARAMETER TargetPath
+    目标 ccq.exe 完整路径。
+    .OUTPUTS
+    @{ Success = $true/$false; ErrorMessage = ""; BackupPath = "..." }
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TempPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$TargetPath
+    )
+
+    $result = @{
+        Success      = $false
+        ErrorMessage = ""
+        BackupPath   = ""
+    }
+
+    # backup 与 temp 都在 target 同目录，满足 File.Replace 同卷约束。
+    $backupPath = "$TargetPath.backup.$PID"
+    $result.BackupPath = $backupPath
+
+    # 记录 temp 大小，供二次确认与最终校验使用。
+    $tempSize = -1L
+    if (Test-Path -LiteralPath $TempPath) {
+        $tempSize = (Get-Item -LiteralPath $TempPath).Length
+    } else {
+        $result.ErrorMessage = "临时文件不存在，无法替换"
+        return $result
+    }
+
+    # 同一长生命周期安装进程可能在上一次回滚失败后再次进入此函数。相同 PID 会生成
+    # 相同 backup 路径，而该文件可能是用户唯一可恢复的旧版本，绝不能作为“残留”删除。
+    # 本次事务尚未开始，可以安全清理的只有它自己的 temp。
+    if (Test-Path -LiteralPath $backupPath) {
+        Remove-Item -LiteralPath $TempPath -Force -ErrorAction SilentlyContinue
+        $result.ErrorMessage = "检测到未完成替换保留的旧版本备份，已停止本次替换且未修改现有 ccq.exe。请先恢复或移走备份后重试: $backupPath"
+        return $result
+    }
+
+    $replaced = $false
+    # 复用 self-update.ts 已验证的量级：20 次 × 250ms（windows-deferred-operation.ts:6-7）。
+    $maxAttempts = 20
+    $intervalMs = 250
+
+    for ($i = 1; $i -le $maxAttempts; $i++) {
+        try {
+            if (Test-Path -LiteralPath $TargetPath) {
+                # NTFS 事务性替换：temp → target，旧 target → backup。
+                [System.IO.File]::Replace($TempPath, $TargetPath, $backupPath, $true)
+            } else {
+                [System.IO.File]::Move($TempPath, $TargetPath)
+            }
+            $replaced = $true
+            break
+        } catch {
+            # 二次确认：File.Replace/Move 抛错不代表没成功（对齐 self-update.ts:922-926）。
+            # 安装器没有预期 SHA256 可比（self-update 有），只靠尺寸会在「同尺寸重装」时
+            # 把失败误判成功。补一个零成本强判别式：替换成功后 temp 必然已被消费。
+            # 被锁失败时 temp 仍在，因此该条件能排除同尺寸假阳性。
+            if (-not (Test-Path -LiteralPath $TempPath) -and
+                (Test-Path -LiteralPath $TargetPath) -and $tempSize -gt 0 -and
+                ((Get-Item -LiteralPath $TargetPath).Length -eq $tempSize)) {
+                $replaced = $true
+                break
+            }
+            if ($i -lt $maxAttempts) {
+                Start-Sleep -Milliseconds $intervalMs
+            }
+        }
+    }
+
+    if (-not $replaced) {
+        # Win32 ReplaceFile 不是全程原子：ERROR_UNABLE_TO_MOVE_REPLACEMENT_2(1177) 下
+        # target 已被改名为 backup 而 temp 仍在原名，此时 target 不存在。
+        # 因此「backup 存在」不等于可以删 backup —— 那是用户唯一的旧版本。
+        # 不变量：只有确认 target 已是可用文件，才允许删 backup。
+        $restoreAttempted = $false
+        $restored = $false
+        if ((Test-Path -LiteralPath $backupPath) -and -not (Test-Path -LiteralPath $TargetPath)) {
+            # target 缺失且 backup 在手：把旧版本搬回 target，避免用户失去可用 ccq.exe。
+            $restoreAttempted = $true
+            $restored = Restore-CcqExecutableBackup -BackupPath $backupPath -TargetPath $TargetPath
+        }
+        if (Test-Path -LiteralPath $TempPath) {
+            Remove-Item -LiteralPath $TempPath -Force -ErrorAction SilentlyContinue
+        }
+        # 失败路径不能仅凭 target 存在就删除 backup：ReplaceFile 报错后的 target 状态并
+        # 不足以证明旧版本安全。只有本次回滚已确认成功时，才可清理仍存在的 backup。
+        if ($restoreAttempted -and $restored -and
+            (Test-Path -LiteralPath $backupPath) -and (Test-Path -LiteralPath $TargetPath)) {
+            Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $TargetPath) {
+            if (Test-Path -LiteralPath $backupPath) {
+                $result.ErrorMessage = "ccq.exe 替换在 ${maxAttempts} 次重试后仍失败；当前目标仍在，旧版本备份已保留在: $backupPath"
+            } else {
+                $result.ErrorMessage = "ccq.exe 被占用，替换在 ${maxAttempts} 次重试后仍失败，已保留现有版本。请关闭所有 ccq 进程后重试。"
+            }
+        } else {
+            $result.ErrorMessage = "ccq.exe 替换在 ${maxAttempts} 次重试后仍失败，且目标缺失。旧版本备份保留在: $backupPath"
+        }
+        return $result
+    }
+
+    # 最终校验（对齐 self-update.ts:932）：替换成功后确认 target 是期望产物。
+    if (-not (Test-Path -LiteralPath $TargetPath) -or $tempSize -le 0 -or
+        ((Get-Item -LiteralPath $TargetPath).Length -ne $tempSize)) {
+        # 替换声称成功但目标非期望产物：从 backup 回滚旧 target。
+        $hadBackup = Test-Path -LiteralPath $backupPath
+        $restored = $false
+        if ($hadBackup) {
+            $restored = Restore-CcqExecutableBackup -BackupPath $backupPath -TargetPath $TargetPath
+        }
+        if (Test-Path -LiteralPath $TempPath) {
+            Remove-Item -LiteralPath $TempPath -Force -ErrorAction SilentlyContinue
+        }
+        # 回滚失败时必须保留 backup —— 它是用户唯一的旧版本凭据，删掉就是数据丢失。
+        if ($restored -and (Test-Path -LiteralPath $backupPath)) {
+            Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+        }
+        if ($restored) {
+            $result.ErrorMessage = "ccq.exe 替换后校验失败，已回滚旧版本。请重试。"
+        } elseif ($hadBackup) {
+            $result.ErrorMessage = "ccq.exe 替换后校验失败且回滚未完成。旧版本备份保留在: $backupPath"
+        } else {
+            $result.ErrorMessage = "ccq.exe 替换后校验失败，且无备份可回滚。请重试。"
+        }
+        return $result
+    }
+
+    # 成功路径：清理残留 temp/backup。Replace 成功后 temp 已被消费，backup 保留旧版本。
+    if (Test-Path -LiteralPath $TempPath) {
+        Remove-Item -LiteralPath $TempPath -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $backupPath) {
+        Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $result.Success = $true
+    return $result
+}
+
+function Expand-CcqGzipFile {
+    <#
+    .SYNOPSIS
+    完整解压 gzip 文件到新的 raw 临时文件，并拒绝空输出。
+    .DESCRIPTION
+    使用 GzipStream 读到流末尾，使截断、CRC 或尾部错误表现为失败。输出以
+    CreateNew 创建；失败时只清理本次创建的 raw partial，不修改 gzip 输入或目标文件。
+    .OUTPUTS
+    @{ Success = $true/$false; ErrorMessage = ""; OutputSize = 0 }
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GzipPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputPath
+    )
+
+    $result = @{
+        Success      = $false
+        ErrorMessage = ""
+        OutputSize   = 0L
+    }
+    $inputStream = $null
+    $gzipStream = $null
+    $outputStream = $null
+    $outputCreated = $false
+
+    try {
+        $streamError = $null
+        try {
+            if (-not (Test-Path -LiteralPath $GzipPath -PathType Leaf)) {
+                throw "gzip 临时文件不存在: $GzipPath"
+            }
+
+            $inputStream = [System.IO.File]::Open(
+                $GzipPath,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Read,
+                [System.IO.FileShare]::Read
+            )
+            $gzipStream = New-Object System.IO.Compression.GzipStream(
+                $inputStream,
+                [System.IO.Compression.CompressionMode]::Decompress
+            )
+            $outputStream = [System.IO.File]::Open(
+                $OutputPath,
+                [System.IO.FileMode]::CreateNew,
+                [System.IO.FileAccess]::Write,
+                [System.IO.FileShare]::None
+            )
+            $outputCreated = $true
+            $gzipStream.CopyTo($outputStream)
+            $outputStream.Flush()
+        } catch {
+            $streamError = $_
+        } finally {
+            # 每个 Dispose 都必须独立尝试；PS5.1 下任一关闭异常都不能阻止后续句柄释放。
+            foreach ($stream in @($outputStream, $gzipStream, $inputStream)) {
+                if ($null -eq $stream) { continue }
+                try {
+                    $stream.Dispose()
+                } catch {
+                    if ($null -eq $streamError) { $streamError = $_ }
+                }
+            }
+        }
+        if ($null -ne $streamError) {
+            throw $streamError
+        }
+
+        if (-not (Test-Path -LiteralPath $OutputPath -PathType Leaf)) {
+            throw "gzip 解压后文件不存在"
+        }
+
+        $outputSize = (Get-Item -LiteralPath $OutputPath).Length
+        if ($outputSize -le 0) {
+            throw "gzip 解压结果为空"
+        }
+
+        $result.Success = $true
+        $result.OutputSize = [long]$outputSize
+    } catch {
+        if ($outputCreated -and (Test-Path -LiteralPath $OutputPath)) {
+            Remove-Item -LiteralPath $OutputPath -Force -ErrorAction SilentlyContinue
+        }
+        $result.ErrorMessage = $_.Exception.Message
+    }
+
+    return $result
+}
+
 function Install-CcqExecutable {
     <#
     .SYNOPSIS
@@ -1682,7 +2109,7 @@ function Install-CcqExecutable {
     @{ Success = $true/$false; ErrorMessage = ""; Path = "..." }
     #>
     param(
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         [string]$DownloadUrl
     )
 
@@ -1692,40 +2119,126 @@ function Install-CcqExecutable {
         Path         = ""
     }
     $tempPath = $null
+    $gzipTempPath = $null
 
     try {
         $ccqPath = Get-CcqExecutablePath
         $ccqBinDir = Split-Path -Parent $ccqPath
 
-        # 1. 创建目标目录
+        # 1. 占用预检：在网络传输前确认目标可替换，避免下载后才失败。
+        $lockState = Test-CcqExecutableLocked -Path $ccqPath
+        if ($lockState.Locked) {
+            $procs = @($lockState.Processes)
+            $msg = "ccq 正在运行或目标被占用，无法替换 ccq.exe"
+            if ($procs.Count -gt 0) {
+                $pidList = ($procs | ForEach-Object { "PID $($_.ProcessId)" }) -join ', '
+                $msg += "（检测到 ccq 进程: $pidList）"
+            }
+            $msg += "。请先关闭所有 ccq 窗口（含 'ccq cc' 启动的会话）后重试；若仍失败请确认文件未被占用且可写。"
+            $result.ErrorMessage = $msg
+            Write-UiDanger "ccq 可执行文件安装失败: $msg"
+            # 命令行单独打印：ErrorMessage 保持单行可读，明细帮助用户定位是哪个会话还开着。
+            foreach ($proc in $procs) {
+                $procCmd = [string]$proc.CommandLine
+                if ([string]::IsNullOrWhiteSpace($procCmd)) { $procCmd = '(命令行不可读，可能权限不足)' }
+                elseif ($procCmd.Length -gt 160) { $procCmd = $procCmd.Substring(0, 160) + '...' }
+                Write-UiDim "  PID $($proc.ProcessId): $procCmd"
+            }
+            return $result
+        }
+        # 探测异常不阻断：预检是优化路径，Locked=$false 一律放行，交给后续替换逻辑与重试兜底。
+
+        # 2. 创建目标目录
         if (-not (Test-Path $ccqBinDir)) {
             New-Item -ItemType Directory -Path $ccqBinDir -Force | Out-Null
             Write-UiInfo "创建 ccq 目录: $ccqBinDir"
         }
 
-        # 2. 下载可执行文件到临时文件，再原子替换，避免失败时删除已有 ccq。
+        # 3. 优先下载 gzip 传输资产；不可用或损坏时自动回退 raw URL。
+        # 两个临时文件都在 target 同目录，后续 raw temp 可直接交给 File.Replace。
         $tempPath = "$ccqPath.download.$PID"
-        if (Test-Path $tempPath) {
-            Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+        $gzipTempPath = "$tempPath.gz"
+        foreach ($transportTemp in @($tempPath, $gzipTempPath)) {
+            if (Test-Path -LiteralPath $transportTemp) {
+                Remove-Item -LiteralPath $transportTemp -Force -ErrorAction SilentlyContinue
+            }
         }
 
-        $downloadResult = Invoke-FileDownload -Url $DownloadUrl -OutputPath $tempPath -Description "ccq 可执行文件"
-        if (-not $downloadResult.Success) {
-            throw "ccq 下载失败: $($downloadResult.ErrorMessage)"
+        $gzipUrl = "$DownloadUrl.gz"
+        $gzipFailureContext = ""
+        $gzipReady = $false
+        try {
+            $gzipDownloadResult = Invoke-FileDownload -Url $gzipUrl -OutputPath $gzipTempPath -Description "ccq gzip 传输资产"
+            if (-not $gzipDownloadResult.Success) {
+                $gzipFailureContext = "gzip 下载失败: $($gzipDownloadResult.ErrorMessage)"
+            } else {
+                $expandResult = Expand-CcqGzipFile -GzipPath $gzipTempPath -OutputPath $tempPath
+                if ($expandResult.Success) {
+                    $gzipReady = $true
+                    Remove-Item -LiteralPath $gzipTempPath -Force -ErrorAction SilentlyContinue
+                } else {
+                    $gzipFailureContext = "gzip 解压失败: $($expandResult.ErrorMessage)"
+                }
+            }
+        } catch {
+            $gzipFailureContext = "gzip 传输异常: $($_.Exception.Message)"
         }
 
-        # 3. 验证文件非空（Invoke-FileDownload 已校验存在性与完整性，此处双重确认）
-        $fileInfo = Get-Item $tempPath
+        if (-not $gzipReady) {
+            foreach ($transportTemp in @($tempPath, $gzipTempPath)) {
+                if (Test-Path -LiteralPath $transportTemp) {
+                    Remove-Item -LiteralPath $transportTemp -Force -ErrorAction SilentlyContinue
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace($gzipFailureContext)) {
+                $gzipFailureContext = "gzip 传输未生成可用文件"
+            }
+            Write-UiWarning "gzip 传输失败（$gzipFailureContext），正在改用 raw 资产..."
+
+            try {
+                $rawDownloadResult = Invoke-FileDownload -Url $DownloadUrl -OutputPath $tempPath -Description "ccq raw 可执行文件"
+            } catch {
+                throw "raw 下载失败: $($_.Exception.Message)；gzip 失败上下文: $gzipFailureContext"
+            }
+            if (-not $rawDownloadResult.Success) {
+                throw "raw 下载失败: $($rawDownloadResult.ErrorMessage)；gzip 失败上下文: $gzipFailureContext"
+            }
+        }
+
+        # 4. 无论来源为何，只有完整且非空的 raw temp 才能进入替换流程。
+        if (-not (Test-Path -LiteralPath $tempPath -PathType Leaf)) {
+            if ($gzipReady) {
+                throw "gzip 解压后的 raw 文件不存在"
+            }
+            throw "raw 下载失败: 下载后文件不存在；gzip 失败上下文: $gzipFailureContext"
+        }
+        $fileInfo = Get-Item -LiteralPath $tempPath
         if ($fileInfo.Length -eq 0) {
-            throw "下载的文件为空"
+            if ($gzipReady) {
+                throw "gzip 解压后的 raw 文件为空"
+            }
+            throw "raw 下载失败: 下载的文件为空；gzip 失败上下文: $gzipFailureContext"
         }
 
-        Move-Item -Path $tempPath -Destination $ccqPath -Force
+        # 5. 原子替换：File.Replace 替换运行中映像，重试退避，失败回滚。
+        $replaceResult = Replace-CcqExecutable -TempPath $tempPath -TargetPath $ccqPath
+        if (-not $replaceResult.Success) {
+            # Replace-CcqExecutable 已清理 temp，并保证现有 target 完好。
+            $result.ErrorMessage = $replaceResult.ErrorMessage
+            Write-UiDanger "ccq 可执行文件安装失败: $($result.ErrorMessage)"
+            return $result
+        }
+        # temp 已在 Replace-CcqExecutable 内被 Move/Replace 消费，不再存在。
+        $tempPath = $null
+        if (Test-Path -LiteralPath $gzipTempPath) {
+            Remove-Item -LiteralPath $gzipTempPath -Force -ErrorAction SilentlyContinue
+        }
+        $gzipTempPath = $null
 
         Write-UiSuccess "✓ ccq 可执行文件已下载到: $ccqPath"
         Write-UiDim "  文件大小: $([math]::Round($fileInfo.Length / 1MB, 2)) MB"
 
-        # 4. 确保目录在用户 PATH（通过注册表 HKCU\Environment）
+        # 6. 确保目录在用户 PATH（通过注册表 HKCU\Environment）
         $pathResult = Add-DirectoryToUserPath -DirectoryPath $ccqBinDir
         if ($pathResult.Success -and $pathResult.AlreadyPresent) {
             Write-UiSuccess "✓ $ccqBinDir 已在用户 PATH，跳过环境变量写入"
@@ -1743,8 +2256,10 @@ function Install-CcqExecutable {
         $result.Path = $ccqPath
 
     } catch {
-        if ($tempPath -and (Test-Path $tempPath)) {
-            Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+        foreach ($transportTemp in @($tempPath, $gzipTempPath)) {
+            if ($transportTemp -and (Test-Path -LiteralPath $transportTemp)) {
+                Remove-Item -LiteralPath $transportTemp -Force -ErrorAction SilentlyContinue
+            }
         }
         $result.ErrorMessage = $_.Exception.Message
         Write-UiDanger "ccq 可执行文件安装失败: $($result.ErrorMessage)"

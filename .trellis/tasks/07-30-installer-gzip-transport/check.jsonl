@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/project/installer/index.md", "reason": "installer 全范围质量检查入口"}
+{"file": ".trellis/spec/project/installer/platform-runtime.md", "reason": "核对跨平台 handoff、fallback、错误与验证契约"}
+{"file": ".trellis/spec/project/installer/windows-core.md", "reason": "核对 PS5.1、raw temp、锁预检与替换回滚不变量"}
+{"file": ".trellis/spec/project/installer/build-release.md", "reason": "核对 gzip 传输与 Release artifact/build gate 一致性"}

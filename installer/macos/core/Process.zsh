@@ -750,6 +750,42 @@ ccq_test_executable_installed() {
   printf '{"isInstalled":%s,"version":"%s","path":"%s"}\n' "${is_installed}" "${version}" "${ccq_path}"
 }
 
+CCQ_DOWNLOAD_ERROR=""
+
+ccq_download_file() {
+  # 下载单个 URL 到指定临时文件。每次调用都是独立传输，进度只来自当前响应。
+  local download_url="${1:-}" output_path="${2:-}"
+  CCQ_DOWNLOAD_ERROR=""
+  if [ -z "${download_url}" ] || [ -z "${output_path}" ]; then
+    CCQ_DOWNLOAD_ERROR="下载 URL 或输出路径为空"
+    return 1
+  fi
+
+  rm -f "${output_path}" 2>/dev/null || true
+  if command -v curl >/dev/null 2>&1; then
+    if ! curl -fL --progress-bar --connect-timeout 20 --max-time 600 -o "${output_path}" "${download_url}"; then
+      rm -f "${output_path}" 2>/dev/null || true
+      CCQ_DOWNLOAD_ERROR="curl 下载失败"
+      return 1
+    fi
+  elif command -v wget >/dev/null 2>&1; then
+    if ! wget --show-progress --progress=bar:force --timeout=20 --tries=3 -O "${output_path}" "${download_url}"; then
+      rm -f "${output_path}" 2>/dev/null || true
+      CCQ_DOWNLOAD_ERROR="wget 下载失败"
+      return 1
+    fi
+  else
+    CCQ_DOWNLOAD_ERROR="curl 和 wget 均不可用"
+    return 1
+  fi
+
+  if [ ! -f "${output_path}" ]; then
+    CCQ_DOWNLOAD_ERROR="下载成功但输出文件不存在"
+    return 1
+  fi
+  return 0
+}
+
 ccq_install_executable() {
   # 下载并安装 ccq 可执行文件到 ~/.local/bin/ccq，并确保该目录在 PATH
   # 参数: $1 = 下载 URL
@@ -757,10 +793,13 @@ ccq_install_executable() {
   local download_url="$1"
   [ -z "${download_url}" ] && { printf 'Error: download_url required\n' >&2; return 1; }
 
-  local ccq_path ccq_bin_dir tmp_path
+  local ccq_path ccq_bin_dir tmp_path gzip_tmp_path gzip_url
+  local gzip_error="" gzip_ready=0
   ccq_path="$(ccq_get_executable_path)"
   ccq_bin_dir="$(dirname "${ccq_path}")"
   tmp_path="${ccq_path}.download.$$"
+  gzip_tmp_path="${tmp_path}.gz"
+  gzip_url="${download_url}.gz"
 
   # 1. 创建目标目录
   if [ ! -d "${ccq_bin_dir}" ]; then
@@ -768,35 +807,69 @@ ccq_install_executable() {
     command -v ccq_ui_info >/dev/null 2>&1 && ccq_ui_info "创建 ccq 目录: ${ccq_bin_dir}"
   fi
 
-  # 2. 下载可执行文件到临时文件，避免半成品覆盖已有 ccq
+  # 2. 优先传输 gzip 资产；不可用或损坏时重新开始一次 raw 下载。
   command -v ccq_ui_info >/dev/null 2>&1 && ccq_ui_info "正在下载 ccq 可执行文件..."
-  command -v ccq_ui_dim >/dev/null 2>&1 && ccq_ui_dim "  URL: ${download_url}"
+  command -v ccq_ui_dim >/dev/null 2>&1 && ccq_ui_dim "  URL: ${gzip_url}"
 
-  rm -f "${tmp_path}" 2>/dev/null || true
-  if command -v curl >/dev/null 2>&1; then
-    curl -fL --progress-bar --connect-timeout 20 --max-time 600 -o "${tmp_path}" "${download_url}" || { rm -f "${tmp_path}" 2>/dev/null || true; printf 'Error: curl 下载失败\n' >&2; return 1; }
-  elif command -v wget >/dev/null 2>&1; then
-    wget --show-progress --progress=bar:force --timeout=20 --tries=3 -O "${tmp_path}" "${download_url}" || { rm -f "${tmp_path}" 2>/dev/null || true; printf 'Error: wget 下载失败\n' >&2; return 1; }
+  rm -f "${tmp_path}" "${gzip_tmp_path}" 2>/dev/null || true
+  if ccq_download_file "${gzip_url}" "${gzip_tmp_path}"; then
+    if ! command -v gzip >/dev/null 2>&1; then
+      gzip_error="系统 gzip 命令不可用"
+    elif gzip -dc -- "${gzip_tmp_path}" > "${tmp_path}" && [ -s "${tmp_path}" ]; then
+      gzip_ready=1
+      rm -f "${gzip_tmp_path}" 2>/dev/null || true
+    elif [ -f "${tmp_path}" ] && [ ! -s "${tmp_path}" ]; then
+      gzip_error="gzip 解压结果为空"
+    else
+      gzip_error="gzip 解压失败或数据损坏"
+    fi
   else
-    printf 'Error: curl 和 wget 均不可用\n' >&2
-    return 1
+    gzip_error="gzip 下载失败: ${CCQ_DOWNLOAD_ERROR:-未知错误}"
   fi
 
-  # 3. 验证文件存在且非空
+  if [ "${gzip_ready}" -ne 1 ]; then
+    rm -f "${tmp_path}" "${gzip_tmp_path}" 2>/dev/null || true
+    [ -n "${gzip_error}" ] || gzip_error="gzip 传输未生成可用文件"
+    if command -v ccq_ui_warning >/dev/null 2>&1; then
+      ccq_ui_warning "gzip 传输失败（${gzip_error}），正在改用 raw 资产..."
+    else
+      printf 'Warning: gzip 传输失败（%s），正在改用 raw 资产...\n' "${gzip_error}" >&2
+    fi
+    command -v ccq_ui_dim >/dev/null 2>&1 && ccq_ui_dim "  URL: ${download_url}"
+
+    if ! ccq_download_file "${download_url}" "${tmp_path}"; then
+      local raw_error="${CCQ_DOWNLOAD_ERROR:-未知错误}"
+      rm -f "${tmp_path}" "${gzip_tmp_path}" 2>/dev/null || true
+      printf 'Error: raw 下载失败: %s；gzip 失败上下文: %s\n' "${raw_error}" "${gzip_error}" >&2
+      return 1
+    fi
+  fi
+
+  # 3. 无论来源为何，只有完整且非空的 raw temp 才能进入最终落盘流程。
   if [ ! -f "${tmp_path}" ]; then
-    printf 'Error: 下载后文件不存在: %s\n' "${tmp_path}" >&2
+    rm -f "${gzip_tmp_path}" 2>/dev/null || true
+    if [ "${gzip_ready}" -eq 1 ]; then
+      printf 'Error: gzip 解压后的 raw 文件不存在: %s\n' "${tmp_path}" >&2
+    else
+      printf 'Error: raw 下载失败: 下载后文件不存在；gzip 失败上下文: %s\n' "${gzip_error}" >&2
+    fi
     return 1
   fi
 
   local file_size
   file_size="$(stat -f%z "${tmp_path}" 2>/dev/null || stat -c%s "${tmp_path}" 2>/dev/null || echo 0)"
   if [ "${file_size}" -eq 0 ]; then
-    rm -f "${tmp_path}" 2>/dev/null || true
-    printf 'Error: 下载的文件为空\n' >&2
+    rm -f "${tmp_path}" "${gzip_tmp_path}" 2>/dev/null || true
+    if [ "${gzip_ready}" -eq 1 ]; then
+      printf 'Error: gzip 解压后的 raw 文件为空\n' >&2
+    else
+      printf 'Error: raw 下载失败: 下载的文件为空；gzip 失败上下文: %s\n' "${gzip_error}" >&2
+    fi
     return 1
   fi
 
   # 4. 设置可执行权限并原子替换
+  rm -f "${gzip_tmp_path}" 2>/dev/null || true
   chmod +x "${tmp_path}" || { rm -f "${tmp_path}" 2>/dev/null || true; printf 'Error: 无法设置可执行权限\n' >&2; return 1; }
   mv -f "${tmp_path}" "${ccq_path}" || { rm -f "${tmp_path}" 2>/dev/null || true; printf 'Error: 无法安装 ccq 可执行文件\n' >&2; return 1; }
 

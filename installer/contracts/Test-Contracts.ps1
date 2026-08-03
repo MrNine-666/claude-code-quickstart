@@ -937,6 +937,508 @@ function Test-ProfileLegacyCleanupContract {
     }
 }
 
+function Test-CcqGzipTransportContract {
+    $processPath = Join-Path $script:CoreRoot 'Process.ps1'
+    $processSource = Get-Content -Path $processPath -Raw -Encoding UTF8
+    foreach ($requiredPattern in @(
+        'function\s+Expand-CcqGzipFile',
+        'System\.IO\.Compression\.GzipStream',
+        '\$gzipUrl\s*=\s*"\$DownloadUrl\.gz"',
+        'gzip 传输失败.+正在改用 raw 资产',
+        'raw 下载失败:.+gzip 失败上下文',
+        'Replace-CcqExecutable\s+-TempPath\s+\$tempPath'
+    )) {
+        if ($processSource -notmatch $requiredPattern) {
+            Add-Issue "Windows ccq gzip transport 缺少契约片段: $requiredPattern"
+        }
+    }
+
+    $macProcessPath = Join-Path $script:InstallerRoot 'macos\core\Process.zsh'
+    $macProcessSource = Get-Content -Path $macProcessPath -Raw -Encoding UTF8
+    foreach ($requiredPattern in @(
+        'ccq_download_file\(\)',
+        'gzip_url="\$\{download_url\}\.gz"',
+        'gzip -dc -- "\$\{gzip_tmp_path\}"',
+        '正在改用 raw 资产',
+        'raw 下载失败:.+gzip 失败上下文'
+    )) {
+        if ($macProcessSource -notmatch $requiredPattern) {
+            Add-Issue "macOS ccq gzip transport 缺少契约片段: $requiredPattern"
+        }
+    }
+
+    $macProbePath = Join-Path $PSScriptRoot 'Test-MacOSGzipTransport.zsh'
+    Assert-PathExists 'macOS gzip transport behavior probe' $macProbePath
+    $buildShSource = Get-Content -Path (Join-Path $script:InstallerRoot 'build.sh') -Raw -Encoding UTF8
+    if ($buildShSource -notmatch '(?m)^\s*zsh\s+"\$\{gzip_probe_path\}"\s*$') {
+        Add-Issue 'installer/build.sh --check 未接入 macOS gzip transport behavior probe'
+    }
+
+    $parseTokens = $null
+    $parseErrors = $null
+    $processAst = [System.Management.Automation.Language.Parser]::ParseFile(
+        $processPath,
+        [ref]$parseTokens,
+        [ref]$parseErrors
+    )
+    if ($parseErrors.Count -gt 0) {
+        Add-Issue 'Windows ccq gzip transport 无法解析 Process.ps1'
+        return
+    }
+
+    $installFunction = $processAst.Find({
+        param($Node)
+        $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $Node.Name -eq 'Install-CcqExecutable'
+    }, $true)
+    if (-not $installFunction) {
+        Add-Issue 'Windows ccq gzip transport 无法找到 Install-CcqExecutable 函数'
+        return
+    }
+
+    $probeDir = Join-Path $env:TEMP ("ccq-gzip-contract-" + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $probeDir -Force | Out-Null
+    try {
+        $rawFixture = Join-Path $probeDir 'raw-fixture.exe'
+        $gzipFixture = "$rawFixture.gz"
+        $emptyGzipFixture = Join-Path $probeDir 'empty.gz'
+        $corruptFixture = Join-Path $probeDir 'corrupt.gz'
+        $roundtripOutput = Join-Path $probeDir 'roundtrip.exe'
+        [System.IO.File]::WriteAllBytes(
+            $rawFixture,
+            [System.Text.Encoding]::UTF8.GetBytes("ccq gzip transport fixture`nline two`n")
+        )
+
+        $gzipOutput = $null
+        $gzipWriter = $null
+        $rawInput = $null
+        try {
+            $gzipOutput = [System.IO.File]::Create($gzipFixture)
+            $gzipWriter = New-Object -TypeName System.IO.Compression.GzipStream -ArgumentList @(
+                $gzipOutput,
+                [System.IO.Compression.CompressionMode]::Compress
+            )
+            $rawInput = [System.IO.File]::OpenRead($rawFixture)
+            $rawInput.CopyTo($gzipWriter)
+        } finally {
+            if ($null -ne $rawInput) { $rawInput.Dispose() }
+            if ($null -ne $gzipWriter) { $gzipWriter.Dispose() }
+            if ($null -ne $gzipOutput) { $gzipOutput.Dispose() }
+        }
+
+        $emptyOutput = $null
+        $emptyWriter = $null
+        try {
+            $emptyOutput = [System.IO.File]::Create($emptyGzipFixture)
+            $emptyWriter = New-Object -TypeName System.IO.Compression.GzipStream -ArgumentList @(
+                $emptyOutput,
+                [System.IO.Compression.CompressionMode]::Compress
+            )
+        } finally {
+            if ($null -ne $emptyWriter) { $emptyWriter.Dispose() }
+            if ($null -ne $emptyOutput) { $emptyOutput.Dispose() }
+        }
+        $corruptBytes = [System.IO.File]::ReadAllBytes($gzipFixture)
+        if ($corruptBytes.Length -lt 9) {
+            throw 'gzip fixture 太短，无法构造 CRC 损坏探针'
+        }
+        # gzip trailer 的前 4 bytes 是 CRC32。翻转其中一位，证明 helper 会读到尾部并校验 CRC。
+        $corruptBytes[$corruptBytes.Length - 8] = $corruptBytes[$corruptBytes.Length - 8] -bxor 0x01
+        [System.IO.File]::WriteAllBytes($corruptFixture, $corruptBytes)
+
+        $roundtripResult = Expand-CcqGzipFile -GzipPath $gzipFixture -OutputPath $roundtripOutput
+        Assert-Equal 'ccq.gzip.helper.roundtrip-success' $true $roundtripResult.Success
+        Assert-Equal 'ccq.gzip.helper.roundtrip-size' (Get-Item -LiteralPath $rawFixture).Length $roundtripResult.OutputSize
+        Assert-Equal 'ccq.gzip.helper.roundtrip-bytes' ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes($rawFixture))) ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes($roundtripOutput)))
+
+        $corruptOutput = Join-Path $probeDir 'corrupt-output.exe'
+        $corruptResult = Expand-CcqGzipFile -GzipPath $corruptFixture -OutputPath $corruptOutput
+        Assert-Equal 'ccq.gzip.helper.corrupt-fails' $false $corruptResult.Success
+        Assert-Equal 'ccq.gzip.helper.corrupt-cleans-output' $false (Test-Path -LiteralPath $corruptOutput)
+        $corruptExclusiveStream = $null
+        try {
+            $corruptExclusiveStream = [System.IO.File]::Open(
+                $corruptFixture,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+            Assert-Equal 'ccq.gzip.helper.corrupt-releases-input' $true ($null -ne $corruptExclusiveStream)
+        } catch {
+            Add-Issue "ccq.gzip.helper.corrupt-releases-input 无法独占打开 gzip fixture: $($_.Exception.Message)"
+        } finally {
+            if ($null -ne $corruptExclusiveStream) { $corruptExclusiveStream.Dispose() }
+        }
+
+        $emptyOutputPath = Join-Path $probeDir 'empty-output.exe'
+        $emptyResult = Expand-CcqGzipFile -GzipPath $emptyGzipFixture -OutputPath $emptyOutputPath
+        Assert-Equal 'ccq.gzip.helper.empty-fails' $false $emptyResult.Success
+        Assert-Equal 'ccq.gzip.helper.empty-cleans-output' $false (Test-Path -LiteralPath $emptyOutputPath)
+
+        # 只重新载入安装函数；解压 helper 使用上方已 dot-source 的真实实现。
+        Invoke-Expression $installFunction.Extent.Text
+        $script:CcqGzipRawFixture = $rawFixture
+        $script:CcqGzipFixture = $gzipFixture
+        $script:CcqGzipEmptyFixture = $emptyGzipFixture
+        $script:CcqGzipCorruptFixture = $corruptFixture
+        $script:CcqGzipScenario = ''
+        $script:CcqGzipTargetPath = ''
+        $script:CcqGzipDownloadCalls = @()
+        $script:CcqGzipWarnings = @()
+        $script:CcqGzipReplaceCalled = $false
+
+        function Get-CcqExecutablePath { return $script:CcqGzipTargetPath }
+        function Test-CcqExecutableLocked {
+            param([string]$Path)
+            return @{ Locked = $false; Processes = @(); Detail = '' }
+        }
+        function Invoke-FileDownload {
+            param([string]$Url, [string]$OutputPath, [string]$Description)
+            $script:CcqGzipDownloadCalls += , @{
+                Url         = $Url
+                OutputPath  = $OutputPath
+                Description = $Description
+            }
+
+            if ($Url.EndsWith('.gz')) {
+                switch ($script:CcqGzipScenario) {
+                    'gzip-success' {
+                        [System.IO.File]::Copy($script:CcqGzipFixture, $OutputPath, $true)
+                        return @{ Success = $true; ErrorMessage = '' }
+                    }
+                    'gzip-download-fail' {
+                        [System.IO.File]::WriteAllText($OutputPath, 'partial-gzip')
+                        return @{ Success = $false; ErrorMessage = 'fixture gzip download failed' }
+                    }
+                    'gzip-corrupt' {
+                        [System.IO.File]::Copy($script:CcqGzipCorruptFixture, $OutputPath, $true)
+                        return @{ Success = $true; ErrorMessage = '' }
+                    }
+                    'gzip-empty' {
+                        [System.IO.File]::Copy($script:CcqGzipEmptyFixture, $OutputPath, $true)
+                        return @{ Success = $true; ErrorMessage = '' }
+                    }
+                    'double-fail' {
+                        [System.IO.File]::WriteAllText($OutputPath, 'partial-gzip')
+                        return @{ Success = $false; ErrorMessage = 'fixture gzip download failed' }
+                    }
+                    'double-fail-corrupt' {
+                        [System.IO.File]::Copy($script:CcqGzipCorruptFixture, $OutputPath, $true)
+                        return @{ Success = $true; ErrorMessage = '' }
+                    }
+                }
+            }
+
+            if ($script:CcqGzipScenario -eq 'gzip-success') {
+                return @{ Success = $false; ErrorMessage = 'raw must not be requested after gzip success' }
+            }
+            if ($script:CcqGzipScenario -in @('double-fail', 'double-fail-corrupt')) {
+                [System.IO.File]::WriteAllText($OutputPath, 'partial-raw')
+                return @{ Success = $false; ErrorMessage = 'fixture raw download failed' }
+            }
+
+            [System.IO.File]::Copy($script:CcqGzipRawFixture, $OutputPath, $true)
+            return @{ Success = $true; ErrorMessage = '' }
+        }
+        function Replace-CcqExecutable {
+            param([string]$TempPath, [string]$TargetPath)
+            $script:CcqGzipReplaceCalled = $true
+            [System.IO.File]::Copy($TempPath, $TargetPath, $true)
+            [System.IO.File]::Delete($TempPath)
+            return @{ Success = $true; ErrorMessage = ''; BackupPath = '' }
+        }
+        function Add-DirectoryToUserPath {
+            param([string]$DirectoryPath)
+            return @{ Success = $true; Added = $false; AlreadyPresent = $true }
+        }
+        function Write-UiDanger { param([string]$Message, [string]$Level) }
+        function Write-UiInfo { param([string]$Message, [string]$Level) }
+        function Write-UiDim { param([string]$Message, [string]$Level) }
+        function Write-UiSuccess { param([string]$Message, [string]$Level) }
+        function Write-UiWarning {
+            param([string]$Message, [string]$Level)
+            $script:CcqGzipWarnings += $Message
+        }
+
+        function Invoke-CcqGzipInstallScenario {
+            param(
+                [string]$Scenario,
+                [int]$ExpectedCalls,
+                [bool]$ExpectSuccess,
+                [bool]$ExpectWarning
+            )
+
+            $targetPath = Join-Path $probeDir "$Scenario.exe"
+            $script:CcqGzipScenario = $Scenario
+            $script:CcqGzipTargetPath = $targetPath
+            $script:CcqGzipDownloadCalls = @()
+            $script:CcqGzipWarnings = @()
+            $script:CcqGzipReplaceCalled = $false
+            [System.IO.File]::WriteAllText($targetPath, 'MUST-SURVIVE')
+            $oldTarget = [System.IO.File]::ReadAllBytes($targetPath)
+
+            $installResult = Install-CcqExecutable -DownloadUrl 'https://example.invalid/ccq-windows-x64.exe'
+            Assert-Equal "ccq.gzip.$Scenario.success" $ExpectSuccess $installResult.Success
+            Assert-Equal "ccq.gzip.$Scenario.download-count" $ExpectedCalls @($script:CcqGzipDownloadCalls).Count
+            Assert-Equal "ccq.gzip.$Scenario.first-url" 'https://example.invalid/ccq-windows-x64.exe.gz' $script:CcqGzipDownloadCalls[0].Url
+            Assert-Equal "ccq.gzip.$Scenario.first-output" "$targetPath.download.$PID.gz" $script:CcqGzipDownloadCalls[0].OutputPath
+            if ($ExpectedCalls -eq 2) {
+                Assert-Equal "ccq.gzip.$Scenario.second-url" 'https://example.invalid/ccq-windows-x64.exe' $script:CcqGzipDownloadCalls[1].Url
+                Assert-Equal "ccq.gzip.$Scenario.second-output" "$targetPath.download.$PID" $script:CcqGzipDownloadCalls[1].OutputPath
+            }
+
+            if ($ExpectSuccess) {
+                Assert-Equal "ccq.gzip.$Scenario.replace-called" $true $script:CcqGzipReplaceCalled
+                Assert-Equal "ccq.gzip.$Scenario.target-bytes" ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes($script:CcqGzipRawFixture))) ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes($targetPath)))
+            } else {
+                Assert-Equal "ccq.gzip.$Scenario.replace-not-called" $false $script:CcqGzipReplaceCalled
+                Assert-Equal "ccq.gzip.$Scenario.target-preserved" ([Convert]::ToBase64String($oldTarget)) ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes($targetPath)))
+                $expectedGzipContext = if ($Scenario -eq 'double-fail-corrupt') {
+                    'gzip 失败上下文: gzip 解压失败:'
+                } else {
+                    'gzip 失败上下文: gzip 下载失败: fixture gzip download failed'
+                }
+                if ($installResult.ErrorMessage -notmatch 'raw 下载失败: fixture raw download failed' -or
+                    $installResult.ErrorMessage -notmatch [regex]::Escape($expectedGzipContext)) {
+                    Add-Issue "ccq.gzip.$Scenario 双失败错误上下文不完整: $($installResult.ErrorMessage)"
+                }
+            }
+
+            Assert-Equal "ccq.gzip.$Scenario.raw-temp-clean" $false (Test-Path -LiteralPath "$targetPath.download.$PID")
+            Assert-Equal "ccq.gzip.$Scenario.gzip-temp-clean" $false (Test-Path -LiteralPath "$targetPath.download.$PID.gz")
+            $hasFallbackWarning = @($script:CcqGzipWarnings | Where-Object { $_ -match '正在改用 raw 资产' }).Count -gt 0
+            Assert-Equal "ccq.gzip.$Scenario.warning" $ExpectWarning $hasFallbackWarning
+        }
+
+        Invoke-CcqGzipInstallScenario -Scenario 'gzip-success' -ExpectedCalls 1 -ExpectSuccess $true -ExpectWarning $false
+        Invoke-CcqGzipInstallScenario -Scenario 'gzip-download-fail' -ExpectedCalls 2 -ExpectSuccess $true -ExpectWarning $true
+        Invoke-CcqGzipInstallScenario -Scenario 'gzip-corrupt' -ExpectedCalls 2 -ExpectSuccess $true -ExpectWarning $true
+        Invoke-CcqGzipInstallScenario -Scenario 'gzip-empty' -ExpectedCalls 2 -ExpectSuccess $true -ExpectWarning $true
+        Invoke-CcqGzipInstallScenario -Scenario 'double-fail' -ExpectedCalls 2 -ExpectSuccess $false -ExpectWarning $true
+        Invoke-CcqGzipInstallScenario -Scenario 'double-fail-corrupt' -ExpectedCalls 2 -ExpectSuccess $false -ExpectWarning $true
+    } finally {
+        Remove-Item -LiteralPath $probeDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-CcqLockedFileReplaceContract {
+    $processPath = Join-Path $script:CoreRoot 'Process.ps1'
+    $processSource = Get-Content -Path $processPath -Raw -Encoding UTF8
+
+    # 正向断言：Process.ps1 含替换运行中映像所需的关键片段。
+    # 注意：重试常量必须绑定到赋值处。裸 '20' / '250' 会被任意 PS 源码撞上，
+    # 那种断言对空实现同样通过，等于没断言。
+    foreach ($requiredPattern in @(
+        '\[System\.IO\.File\]::Replace',
+        'function\s+Test-CcqExecutableLocked',
+        'function\s+Replace-CcqExecutable',
+        'function\s+Restore-CcqExecutableBackup',
+        'ccq 正在运行',
+        '\$maxAttempts\s*=\s*20',
+        '\$intervalMs\s*=\s*250',
+        # PS5.1 下 File.Replace 的 backup 形参传 $null 会抛「路径的格式不合法」，
+        # 必须是 [NullString]::Value，否则回滚是永远失败的死代码。
+        '\[NullString\]::Value'
+    )) {
+        if ($processSource -notmatch $requiredPattern) {
+            Add-Issue "Windows ccq locked-file replace 缺少契约片段: $requiredPattern"
+        }
+    }
+
+    # 解析 AST 提取 Install-CcqExecutable 函数体，做反向断言与行为探针。
+    $parseTokens = $null
+    $parseErrors = $null
+    $processAst = [System.Management.Automation.Language.Parser]::ParseFile(
+        $processPath,
+        [ref]$parseTokens,
+        [ref]$parseErrors
+    )
+    if ($parseErrors.Count -gt 0) {
+        Add-Issue 'Windows ccq locked-file replace 无法解析 Process.ps1'
+        return
+    }
+
+    $installFunction = $processAst.Find({
+        param($Node)
+        $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $Node.Name -eq 'Install-CcqExecutable'
+    }, $true)
+    if (-not $installFunction) {
+        Add-Issue 'Windows ccq locked-file replace 无法找到 Install-CcqExecutable 函数'
+        return
+    }
+
+    $installBody = $installFunction.Extent.Text
+
+    # 反向断言：Install-CcqExecutable 函数体不得再用 Move-Item 落盘 ccq.exe。
+    # 注意参数顺序：被移除的旧代码是 `Move-Item -Path $tempPath -Destination $ccqPath -Force`，
+    # -Path 在 -Destination 之前，所以 'Move-Item\s+-Destination' 这类正则根本命中不到它，
+    # 那样的反向断言对真回归是空转。替换已委托给 Replace-CcqExecutable，
+    # 该函数体内不存在任何 Move-Item 的正当用途，因此直接断言「一个都不许有」。
+    # 必须带 \b 词边界：-match 默认大小写不敏感，裸 'Move-Item' 会命中 'Remove-Item'
+    # 里的 'move-Item'，把正常的 temp 清理误报成回归。
+    if ($installBody -match '\bMove-Item') {
+        Add-Issue 'Windows ccq locked-file replace Install-CcqExecutable 仍含 Move-Item 落盘'
+    }
+
+    # 真实文件系统行为探针必须先跑：下方 mock 会遮蔽 Test-CcqExecutableLocked 等真函数。
+    $probeDir = Join-Path $env:TEMP ("ccq-lock-contract-" + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $probeDir -Force | Out-Null
+    $probeLockStream = $null
+    try {
+        # 预检探针 1：目标不存在 → 不算被锁，且进程列表 Count 必须为 0。
+        # 这条守住 `return , $array` 与调用方 @() 的双重包裹 —— 一旦再套一层，
+        # 空列表会被包成 @(@()) 使 Count 变 1，用户会看到空的「检测到 ccq 进程: 」括号。
+        $absentState = Test-CcqExecutableLocked -Path (Join-Path $probeDir 'absent.exe')
+        Assert-Equal 'ccq.locked.absent-not-locked' $false $absentState.Locked
+        Assert-Equal 'ccq.locked.absent-empty-processes' 0 @($absentState.Processes).Count
+
+        # 预检探针 2：目标空闲 → 放行；FileShare.None 独占持锁 → 判定被锁。
+        $freeFile = Join-Path $probeDir 'free.exe'
+        Set-Content -LiteralPath $freeFile -Value 'FREE' -NoNewline -Encoding ASCII
+        Assert-Equal 'ccq.locked.free-target-passes' $false (Test-CcqExecutableLocked -Path $freeFile).Locked
+
+        $probeLockStream = [System.IO.File]::Open(
+            $freeFile,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+        Assert-Equal 'ccq.locked.detects-exclusive-lock' $true (Test-CcqExecutableLocked -Path $freeFile).Locked
+        $probeLockStream.Close(); $probeLockStream.Dispose(); $probeLockStream = $null
+
+        # 替换探针共用的 Start-Sleep 遮蔽：既让 20 次重试瞬间跑完（不真睡 5 秒），
+        # 又用 sleep 次数证明确实走过重试路径（否则探针可能被「一次就成功」空转通过）。
+        $script:CcqRetryLockStream = $null
+        $script:CcqRetrySleepCount = 0
+        $script:CcqRetryReleaseOnSleep = $false
+        function Start-Sleep {
+            param([int]$Milliseconds, [int]$Seconds)
+            $script:CcqRetrySleepCount++
+            if ($script:CcqRetryReleaseOnSleep -and $null -ne $script:CcqRetryLockStream) {
+                $script:CcqRetryLockStream.Close()
+                $script:CcqRetryLockStream.Dispose()
+                $script:CcqRetryLockStream = $null
+            }
+        }
+
+        # 替换探针 0：同一 PID 的旧 backup 可能来自上次失败回滚，且可能是唯一旧版本。
+        # 新事务必须在修改 target 前中止，只清理自己的 temp，绝不能删除该 backup。
+        $collisionTarget = Join-Path $probeDir 'collision.exe'
+        $collisionTemp = "$collisionTarget.download.$PID"
+        $collisionBackup = "$collisionTarget.backup.$PID"
+        Set-Content -LiteralPath $collisionTarget -Value 'CURRENTBUILD' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $collisionTemp -Value 'NEXTBUILD' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $collisionBackup -Value 'ONLYRECOVERY' -NoNewline -Encoding ASCII
+        $collisionResult = Replace-CcqExecutable -TempPath $collisionTemp -TargetPath $collisionTarget
+        Assert-Equal 'ccq.locked.backup-collision-fails-closed' $false $collisionResult.Success
+        Assert-Equal 'ccq.locked.backup-collision-keeps-target' 'CURRENTBUILD' (Get-Content -LiteralPath $collisionTarget -Raw)
+        Assert-Equal 'ccq.locked.backup-collision-preserves-recovery' 'ONLYRECOVERY' (Get-Content -LiteralPath $collisionBackup -Raw)
+        Assert-Equal 'ccq.locked.backup-collision-cleans-new-temp' $false (Test-Path -LiteralPath $collisionTemp)
+        if ($collisionResult.ErrorMessage -notmatch [regex]::Escape($collisionBackup)) {
+            Add-Issue "ccq.locked.backup-collision 错误未指出保留的备份: $($collisionResult.ErrorMessage)"
+        }
+
+        # 替换探针 1：锁在重试窗口内释放 → 替换成功，target 变成新产物。
+        # 对应 PRD 验收「锁在重试窗口内释放时，替换能成功完成而无需用户重跑」。
+        $retryTarget = Join-Path $probeDir 'retry.exe'
+        $retryTemp = "$retryTarget.download.$PID"
+        Set-Content -LiteralPath $retryTarget -Value 'OLDBUILD' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $retryTemp -Value 'NEWBUILDNEWBUILD' -NoNewline -Encoding ASCII
+        $script:CcqRetryReleaseOnSleep = $true
+        $script:CcqRetrySleepCount = 0
+        $script:CcqRetryLockStream = [System.IO.File]::Open(
+            $retryTarget,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+        $retryResult = Replace-CcqExecutable -TempPath $retryTemp -TargetPath $retryTarget
+        if ($null -ne $script:CcqRetryLockStream) {
+            $script:CcqRetryLockStream.Close(); $script:CcqRetryLockStream.Dispose()
+            $script:CcqRetryLockStream = $null
+        }
+        Assert-Equal 'ccq.locked.retry-succeeds-after-release' $true $retryResult.Success
+        Assert-Equal 'ccq.locked.retry-target-is-new-build' 'NEWBUILDNEWBUILD' (Get-Content -LiteralPath $retryTarget -Raw)
+        Assert-Equal 'ccq.locked.retry-temp-consumed' $false (Test-Path -LiteralPath $retryTemp)
+        Assert-Equal 'ccq.locked.retry-no-backup-residue' $false (Test-Path -LiteralPath "$retryTarget.backup.$PID")
+        if ($script:CcqRetrySleepCount -lt 1) {
+            Add-Issue 'ccq.locked.retry 未经过重试路径，探针可能空转'
+        }
+
+        # 替换探针 2：锁始终不释放 → 替换失败，但原 target 必须完好且不留 temp/backup。
+        # 对应 PRD 验收「替换彻底失败时，原有 ccq.exe 仍可用，且不留残留 temp」。
+        $keepTarget = Join-Path $probeDir 'keep.exe'
+        $keepTemp = "$keepTarget.download.$PID"
+        Set-Content -LiteralPath $keepTarget -Value 'MUSTSURVIVE' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $keepTemp -Value 'NEWNEWNEWNEW' -NoNewline -Encoding ASCII
+        $script:CcqRetryReleaseOnSleep = $false
+        $script:CcqRetrySleepCount = 0
+        $probeLockStream = [System.IO.File]::Open(
+            $keepTarget,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+        $keepResult = Replace-CcqExecutable -TempPath $keepTemp -TargetPath $keepTarget
+        $probeLockStream.Close(); $probeLockStream.Dispose(); $probeLockStream = $null
+        Assert-Equal 'ccq.locked.fail-reports-failure' $false $keepResult.Success
+        Assert-Equal 'ccq.locked.fail-preserves-old-target' 'MUSTSURVIVE' (Get-Content -LiteralPath $keepTarget -Raw)
+        Assert-Equal 'ccq.locked.fail-no-temp-residue' $false (Test-Path -LiteralPath $keepTemp)
+        Assert-Equal 'ccq.locked.fail-no-backup-residue' $false (Test-Path -LiteralPath "$keepTarget.backup.$PID")
+        Assert-Equal 'ccq.locked.fail-exhausts-retries' 19 $script:CcqRetrySleepCount
+        # 用户可见错误不得是「当文件已存在时，无法创建该文件」这类无信息量文案。
+        if ($keepResult.ErrorMessage -notmatch '被占用|保留现有版本') {
+            Add-Issue "ccq.locked.fail 缺少可操作错误: $($keepResult.ErrorMessage)"
+        }
+
+        # 回滚探针：Restore-CcqExecutableBackup 必须真能把旧版本搬回 target。
+        # PS5.1 下 File.Replace 传 $null backup 会抛「路径的格式不合法」，
+        # 这条断言守住 [NullString]::Value，避免回滚退化成永远失败的死代码。
+        $rbTarget = Join-Path $probeDir 'rollback.exe'
+        $rbBackup = "$rbTarget.backup.$PID"
+        Set-Content -LiteralPath $rbTarget -Value 'BADBUILD' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $rbBackup -Value 'GOODOLDBUILD' -NoNewline -Encoding ASCII
+        Assert-Equal 'ccq.locked.rollback-succeeds' $true (Restore-CcqExecutableBackup -BackupPath $rbBackup -TargetPath $rbTarget)
+        Assert-Equal 'ccq.locked.rollback-restores-old' 'GOODOLDBUILD' (Get-Content -LiteralPath $rbTarget -Raw)
+        Assert-Equal 'ccq.locked.rollback-consumes-backup' $false (Test-Path -LiteralPath $rbBackup)
+    } finally {
+        if ($null -ne $probeLockStream) { $probeLockStream.Close(); $probeLockStream.Dispose() }
+        Remove-Item -LiteralPath $probeDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    # 行为探针：mock Test-CcqExecutableLocked 返回 Locked=$true，断言 Invoke-FileDownload 不被调用。
+    # 沿用 Test-CcqVersionHandoffContract 的 Invoke-Expression + mock 函数覆盖手法。
+    Invoke-Expression $installFunction.Extent.Text
+
+    $script:CcqLockedDownloadCalled = $false
+
+    function Get-CcqExecutablePath { return 'C:\fake\ccq.exe' }
+    function Test-CcqExecutableLocked {
+        param([string]$Path)
+        return @{ Locked = $true; Processes = @(@{ ProcessId = 99999; CommandLine = '"C:\fake\ccq.exe" cc aether' }); Detail = '目标被占用' }
+    }
+    function Invoke-FileDownload {
+        $script:CcqLockedDownloadCalled = $true
+        return @{ Success = $true; ErrorMessage = '' }
+    }
+    function Add-DirectoryToUserPath {
+        return @{ Success = $true; Added = $false; AlreadyPresent = $true }
+    }
+    function Write-UiDanger { param([string]$Message, [string]$Level) }
+    function Write-UiInfo { param([string]$Message, [string]$Level) }
+    function Write-UiDim { param([string]$Message, [string]$Level) }
+    function Write-UiSuccess { param([string]$Message, [string]$Level) }
+    function Write-UiWarning { param([string]$Message, [string]$Level) }
+
+    $installResult = Install-CcqExecutable -DownloadUrl 'https://example.invalid/ccq.exe'
+    Assert-Equal 'ccq.locked.preview-blocks-install' $false $script:CcqLockedDownloadCalled
+    Assert-Equal 'ccq.locked.preview-returns-failure' $false $installResult.Success
+    if ($installResult.ErrorMessage -notmatch 'ccq 正在运行') {
+        Add-Issue "ccq.locked.preview 缺少可读错误: $($installResult.ErrorMessage)"
+    }
+}
+
 function Main {
     if (-not (Test-Path $script:InstallerRoot -PathType Container)) {
         throw "InstallerRoot 不是有效目录: $script:InstallerRoot"
@@ -944,6 +1446,8 @@ function Main {
 
     Test-CanonicalSourceLayout
     Test-CcqVersionHandoffContract
+    Test-CcqGzipTransportContract
+    Test-CcqLockedFileReplaceContract
     # installer 契约（installer/contracts/）
     Test-StepsContract -Contract (Read-ContractJson 'steps.json')
     Test-BuildManifestContract -Contract (Read-ContractJson 'build.json')
