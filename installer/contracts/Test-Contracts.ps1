@@ -981,7 +981,7 @@ function Test-CcqGzipTransportContract {
         [ref]$parseTokens,
         [ref]$parseErrors
     )
-    if ($parseErrors.Count -gt 0) {
+    if (@($parseErrors).Count -gt 0) {
         Add-Issue 'Windows ccq gzip transport 无法解析 Process.ps1'
         return
     }
@@ -1253,7 +1253,7 @@ function Test-CcqLockedFileReplaceContract {
         [ref]$parseTokens,
         [ref]$parseErrors
     )
-    if ($parseErrors.Count -gt 0) {
+    if (@($parseErrors).Count -gt 0) {
         Add-Issue 'Windows ccq locked-file replace 无法解析 Process.ps1'
         return
     }
@@ -1270,15 +1270,50 @@ function Test-CcqLockedFileReplaceContract {
 
     $installBody = $installFunction.Extent.Text
 
-    # 反向断言：Install-CcqExecutable 函数体不得再用 Move-Item 落盘 ccq.exe。
+    $replaceFunction = $processAst.Find({
+        param($Node)
+        $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $Node.Name -eq 'Replace-CcqExecutable'
+    }, $true)
+    if (-not $replaceFunction) {
+        Add-Issue 'Windows ccq locked-file replace 无法找到 Replace-CcqExecutable 函数'
+        return
+    }
+    $replaceBody = $replaceFunction.Extent.Text
+
+    # 反向断言：Install-CcqExecutable 和替换 helper 都不得再用 Move-Item 落盘 ccq.exe。
     # 注意参数顺序：被移除的旧代码是 `Move-Item -Path $tempPath -Destination $ccqPath -Force`，
     # -Path 在 -Destination 之前，所以 'Move-Item\s+-Destination' 这类正则根本命中不到它，
     # 那样的反向断言对真回归是空转。替换已委托给 Replace-CcqExecutable，
     # 该函数体内不存在任何 Move-Item 的正当用途，因此直接断言「一个都不许有」。
     # 必须带 \b 词边界：-match 默认大小写不敏感，裸 'Move-Item' 会命中 'Remove-Item'
     # 里的 'move-Item'，把正常的 temp 清理误报成回归。
-    if ($installBody -match '\bMove-Item') {
+    $assertNoMoveItem = {
+        param([string]$Body)
+        return ($Body -notmatch '\bMove-Item')
+    }
+    if (-not (& $assertNoMoveItem $installBody)) {
         Add-Issue 'Windows ccq locked-file replace Install-CcqExecutable 仍含 Move-Item 落盘'
+    }
+    if (-not (& $assertNoMoveItem $replaceBody)) {
+        Add-Issue 'Windows ccq locked-file replace Replace-CcqExecutable 仍含 Move-Item 落盘'
+    }
+    if ($replaceBody -notmatch '\[System\.IO\.File\]::Replace\s*\(') {
+        Add-Issue 'Windows ccq locked-file replace Replace-CcqExecutable 缺少 File.Replace'
+    }
+
+    # Mutation check：用被移除的旧落盘语句构造本地副本，确认上述反向断言真的会
+    # 失败，而不是只检查一个永远匹配不到的正则；不改写工作区源文件，避免测试
+    # 本身污染并行任务的修改。
+    $legacyMoveSnippet = 'Move-Item -Path $tempPath -Destination $ccqPath -Force'
+    if ($legacyMoveSnippet -notmatch '\bMove-Item') {
+        Add-Issue 'Windows ccq locked-file replace Move-Item 反向断言 mutation-check 未命中旧语句'
+    }
+    if (& $assertNoMoveItem ($installBody + "`n" + $legacyMoveSnippet)) {
+        Add-Issue 'Windows ccq locked-file replace Install-CcqExecutable mutation-check 未触发'
+    }
+    if (& $assertNoMoveItem ($replaceBody + "`n" + $legacyMoveSnippet)) {
+        Add-Issue 'Windows ccq locked-file replace Replace-CcqExecutable mutation-check 未触发'
     }
 
     # 真实文件系统行为探针必须先跑：下方 mock 会遮蔽 Test-CcqExecutableLocked 等真函数。
@@ -1297,6 +1332,27 @@ function Test-CcqLockedFileReplaceContract {
         $freeFile = Join-Path $probeDir 'free.exe'
         Set-Content -LiteralPath $freeFile -Value 'FREE' -NoNewline -Encoding ASCII
         Assert-Equal 'ccq.locked.free-target-passes' $false (Test-CcqExecutableLocked -Path $freeFile).Locked
+
+        # 预检成功后必须释放自身的独占句柄；否则真正的替换会把安装器自己误判为
+        # 持锁进程。立即再次以 FileShare.None 打开同一路径，覆盖 Close/Dispose
+        # 任一动作异常时仍继续释放的回归。
+        $freeReopenStream = $null
+        try {
+            $freeReopenStream = [System.IO.File]::Open(
+                $freeFile,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+            Assert-Equal 'ccq.locked.free-probe-releases-handle' $true $true
+        } catch {
+            Add-Issue "ccq.locked.free-probe 未释放独占句柄: $($_.Exception.Message)"
+        } finally {
+            if ($null -ne $freeReopenStream) {
+                try { $freeReopenStream.Close() } catch { }
+                try { $freeReopenStream.Dispose() } catch { }
+            }
+        }
 
         $probeLockStream = [System.IO.File]::Open(
             $freeFile,

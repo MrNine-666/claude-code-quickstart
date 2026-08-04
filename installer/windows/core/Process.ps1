@@ -1717,6 +1717,15 @@ function Test-CcqExecutableLocked {
             )
             $result.Locked = $false
             $result.Detail = "目标可独占打开，无占用"
+        } catch [System.IO.FileNotFoundException] {
+            # 目标可能在 Test-Path 与 Open 之间被另一个安装/清理进程删除；
+            # 这不是占用，必须放行让后续逻辑创建新文件。
+            $result.Locked = $false
+            $result.Detail = "目标在预检期间消失，按未安装处理"
+        } catch [System.IO.DirectoryNotFoundException] {
+            # 父目录同样可能在竞态中消失；不要把路径竞态误报为锁定。
+            $result.Locked = $false
+            $result.Detail = "目标目录在预检期间消失，按未安装处理"
         } catch [System.IO.IOException] {
             $result.Locked = $true
             $result.Detail = "目标被占用: $($_.Exception.Message)"
@@ -1733,8 +1742,9 @@ function Test-CcqExecutableLocked {
             $result.Detail = "预检异常已忽略: $($_.Exception.GetType().FullName)"
         } finally {
             if ($null -ne $stream) {
-                $stream.Close()
-                $stream.Dispose()
+                # Close/Dispose 独立尝试；极少数关闭异常也不能阻止 Dispose 释放句柄。
+                try { $stream.Close() } catch { }
+                try { $stream.Dispose() } catch { }
             }
         }
     } catch {
@@ -1924,9 +1934,17 @@ function Replace-CcqExecutable {
             # 安装器没有预期 SHA256 可比（self-update 有），只靠尺寸会在「同尺寸重装」时
             # 把失败误判成功。补一个零成本强判别式：替换成功后 temp 必然已被消费。
             # 被锁失败时 temp 仍在，因此该条件能排除同尺寸假阳性。
-            if (-not (Test-Path -LiteralPath $TempPath) -and
-                (Test-Path -LiteralPath $TargetPath) -and $tempSize -gt 0 -and
-                ((Get-Item -LiteralPath $TargetPath).Length -eq $tempSize)) {
+            $confirmed = $false
+            try {
+                $confirmed = (-not (Test-Path -LiteralPath $TempPath) -and
+                    (Test-Path -LiteralPath $TargetPath) -and $tempSize -gt 0 -and
+                    ((Get-Item -LiteralPath $TargetPath).Length -eq $tempSize))
+            } catch {
+                # 目标在二次确认期间被并发删除/替换时，按未确认处理并继续重试；
+                # 确认本身不能遮蔽原始替换错误或跳过清理/回滚。
+                $confirmed = $false
+            }
+            if ($confirmed) {
                 $replaced = $true
                 break
             }
@@ -1970,8 +1988,15 @@ function Replace-CcqExecutable {
     }
 
     # 最终校验（对齐 self-update.ts:932）：替换成功后确认 target 是期望产物。
-    if (-not (Test-Path -LiteralPath $TargetPath) -or $tempSize -le 0 -or
-        ((Get-Item -LiteralPath $TargetPath).Length -ne $tempSize)) {
+    $targetMatchesExpected = $false
+    try {
+        if ((Test-Path -LiteralPath $TargetPath) -and $tempSize -gt 0) {
+            $targetMatchesExpected = ((Get-Item -LiteralPath $TargetPath).Length -eq $tempSize)
+        }
+    } catch {
+        $targetMatchesExpected = $false
+    }
+    if (-not $targetMatchesExpected) {
         # 替换声称成功但目标非期望产物：从 backup 回滚旧 target。
         $hadBackup = Test-Path -LiteralPath $backupPath
         $restored = $false

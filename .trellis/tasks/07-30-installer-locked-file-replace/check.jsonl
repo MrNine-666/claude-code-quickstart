@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/project/installer/windows-core.md", "reason": "check 阶段核对 ccq handoff 与 Error Matrix 合规"}
+{"file": ".trellis/spec/project/installer/platform-runtime.md", "reason": "check 阶段核对平台运行时契约"}
