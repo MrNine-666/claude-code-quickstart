@@ -1,11 +1,11 @@
-# Installer 平台 Runtime 合同
+# Installer Platform Runtime Contract
 
-## 1. 范围与触发条件
+## 1. Scope / Trigger
 
 适用于 `installer/windows/**`、`installer/macos/**`、`steps.json`、bootstrap
 流程、平台检测、NodeJS/Git 处理和最终 ccq 安装。
 
-## 2. 签名与 Step 合同
+## 2. Signatures And Step Contract
 
 每个活动安装步骤都提供等价于以下内容的平台函数：
 
@@ -24,7 +24,7 @@ Git    (Order 20, no dependencies)
 
 Windows 使用 `StepFile`，macOS 使用 `MacOSStepFile`。
 
-## 3. 合同
+## 3. Contract
 
 - 安装流程先 bootstrap NodeJS/Git，然后提供/下载 `ccq`。Claude Code、Codex、
   Provider、MCP、Skills 及周边工具由 TUI 管理。
@@ -55,10 +55,10 @@ Windows 使用 `StepFile`，macOS 使用 `MacOSStepFile`。
   “原子替换”是特殊且仅部分原子的合同；操作该路径前先阅读
   [Windows Core](./windows-core.md) 的替换章节。
 
-### ccq transport 合同
+### ccq Transport Contract
 
 公开的安装器交接仍然使用 raw asset URL：
-`Install-CcqExecutable -DownloadUrl <raw-url>` on Windows and
+Windows 使用 `Install-CcqExecutable -DownloadUrl <raw-url>`，macOS 使用
 `ccq_install_executable <raw-url>`。每个函数通过追加 `.gz` 推导首选 gzip URL；
 不查询 Release API，也不要求 digest metadata。
 
@@ -70,9 +70,9 @@ Windows 使用 `StepFile`，macOS 使用 `MacOSStepFile`。
 - 两种传输都失败时，raw 失败是主错误，同时保留 gzip 阶段（下载或解压）作为诊断
   上下文。任何传输失败都不得触碰现有 `ccq` 字节。
 
-## 4. 验证与错误矩阵
+## 4. Validation And Error Matrix
 
-| 条件 | 必需结果 |
+| Condition | Required result |
 |---|---|
 | 已有 Node/npm 满足最低版本 | 跳过且不迁移 provider |
 | 活动 provider 可更新到 LTS | 在该 provider 内更新并验证 |
@@ -88,7 +88,7 @@ Windows 使用 `StepFile`，macOS 使用 `MacOSStepFile`。
 | 不支持的 OS/版本/架构 | 明确失败或标记手动/不支持；不得假报成功 |
 | Linux 调用 | 当前平台不支持；proposal 不属于 runtime 行为 |
 
-## 5. 良好、基线与错误案例
+## 5. Good / Base / Bad Cases
 
 - 正确：macOS 已有 fnm Node LTS 时直接复用，不清理 Profile。
 - 正确：已安装 `ccq 1.2.2`、安装器为 `v1.2.3` 时显示两个版本，仅在用户选择
@@ -103,7 +103,7 @@ Windows 使用 `StepFile`，macOS 使用 `MacOSStepFile`。
   Basic 步骤安装。
 - 错误：在 StrictMode 下使用 `$result = Some-Command; $result.Count`。
 
-## 6. 必需测试
+## 6. Tests Required
 
 - `pwsh -File installer/contracts/Test-Contracts.ps1`。
 - Windows source：`pwsh -File installer/windows/Install.ps1 -ListSteps` 以及相关
@@ -118,7 +118,7 @@ Windows 使用 `StepFile`，macOS 使用 `MacOSStepFile`。
 - `Test-CcqVersionHandoffContract` 断言规范化、同版本跳过、不匹配时默认保留、
   明确覆盖后继续，以及对应的 macOS source 合同。
 
-## 7. 错误与正确对比
+## 7. Wrong Vs Correct
 
 ```powershell
 # 错误：命令返回 $null 时在 StrictMode 下会失败。

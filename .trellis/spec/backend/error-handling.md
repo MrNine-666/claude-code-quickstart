@@ -2,7 +2,7 @@
 
 ## Expected Failure Shapes
 
-Use discriminated results when callers need to branch on a recoverable failure:
+调用方需要按可恢复失败分支时，使用 discriminated result：
 
 ```ts
 type OperationResult<T, E> =
@@ -10,69 +10,67 @@ type OperationResult<T, E> =
   | {readonly ok: false; readonly error: E};
 ```
 
-Existing examples include `CheckLatestVersionResult`, `DownloadUpdateResult`,
-`ApplySelfUpdateResult`, Provider service results and Skills adoption results.
-Do not collapse `partial`, `restored`, `scheduled`, `applied`, and `deleted`
-into a boolean success.
+现有示例包括 `CheckLatestVersionResult`、`DownloadUpdateResult`、
+`ApplySelfUpdateResult`、Provider service result 与 Skills adoption result。
+不得把 `partial`、`restored`、`scheduled`、`applied` 和 `deleted` 压缩成一个
+`boolean success` 字段。
 
 ## File Read Rules
 
-Missing and corrupt are different states. A missing mutable file may be created;
-an existing malformed JSON/TOML file must be preserved and reported.
+缺失与损坏是不同状态。缺失的可变文件可以创建；已有但格式错误的 JSON/TOML
+文件必须保留并报告。
 
 ```ts
 const result = readJsonFileStrict(path);
 if (result.status === 'invalid') return {ok: false, error: result.error};
 ```
 
-Never catch a parse error, replace the value with `{}`, and write it back.
-Atomic writes use `fs-utils.ts`/`toml-edit.ts`, preserve unrelated fields, and
-use `0600` for secret files on POSIX.
+绝不能捕获 parse error、用 `{}` 替代原值后再写回。原子写入使用
+`fs-utils.ts`/`toml-edit.ts`，保留无关字段，并在 POSIX 上对机密文件使用
+`0600`。
 
 ## Child Process Rules
 
-- Use `core/exec.ts` for captured management commands and always inspect
-  `code`, `stdout`, `stderr`, timeout and spawn failure.
-- Launch-class `cc`/`cx` commands use inherited stdio and return the child code.
-- ENOENT for a launched Agent is exit `127`.
-- A timeout must settle the caller even when a descendant keeps stdio handles.
-- A command exit code is diagnostic, not proof of a filesystem fact. Skills,
-  MCP, tool injection and self-update must reconcile final state.
+- 捕获式管理命令使用 `core/exec.ts`，并始终检查 `code`、`stdout`、`stderr`、
+  timeout 与 spawn failure。
+- 启动类 `cc`/`cx` 命令继承 stdio，并返回 child code。
+- 启动 Agent 时出现 ENOENT，exit code 为 `127`。
+- 即使 descendant 仍持有 stdio handle，timeout 也必须让 caller settle。
+- 命令 exit code 是诊断，不是 filesystem fact 的证明。Skills、MCP、tool
+  injection 与 self-update 必须对最终状态进行 reconciliation。
 
 ## Presentation
 
-- TUI default errors are friendly and concise; technical detail belongs in
-  `ErrorPanel` and the `D` expansion path.
-- CLI errors go to stderr and keep stdout machine-readable where applicable.
-- Use domain redactors before formatting JSON/TOML or child stderr.
-- A successful first step followed by activation failure returns success with a
-  warning when the saved object remains usable.
+- TUI 默认错误应友好且简洁；技术细节放入 `ErrorPanel` 和 `D` 展开路径。
+- CLI 错误写入 stderr；适用时保持 stdout 可被机器读取。
+- 格式化 JSON/TOML 或 child stderr 前使用领域 redactor。
+- 第一步成功但 activation 失败时，只要已保存对象仍可用，就返回带 warning 的
+  success。
 
 ## Cleanup
 
-Best-effort cleanup may use a narrow empty `catch` only when the primary typed
-result already carries the failure and cleanup cannot change it. The catch must
-be scoped to that transaction's temp/helper path. Never swallow the primary
-operation error.
+只有主要 typed result 已携带失败且 cleanup 不会改变该结果时，best-effort
+cleanup 才可使用范围狭窄的空 `catch`。该 catch 必须只覆盖当前 transaction 的
+temp/helper path。绝不能吞掉 primary operation error。
 
 ## Error Matrix
 
 | Condition | Required behavior |
 |---|---|
-| Missing optional file | Return `missing` or create minimal owned structure |
-| Existing malformed file | Reject mutation; preserve bytes; redact output |
-| External command non-zero | Friendly error plus retained diagnostic |
-| Command zero but postflight fact absent | Failure/partial, never success |
-| Mutation completed but follow-up sync failed | Success with warning when data is usable |
-| Destructive action in non-TTY without `--yes` | Refuse before mutation |
-| Cleanup failure after primary failure | Preserve primary error; do not broaden deletion |
+| 可选文件缺失 | 返回 `missing` 或创建最小 owned structure |
+| 已有文件格式错误 | 拒绝 mutation；保留原字节；脱敏输出 |
+| 外部命令 non-zero | 友好错误，并保留诊断 |
+| 命令为 zero 但 postflight fact 缺失 | 返回 failure/partial，绝不返回 success |
+| Mutation 已完成但后续 sync 失败 | 数据仍可用时返回带 warning 的 success |
+| Non-TTY 中执行 destructive action 且无 `--yes` | mutation 前拒绝 |
+| Primary failure 后 cleanup 也失败 | 保留 primary error；不得扩大删除范围 |
 
 ## Scenario: Abortable Child Operations
 
 ### 1. Scope / Trigger
 
-Use this contract when a TUI mutation can be interrupted by the parent view,
-especially when the command is a shell-backed Windows process tree.
+当 TUI mutation 可被父 view 中断时使用此合同，尤其是命令由 Windows shell
+process tree 承载时。
 
 ### 2. Signatures
 
@@ -95,54 +93,54 @@ function bindExecSignal(signal: AbortSignal): typeof execCommand;
 
 ### 3. Contracts
 
-- `execCommand` rejects promptly with `OperationAbortedError` (`name:
-  'AbortError'`) when `signal` aborts; it does not wait for `close`.
-- Aborting terminates the complete child process tree (`taskkill /T /F` on
-  Windows, signal termination elsewhere), removes the settlement listener and
-  normal timeout, and may retain a force-kill cleanup timer until child close.
-- Services pass the bound executor through their existing dependency seam; they
-  do not create a second process runner.
-- Parent views suppress stale completion dispatches, clear busy state, and
-  refresh detection facts after cancellation.
+- `signal` abort 时，`execCommand` 立即以 `OperationAbortedError`（`name:
+  'AbortError'`）reject；不得等待 `close`。
+- Abort 会终止完整 child process tree（Windows 使用 `taskkill /T /F`，其他
+  平台使用 signal termination），移除 settlement listener 与正常 timeout；
+  在 child close 前可保留 force-kill cleanup timer。
+- Service 通过现有 dependency seam 传递绑定后的 executor；不得创建第二个
+  process runner。
+- Parent view 抑制过期 completion dispatch、清除 busy state，并在 cancel 后
+  刷新 detection fact。
 
 ### 4. Validation & Error Matrix
 
 | Condition | Required result |
 |---|---|
-| Signal already aborted before spawn | Immediate `AbortError`, no command work |
-| Signal aborts during command | Prompt `AbortError`, process tree termination requested |
-| Descendant keeps stdio after abort/timeout | Caller promise is already settled |
-| Aborted mutation promise settles later | Parent ignores success/failure dispatch |
-| Final fact refresh fails after cancellation | Keep cancellation state; surface refresh failure through normal detection state |
+| Spawn 前 signal 已 aborted | 立即返回 `AbortError`，不执行命令 |
+| 命令执行中 signal abort | 立即返回 `AbortError`，并请求终止 process tree |
+| Abort/timeout 后 descendant 仍持有 stdio | Caller promise 已 settle |
+| 已 abort 的 mutation promise 后续 settle | Parent 忽略 success/failure dispatch |
+| Cancel 后 final fact refresh 失败 | 保留 cancellation state；通过正常 detection state 展示 refresh failure |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: `ToolsView`/`SkillsView` own one controller per mutation and call
-  `finish(signal)` in `finally`.
-- Base: a non-mutating detection command omits `signal` and keeps existing
-  timeout/error semantics.
-- Bad: catching `AbortError` and dispatching `item-failed`/`action-failed`, or
-  treating a cancelled command's partial stdout as success.
+- 良好：`ToolsView`/`SkillsView` 每次 mutation 拥有一个 controller，并在
+  `finally` 中调用 `finish(signal)`。
+- 基线：非 mutation 的 detection command 不传 `signal`，保持现有
+  timeout/error 语义。
+- 错误：捕获 `AbortError` 后 dispatch `item-failed`/`action-failed`，或把已
+  cancel 命令的 partial stdout 当作 success。
 
 ### 6. Tests Required
 
-- `verify-core-functions.mjs`: timeout and real AbortSignal tests assert prompt
-  settlement and error name.
-- Domain reducer gates: assert `cancel-busy` clears busy/progress/error state.
-- Tool/Skills lifecycle gates: assert postflight fact refresh remains the source
-  of final state after a cancelled mutation.
+- `verify-core-functions.mjs`：timeout 与真实 AbortSignal 测试断言立即 settle
+  和 error name。
+- Domain reducer gate：断言 `cancel-busy` 清除 busy/progress/error state。
+- Tool/Skills lifecycle gate：断言 cancel mutation 后仍以 postflight fact
+  refresh 作为最终状态来源。
 
 ### 7. Wrong vs Correct
 
 ```ts
-// Wrong: operation layer owns UI cancellation semantics.
+// 错误：operation layer 拥有 UI cancellation 语义。
 try {
   await execCommand(command, args, {signal});
 } catch {
   dispatch({type: 'item-failed', error: '取消'});
 }
 
-// Correct: core rejects typed cancellation; the parent owns reducer policy.
+// 正确：core reject typed cancellation；父级拥有 reducer policy。
 const exec = bindExecSignal(signal);
 try {
   await serviceMutation(exec);

@@ -2,7 +2,7 @@
 
 ## Map the Flow
 
-Write the actual path before editing:
+编辑前写出真实路径：
 
 ```text
 key/argv -> parser/view -> service -> core/contract -> file or child process
@@ -10,7 +10,7 @@ key/argv -> parser/view -> service -> core/contract -> file or child process
          -> reducer reconciliation -> view/footer/CLI exit
 ```
 
-For installer/Release work use:
+Installer/Release 工作使用：
 
 ```text
 source -> contract -> builder -> dist artifact -> CI/Release -> installed runtime
@@ -18,48 +18,49 @@ source -> contract -> builder -> dist artifact -> CI/Release -> installed runtim
 
 ## Boundary Checklist
 
-- [ ] What is the exact input and who validates it?
-- [ ] Which layer owns persistence or process execution?
-- [ ] What fields/files belong to another domain and must be preserved?
-- [ ] Are missing and corrupt states distinct?
-- [ ] Does exit code need filesystem/runtime postflight?
-- [ ] Can the result be partial, restored, scheduled or cancelled?
-- [ ] Which side effects require snapshot/atomic write/cleanup?
-- [ ] How are secrets redacted across progress, error, toast and CLI output?
-- [ ] Is final UI state reconciled from current facts?
+- [ ] 精确输入是什么，由谁验证？
+- [ ] 哪一层拥有 persistence 或 process execution？
+- [ ] 哪些 field/file 属于其他 domain，必须保留？
+- [ ] Missing 与 corrupt state 是否区分？
+- [ ] Exit code 后是否需要 filesystem/runtime postflight？
+- [ ] 结果是否可能为 partial、restored、scheduled 或 cancelled？
+- [ ] 哪些 side effect 需要 snapshot/atomic write/cleanup？
+- [ ] Progress、error、toast 与 CLI output 中的 secret 如何脱敏？
+- [ ] 最终 UI state 是否根据当前事实完成 reconciliation？
 
 ## Project-Specific Boundaries
 
 ### Config
 
-Provider, Config, MCP, Skills and Global Rules are separate owners. A general
-config save must not serialize a reduced model over another domain.
+Provider、Config、MCP、Skills 与 Global Rules 分别由不同 owner 管理。通用 config
+save 不得用缩减后的 model 覆盖其他 domain。
 
 ### Shared Agent Resources
 
-Tools/MCP/Skills show two-sided facts but each has a different physical model.
-Do not reuse one domain's projection or injection assumption in another.
+Tools/MCP/Skills 都展示两侧事实，但各自具有不同物理模型。不得在不同 domain
+间复用 projection 或 injection 假设。
 
 ### External CLIs
 
-Command construction, environment, timeout, TTY and diagnostic capture are part
-of the contract. Official Skills/CodeGraph/CcgWorkflow commands also require
-postflight facts; stdout/stderr alone is not state.
+Command construction、environment、timeout、TTY 与 diagnostic capture 都是
+contract 的组成部分。Skills/CodeGraph/CcgWorkflow 官方命令还需要 postflight
+fact；stdout/stderr 本身不是 state。
 
 ### Compiled Runtime
 
-Source paths, dynamic workers and adjacent contract files may not exist in a Bun
-single-file executable. Every source-mode asset path needs an embedded/plain
-fallback and a compiled smoke.
+Bun 单文件 executable 中可能不存在 source path、dynamic worker 与相邻
+contract file。每条 source-mode asset path 都需要 embedded/plain fallback
+和 compiled smoke。
 
 ### Windows Release
 
-Source PowerShell and `irm | iex` have different path/encoding contexts. Test
-both whenever build composition, contracts, templates or remote entry code moves.
+Source PowerShell 与 `irm | iex` 具有不同 path/encoding context。Build
+composition、contract、template 或 remote entry code 发生移动时，两种模式都要
+测试。
 
 ## After the Change
 
-- [ ] Focused boundary assertions exist on both sides.
-- [ ] A corrupt/partial/error case proves no unrelated mutation.
-- [ ] Registry/help/footer/contract projections still share one source.
-- [ ] Source and compiled/platform-specific paths are both covered.
+- [ ] 边界两侧都有 focused assertion。
+- [ ] Corrupt/partial/error 案例证明没有无关 mutation。
+- [ ] Registry/help/footer/contract projection 仍共享一个事实来源。
+- [ ] Source 与 compiled/platform-specific path 均已覆盖。

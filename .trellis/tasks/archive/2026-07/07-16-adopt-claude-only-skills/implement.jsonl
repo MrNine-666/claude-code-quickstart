@@ -1,4 +1,4 @@
-{"file":".trellis/spec/frontend/skills-lifecycle-contract.md","reason":"单实体物理拓扑、snapshot、官方 CLI 所有权、postflight、partial 与恢复的主契约"}
-{"file":".trellis/spec/frontend/skills-batch-install-contract.md","reason":"保护扁平安装、来源批次和 detection reconciliation，避免管理迁移破坏安装页"}
-{"file":"tui/AGENTS.md","reason":"TUI Skills 共享本体、Agent 映射、CLI 删除所有权和 OpenTUI 交互硬约束"}
-{"file":".context/prefs/workflow.md","reason":"红灯测试、决策日志、影响范围与验证顺序要求"}
+{"file":".trellis/spec/project/tui/skills-lifecycle-contract.md","reason":"单实体物理拓扑、snapshot、官方 CLI 所有权、postflight、partial 与恢复的主契约"}
+{"file":".trellis/spec/project/tui/skills-batch-install-contract.md","reason":"保护扁平安装、来源批次和 detection reconciliation，避免管理迁移破坏安装页"}
+{"file":".trellis/spec/project/tui/index.md","reason":"TUI Skills 共享本体、Agent 映射、CLI 删除所有权和 OpenTUI 交互硬约束"}
+{"file":".trellis/spec/guides/development-workflow.md","reason":"红灯测试、决策日志、影响范围与验证顺序要求"}

@@ -1,14 +1,14 @@
-# ccq — OpenTUI 管理控制台
+# ccq - OpenTUI Management Console
 
 Claude Code Quickstart 的 **6 菜单管理控制台**（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills），基于 **OpenTUI + Bun**，经 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），contracts 内嵌进可执行文件。
 
-> 架构与约束详见 [tui/AGENTS.md](AGENTS.md)。CLI 使用说明见根目录 [README.md](../README.md) 的「Manage 管理控制台（ccq）」章节。
+> 架构与约束详见 [TUI Project Contracts](../.trellis/spec/project/tui/index.md)。CLI 使用说明见根目录 [README.md](../README.md) 的「Manage 管理控制台（ccq）」章节。
 
-## 环境要求
+## Requirements
 
 - **Bun** `>=1.2.0`（安装：`curl -fsSL https://bun.sh/install | bash`）
 
-## 本地开发
+## Local Development
 
 ```bash
 # 安装依赖
@@ -24,14 +24,14 @@ bun run typecheck
 bun run build
 ```
 
-## 验证
+## Verification
 
 ```bash
 # 运行全部 verify 门禁（parser / 状态机 / 迁移 / parity，bun 直跑 src）
 bun run verify
 ```
 
-## 目录结构
+## Directory Structure
 
 ```
 tui/

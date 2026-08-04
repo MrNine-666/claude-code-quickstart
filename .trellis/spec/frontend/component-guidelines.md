@@ -2,85 +2,83 @@
 
 ## Component Ownership
 
-Reusable controls live in `tui/src/components/`:
+可复用控件位于 `tui/src/components/`：
 
-- `Card`, `ScrollList`, `ListState`, `DetailScreen`, `DetailPanel` for list/detail
-  composition.
-- `Modal`, `ErrorPanel`, `Spinner`, toast for overlays and feedback.
-- `FormPanel` plus `TextField`, `SelectField`, `RadioField`, `KeyValueField` for
-  structured forms.
-- `SingleLineInput` for page search/filter input and `TextareaEditor` for
-  multiline editing.
-- `CodePreview` for plain/JSON/TOML previews with source-mode syntax support.
+- `Card`、`ScrollList`、`ListState`、`DetailScreen`、`DetailPanel` 用于
+  list/detail 组合。
+- `Modal`、`ErrorPanel`、`Spinner`、toast 用于 overlay 与反馈。
+- `FormPanel` 配合 `TextField`、`SelectField`、`RadioField`、`KeyValueField`
+  实现结构化表单。
+- `SingleLineInput` 用于页面搜索/过滤 input，`TextareaEditor` 用于
+  多行编辑。
+- `CodePreview` 用于纯文本/JSON/TOML 预览，并在 source mode 支持语法高亮。
 
 ## Focus and Input
 
-- A control receives explicit `active` and `focused` facts. Rendering focus and
-  accepting keys are the same ownership decision.
-- When a Modal is active, the background list/grid is rendered inactive. Modal
-  arrows and Enter must not move or submit the background.
-- Controlled OpenTUI `<input>` uses both supported change events through one
-  normalizer when necessary; page Enter remains owned by the page handler.
-- Secret values may be visible only during explicit editing. Read-only previews,
-  labels, toasts and errors remain masked.
+- 控件接收显式 `active` 与 `focused` fact。渲染焦点和接受按键属于同一个
+  所有权决策。
+- Modal 活动时，背景 list/grid 以 inactive 状态渲染。Modal 的 arrow 与 Enter
+  不得移动或提交背景内容。
+- 受控 OpenTUI `<input>` 必要时通过一个 normalizer 处理两种受支持 change
+  event；页面 Enter 仍由 page handler 拥有。
+- Secret value 只可在显式编辑期间可见。只读预览、label、toast 与 error 始终保持
+  masked。
 
 ## Layout
 
-- Prefer flex layouts with one clear height owner. Do not reintroduce manual
-  `terminalHeight - header - footer` arithmetic in each view.
-- Stable regions such as card grids, status columns, checkboxes and shortcut bars
-  need fixed/min dimensions so labels or hover/focus do not shift layout.
-- Shared `Checkbox` renders unchecked idle brackets/content with `colors.muted`
-  and uses `colors.primary` for the complete bracket plus checkmark whenever it
-  is focused or checked. Do not theme only the brackets or leave the checkmark
-  at the terminal default color; Skills install and installed lists share it.
-- `RadioField compact` reuses the same option selection colors without the wide
-  form label/frame. Use it for read-only page summaries whose input remains owned
-  by a page shortcut; normal editable forms keep the default framed variant.
-- `ScrollListItem.bordered` passes through to `Card.bordered` and defaults to a
-  normal rounded Card. Use `bordered: false` for lightweight structural rows
-  such as expandable source-group headers; keep actual domain Items bordered.
-- `titleRight`/status regions stay visible; long titles shrink or clip before
-  displacing status/download facts.
-- Use semantic colors from `theme/index.ts`; do not hardcode terminal colors in
-  views. Source and compiled mode must both have a legible plain-text fallback.
-- All loading/empty/no-match/error list states use `ListState`; do not hand-build
-  different spinner/empty text in each view.
+- 优先使用只有一个明确 height owner 的 flex layout。不得在每个 view 中重新
+  引入 `terminalHeight - header - footer` 手工运算。
+- Card grid、status column、checkbox 与 shortcut bar 等稳定区域需要固定或最小
+  dimension，使 label 或 hover/focus 不会造成布局位移。
+- 共享 `Checkbox` 使用 `colors.muted` 渲染未选中 idle bracket/content；focused
+  或 checked 时，完整 bracket 与 checkmark 都使用 `colors.primary`。不得只为
+  bracket 着色或让 checkmark 使用 terminal default color；Skills install 与
+  installed list 共用该组件。
+- `RadioField compact` 复用相同的 option selection color，但不显示宽 form
+  label/frame。只读 page summary 的 input 仍由页面 shortcut 拥有时使用它；
+  普通 editable form 保留默认 framed variant。
+- `ScrollListItem.bordered` 传给 `Card.bordered`，默认是普通 rounded Card。
+  Expandable source-group header 等轻量 structural row 使用 `bordered: false`；
+  实际 domain Item 保留 border。
+- `titleRight`/status region 始终可见；长 title 应先 shrink 或 clip，不得挤走
+  status/download 事实。
+- 使用 `theme/index.ts` 的 semantic color；view 中不得硬编码 terminal color。
+  Source 与 compiled mode 都必须有清晰可读的纯文本 fallback。
+- 所有 loading/empty/no-match/error list state 使用 `ListState`；不得在每个 view
+  中分别手写 spinner/empty text。
 
 ## Textarea Rule
 
-OpenTUI `<textarea>` scrolls internally but exposes no visible scrollbar.
-Never wrap it in `<scrollbox>`: that suppresses internal scrolling. Accept the
-cursor-driven scroll behavior and keep the editor in a stable flex region.
+OpenTUI `<textarea>` 在内部滚动，但不暴露可见滚动条。绝不能用
+`<scrollbox>` 包裹，否则会抑制内部滚动。接受 cursor-driven scroll behavior，
+并将 editor 放在稳定 flex region 中。
 
 ## CodePreview Rule
 
-Normalize CRLF and trailing newline handling before counting/rendering lines.
-In compiled executables Tree-sitter is disabled because its worker cannot be
-resolved from Bun's virtual path; render plain text. Source mode may use syntax
-highlighting.
+统计和渲染行前，先统一 CRLF 与 trailing newline。Compiled executable 中禁用
+Tree-sitter，因为 Bun virtual path 无法解析其 worker；改为渲染 plain text。
+Source mode 可以使用语法高亮。
 
 ## Global Busy Feedback
 
-- `Spinner` is the single loading component. Use its default `inline` variant
-  for local detection/loading rows and `variant="overlay"` for blocking
-  install, update and uninstall mutations.
-- App owns the current `BusyOverlayState` and renders the overlay at the terminal
-  root. Tools and Skills report presentation state through
-  `onBusyStateChange`; they must not render a mutation `ProgressLog` at the
-  bottom of the page.
-- The overlay covers `100%` width/height with a themed semi-transparent
-  background, keeps the spinner/content panel opaque, and shows only the latest
-  instruction reported by the active mutation.
-- While the overlay is visible, App disables both global input dispatch and the
-  active background view. Completion clears the overlay; the parent view owns
-  the final completion/cancellation toast and domain error presentation.
+- `Spinner` 是唯一 loading component。局部 detection/loading row 使用默认
+  `inline` variant；阻塞 install、update 与 uninstall mutation 使用
+  `variant="overlay"`。
+- App 拥有当前 `BusyOverlayState`，并在 terminal root 渲染 overlay。Tools 与
+  Skills 通过 `onBusyStateChange` 上报 presentation state；不得在页面底部渲染
+  mutation `ProgressLog`。
+- Overlay 以主题化半透明背景覆盖 `100%` width/height，
+  spinner/content panel 保持不透明，只显示活动 mutation 上报的最新
+  instruction。
+- Overlay 可见时，App 同时禁用 global input dispatch 与活动背景 view。
+  Completion 清除 overlay；parent view 拥有最终 completion/cancellation toast
+  与 domain error presentation。
 
 ```tsx
-// Wrong: a view-local log leaves the rest of the shell interactive.
+// 错误：view-local log 使 shell 其他部分仍可交互。
 {busyAction ? <BottomLog messages={progress} /> : null}
 
-// Correct: the view reports state and App reuses the shared Spinner overlay.
+// 正确：view 上报 state，App 复用共享 Spinner overlay。
 onBusyStateChange?.({title: '正在更新工具', message: latestInstruction, onCancel: cancelBusyTask});
 <Spinner variant="overlay" label={busy.title} message={busy.message} onCancel={busy.onCancel} />
 ```
@@ -89,8 +87,8 @@ onBusyStateChange?.({title: '正在更新工具', message: latestInstruction, on
 
 ### 1. Scope / Trigger
 
-Use this contract for any blocking install, update, inject, topology, or
-uninstall action rendered through `Spinner variant="overlay"`.
+所有通过 `Spinner variant="overlay"` 渲染的阻塞 install、update、inject、
+topology 或 uninstall action 都使用此合同。
 
 ### 2. Signatures
 
@@ -118,64 +116,62 @@ type ProgressEvent = {
 
 ### 3. Contracts
 
-- Overlay is the default blocking presentation for mutation busy state.
-- On the first `Esc`, Spinner hides itself immediately and invokes `onCancel`
-  exactly once. It must not know about child processes, reducers, or
-  `AbortController`.
-- The parent view owns cancellation: abort its active controller, dispatch its
-  domain `cancel-busy` action, and refresh final facts from the shared cache.
-- App passes the parent callback to the root Spinner and disables background
-  input while `BusyOverlayState` is present.
-- Views project only the structured progress event's latest `instruction` to
-  the overlay. A newer command replaces the rendered message; status-only
-  events do not hide the command. Completing the current mutation clears the
-  overlay and emits one parent-owned toast.
+- Overlay 是 mutation busy state 的默认阻塞式 presentation。
+- 第一次按下 `Esc` 时，Spinner 立即隐藏，并精确调用一次 `onCancel`。它不得
+  了解 child process、reducer 或 `AbortController`。
+- Parent view 拥有 cancellation：abort 活动 controller、dispatch 领域
+  `cancel-busy` action，并从共享 cache refresh 最终 fact。
+- App 将 parent callback 传给 root Spinner，并在 `BusyOverlayState` 存在时
+  禁用 background input。
+- View 只把 structured progress event 的最新 `instruction` 投影到 overlay。
+  新 command 替换已渲染 message；仅 status 的 event 不得隐藏 command。当前
+  mutation 完成时清除 overlay，并发出一个 parent-owned toast。
 
 ### 4. Validation & Error Matrix
 
 | Condition | Required result |
 |---|---|
-| Overlay rendered without `onCancel` | Typecheck failure |
-| First Esc while visible | Overlay disappears and parent callback runs once |
-| Repeated Esc after callback | No duplicate callback or state transition |
-| New progress event arrives | Replace the current instruction; do not append a log |
-| Status-only event has no `instruction` | Keep the current command visible; do not replace it with fixed status copy |
-| Parent abort rejects the command | No stale success/error dispatch; parent refreshes facts |
-| Mutation completes normally | Parent clears busy and shows one final toast |
+| Overlay 渲染时没有 `onCancel` | Typecheck 失败 |
+| 可见时第一次按 Esc | Overlay 消失，parent callback 运行一次 |
+| Callback 后重复按 Esc | 不重复 callback 或 state transition |
+| 新 progress event 到达 | 替换当前 instruction；不得追加 log |
+| 仅 status event 没有 `instruction` | 保留当前 command；不得用固定 status 文案替换 |
+| Parent abort 导致 command reject | 不 dispatch 过期 success/error；parent refresh fact |
+| Mutation 正常完成 | Parent 清除 busy，并显示一个最终 toast |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: `Spinner` calls `onCancel`; `ToolsView`/`SkillsView` abort and dispatch
-  `cancel-busy` without presenting cancellation as an error.
-- Good: core emits `instruction: 'npm install -g package'`; the view projects
-  that field while retaining `message` for CLI/status diagnostics.
-- Base: a mutation has no active controller; Esc is ignored by the parent and
-  does not fabricate a reducer failure.
-- Bad: Spinner calls `taskkill`, mutates a domain reducer, or waits for a
-  process promise before hiding the overlay.
-- Bad: the view projects `event.message`, allowing text such as `正在更新...`
-  or a success message to replace the concrete command.
+- 良好：`Spinner` 调用 `onCancel`；`ToolsView`/`SkillsView` abort 并 dispatch
+  `cancel-busy`，且不把 cancellation 展示为 error。
+- 良好：core 发出 `instruction: 'npm install -g package'`；view 投影该 field，
+  同时保留 `message` 供 CLI/status diagnostic 使用。
+- 基线：mutation 没有活动 controller；parent 忽略 Esc，且不伪造 reducer
+  failure。
+- 错误：Spinner 调用 `taskkill`、修改 domain reducer，或等 process promise
+  settle 后才隐藏 overlay。
+- 错误：view 投影 `event.message`，使 `正在更新...` 或 success message 替换
+  具体 command。
 
 ### 6. Tests Required
 
-- `verify-layout-shell.mjs`: render one current instruction, assert the obsolete
-  bottom-log component is absent, emit Escape, and assert one callback plus no
-  overlay frame after the event.
-- Skills/Tools core gates: assert spawned command argv is also exposed through
-  `ProgressEvent.instruction`.
-- Tools/Skills reducer gates: assert `cancel-busy` clears busy/progress/error
-  state and returns to the correct page.
-- `verify-core-functions.mjs`: assert a real `AbortSignal` rejects the command
-  promptly with `AbortError`.
+- `verify-layout-shell.mjs`：渲染一个 current instruction，断言旧 bottom-log
+  component 不存在，发出 Escape，并断言 callback 只执行一次且事件后无 overlay
+  frame。
+- Skills/Tools core gate：断言 spawned command argv 也通过
+  `ProgressEvent.instruction` 暴露。
+- Tools/Skills reducer gate：断言 `cancel-busy` 清除 busy/progress/error state，
+  并返回正确页面。
+- `verify-core-functions.mjs`：断言真实 `AbortSignal` 立即以 `AbortError`
+  reject command。
 
 ### 7. Wrong vs Correct
 
 ```tsx
-// Wrong: rendering owns business cancellation and projects generic status copy.
+// 错误：rendering 拥有业务 cancellation，并投影通用 status 文案。
 onProgress(event => dispatch({type: 'progress', message: event.message}));
 <Spinner variant="overlay" message={progress.join('\n')} onCancel={() => child.kill()} />
 
-// Correct: the view projects only concrete instructions; the parent owns cancellation.
+// 正确：view 只投影具体 instruction；parent 拥有 cancellation。
 onProgress(event => {
   if (event.instruction) dispatch({type: 'progress', message: event.instruction});
 });
@@ -185,25 +181,25 @@ onProgress(event => {
 ## Wrong vs Correct
 
 ```tsx
-// Wrong: background remains interactive under the Modal.
+// 错误：Modal 下方背景仍可交互。
 <ToolsGrid active={true} />
 <Modal active={confirming}>...</Modal>
 
-// Correct
+// 正确
 <ToolsGrid active={!confirming} />
 <Modal active={confirming}>...</Modal>
 ```
 
 ```tsx
-// Wrong: a source-group header is visually presented as another domain Card.
+// 错误：source-group header 在视觉上被当成另一张 domain Card。
 {key: group.key, title: group.label}
 
-// Correct: retain ScrollList focus/scroll behavior without a Card border.
+// 正确：保留 ScrollList focus/scroll behavior，但不显示 Card border。
 {key: group.key, title: group.label, bordered: false}
 ```
 
 ## Verification
 
-Run `verify-layout-*`, `verify-list-state` coverage within existing gates,
-`verify-modal-title.mjs`, `verify-code-preview.mjs`, domain render gates,
-`verify-layout-shell.mjs` for global busy feedback, typecheck and full verify.
+运行 `verify-layout-*`、现有 gate 中的 `verify-list-state` coverage、
+`verify-modal-title.mjs`、`verify-code-preview.mjs`、domain render gate、用于全局
+busy feedback 的 `verify-layout-shell.mjs`、typecheck 与完整 verify。

@@ -1,12 +1,12 @@
-# Windows Core 合同
+# Windows Core Contract
 
-## 1. 范围与触发条件
+## 1. Scope / Trigger
 
 适用于 `installer/windows/core/**`、`installer/windows/Install.ps1`、Windows 单文件
 构建，以及任何消费 PowerShell runtime helpers 的步骤。这些文件是 dot-sourced
 脚本，不是 PowerShell modules。
 
-## 2. 加载与所有权合同
+## 2. Load And Ownership Contract
 
 `installer/windows/Install.ps1` 必须严格按以下顺序加载 core 文件：
 
@@ -21,7 +21,7 @@ Json.ps1 -> Ui.ps1 -> Process.ps1 -> Profile.ps1 -> Update.ps1
 source 与 release artifact 使用相同的 runtime 边界，但 release artifact 可能没有
 可用的 `$PSScriptRoot`。
 
-| Module | 负责内容 |
+| Module | Owns |
 |---|---|
 | `Json.ps1` | 兼容 PS5.1 的 JSON-to-hashtable 转换 |
 | `Ui.ps1` | 终端能力/主题检测、语义输出、菜单、进度和错误详情 |
@@ -33,9 +33,9 @@ source 与 release artifact 使用相同的 runtime 边界，但 release artifac
 | `Registry.ps1` | 共享步骤合同加载、inline fallback、分组、依赖和有序文件 |
 | `Bootstrap.ps1` | 内存步骤状态、依赖排序和 Test -> Install/Update -> Verify 生命周期 |
 
-## 3. Runtime 合同
+## 3. Runtime Contracts
 
-### PowerShell 兼容性与数组
+### PowerShell Compatibility And Arrays
 
 - 所有 Windows installer 代码以 PowerShell 5.1+ 和
   `Set-StrictMode -Version Latest` 为目标。
@@ -48,7 +48,7 @@ source 与 release artifact 使用相同的 runtime 边界，但 release artifac
   再用 `@(...)` 包裹，否则空列表会嵌套为 `@(@())`，导致 `.Count` 读为 1，并渲染
   出伪元素，例如空的带括号进程列表。
 
-### Process 与命令执行
+### Process And Command Execution
 
 `Invoke-ExternalCommand` 接受 `-Command`、`-Arguments`、`-WorkingDirectory`、
 `-TimeoutSeconds`、`-RetryCount` 和 `-SuppressOutput`，并返回包含 `Success`、
@@ -61,7 +61,7 @@ PowerShell engine 时，含空格的 `.ps1` 路径必须加引号。`Invoke-NpmG
 使用 MSI 安装 Microsoft.PowerShell package 时才使用 `-InstallerType wix`；不得将其
 传给仅支持 MSIX 的 Windows Terminal package。
 
-### Profile、更新与权限安全
+### Profile, Update And Privilege Safety
 
 Profile 编辑必须严格使用以下标记：
 
@@ -77,13 +77,13 @@ Profile 编辑必须严格使用以下标记：
 历史 Release URL 的 AST 解析 `ccq` 函数；其他行必须原样保留，解析/身份不确定时
 必须零写入跳过。`Update.ps1` 依赖 Profile，并提供
 `Read-UpdateManifest`, `Write-UpdateManifest`,
-`Get-StringFingerprint`, `New-UpdateSnapshot` and `Clear-OldUpdateSnapshots`.
+`Get-StringFingerprint`、`New-UpdateSnapshot` 和 `Clear-OldUpdateSnapshots`。
 该 manifest 是用户 runtime 状态，不是 installer step 状态。
 
 `Assert-StepPrivilege` 返回 Boolean，而不是对象。`Invoke-SelfElevated` 必须拒绝空脚本
 路径，因为通过管道执行的 release artifact 不能用 `-File` 重新启动。
 
-### Registry、bootstrap 与 Release 路径
+### Registry, Bootstrap And Release Paths
 
 `Registry.ps1` 在 source mode 读取 `installer/contracts/steps.json`，合同不可用时使用
 匹配的 inline fallback。`Get-StepFiles` 返回有序相对路径，并将声明的子模块放在
@@ -94,7 +94,7 @@ Profile 编辑必须严格使用以下标记：
 或 dot-sourcing。使用 artifact 的 inline 或 environment fallback，或带明确诊断地
 安全跳过。
 
-### ccq executable 交接
+### ccq Executable Handoff
 
 `Get-CcqArchitecture` 将 Windows ARM64 映射为 `windows-arm64`，其他受支持架构映射
 为 `windows-x64`。`Install-CcqExecutable` 检查目标锁定状态，下载到临时文件，确认
@@ -110,7 +110,7 @@ PATH 更新属于用户级别（`HKCU\Environment`），不得注入 Profile wra
 `Confirm-CcqExecutableDownload` 跳过相同版本，为不同版本显示默认保留的覆盖菜单，
 目标版本不可用时保留已有可执行文件。
 
-### gzip-first 传输与 raw 交接
+### Gzip-First Transport And Raw Handoff
 
 `Install-CcqExecutable -DownloadUrl <raw-url>` 负责可选的传输优化。它推导
 `$DownloadUrl + '.gz'`，对 gzip 临时文件调用一次现有 `Invoke-FileDownload`；gzip
@@ -135,7 +135,7 @@ gzip 失败会删除两者，打印 raw 回退警告，且绝不触碰目标。�
 为主错误并附带 gzip 上下文。任一来源成功后，仅将完整非空的 raw 临时文件传给
 `Replace-CcqExecutable`；gzip 字节不得进入替换路径。
 
-### ccq executable 替换
+### ccq Executable Replacement
 
 目标通常是运行中的映像，因为 `ccq cc` 会话会保持 `ccq.exe` 映射。因此替换是由
 `Replace-CcqExecutable` 负责的独立合同；`Install-CcqExecutable` 委托给它，不得自行
@@ -170,13 +170,14 @@ gzip 失败会删除两者，打印 raw 回退警告，且绝不触碰目标。�
 - 下载前锁定 probe（使用 `FileShare.None` 的 `[System.IO.File]::Open`）只是避免
   在失败前下载约 104 MB 的优化，不是硬门禁。只有 `IOException` 和
   `UnauthorizedAccessException` 表示已锁定；其他异常都继续进入替换重试。probe
-  本身绝不能抛出或阻塞正常安装。
+  本身绝不能抛出或阻塞正常安装。probe stream 的 `Close` 与 `Dispose` 必须独立
+  尝试；任一关闭异常不得阻止另一个释放动作，也不得留下安装器自己的占用句柄。
 - `Get-CcqLockHolderProcesses` 使用 `return ,$array` 重塑结果，因此调用方直接读取
   `.Count`；参见上面的数组规则。
 
-## 4. 验证与错误矩阵
+## 4. Validation And Error Matrix
 
-| 条件 | 必需结果 |
+| Condition | Required result |
 |---|---|
 | PS5.1 或 StrictMode 违规 | Release 前拒绝，并增加针对性的兼容性检查 |
 | `$PSScriptRoot` 不可用 | 使用 inline/env 回退或明确安全跳过；绝不调用空路径 |
@@ -202,7 +203,7 @@ gzip 失败会删除两者，打印 raw 回退警告，且绝不触碰目标。�
 | Profile 标记块含 fnm 或未知用户内容 | 仅删除明确识别的历史 `ccq` 函数；否则不写入 |
 | 非管理员管道执行 | 不尝试 `-File` 重启；提示用户提权后重试 |
 
-## 5. 良好、基线与错误案例
+## 5. Good / Base / Bad Cases
 
 - 正确：source mode 从磁盘解析合同，release mode 通过 inline fallback 使用相同
   registry 数据。
@@ -220,7 +221,7 @@ gzip 失败会删除两者，打印 raw 回退警告，且绝不触碰目标。�
   文本直接展示给用户。
 - 错误：未先确认目标存在就于失败路径删除 `backup`。
 
-## 6. 必需测试
+## 6. Tests Required
 
 - 运行 `pwsh -File installer/contracts/Test-Contracts.ps1`。
 - 在 source mode 运行 `pwsh -File installer/windows/Install.ps1 -ListSteps`，并在
@@ -236,7 +237,8 @@ gzip 失败会删除两者，打印 raw 回退警告，且绝不触碰目标。�
 - `Test-CcqLockedFileReplaceContract` 探测真实 `FileShare.None` 独占锁：重试窗口内
   释放锁后成功且不留下 `temp`/`backup`；持锁失败但保留旧目标且无 residue；
   `Restore-CcqExecutableBackup` 回滚到已验证的旧目标；同 PID backup 冲突时逐字节
-  保留恢复 artifact 且目标不变。还要断言 probe 报告锁定后不会下载。
+  保留恢复 artifact 且目标不变。还要断言 probe 报告锁定后不会下载，并通过 probe
+  返回后再次独占打开目标，证明其 stream 句柄已完整释放。
 - 合同测试中的每个反向断言都必须针对实际删除的旧代码做 mutation-check：粘回旧文本
   并确认断言触发，再恢复并确认 PASS。静默匹配不到任何内容的反向断言属于死代码。
   `Install-CcqExecutable` 中的 `\bMove-Item` 边界是已验证示例：`-match` 不区分大小写，
@@ -247,7 +249,7 @@ gzip 失败会删除两者，打印 raw 回退警告，且绝不触碰目标。�
   5.1 流句柄。
 - 修改 PowerShell 或生成 artifact 输入后运行 `git diff --check`。
 
-## 7. 错误与正确对比
+## 7. Wrong Vs Correct
 
 ```powershell
 # Wrong: release mode can leave an empty path and StrictMode will throw.

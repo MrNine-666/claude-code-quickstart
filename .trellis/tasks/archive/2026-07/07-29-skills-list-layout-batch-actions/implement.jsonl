@@ -1,7 +1,7 @@
-{"file":".trellis/spec/frontend/skills-lifecycle-contract.md","reason":"Preserve source-aware instance identity, capability gates, safe deletion, and full reconciliation while adding list batch actions."}
+{"file":".trellis/spec/project/tui/skills-lifecycle-contract.md","reason":"Preserve source-aware instance identity, capability gates, safe deletion, and full reconciliation while adding list batch actions."}
 {"file":".trellis/spec/frontend/state-management.md","reason":"Implement reducer-owned layout, id-backed selection, pending batch snapshots, focus bounds, and mutation reconciliation."}
 {"file":".trellis/spec/frontend/component-guidelines.md","reason":"Reuse ScrollList/Card/Checkbox, maintain explicit focus, modal isolation, single-height ownership, and busy overlay behavior."}
-{"file":".trellis/spec/frontend/skills-batch-install-contract.md","reason":"Keep the install-page flat multi-select and its shared a/Space/Enter key behavior unchanged while list shortcuts evolve."}
+{"file":".trellis/spec/project/tui/skills-batch-install-contract.md","reason":"Keep the install-page flat multi-select and its shared a/Space/Enter key behavior unchanged while list shortcuts evolve."}
 {"file":".trellis/spec/backend/directory-structure.md","reason":"Keep view intent, service orchestration, core command building, and reducer facts in their owning layers."}
 {"file":".trellis/spec/backend/error-handling.md","reason":"Preserve typed partial outcomes, AbortSignal behavior, and post-mutation fact reconciliation for batch lifecycle operations."}
 {"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace each key through registry, input, service/core mutation, reducer reconciliation, render, and footer."}

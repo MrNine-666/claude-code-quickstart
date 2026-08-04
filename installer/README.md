@@ -1,10 +1,10 @@
-# installer/ — 安装器开发入口
+# installer/ - Installer Development Entry
 
 Claude Code Quickstart 的跨平台安装器源码目录。这里面向维护者，说明 Windows / macOS 安装入口、构建入口、契约边界和调试命令；面向用户的产品介绍与 CLI 用法见根目录 [README.md](../README.md)，TUI 子项目开发说明见 [tui/README.md](../tui/README.md)。
 
 ---
 
-## 目录职责
+## Directory Responsibilities
 
 ```text
 installer/
@@ -25,7 +25,7 @@ installer/
 
 ---
 
-## 本地调试
+## Local Debugging
 
 ### Windows
 
@@ -52,7 +52,7 @@ zsh -n installer/macos/Install.zsh
 
 ---
 
-## 构建
+## Build
 
 ```powershell
 # Windows / CI Windows job 构建入口
@@ -80,7 +80,7 @@ sh installer/build.sh --check
 
 ---
 
-## 契约边界
+## Contract Boundaries
 
 - install 链契约位于 `installer/contracts/`，包括步骤分组、构建配置、清理策略和契约测试。
 - TUI 链契约位于 `tui/contracts/`，其中运行时消费项会内嵌进 `ccq` 可执行文件。
@@ -88,7 +88,7 @@ sh installer/build.sh --check
 
 ---
 
-## 关键约束
+## Key Constraints
 
 - Windows 安装入口必须兼容 PowerShell 5.1，不得使用 PS7 专有语法。
 - Windows Release `dist/install.ps1` 必须保持纯 ASCII trampoline，以兼容 `irm ... | iex` 在 PS5.1 下的编码行为。

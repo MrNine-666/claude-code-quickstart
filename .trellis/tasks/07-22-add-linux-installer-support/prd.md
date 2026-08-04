@@ -1,4 +1,4 @@
-# 支持 Linux 安装链
+# Linux Installer Support
 
 ## Goal
 

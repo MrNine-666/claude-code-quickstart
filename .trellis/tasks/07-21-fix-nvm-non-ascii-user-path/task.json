@@ -24,7 +24,7 @@
     "installer/windows/steps/NodeJS-Nvm.ps1",
     "installer/windows/core/Process.ps1",
     "installer/contracts/Test-Contracts.ps1",
-    ".trellis/spec/installer/steps.md"
+    ".trellis/spec/project/installer/steps.md"
   ],
   "notes": "保持 planning 状态，尚未授权实施。候选方向：验证 winget --override /DIR=C:\\nvm4w 的权限、升级和兼容性后，使用纯 ASCII nvm root。",
   "meta": {}

@@ -1,4 +1,4 @@
-# 修复 nvm 中文用户目录安装失败
+# Fix nvm Installation for Non-ASCII User Paths
 
 ## Goal
 
@@ -59,10 +59,10 @@
 - `installer/windows/steps/NodeJS-Nvm.ps1`
 - `installer/windows/core/Process.ps1`
 - `installer/contracts/Test-Contracts.ps1`
-- `.trellis/spec/installer/steps.md`
+- `.trellis/spec/project/installer/steps.md`
 
 ## Out Of Scope
 
-- Forking or patching the upstream nvm-windows executable.
-- Silently moving an existing user's nvm root or installed Node.js versions.
-- Implementing the fix as part of this recording-only request.
+- 不 fork 或修补上游 nvm-windows executable。
+- 不静默移动现有用户的 nvm root 或已安装的 Node.js 版本。
+- 不在本次仅记录需求的任务中实施修复。

@@ -2,51 +2,50 @@
 
 ## App-Level Detection
 
-`use-detection-cache.ts` owns shared asynchronous detection state. A view entry
-must reuse the App cache and must not automatically launch a duplicate request.
+`use-detection-cache.ts` 拥有共享 async detection state。View 入口必须复用 App
+cache，不得自动启动重复 request。
 
-Refresh is allowed on:
+允许在以下时机 refresh：
 
-- the initial App detection;
-- explicit user refresh;
-- a lifecycle mutation that may have started;
-- postflight reconciliation.
+- App 初始 detection；
+- 用户显式 refresh；
+- 可能已经启动的 lifecycle mutation；
+- postflight reconciliation。
 
-Use `refreshAndWait()` when the reducer result depends on final detected facts.
-Do not dispatch success from a stale closure and refresh later.
+Reducer result 依赖最终 detection fact 时使用 `refreshAndWait()`。不得从 stale
+closure dispatch success 后再 refresh。
 
 ## Input Routing
 
-`use-manage-input.ts` integrates renderer key events with shell/view focus.
-Views expose a handler for their active mode; global handling must not steal keys
-from an active input, textarea, form or Modal.
+`use-manage-input.ts` 将 renderer key event 与 shell/view focus 集成。View 为活动
+mode 暴露 handler；全局处理不得从活动 input、textarea、form 或 Modal 抢走按键。
 
-Normalize platform modifiers in `utils/keyboard.ts`. Do not check raw key fields
-differently in every view.
+在 `utils/keyboard.ts` 中统一 platform modifier。不得在每个 view 中以不同方式
+检查原始 key field。
 
 ## Effect Rules
 
-- Effects synchronize external state, detection or renderer capabilities; pure
-  derived values remain calculations/reducer selectors.
-- Every async effect guards stale completion or cancellation before dispatching.
-- Cleanup only owns resources created by that effect (abort controller, timer,
-  listener). Do not cancel another view's shared request.
-- Tree-sitter initialization exits before constructing a worker in compiled mode.
-- Background update checking updates UI state without blocking initial render.
+- Effect 同步 external state、detection 或 renderer capability；pure derived
+  value 保持为 calculation/reducer selector。
+- 每个 async effect 在 dispatch 前防护 stale completion 或 cancellation。
+- Cleanup 只拥有该 effect 创建的 resource（abort controller、timer、listener）。
+  不得 cancel 其他 view 的共享 request。
+- Compiled mode 中，Tree-sitter initialization 在构造 worker 前退出。
+- 后台 update check 更新 UI state，但不阻塞 initial render。
 
 ## Anti-Patterns
 
 ```ts
-// Wrong: every page entry bypasses the shared cache.
+// 错误：每个 page 入口都绕过共享 cache。
 useEffect(() => { void cache.refresh(); }, []);
 
-// Correct: App owns initial detection; mutation awaits final facts.
+// 正确：App 拥有 initial detection；mutation 等待最终 fact。
 const finalState = await cache.refreshAndWait();
 dispatch({type: 'install-reconciled', finalState});
 ```
 
 ## Tests
 
-Use deterministic injected detectors/timers and cover stale response, refresh
-coalescing, mutation reconciliation and unmount cleanup. Run
-`verify-async-detection.mjs` plus the affected view/domain gates.
+使用 deterministic injected detector/timer，并覆盖 stale response、refresh
+coalescing、mutation reconciliation 与 unmount cleanup。运行
+`verify-async-detection.mjs` 以及受影响的 view/domain gate。

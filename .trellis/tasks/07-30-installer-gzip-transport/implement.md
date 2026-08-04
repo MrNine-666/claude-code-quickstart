@@ -1,4 +1,4 @@
-# 执行计划 - installer-gzip-transport
+# Installer gzip Transport Implementation Plan
 
 ## Preconditions
 
@@ -12,10 +12,10 @@
 
 ### 1. Add Windows gzip materialization helper
 
-- [ ] 在 `installer/windows/core/Process.ps1` 增加 PS5.1-compatible gzip 解压 helper。
+- [ ] 在 `installer/windows/core/Process.ps1` 增加兼容 PS5.1 的 gzip 解压 helper。
 - [ ] 完整关闭 input/gzip/output streams，并在异常/空输出时删除 raw partial。
 - [ ] 返回结构化结果，保留可用于最终双失败信息的阶段错误。
-- [ ] 用 PID-scoped、target 同目录的 gzip/raw temp，保持 `File.Replace` 同卷约束。
+- [ ] 使用按 PID 隔离、与 target 同目录的 gzip/raw temp，保持 `File.Replace` 同卷约束。
 
 ### 2. Integrate Windows gzip-first/raw-fallback
 
@@ -66,25 +66,25 @@ zsh installer/macos/Install.zsh --list-steps
 sh installer/build.sh --check
 ```
 
-When cross-platform runtime artifacts are already available, also build with the existing `--skip-tui-build` path to
-verify both single-file installers without forcing a new Bun cross-compile. A full build remains the Release gate; any
-external Bun runtime download/extraction failure must be recorded separately from gzip contract results.
+当已有 cross-platform runtime artifact 时，也使用现有 `--skip-tui-build` path 构建，验证
+两个 single-file installer，而不强制新的 Bun cross-compile。完整构建仍是 Release gate；
+任何外部 Bun runtime download/extraction failure 都要与 gzip contract result 分开记录。
 
 ## Review Gates
 
-- [ ] gzip remains optional; raw fallback is always retained.
-- [ ] no GitHub Release API/digest dependency is added to initial installers.
-- [ ] `Invoke-FileDownload` behavior and caller signature remain unchanged.
-- [ ] Windows lock preflight and `Replace-CcqExecutable` rollback behavior are preserved.
-- [ ] no partial gzip/raw file can reach the target path.
-- [ ] both-failure errors retain gzip context but make raw failure primary.
-- [ ] each transport gets a fresh downloader invocation/progress total.
-- [ ] PS5.1 syntax and macOS system-only dependencies are preserved.
-- [ ] no unrelated task files, code, generated artifacts, staging, commits, or archives are included.
+- [ ] gzip 保持可选；raw fallback 始终保留。
+- [ ] 初始 installer 不增加 GitHub Release API/digest dependency。
+- [ ] `Invoke-FileDownload` behavior 和 caller signature 保持不变。
+- [ ] Windows lock preflight 与 `Replace-CcqExecutable` rollback behavior 保留。
+- [ ] 不允许任何 partial gzip/raw file 到达 target path。
+- [ ] 双失败错误保留 gzip context，但以 raw failure 为主。
+- [ ] 每个 transport 都使用新的 downloader invocation/progress total。
+- [ ] 保留 PS5.1 syntax 和 macOS system-only dependency。
+- [ ] 不包含无关 task file、code、generated artifact、staging、commit 或 archive。
 
 ## Rollback Points
 
-- Runtime changes can be reverted independently from spec/test changes because raw assets remain published.
-- If a platform implementation fails its behavior probe, revert only that platform chunk and keep the task open; do not
-  weaken the shared acceptance criteria.
-- Do not revert or rewrite the existing locked-file changes in overlapping Windows files.
+- 由于 raw asset 仍会发布，runtime change 可以独立于 spec/test change 回滚。
+- 如果某个平台实现未通过 behavior probe，只回滚该平台 chunk 并保持 task open，不要降低共享
+  验收标准。
+- 不要回滚或重写重叠 Windows file 中已有的 locked-file change。

@@ -1,4 +1,4 @@
-# 安装脚本对齐 gzip 传输资产
+# Align Installer gzip Transport Assets
 
 ## Goal
 
@@ -25,25 +25,25 @@ Release、回滚 Release 和 gzip 损坏场景仍可完成安装。
 
 ## Requirements
 
-### R1. gzip 优先
+### R1. gzip First
 
 - Windows 和 macOS 安装函数接收现有 raw URL 后，必须先尝试对应的 `<raw>.gz`。
 - gzip 是可选加速路径，raw URL 仍是安装所需的最终兼容入口。
 - 不改变上层版本比较、用户确认、架构选择和目标路径行为。
 
-### R2. raw 回退
+### R2. raw Fallback
 
 - gzip 下载失败、响应不完整、gzip 流损坏或解压结果为空时，必须清理该次临时
   文件并自动尝试 raw URL。
 - 回退必须有用户可见提示，明确说明 gzip 路径失败并正在改用 raw 资产。
 - 旧 Release 没有 gzip 资产时，不得要求额外配置或人工重试。
 
-### R3. 进度语义
+### R3. Progress Semantics
 
 - 每次下载的进度总量必须来自当前实际传输响应；gzip 与 raw 不共享百分比或总字节数。
 - 从 gzip 切换到 raw 时，进度必须作为一次新的传输重新开始。
 
-### R4. 完整性与落盘安全
+### R4. Integrity and Write Safety
 
 - gzip 路径只有在下载成功、完整解压且解压结果非空后才可进入现有替换流程。
 - gzip 解压必须完整读取流，使 gzip CRC/尾部错误表现为失败；不得吞掉解压异常。
@@ -53,13 +53,13 @@ Release、回滚 Release 和 gzip 损坏场景仍可完成安装。
 - 任一失败路径不得把 gzip 字节、部分解压输出或部分 raw 下载落到最终目标，也不得
   删除原有可用的 `ccq`。
 
-### R5. 错误可诊断性
+### R5. Diagnostic Errors
 
 - gzip 路径失败但 raw 成功时，安装整体成功。
 - gzip 与 raw 都失败时，最终错误以 raw 失败为主，并保留 gzip 失败阶段或原因，便于
   区分“加速路径失败”与“所有传输均失败”。
 
-### R6. 平台兼容
+### R6. Platform Compatibility
 
 - Windows 保持 PowerShell 5.1 兼容，只使用可用的
   `System.IO.Compression.GzipStream` / .NET Framework API。

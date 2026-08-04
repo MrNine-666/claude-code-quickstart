@@ -2,57 +2,53 @@
 
 ## Required Patterns
 
-- Keep changes scoped to the owning domain; do not combine cleanup refactors
-  with behavior changes.
-- Search current registries/contracts before adding constants or helper logic.
-- Use explicit names and discriminated unions; avoid untyped cross-layer casts.
-- Keep trust-boundary validation in core/parser code and reuse it from CLI/TUI.
-- Test a bug with a failing regression before applying the fix when the behavior
-  can be isolated.
-- Never reduce coverage by deleting a verification assertion just to make a
-  change pass.
+- 变更范围保持在拥有该行为的 domain；不要把 cleanup refactor 与 behavior
+  change 混在一起。
+- 添加 constant 或 helper logic 前搜索当前 registry/contract。
+- 使用明确名称与 discriminated union；避免无类型的 cross-layer cast。
+- Trust-boundary validation 留在 core/parser code，并由 CLI/TUI 复用。
+- 行为可隔离时，修复 bug 前先用失败的 regression 覆盖它。
+- 绝不能仅为通过变更而删除 verification assertion、降低 coverage。
 
 ## Forbidden Patterns
 
-- Duplicate tool/MCP/Provider/Skills lists in views or help text.
-- Parse JSON/TOML with regex or ad hoc line replacement when a structural parser
-  already owns the format.
-- Direct config writes from React views.
-- Empty catches around primary operations.
-- Logging raw secrets or child-process credential arguments.
-- Assuming exit code zero proves final filesystem/runtime state.
+- 在 view 或 help text 中复制 tool/MCP/Provider/Skills list。
+- 已有 structural parser 拥有格式时，用 regex 或临时行替换解析 JSON/TOML。
+- 从 React view 直接写 config。
+- 在 primary operation 周围使用空 catch。
+- 记录原始 secret 或 child-process credential argument。
+- 假设 exit code zero 能证明最终 filesystem/runtime state。
 
 ## Verification Matrix
 
 | Area | Minimum focused gate |
 |---|---|
-| CLI argv/help/exit | `bun scripts/verify-cli-subcommands.mjs` |
-| Provider/Codex config | `verify-provider-safety.mjs`, `verify-codex-*.mjs`, `verify-toml-edit.mjs` |
-| MCP | `verify-mcp-parity.mjs`, `verify-mcp-multitool.mjs`, `verify-mcp-shared-projection.mjs` |
-| Tools | `verify-tools-*.mjs`, `verify-codegraph-lifecycle.mjs`, `verify-ccgworkflow-codex.mjs` |
-| Skills | gates listed in both Skills contracts |
-| Self lifecycle | `verify-self-update.mjs`, `verify-cli-uninstall.mjs`, Windows native/helper smoke |
+| CLI argv/help/exit 行为 | `bun scripts/verify-cli-subcommands.mjs` |
+| Provider/Codex 配置 | `verify-provider-safety.mjs`、`verify-codex-*.mjs`、`verify-toml-edit.mjs` |
+| MCP | `verify-mcp-parity.mjs`、`verify-mcp-multitool.mjs`、`verify-mcp-shared-projection.mjs` |
+| Tools | `verify-tools-*.mjs`、`verify-codegraph-lifecycle.mjs`、`verify-ccgworkflow-codex.mjs` |
+| Skills | 两份 Skills contract 中列出的 gate |
+| 自生命周期（Self lifecycle） | `verify-self-update.mjs`、`verify-cli-uninstall.mjs`、Windows native/helper smoke |
 
-All runtime changes finish with:
+所有 runtime 变更最终运行：
 
 ```sh
 cd tui
 bun run check
 ```
 
-`bun run check` owns format check, lint, TypeScript, Bun tests and the complete
-legacy `verify` chain. Run focused checks while iterating, but do not replace the
-aggregate gate with a hand-picked subset. See
-[TUI Quality Tooling](./tui-quality-tooling.md) for its executable contract.
+`bun run check` 统一负责 format check、lint、TypeScript、Bun test 与完整旧版
+`verify` 链。迭代时运行 focused check，但不得用手选子集替代 aggregate gate。
+其可执行合同见 [TUI 质量工具链](../project/tui/quality-tooling.md)。
 
-Run `git diff --check` for tracked source changes. Build all four executable
-targets when changing compile, embedded asset, platform or Release behavior.
+已跟踪 source 变更运行 `git diff --check`。修改 compile、embedded asset、
+platform 或 Release 行为时，构建全部四个 executable target。
 
 ## Review Checklist
 
-- [ ] The spec/contract owner is clear and there is no second source of truth.
-- [ ] Missing, corrupt, partial, cancelled and non-TTY cases are covered.
-- [ ] Final state is reconciled after mutation.
-- [ ] User-owned fields and unrelated files are preserved.
-- [ ] Secrets are absent from error/progress/CLI/helper output.
-- [ ] Focused and full gates pass without weakening assertions.
+- [ ] Spec/contract owner 明确，且没有第二个事实来源。
+- [ ] Missing、corrupt、partial、cancelled 与 non-TTY 案例均已覆盖。
+- [ ] Mutation 后根据事实完成 final state reconciliation。
+- [ ] 保留用户拥有的字段与无关文件。
+- [ ] Error/progress/CLI/helper output 不包含 secret。
+- [ ] Focused 与 full gate 通过，且没有削弱 assertion。

@@ -1,5 +1,5 @@
-{"file":".trellis/spec/frontend/skills-lifecycle-contract.md","reason":"检查最终检测、能力矩阵、删除范围、迁移事务和 CLI reconciliation 是否与批准需求一致。"}
-{"file":".trellis/spec/frontend/skills-batch-install-contract.md","reason":"检查搜索多选、来源等价、同名目标冲突和安装后对账没有回归。"}
+{"file":".trellis/spec/project/tui/skills-lifecycle-contract.md","reason":"检查最终检测、能力矩阵、删除范围、迁移事务和 CLI reconciliation 是否与批准需求一致。"}
+{"file":".trellis/spec/project/tui/skills-batch-install-contract.md","reason":"检查搜索多选、来源等价、同名目标冲突和安装后对账没有回归。"}
 {"file":".trellis/spec/frontend/state-management.md","reason":"检查 reducer 无 name-only 乐观成功，Modal/busy 保留实例快照且失败可恢复。"}
 {"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查来源展示、未知来源、同名多卡片、确认 Modal、窄布局和快捷键 footer。"}
 {"file":".trellis/spec/backend/error-handling.md","reason":"检查路径拒绝、命令失败、部分删除、回滚和刷新失败均保留真实诊断。"}

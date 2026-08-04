@@ -1,12 +1,12 @@
-# 构建、内嵌与 Release 合同
+# Build, Embedding, And Release Contract
 
-## 1. 范围与触发条件
+## 1. Scope And Trigger
 
 适用于 `installer/build.ps1`、`installer/build.sh`、
 `installer/contracts/build.json`、`tui/scripts/build.ts`、内嵌合同、
 Release CI、版本注入和 artifact 冒烟测试。
 
-## 2. Artifact 签名
+## 2. Artifact Signatures
 
 当前 Release artifact 集合必须严格包含以下十个文件：
 
@@ -30,7 +30,7 @@ ccq-macos-arm64.gz
 TUI 编译目标为 `bun-windows-{x64,arm64}` 和
 `bun-darwin-{x64,arm64}`。安装后的二进制文件必须在没有 Bun 或 Node 的环境中运行。
 
-## 3. 合同
+## 3. Contract
 
 - `build.json` 负责安装器组合和 artifact 名称。CI 期望列表、dist 数量、Release
   正文和合同测试必须与其一致。
@@ -75,12 +75,12 @@ TUI 编译目标为 `bun-windows-{x64,arm64}` 和
 - 本地 `tui/scripts/build.ts` 可以报告 arm64 交叉编译限制，但 Release 不得发布
   不完整的 artifact 集合。
 
-## 4. 验证与错误矩阵
+## 4. Validation And Error Matrix
 
-| 条件 | 必需结果 |
+| Condition | Required Result |
 |---|---|
-| artifact 名称/数量与构建合同不同 | Contract/CI failure |
-| Windows remote entry 含非 ASCII 正文 | Build/encoding failure |
+| artifact 名称/数量与构建合同不同 | Contract/CI 失败 |
+| Windows remote entry 含非 ASCII 正文 | Build/encoding 失败 |
 | `$PSScriptRoot` 缺失 | 使用回退路径；不得传入空的 `-Path` 参数 |
 | compiled mode 缺少磁盘合同 | Embedded loader 成功 |
 | 内嵌 key 缺失/格式错误 | 输出命名失败，不得静默使用空配置 |
@@ -89,14 +89,14 @@ TUI 编译目标为 `bun-windows-{x64,arm64}` 和
 | Bun build runtime 不包含 `f64cade3` 或无法验证 ancestry | 编译前失败，不发布 |
 | 当前平台 raw/gzip 仅来自旧构建 | 编译前清理；若当前构建未重新产生则失败 |
 | 可选 Windows 图标无法内嵌 | 保持可执行文件构建有效，并报告跳过图标 |
-| 实现前出现 Linux artifact | Contract failure |
-| 重复 gzip 打包逐字节不同 | Packaging failure |
-| gzip 往返结果与 raw 可执行文件不同 | Packaging failure |
+| 实现前出现 Linux artifact | Contract 失败 |
+| 重复 gzip 打包逐字节不同 | Packaging 失败 |
+| gzip 往返结果与 raw 可执行文件不同 | Packaging 失败 |
 | 安装器 gzip 传输失败但 raw 成功 | 警告，重新开始 raw 进度，然后成功安装 |
 | 安装器 gzip 与 raw 传输都失败 | 先报告 raw 错误并保留 gzip 上下文；不得触碰现有目标 |
-| Release 少于或多于 10 个文件 | CI failure |
+| Release 少于或多于 10 个文件 | CI 失败 |
 
-## 5. 良好、基线与错误案例
+## 5. Good, Base, And Bad Cases
 
 - 正确：source 和 compiled contract probe 解析出的 providers 与 templates 相同。
 - 正确：安装器先请求 `<raw>.gz`，gzip 缺失或损坏后再独立请求 raw；最终字节与
@@ -107,7 +107,7 @@ TUI 编译目标为 `bun-windows-{x64,arm64}` 和
 - 错误：只在 `build.ts` 中增加两个 Linux artifact，却没有同步合同/CI/安装支持。
 - 错误：仅因为向 Bun 传入 `--windows-icon` 就让交叉编译的 arm64 构建失败。
 
-## 6. 必需测试
+## 6. Tests Required
 
 ```sh
 cd tui
@@ -132,7 +132,7 @@ sh installer/build.sh --check
 Windows 同时验证 `pwsh -File` source mode 与等价于 `irm | iex` 的 Release
 trampoline 执行。
 
-## 7. 错误与正确对比
+## 7. Wrong Vs Correct
 
 ```powershell
 # 错误：UTF-8 正文直接通过 PS5.1 octet-stream 管道发送。

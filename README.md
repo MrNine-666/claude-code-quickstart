@@ -6,24 +6,24 @@ Windows 与 macOS 双平台的 CLI Agent（Claude Code / Codex）开发环境自
 
 ---
 
-## 目录
+## Directory
 
-- [核心特性](#核心特性)
-- [系统要求](#系统要求)
-- [快速开始](#快速开始)
-  - [方式一：云端直接执行](#方式一云端直接执行推荐)
-  - [方式二：下载单文件执行](#方式二下载单文件执行)
-  - [方式三：从源码运行](#方式三从源码运行开发者)
-- [安装内容](#安装内容)
-- [Manage 管理控制台（ccq）](#manage-管理控制台ccq)
-- [项目结构](#项目结构)
-- [常见问题](#常见问题)
+- [Core Features](#core-features)
+- [System Requirements](#system-requirements)
+- [Quick Start](#quick-start)
+  - [Method 1: Run Directly From The Cloud](#method-1-run-directly-from-the-cloud-recommended)
+  - [Method 2: Download And Run A Single File](#method-2-download-and-run-a-single-file)
+  - [Method 3: Run From Source](#method-3-run-from-source-developers)
+- [Installation Contents](#installation-contents)
+- [Manage Console (ccq)](#manage-console-ccq)
+- [Project Structure](#project-structure)
+- [Frequently Asked Questions](#frequently-asked-questions)
 - [License](#license)
-- [友情链接](#友情链接)
+- [Related Links](#related-links)
 
 ---
 
-## 核心特性
+## Core Features
 
 - **一键装好开发环境**：一条命令搞定 Windows / macOS 双平台的 Node.js / Git 与 `ccq` 管理控制台，已装组件实时检测自动跳过，无需手动处理版本、编码与初始化顺序
 - **Agent 与插件统一管理**：Claude Code / Codex 等 CLI Agent 与 Ccline / CcgWorkflow / OpenSpec / Trellis / CodeGraph 等周边工具，都能在「工具管理」里快捷安装 / 更新 / 卸载
@@ -38,9 +38,9 @@ Windows 与 macOS 双平台的 CLI Agent（Claude Code / Codex）开发环境自
 
 ---
 
-## 系统要求
+## System Requirements
 
-| 项目 | Windows | macOS |
+| Project | Windows | macOS |
 |---|---|---|
 | 操作系统 | Windows 10 1903 (18362)+ / Windows 11 | macOS 12 Monterey 或更新版本 |
 | Shell / 运行时 | PowerShell 5.1+ 单运行时直跑（PS7 作为推荐组件非阻塞安装，不 re-exec） | `/bin/zsh`，云端入口兼容 `curl ... | bash` |
@@ -51,13 +51,13 @@ Windows 与 macOS 双平台的 CLI Agent（Claude Code / Codex）开发环境自
 
 ---
 
-## 快速开始
+## Quick Start
 
-### 方式一：云端直接执行（推荐）
+### Method 1: Run Directly From The Cloud (Recommended)
 
 #### Windows
 
-##### 1) 安装脚本（PS 5.1+）
+##### 1) Installer Script (PS 5.1+)
 
 请先以**管理员身份**打开 Windows PowerShell 5.1 或 PowerShell 7，再执行安装命令：
 
@@ -72,7 +72,7 @@ PS 5.1 单运行时直跑：前置检测内联（Windows 版本 / winget 自动�
 
 ![Windows 安装界面](./assets/screenshots/windows-install.png)
 
-##### 2) 管理面板
+##### 2) Management Console
 
 安装完成后，**开新终端**直接运行：
 
@@ -102,7 +102,7 @@ ccq
 
 ---
 
-### 方式二：下载单文件执行
+### Method 2: Download And Run A Single File
 
 从 [Releases](../../releases) 下载：
 
@@ -132,7 +132,7 @@ ccq
 
 ---
 
-### 方式三：从源码运行（开发者）
+### Method 3: Run From Source (Developers)
 
 Windows：
 
@@ -179,7 +179,7 @@ bash dist/install.sh --list-steps
 
 ---
 
-## 安装内容
+## Installation Contents
 
 ### Windows
 
@@ -204,13 +204,13 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 
 ---
 
-## Manage 管理控制台（ccq）
+## Manage Console (ccq)
 
 安装后直接运行 `ccq` 命令进入管理控制台。`ccq` 是 OpenTUI + Bun 构建的单文件可执行产物（`tui/` 子项目交叉编译而来），安装时下载到 `~/.local/bin/ccq[.exe]`（与 Claude Code native installer 同目录），通过用户级 PATH 天然可达。控制台提供 **6 菜单**，右侧 content 顶部用全称 Header 在 `Claude Code` / `Codex` 间切换当前 Agent 上下文；也可以直接使用非交互 CLI 子命令完成常用操作：
 
-### CLI 子命令
+### CLI Subcommands
 
-| 命令 | 说明 |
+| Command | Description |
 |---|---|
 | `ccq` | 进入 OpenTUI 6 菜单管理控制台 |
 | `ccq cc <provider> [claude-args...]` | 临时使用指定 provider 启动 Claude Code；不写盘，后续参数透传给 `claude` |
@@ -224,7 +224,7 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 
 卸载类命令在非 TTY 环境必须传 `--yes` 或 `-y`，否则会拒绝执行以避免误删；`ccq cc` / `ccq cx` 是启动类动词（继承 TTY、参数透传给底层工具），`ccq use` 是管理类动词（修改持久默认配置）。
 
-### 1) 工具管理（Tools）
+### 1) Tool Management (Tools)
 
 - Agent 组常显 ClaudeCode / CodexCli / AntigravityCli；Ccline 仅 Claude Code；OpenSpec / Trellis / CcgWorkflow / CodeGraph 在两种上下文可见
 - 安装 / 更新 / 卸载（强确认 + snapshot 保护）；CodeGraph 安装/更新后校验当前 Agent MCP 接入，更新后重接入已安装的 cc/cx，卸载最后一个 CodeGraph MCP 后自动移除共享 CLI；CcgWorkflow Codex Mode 使用官方非交互 install/uninstall
@@ -232,7 +232,7 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 
 ![工具管理](./assets/screenshots/tui-tool.png)
 
-### 2) 供应商（Provider）
+### 2) Provider Management (Provider)
 
 - Claude Code Header 下：供应商 Profile 的新增 / 编辑 / 删除 / 切换 / 设置默认；配置写入 `~/.claude/settings.json` 的 `env`，Profile 保存到 `~/.claude/providers/`
 - Codex Header 下：管理 `$CODEX_HOME/<key>.config.toml`（默认 `~/.codex/<key>.config.toml`）官方 profile 文件；key 同时作为文件名、`--profile` 名、provider id 与默认显示名
@@ -241,14 +241,14 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 
 ![供应商管理](./assets/screenshots/tui-providers.png)
 
-### 3) 配置文件（Config）
+### 3) Configuration Files (Config)
 
 - Claude Code Header 下查看 `~/.claude/settings.json` 推荐配置；Codex Header 下查看 `CODEX_HOME/config.toml` 推荐配置
 - 复用预览 / 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入；不管理 provider、MCP、Skills 或规则文件内容
 
 ![配置文件管理](./assets/screenshots/tui-config.png)
 
-### 4) 全局规则（Prompts）
+### 4) Global Rules (Prompts)
 
 - Claude Code Header 下维护 `~/.claude/CLAUDE.md`；Codex Header 下维护 `CODEX_HOME/AGENTS.md`
 - 复用预览 / 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` 导入，Codex 推荐内容复用 Claude Code 推荐规则
@@ -276,7 +276,7 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 
 ---
 
-## 项目结构
+## Project Structure
 
 ```text
 claude-code-quickstart/
@@ -301,13 +301,13 @@ claude-code-quickstart/
 
 ---
 
-## 常见问题
+## Frequently Asked Questions
 
-### Q1：安装失败怎么办？
+### Q1: What If Installation Fails?
 
 直接重新运行安装脚本即可。CCQ 会实时检测并跳过已安装项。
 
-### Q2：提示找不到 `ccq` 怎么办？
+### Q2: What If `ccq` Cannot Be Found?
 
 按你的场景处理：
 
@@ -341,7 +341,7 @@ claude-code-quickstart/
 
 ---
 
-## 友情链接
+## Related Links
 
 - [LINUX DO](https://linux.do/)
 

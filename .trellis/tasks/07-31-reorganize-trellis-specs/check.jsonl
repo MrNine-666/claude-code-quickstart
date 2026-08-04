@@ -1,0 +1,8 @@
+{"file":".trellis/spec/index.md","reason":"验证 spec layer、索引职责和相对链接"}
+{"file":".trellis/spec/guides/development-workflow.md","reason":"验证英文结构标题与长期中文正文约束"}
+{"file":".trellis/spec/backend/index.md","reason":"验证 Backend 路由与 Quality Check"}
+{"file":".trellis/spec/frontend/index.md","reason":"验证 Frontend 路由与 Quality Check"}
+{"file":".trellis/spec/project/index.md","reason":"验证 Project 业务合同导航"}
+{"file":".trellis/tasks/07-31-reorganize-trellis-specs/research/spec-inventory.md","reason":"验证 spec 文件集合与路径迁移证据"}
+{"file":".trellis/tasks/07-31-reorganize-trellis-specs/research/migration-baseline.md","reason":"验证入口和用户改动保护基线"}
+{"file":".trellis/tasks/07-31-reorganize-trellis-specs/research/document-language-inventory.md","reason":"验证当前项目文档扫描范围和排除项"}

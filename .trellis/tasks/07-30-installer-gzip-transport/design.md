@@ -1,4 +1,4 @@
-# 安装脚本 gzip 传输 - 技术设计
+# Installer gzip Transport Design
 
 ## 1. Design Boundary
 
@@ -52,7 +52,7 @@ rawTemp  = <ccqPath>.download.<PID>
 gzipTemp = <rawTemp>.gz
 ```
 
-raw temp 继续与 target 同目录，以满足后续 `File.Replace` 同卷约束。进入新传输前先只
+raw 临时文件继续与 target 同目录，以满足后续 `File.Replace` 同卷约束。进入新传输前先只
 清理本事务的两个 temp，不碰 target/backup。
 
 ### 3.2 Decompression helper
@@ -96,7 +96,7 @@ Framework，不使用 `Expand-Archive` 或 PowerShell 7 API。
 - 两者都不存在时失败
 - 失败时只删除本次 output，不修改 target
 
-这不是通用下载框架重构；helper 只为同一安装函数的 gzip/raw 两次传输消除重复并提供
+这不是通用下载框架重构；helper 只为同一安装函数的 gzip/raw 两次传输消除重复，并提供
 可替换的行为测试缝。
 
 ### 4.2 Decompression and fallback
@@ -133,14 +133,14 @@ size 与 SHA-256 元数据。因此本任务不复制 TUI 的 Release metadata �
 
 | Condition | Result | Cleanup |
 |---|---|---|
-| gzip download succeeds + decompresses non-empty | Continue with raw temp | delete gzip temp |
-| gzip download fails | visible warning, try raw | delete gzip/raw partials |
-| gzip corrupt/truncated/empty | visible warning, try raw | delete gzip/raw partials |
-| raw fallback succeeds | install succeeds | normal platform cleanup |
-| gzip and raw both fail | fail with raw primary + gzip context | delete both temps; preserve target |
-| final replace/install fails | existing platform error/rollback contract | transport temps cleaned; preserve target/backup rules |
+| gzip 下载成功且解压结果非空 | 继续使用 raw temp | 删除 gzip temp |
+| gzip 下载失败 | 显示 warning 并尝试 raw | 删除 gzip/raw 部分文件 |
+| gzip 损坏、截断或为空 | 显示 warning 并尝试 raw | 删除 gzip/raw 部分文件 |
+| raw 回退成功 | 安装成功 | 执行平台正常清理 |
+| gzip 与 raw 均失败 | 以 raw 错误为主并附 gzip 上下文 | 删除两个 temp；保留 target |
+| 最终替换/安装失败 | 沿用现有平台错误/回滚合同 | 清理传输 temp；保留 target/backup 规则 |
 
-Cleanup is idempotent and scoped to paths containing the current PID. No wildcard or directory-wide deletion。
+清理操作必须幂等，并限制在包含当前 PID 的路径内。不得使用 wildcard 或目录级删除。
 
 ## 7. Contract Tests
 
@@ -148,27 +148,27 @@ Cleanup is idempotent and scoped to paths containing the current PID. No wildcar
 
 新增 `Test-CcqGzipTransportContract`：
 
-- AST/source assertions ensure gzip URL derives from raw as `.gz`, gzip is attempted before raw, fallback warning exists,
-  and `Invoke-FileDownload` remains unchanged.
-- Generate a raw fixture and gzip it with .NET; invoke the real decompression helper and compare bytes exactly.
-- Mock `Invoke-FileDownload` to cover gzip success/no raw call, gzip download failure/raw success, corrupt gzip/raw success,
-  and both transports failing while an existing target remains unchanged.
-- Assert separate output paths and ordered URL calls; this also guards progress reset via two downloader invocations.
-- Keep the existing locked-file behavior probes green to prove gzip work did not bypass `Replace-CcqExecutable`.
+- AST/source assertion 确认 gzip URL 从 raw 以 `.gz` 派生、gzip 先于 raw 尝试、存在 fallback
+  warning，且 `Invoke-FileDownload` 保持不变。
+- 生成 raw fixture，用 .NET 压缩后调用真实解压 helper，逐字节比较结果。
+- mock `Invoke-FileDownload`，覆盖 gzip 成功且不调用 raw、gzip 下载失败后 raw 成功、gzip
+  损坏后 raw 成功，以及两个 transport 都失败但现有 target 保持不变的场景。
+- 断言独立 output path 和 URL 调用顺序；这也通过两次 downloader invocation 保证进度会重新计算。
+- 保持现有 locked-file behavior probe 通过，证明 gzip 工作没有绕过 `Replace-CcqExecutable`。
 
 ### macOS probe
 
-Add a small zsh behavior probe under `installer/contracts/` and run it from `installer/build.sh --check` when zsh is
-available. It generates raw/gzip fixtures, stubs the narrow download helper, and covers the same success/fallback/corrupt/
-double-failure matrix. `Test-Contracts.ps1` also asserts the probe remains wired so Windows-side contract runs cannot
-silently drop macOS coverage.
+在 `installer/contracts/` 增加小型 zsh behavior probe；有 zsh 时从 `installer/build.sh --check`
+运行。它生成 raw/gzip fixture，替换窄 download helper，并覆盖相同的 success/fallback/corrupt/
+double-failure matrix。`Test-Contracts.ps1` 还要断言 probe 仍已接线，避免 Windows 侧 contract
+运行时静默丢失 macOS 覆盖。
 
 ## 8. Compatibility, Rollout, and Rollback
 
-- Old/gzip-less Release: first request fails, visible raw fallback succeeds.
-- Current Release: gzip is preferred without changing artifact names.
-- PowerShell 5.1 and macOS system tools remain the only runtime dependencies.
-- Rollout requires installer source tests plus both built installer structure checks. Full TUI cross-compilation failures
-  caused by external Bun runtime extraction are reported separately and do not weaken source/contract gates.
-- Code rollback removes gzip selection and helpers, returning to raw-only transport; raw Release assets remain published,
-  so rollback requires no data or artifact migration.
+- 旧版/无 gzip 的 Release：第一次请求失败后，显示提示并成功回退 raw。
+- 当前 Release：优先 gzip，但不改变 artifact name。
+- PowerShell 5.1 和 macOS system tools 仍是唯一 runtime dependency。
+- 发布需要 installer source test 和两个构建 installer structure check。外部 Bun runtime
+  extraction 导致的完整 TUI cross-compilation failure 单独报告，不降低 source/contract gate。
+- 代码回滚移除 gzip selection 和 helper，恢复 raw-only 传输；raw Release asset 仍会发布，
+  因此无需数据或 artifact migration。

@@ -4,82 +4,79 @@
 
 ```text
 tui/src/
-├── app.tsx                 # shell, active view, shared caches, global Modal/update state
-├── views/                  # domain screens and focused key dispatch
-│   ├── provider/           # Provider Root/Home/Form and Agent adapters
-│   ├── config/             # Config adapter-backed root
-│   ├── prompts/            # Global Rules adapter-backed root
-│   ├── mcp/                # MCP Root/Home/Form and actions
-│   ├── tools/              # Tools Root/Home/Modal, input, actions and service adapter
-│   └── skills/             # Skills Root/Home/Install/Modal, input, actions and service adapter
-├── components/             # shared cards, lists, form controls, editors and overlays
-│   └── managed-document/   # shared Config/Global Rules Home/Form controller
-├── hooks/                  # input routing and detection lifecycle
-├── state/                  # pure reducers and shortcut projections
+├── app.tsx                 # shell、活动 view、共享 cache、全局 Modal/update state
+├── views/                  # domain screen 与聚焦后的 key dispatch
+│   ├── provider/           # Provider Root/Home/Form 与 Agent adapter
+│   ├── config/             # 基于 adapter 的 Config root
+│   ├── prompts/            # 基于 adapter 的 Global Rules root
+│   ├── mcp/                # MCP Root/Home/Form 与 action
+│   ├── tools/              # Tools Root/Home/Modal、input、action 与 service adapter
+│   └── skills/             # Skills Root/Home/Install/Modal、input、action 与 service adapter
+├── components/             # 共享 card、list、form control、editor 与 overlay
+│   └── managed-document/   # 共享 Config/Global Rules Home/Form controller
+├── hooks/                  # input routing 与 detection 生命周期
+├── state/                  # pure reducer 与 shortcut projection
 ├── config/keybindings.ts   # command-to-binding registry
-├── theme/                  # semantic terminal colors and logo
-└── utils/keyboard.ts       # platform key normalization/formatting
+├── theme/                  # semantic terminal color 与 logo
+└── utils/keyboard.ts       # 平台 key normalization/formatting
 ```
 
 ## Placement Rules
 
-- `app.tsx` owns cross-view shell state, current Agent context, App-level
-  detection caches, update Modal and footer composition.
-- A view owns only its domain's screen mode, active row/form focus and key
-  routing. It reports `onSubModeChange` so App can derive the footer.
-- Domain roots own reducer/cache/effect wiring and select Home/Form/Modal pages.
-  Page modules render typed facts and emit typed intents; they do not import
-  write-oriented services, read files or launch commands.
-- Multi-step mutation, postflight reconciliation and reusable patches live in
-  the domain action module. Tools and Skills keep separate action interfaces
-  because their topology and reconciliation contracts are different.
-- Shared visuals and input behavior live under `components/`; export them from
-  `components/index.ts`.
-- Pure state transitions live under `state/`. Do not hide a reducer inside a
-  component effect when it is independently testable.
-- Business operations remain in `core/`/`services/`; views receive adapters or
-  callbacks and map results into reducer actions/toasts.
+- `app.tsx` 拥有 cross-view shell state、当前 Agent context、App-level detection
+  cache、update Modal 与 footer composition。
+- 一个 view 只拥有自身 domain 的 screen mode、活动 row/form focus 与 key
+  routing。它通过 `onSubModeChange` 上报，使 App 能派生 footer。
+- Domain root 拥有 reducer/cache/effect wiring，并选择 Home/Form/Modal page。
+  Page module 渲染 typed fact 并发出 typed intent；不得 import 面向写入的
+  service、读取文件或启动命令。
+- 多步骤 mutation、postflight reconciliation 与可复用 patch 放在 domain
+  action module。Tools 与 Skills 使用不同 action interface，因为二者的
+  topology 与 reconciliation contract 不同。
+- 共享视觉和 input behavior 放在 `components/` 下，并从
+  `components/index.ts` 导出。
+- Pure state transition 放在 `state/` 下。若 reducer 可独立测试，不要把它
+  隐藏在 component effect 中。
+- Business operation 留在 `core/`/`services/`；view 接收 adapter 或 callback，
+  并将结果映射为 reducer action/toast。
 
 ## Naming
 
-- React components and files use PascalCase when the file exports one component.
-- Domain modules and state files use kebab-case (`skills-view-state.ts`).
-- Commands are semantic ids (`PRIMARY_ACTION`, `UPDATE_ONE`) rather than physical
-  key names.
-- Modes describe user-visible state (`grid`, `form`, `confirm-uninstall`) rather
-  than implementation details.
+- 文件只导出一个 React component 时，component 与文件使用 PascalCase。
+- Domain module 与 state 文件使用 kebab-case（`skills-view-state.ts`）。
+- Command 使用 semantic id（`PRIMARY_ACTION`、`UPDATE_ONE`），而不是物理按键名。
+- Mode 描述用户可见状态（`grid`、`form`、`confirm-uninstall`），而不是实现细节。
 
 ## Anti-Patterns
 
-- View-local `ShortcutBar` or duplicated key label arrays.
-- A Card/Modal component that executes a domain command.
-- Fixed terminal heights copied across views; use flex ownership and shared
-  list/detail shells.
-- A second form/input implementation when FormPanel, SingleLineInput,
-  TextareaEditor or existing field components cover the behavior.
-- A flat `views/*View.tsx` entry that combines Root, Home/Form rendering,
-  mutation orchestration and Modal input in one file.
+- View-local `ShortcutBar` 或重复的 key label array。
+- 执行 domain command 的 Card/Modal component。
+- 在多个 view 复制固定 terminal height；使用 flex owner 与共享 list/detail shell。
+- `FormPanel`、`SingleLineInput`、`TextareaEditor` 或现有 field component 已覆盖
+  行为时，再增加第二套 form/input 实现。
+- 一个扁平的 `views/*View.tsx` 同时组合 Root、Home/Form rendering、mutation
+  orchestration 与 Modal input。
 
 ## Domain View Pattern
 
-Each domain root follows a small orchestration interface. The root owns screen
-state and effects, while pages receive immutable facts and intent callbacks:
+每个 domain root 遵循小型 orchestration interface。Root 拥有 screen state 与
+effect，page 接收 immutable fact 与 intent callback：
 
 ```tsx
-// Root: route and lifecycle only
+// Root：只负责 route 与 lifecycle
 <SkillsHomeView view={view} active={pageActive} dispatch={dispatch} />
 <SkillsInstallView view={view} detection={detection} active={pageActive} dispatch={dispatch} />
 
-// Page: facts plus typed intent; no file/process side effects
+// Page：fact 加 typed intent；无 file/process side effect
 <McpFormView model={model} onSubmit={submitMcpFormAction} onSaved={onSaved} />
 ```
 
-Async mutation, progress projection and final detection reconciliation belong
-in `*-view-actions.ts` (or an existing `services/` adapter). A page may import
-pure domain models and type-only service results, but must not import a
-write-oriented service at runtime or use `fs`/`child_process` directly.
+Async mutation、progress projection 与 final detection reconciliation 属于
+`*-view-actions.ts`（或现有 `services/` adapter）。Page 可以 import pure domain
+model 和仅类型的 service result，但运行时不得 import 面向写入的 service，
+也不得直接使用 `fs`/`child_process`。
 
-`bun scripts/verify-view-architecture.mjs` is the executable topology gate. It
-checks all six domain roots, shared Config/Rules document reuse, removal of old
-flat entries, and the page-to-service dependency direction. Keep this gate in
-the `package.json` `verify` chain when moving a view.
+`bun scripts/verify-view-architecture.mjs` 是可执行 topology gate。它检查全部六个
+domain root、共享 Config/Rules document 复用、旧扁平入口移除，以及 page-to-service
+dependency direction。移动 view 时，必须把此 gate 保留在 `package.json` 的
+`verify` 链中。
