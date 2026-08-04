@@ -168,7 +168,7 @@ gzip 失败会删除两者，打印 raw 回退警告，且绝不触碰目标。�
 - 高于原子性的约束是：用户绝不能最终失去可用的 `ccq.exe`。为满足这一点，回滚
   helper 可以从 `File::Replace` 降级为复制。
 - 下载前锁定 probe（使用 `FileShare.None` 的 `[System.IO.File]::Open`）只是避免
-  在失败前下载约 104 MB 的优化，不是硬门禁。只有 `IOException` 和
+  在传输完成后才发现无法替换的优化，不是硬门禁。只有 `IOException` 和
   `UnauthorizedAccessException` 表示已锁定；其他异常都继续进入替换重试。probe
   本身绝不能抛出或阻塞正常安装。probe stream 的 `Close` 与 `Dispose` 必须独立
   尝试；任一关闭异常不得阻止另一个释放动作，也不得留下安装器自己的占用句柄。

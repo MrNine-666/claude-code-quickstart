@@ -3,7 +3,7 @@
   "name": "installer-gzip-transport",
   "title": "安装脚本对齐 gzip 传输资产",
   "description": "Windows Install.ps1 与 macOS Install.zsh 只拼 raw asset 名，未使用 Release 已有的 .gz 资产；对齐 self-update.ts 的 gzip 优先 + raw 回退策略，下载量从 104MB 降至 38MB",
-  "status": "in_progress",
+  "status": "review",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": "07-30-fix-ccq-install-replace-chain",
   "relatedFiles": [],
-  "notes": "",
+  "notes": "实现已包含在提交 5854745；Windows contracts、PowerShell 5.1 解析/ListSteps、gzip roundtrip/CRC 探针通过。原生 macOS zsh/build.sh 门禁因当前 Windows 环境缺少 zsh/sh 待在 macOS 或 zsh 环境复验后再归档。",
   "meta": {}
 }

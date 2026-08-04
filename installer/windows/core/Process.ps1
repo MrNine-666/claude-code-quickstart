@@ -1675,7 +1675,7 @@ function Test-CcqExecutableInstalled {
 function Test-CcqExecutableLocked {
     <#
     .SYNOPSIS
-    下载前独占探测目标 ccq.exe 是否被运行中进程锁住，避免白下 104MB 才失败。
+    下载前独占探测目标 ccq.exe 是否被运行中进程锁住，避免在传输完成后才发现无法替换。
     .DESCRIPTION
     尝试以 ReadWrite + FileShare.None 独占打开目标路径：
     - 文件不存在 → Locked=$false（不是占用问题，交给后续逻辑）。

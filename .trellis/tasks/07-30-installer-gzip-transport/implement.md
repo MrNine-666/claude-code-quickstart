@@ -72,15 +72,28 @@ sh installer/build.sh --check
 
 ## Review Gates
 
-- [ ] gzip 保持可选；raw fallback 始终保留。
-- [ ] 初始 installer 不增加 GitHub Release API/digest dependency。
-- [ ] `Invoke-FileDownload` behavior 和 caller signature 保持不变。
-- [ ] Windows lock preflight 与 `Replace-CcqExecutable` rollback behavior 保留。
-- [ ] 不允许任何 partial gzip/raw file 到达 target path。
-- [ ] 双失败错误保留 gzip context，但以 raw failure 为主。
-- [ ] 每个 transport 都使用新的 downloader invocation/progress total。
-- [ ] 保留 PS5.1 syntax 和 macOS system-only dependency。
-- [ ] 不包含无关 task file、code、generated artifact、staging、commit 或 archive。
+- [x] gzip 保持可选；raw fallback 始终保留。
+- [x] 初始 installer 不增加 GitHub Release API/digest dependency。
+- [x] `Invoke-FileDownload` behavior 和 caller signature 保持不变。
+- [x] Windows lock preflight 与 `Replace-CcqExecutable` rollback behavior 保留。
+- [x] 不允许任何 partial gzip/raw file 到达 target path。
+- [x] 双失败错误保留 gzip context，但以 raw failure 为主。
+- [x] 每个 transport 都使用新的 downloader invocation/progress total。
+- [x] 保留 PS5.1 syntax 和 macOS system-only dependency。
+- [x] 不包含无关 task file、code、generated artifact、staging、commit 或 archive。
+
+## Completion Evidence
+
+- [x] `pwsh -NoProfile -File installer/contracts/Test-Contracts.ps1`
+- [x] Windows PowerShell 5.1 `Parser.ParseFile` 语法检查
+- [x] `pwsh -File installer/windows/Install.ps1 -ListSteps`
+- [x] Windows PowerShell 5.1 `Install.ps1 -ListSteps`
+- [x] Windows gzip roundtrip、CRC 损坏和传输回退探针
+- [x] `git diff --check`（仅报告工作区 LF/CRLF 转换提示）
+- [x] 源码/合同确认 macOS zsh probe 与 `build.sh --check` 已接线
+
+原生 zsh/macOS 行为探针因当前 Windows 环境缺少 zsh 未执行；不能将该环境限制
+误报为实现失败。
 
 ## Rollback Points
 
