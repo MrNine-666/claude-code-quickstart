@@ -14,10 +14,14 @@ const rendererTest = read(join(root, 'tests', 'components', 'status-dot.test.tsx
 
 assert.equal(pkg.packageManager, 'bun@1.3.14');
 assert.equal(pkg.devDependencies['@biomejs/biome'], '2.5.4');
+assert.equal(pkg.dependencies['@opentui/core'], '0.4.5');
+assert.equal(pkg.dependencies['@opentui/keymap'], '0.4.5');
+assert.equal(pkg.dependencies['@opentui/react'], '0.4.5');
 assert.equal(pkg.scripts.format, 'bun scripts/biome-format.mjs --write');
 assert.equal(pkg.scripts['format:check'], 'bun scripts/biome-format.mjs');
 assert.equal(pkg.scripts.lint, 'biome lint --diagnostic-level=error src scripts tests');
 assert.equal(pkg.scripts.test, 'bun test tests');
+assert.match(pkg.scripts.verify, /bun scripts\/verify-build-runtime\.mjs/);
 assert.equal(pkg.scripts.check, 'bun run format:check && bun run lint && bun run typecheck && bun run test && bun run verify');
 assert.equal(JSON.stringify({...pkg.dependencies, ...pkg.devDependencies}).match(/vite|vitest/i), null);
 

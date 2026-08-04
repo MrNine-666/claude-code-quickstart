@@ -61,6 +61,10 @@ TUI 编译目标为 `bun-windows-{x64,arm64}` 和
   `tui/contracts/`；executable mode 不得依赖相邻文件。
 - 默认不要使用 `bun build --compile --minify`。OpenTUI host 注册和 compiled-mode
   行为要求使用未压缩构建，除非 compiled smoke 已证明压缩构建同样可靠。
+- Windows executable 的 OpenTUI FFI 路径要求 Bun 包含上游修复
+  `f64cade36214f2a5b724da8d7557ca4dad069d81`（Bun PR #33696）。稳定版尚未包含该修复时，Release CI
+  使用 `canary` 且禁用 setup cache，并在编译前通过 GitHub compare API 证明实际
+  `bun --revision` 等于或晚于该提交；无法证明时必须 fail closed，不得继续发布。
 - `tui/assets/ccq-icon.ico` 是 Windows 源图标。由于 Bun 不支持交叉编译时使用该
   flag，`tui/scripts/build.ts` 仅在 Windows x64 原生构建时传入 `--windows-icon`；
   其他目标保留默认图标。当可选图标文件或 Bun metadata embedding 不可用时，构建
@@ -82,6 +86,7 @@ TUI 编译目标为 `bun-windows-{x64,arm64}` 和
 | 内嵌 key 缺失/格式错误 | 输出命名失败，不得静默使用空配置 |
 | tag 版本与 `ccq --version` 不同 | Release 构建失败 |
 | Release 构建中有目标失败 | 不发布不完整 Release |
+| Bun build runtime 不包含 `f64cade3` 或无法验证 ancestry | 编译前失败，不发布 |
 | 当前平台 raw/gzip 仅来自旧构建 | 编译前清理；若当前构建未重新产生则失败 |
 | 可选 Windows 图标无法内嵌 | 保持可执行文件构建有效，并报告跳过图标 |
 | 实现前出现 Linux artifact | Contract failure |
@@ -108,6 +113,7 @@ TUI 编译目标为 `bun-windows-{x64,arm64}` 和
 cd tui
 bun run typecheck
 bun run verify
+bun scripts/verify-build-runtime.mjs
 bun scripts/verify-gzip-assets.mjs
 bun run build
 

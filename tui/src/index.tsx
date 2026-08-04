@@ -47,7 +47,7 @@ renderer.on('selection', selection => {
 	copyTextWithFeedback(renderer, selection.getSelectedText());
 });
 // @opentui/keymap 自带 @opentui/core 依赖；Bun 会保留一份嵌套副本。
-// 运行时版本已对齐到 0.4.2，这里只做 CliRenderer 私有类型桥接。
+// 运行时版本已对齐到 0.4.5，这里只做 CliRenderer 私有类型桥接。
 const keymap = createDefaultOpenTuiKeymap(renderer as never);
 
 // 终端主题检测：OpenTUI 用 DEC 2031 实时上报 + OSC 10/11 亮度回退；
