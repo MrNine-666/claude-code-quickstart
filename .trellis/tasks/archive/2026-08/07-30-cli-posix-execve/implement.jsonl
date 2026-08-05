@@ -1,0 +1,6 @@
+{"file":".trellis/spec/project/tui/cli-contract.md","reason":"执行 CLI 启动类命令的 argv、TTY、退出码和 ENOENT 合同。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"遵循外部命令失败、fallback 和 stderr 错误映射规则。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"遵循 runtime owner、回归测试和 focused/full gate 要求。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对 argv 到 child process 的边界、环境变量和退出码数据流。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"要求 cc/cx 共用 process runner，避免 execve/fallback 逻辑漂移。"}
+{"file":".trellis/tasks/07-30-cli-posix-execve/research/bun-execve-contract.md","reason":"提供 Bun 1.3.14 execve/which 类型、平台和 warning 探针证据。"}

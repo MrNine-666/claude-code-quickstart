@@ -1,0 +1,6 @@
+{"file":".trellis/spec/project/tui/cli-contract.md","reason":"检查 cc/cx 的透传、inherited TTY、127 和 child exit code 不变量。"}
+{"file":".trellis/spec/project/tui/quality-tooling.md","reason":"检查 verify-cli-subcommands、typecheck、lint 和 aggregate check 范围。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"检查 execve 失败、spawn fallback、warning 和错误诊断行为。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 runtime 变更的 focused regression 与完整验证要求。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"复核 process runner 与 cc/cx/core 边界以及环境变量/退出码传递。"}
+{"file":".trellis/tasks/07-30-cli-posix-execve/research/bun-execve-contract.md","reason":"按已验证的 Bun 1.3.14 API 和 warning 证据检查实现，不依赖过时猜测。"}
