@@ -3,14 +3,12 @@
 // 不写盘、不注入 ccq vault/env；Codex 自行读取 ~/.codex/profile TOML。
 
 import {codexProfileExists, isOfficialLoginKey, safeCodexProfileKey} from '../../core/codex.js';
+import {runWithInheritedTty} from '../process-runner.js';
 
 export type CodexRunner = (args: readonly string[]) => Promise<number>;
 
 async function runCodexWithInheritedTty(args: readonly string[]): Promise<number> {
-	const proc = Bun.spawn(['codex', ...args], {
-		stdio: ['inherit', 'inherit', 'inherit']
-	});
-	return await proc.exited;
+	return await runWithInheritedTty('codex', args);
 }
 
 /** 执行 cx 子命令。返回退出码（透传 codex 的退出码）。 */
