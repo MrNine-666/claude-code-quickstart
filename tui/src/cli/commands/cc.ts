@@ -13,7 +13,7 @@ async function runClaudeWithInheritedTty(args: readonly string[]): Promise<numbe
 	return await runWithInheritedTty('claude', args);
 }
 
-/** 执行 cc 子命令。返回退出码（透传 claude 的退出码）。 */
+/** 执行 cc 子命令。POSIX 透传 claude 退出码；Windows 仅返回 detached 启动结果。 */
 export async function runCc(name: string, passthrough: string[], runClaude: ClaudeRunner = runClaudeWithInheritedTty): Promise<number> {
 	// 名称白名单校验（^[A-Za-z0-9._-]+$，天然防路径穿越：不含 / 与 ..）
 	if (!testProviderKey(name)) {

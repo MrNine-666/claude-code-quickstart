@@ -11,7 +11,7 @@ async function runCodexWithInheritedTty(args: readonly string[]): Promise<number
 	return await runWithInheritedTty('codex', args);
 }
 
-/** 执行 cx 子命令。返回退出码（透传 codex 的退出码）。 */
+/** 执行 cx 子命令。POSIX 透传 codex 退出码；Windows 仅返回 detached 启动结果。 */
 export async function runCx(
 	name: string | undefined,
 	passthrough: string[],

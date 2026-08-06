@@ -33,8 +33,11 @@ if (result.status === 'invalid') return {ok: false, error: result.error};
 
 - 捕获式管理命令使用 `core/exec.ts`，并始终检查 `code`、`stdout`、`stderr`、
   timeout 与 spawn failure。
-- 启动类 `cc`/`cx` 命令继承 stdio，并返回 child code。
+- 启动类 `cc`/`cx` 命令继承 stdio。POSIX 等待并返回 child code；Windows 只在
+  direct Agent process 创建成功后立即返回，不观察或透传 Agent 后续 code。
 - 启动 Agent 时出现 ENOENT，exit code 为 `127`。
+- Windows direct executable 解析失败或 `spawn()` 同步失败仍按启动失败映射为
+  `127`/`1`；不得因此回退到 shell 或额外 helper process。
 - 即使 descendant 仍持有 stdio handle，timeout 也必须让 caller settle。
 - 命令 exit code 是诊断，不是 filesystem fact 的证明。Skills、MCP、tool
   injection 与 self-update 必须对最终状态进行 reconciliation。

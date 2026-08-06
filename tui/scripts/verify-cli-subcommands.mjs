@@ -60,28 +60,154 @@ try {
 		assert.deepEqual(posixCalls.spawn[0].argv, ['claude', '--settings', 'profile.json', '--help']);
 		assert.deepEqual(posixCalls.spawn[0].options, {stdio: ['inherit', 'inherit', 'inherit']});
 
-		const windowsCalls = {which: 0, execve: 0, spawn: []};
+		const windowsCalls = {which: [], execve: 0, spawn: [], unref: 0};
 		const windowsRuntime = {
 			platform: 'win32',
-			which() {
-				windowsCalls.which += 1;
-				throw new Error('Windows fallback must not resolve an executable');
+			which(command) {
+				windowsCalls.which.push(command);
+				return 'C:\\Tools\\codex.exe';
 			},
+			fileExists: () => true,
 			execve() {
 				windowsCalls.execve += 1;
 				throw new Error('Windows fallback must not call execve');
 			},
 			spawn(argv, options) {
 				windowsCalls.spawn.push({argv: [...argv], options});
-				return {exited: Promise.resolve(17)};
+				return {
+					exited: new Promise(() => {}),
+					unref() {
+						windowsCalls.unref += 1;
+					}
+				};
 			}
 		};
 
-		assert.equal(await runWithInheritedTty('codex', ['--help'], windowsRuntime), 17);
-		assert.equal(windowsCalls.which, 0);
+		const windowsCode = await Promise.race([
+			runWithInheritedTty('codex', ['--help'], windowsRuntime),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('Windows detached runner waited for child exit')), 250))
+		]);
+		assert.equal(windowsCode, 0);
+		assert.deepEqual(windowsCalls.which, ['codex']);
 		assert.equal(windowsCalls.execve, 0);
-		assert.deepEqual(windowsCalls.spawn[0].argv, ['codex', '--help']);
-		console.log('[PASS] process runner POSIX execve/fallback + Windows spawn');
+		assert.deepEqual(windowsCalls.spawn[0].argv, ['C:\\Tools\\codex.exe', '--help']);
+		assert.deepEqual(windowsCalls.spawn[0].options, {
+			stdio: ['inherit', 'inherit', 'inherit'],
+			detached: true
+		});
+		assert.equal(windowsCalls.unref, 1);
+
+		const directRuntime = {
+			...windowsRuntime,
+			which: () => 'C:\\Tools\\claude.exe',
+			fileExists: () => true,
+			spawn(argv, options) {
+				windowsCalls.spawn.push({argv: [...argv], options});
+				return {exited: new Promise(() => {}), unref: () => { windowsCalls.unref += 1; }};
+			}
+		};
+		assert.equal(await runWithInheritedTty('claude', ['--version'], directRuntime), 0);
+		assert.deepEqual(windowsCalls.spawn.at(-1).argv, ['C:\\Tools\\claude.exe', '--version']);
+
+		const wrapperRuntime = {
+			...directRuntime,
+			which: () => 'C:\\node\\claude.cmd',
+			readFile: () => '"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe" %*',
+			fileExists: path => path === 'C:\\node\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe'
+		};
+		assert.equal(await runWithInheritedTty('claude', [], wrapperRuntime), 0);
+		assert.deepEqual(windowsCalls.spawn.at(-1).argv, ['C:\\node\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe']);
+
+		const escapedWrapperRuntime = {
+			...directRuntime,
+			which: () => 'C:\\node\\claude.cmd',
+			readFile: () => '"%dp0%\\..\\outside\\claude.exe" %*',
+			fileExists: () => true,
+			spawn() {
+				throw new Error('wrapper traversal must fail closed before spawn');
+			}
+		};
+		await assert.rejects(
+			() => runWithInheritedTty('claude', [], escapedWrapperRuntime),
+			/Executable not found: claude/
+		);
+
+		const codexFallbackRuntime = {
+			...directRuntime,
+			which: () => 'C:\\Program Files\\WindowsApps\\OpenAI.Codex\\codex.exe',
+			localAppData: 'C:\\Users\\tester\\AppData\\Local',
+			listDirectory: () => ['old', 'new'],
+			fileExists: path => path === 'C:\\Users\\tester\\AppData\\Local\\OpenAI\\Codex\\bin\\new\\codex.exe'
+		};
+		assert.equal(await runWithInheritedTty('codex', [], codexFallbackRuntime), 0);
+		assert.deepEqual(windowsCalls.spawn.at(-1).argv, ['C:\\Users\\tester\\AppData\\Local\\OpenAI\\Codex\\bin\\new\\codex.exe']);
+
+		const codexWhichFailureRuntime = {
+			...directRuntime,
+			which() {
+				throw new Error('PATH probe failed');
+			},
+			localAppData: 'C:\\Users\\tester\\AppData\\Local',
+			listDirectory: () => ['..', 'valid'],
+			fileExists: path => path === 'C:\\Users\\tester\\AppData\\Local\\OpenAI\\Codex\\bin\\valid\\codex.exe'
+		};
+		assert.equal(await runWithInheritedTty('codex', [], codexWhichFailureRuntime), 0);
+		assert.deepEqual(windowsCalls.spawn.at(-1).argv, ['C:\\Users\\tester\\AppData\\Local\\OpenAI\\Codex\\bin\\valid\\codex.exe']);
+
+		const unavailableCodexRuntime = {
+			...directRuntime,
+			which: () => 'C:\\Program Files\\WindowsApps\\OpenAI.Codex\\codex.exe',
+			localAppData: 'C:\\Users\\tester\\AppData\\Local',
+			listDirectory: () => ['v1'],
+			fileExists: () => false,
+			spawn() {
+				throw new Error('unavailable Codex must fail closed before spawn');
+			}
+		};
+		await assert.rejects(
+			() => runWithInheritedTty('codex', [], unavailableCodexRuntime),
+			/Executable not found: codex/
+		);
+
+		const missingRuntime = {
+			...directRuntime,
+			which: () => 'C:\\Tools\\missing.exe',
+			fileExists: () => false,
+			listDirectory: () => [],
+			spawn() {
+				throw new Error('must not spawn when no direct executable exists');
+			}
+		};
+		await assert.rejects(
+			() => runWithInheritedTty('claude', [], missingRuntime),
+			/Executable not found: claude/
+		);
+
+		const whichFailureRuntime = {
+			...directRuntime,
+			which() {
+				throw new Error('PATH probe failed');
+			},
+			localAppData: 'C:\\Users\\tester\\AppData\\Local',
+			listDirectory: () => [],
+			spawn() {
+				throw new Error('which failure must fail closed before spawn');
+			}
+		};
+		await assert.rejects(
+			() => runWithInheritedTty('claude', [], whichFailureRuntime),
+			/Executable not found: claude/
+		);
+
+		const spawnFailureRuntime = {
+			...directRuntime,
+			which: () => 'C:\\Tools\\claude.exe',
+			spawn() {
+				throw new Error('EPERM: operation not permitted');
+			}
+		};
+		await assert.rejects(() => runWithInheritedTty('claude', [], spawnFailureRuntime), /EPERM/);
+		console.log('[PASS] process runner POSIX execve/fallback + Windows direct detached launch');
 	} finally {
 		if (previousExecveMarker === undefined) delete process.env.CCQ_EXECVE_TEST;
 		else process.env.CCQ_EXECVE_TEST = previousExecveMarker;
