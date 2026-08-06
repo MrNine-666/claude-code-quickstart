@@ -1233,6 +1233,7 @@ function Test-CcqLockedFileReplaceContract {
         'function\s+Test-CcqExecutableLocked',
         'function\s+Replace-CcqExecutable',
         'function\s+Restore-CcqExecutableBackup',
+        'function\s+Clear-CcqReplacementBackupsAfterVerifiedReplace',
         'ccq 正在运行',
         '\$maxAttempts\s*=\s*20',
         '\$intervalMs\s*=\s*250',
@@ -1281,6 +1282,16 @@ function Test-CcqLockedFileReplaceContract {
     }
     $replaceBody = $replaceFunction.Extent.Text
 
+    $cleanupFunction = $processAst.Find({
+        param($Node)
+        $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $Node.Name -eq 'Clear-CcqReplacementBackupsAfterVerifiedReplace'
+    }, $true)
+    if (-not $cleanupFunction) {
+        Add-Issue 'Windows ccq locked-file replace 无法找到 replacement backup cleanup 函数'
+        return
+    }
+
     # 反向断言：Install-CcqExecutable 和替换 helper 都不得再用 Move-Item 落盘 ccq.exe。
     # 注意参数顺序：被移除的旧代码是 `Move-Item -Path $tempPath -Destination $ccqPath -Force`，
     # -Path 在 -Destination 之前，所以 'Move-Item\s+-Destination' 这类正则根本命中不到它，
@@ -1320,6 +1331,10 @@ function Test-CcqLockedFileReplaceContract {
     $probeDir = Join-Path $env:TEMP ("ccq-lock-contract-" + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $probeDir -Force | Out-Null
     $probeLockStream = $null
+    $originalWriteUiWarning = $null
+    $scriptRemoveWrapperInstalled = $false
+    $getProcessMockInstalled = $false
+    $getChildItemMockInstalled = $false
     try {
         # 预检探针 1：目标不存在 → 不算被锁，且进程列表 Count 必须为 0。
         # 这条守住 `return , $array` 与调用方 @() 的双重包裹 —— 一旦再套一层，
@@ -1458,9 +1473,224 @@ function Test-CcqLockedFileReplaceContract {
         Assert-Equal 'ccq.locked.rollback-succeeds' $true (Restore-CcqExecutableBackup -BackupPath $rbBackup -TargetPath $rbTarget)
         Assert-Equal 'ccq.locked.rollback-restores-old' 'GOODOLDBUILD' (Get-Content -LiteralPath $rbTarget -Raw)
         Assert-Equal 'ccq.locked.rollback-consumes-backup' $false (Test-Path -LiteralPath $rbBackup)
+
+        # 成功后的 backup cleanup 必须在真实删除边界处理短时/持续占用。
+        # scoped Remove-Item wrapper 只负责在当前 backup 首次删除前注入 FileShare.None
+        # 句柄；真正的删除仍委托给 provider cmdlet。
+        $script:CcqCleanupLockPath = ''
+        $script:CcqCleanupInjectLock = $false
+        $script:CcqCleanupLockInjected = $false
+        $script:CcqCleanupRemovePaths = @()
+        $script:CcqCleanupWarnings = @()
+
+        # 把两个真实函数重新定义在当前 probe scope，使下方 scoped cmdlet wrapper
+        # 能命中 post-replace 删除边界；函数文本仍来自已解析的生产 Process.ps1。
+        Invoke-Expression $cleanupFunction.Extent.Text
+        Invoke-Expression $replaceFunction.Extent.Text
+        $originalWriteUiWarning = (Get-Command Write-UiWarning -CommandType Function -ErrorAction Stop).ScriptBlock
+        function script:Remove-Item {
+            [CmdletBinding()]
+            param(
+                [string]$LiteralPath,
+                [switch]$Force,
+                [switch]$Recurse
+            )
+
+            $script:CcqCleanupRemovePaths += [string]$LiteralPath
+            if ($script:CcqCleanupInjectLock -and -not $script:CcqCleanupLockInjected -and
+                [System.StringComparer]::OrdinalIgnoreCase.Equals($LiteralPath, $script:CcqCleanupLockPath) -and
+                (Test-Path -LiteralPath $LiteralPath -PathType Leaf)) {
+                $script:CcqRetryLockStream = [System.IO.File]::Open(
+                    $LiteralPath,
+                    [System.IO.FileMode]::Open,
+                    [System.IO.FileAccess]::Read,
+                    [System.IO.FileShare]::None
+                )
+                $script:CcqCleanupLockInjected = $true
+            }
+
+            Microsoft.PowerShell.Management\Remove-Item @PSBoundParameters
+        }
+        $scriptRemoveWrapperInstalled = $true
+        function script:Write-UiWarning {
+            param([string]$Message, [string]$Level)
+            $script:CcqCleanupWarnings += $Message
+        }
+
+        # Cleanup 探针 1：当前 backup 的锁在 retry window 内释放，replacement 仍成功，
+        # backup 最终删除且 target 字节保持新版本。
+        $cleanupRetryTarget = Join-Path $probeDir 'cleanup-retry.exe'
+        $cleanupRetryTemp = "$cleanupRetryTarget.download.$PID"
+        $cleanupRetryBackup = "$cleanupRetryTarget.backup.$PID"
+        Set-Content -LiteralPath $cleanupRetryTarget -Value 'CLEANUP-OLD' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $cleanupRetryTemp -Value 'CLEANUP-NEW-BUILD' -NoNewline -Encoding ASCII
+        $script:CcqCleanupLockPath = [System.IO.Path]::GetFullPath($cleanupRetryBackup)
+        $script:CcqCleanupInjectLock = $true
+        $script:CcqCleanupLockInjected = $false
+        $script:CcqCleanupWarnings = @()
+        $script:CcqRetrySleepCount = 0
+        $script:CcqRetryReleaseOnSleep = $true
+        $cleanupRetryResult = Replace-CcqExecutable -TempPath $cleanupRetryTemp -TargetPath $cleanupRetryTarget
+        Assert-Equal 'ccq.cleanup.current-transient.success' $true $cleanupRetryResult.Success
+        Assert-Equal 'ccq.cleanup.current-transient.target' 'CLEANUP-NEW-BUILD' (Get-Content -LiteralPath $cleanupRetryTarget -Raw)
+        Assert-Equal 'ccq.cleanup.current-transient.backup-removed' $false (Test-Path -LiteralPath $cleanupRetryBackup)
+        Assert-Equal 'ccq.cleanup.current-transient.lock-injected' $true $script:CcqCleanupLockInjected
+        if (@($script:CcqCleanupRemovePaths).Count -eq 0) {
+            Add-Issue 'ccq.cleanup.current-transient scoped Remove-Item wrapper 未收到任何调用'
+        } elseif (-not $script:CcqCleanupLockInjected) {
+            Add-Issue "ccq.cleanup.current-transient lock path 未命中: expected=$($script:CcqCleanupLockPath); actual=$($script:CcqCleanupRemovePaths -join ', ')"
+        }
+        if ($script:CcqRetrySleepCount -lt 1) {
+            Add-Issue 'ccq.cleanup.current-transient 未经过 cleanup 重试路径，探针可能空转'
+        }
+        Assert-Equal 'ccq.cleanup.current-transient.no-warning' 0 @($script:CcqCleanupWarnings).Count
+
+        # Cleanup 探针 2：当前 backup 持续占用时，已验证 replacement 不降级；
+        # target 保持新版本，backup 和包含绝对路径的 warning 都保留。
+        $cleanupKeepTarget = Join-Path $probeDir 'cleanup-keep.exe'
+        $cleanupKeepTemp = "$cleanupKeepTarget.download.$PID"
+        $cleanupKeepBackup = "$cleanupKeepTarget.backup.$PID"
+        Set-Content -LiteralPath $cleanupKeepTarget -Value 'KEEP-OLD' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $cleanupKeepTemp -Value 'KEEP-NEW-BUILD' -NoNewline -Encoding ASCII
+        $script:CcqCleanupLockPath = [System.IO.Path]::GetFullPath($cleanupKeepBackup)
+        $script:CcqCleanupInjectLock = $true
+        $script:CcqCleanupLockInjected = $false
+        $script:CcqCleanupWarnings = @()
+        $script:CcqRetrySleepCount = 0
+        $script:CcqRetryReleaseOnSleep = $false
+        $cleanupKeepResult = Replace-CcqExecutable -TempPath $cleanupKeepTemp -TargetPath $cleanupKeepTarget
+        Assert-Equal 'ccq.cleanup.current-persistent.success' $true $cleanupKeepResult.Success
+        Assert-Equal 'ccq.cleanup.current-persistent.target' 'KEEP-NEW-BUILD' (Get-Content -LiteralPath $cleanupKeepTarget -Raw)
+        Assert-Equal 'ccq.cleanup.current-persistent.backup-retained' $true (Test-Path -LiteralPath $cleanupKeepBackup)
+        Assert-Equal 'ccq.cleanup.current-persistent.exhausts-retries' 19 $script:CcqRetrySleepCount
+        $persistentWarning = @($script:CcqCleanupWarnings | Where-Object {
+            $_ -match [regex]::Escape([System.IO.Path]::GetFullPath($cleanupKeepBackup))
+        }).Count -gt 0
+        Assert-Equal 'ccq.cleanup.current-persistent.warning-path' $true $persistentWarning
+        if ($null -ne $script:CcqRetryLockStream) {
+            $script:CcqRetryLockStream.Close()
+            $script:CcqRetryLockStream.Dispose()
+            $script:CcqRetryLockStream = $null
+        }
+        Microsoft.PowerShell.Management\Remove-Item -LiteralPath $cleanupKeepBackup -Force -ErrorAction SilentlyContinue
+
+        # Cleanup 探针 3：下次成功 replacement 回收 dead-PID 历史 backup；活动 PID、
+        # 非法名、超出 Int32 的 PID 和非普通文件始终保留。
+        $historyTarget = Join-Path $probeDir 'history.exe'
+        $historyTemp = "$historyTarget.download.$PID"
+        $deadBackup = "$historyTarget.backup.2147483646"
+        $malformedBackup = "$historyTarget.backup.not-a-pid"
+        $nonFileBackup = "$historyTarget.backup.2147483645"
+        Set-Content -LiteralPath $historyTarget -Value 'HISTORY-OLD' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $historyTemp -Value 'HISTORY-NEW-BUILD' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $deadBackup -Value 'DEAD-PID-BACKUP' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $malformedBackup -Value 'MALFORMED-BACKUP' -NoNewline -Encoding ASCII
+        New-Item -ItemType Directory -Path $nonFileBackup -Force | Out-Null
+        $script:CcqCleanupInjectLock = $false
+        $script:CcqCleanupWarnings = @()
+        $historyResult = Replace-CcqExecutable -TempPath $historyTemp -TargetPath $historyTarget
+        Assert-Equal 'ccq.cleanup.history.success' $true $historyResult.Success
+        Assert-Equal 'ccq.cleanup.history.dead-pid-removed' $false (Test-Path -LiteralPath $deadBackup)
+        Assert-Equal 'ccq.cleanup.history.malformed-preserved' $true (Test-Path -LiteralPath $malformedBackup)
+        Assert-Equal 'ccq.cleanup.history.non-file-preserved' $true (Test-Path -LiteralPath $nonFileBackup -PathType Container)
+
+        $directTarget = Join-Path $probeDir 'direct.exe'
+        $directCurrent = "$directTarget.backup.0"
+        $activeBackup = "$directTarget.backup.$PID"
+        $overflowBackup = "$directTarget.backup.999999999999999999999"
+        Set-Content -LiteralPath $directTarget -Value 'DIRECT-TARGET' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $activeBackup -Value 'ACTIVE-PID-BACKUP' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $overflowBackup -Value 'OVERFLOW-PID-BACKUP' -NoNewline -Encoding ASCII
+        $directSize = (Get-Item -LiteralPath $directTarget).Length
+        $directCleanup = Clear-CcqReplacementBackupsAfterVerifiedReplace `
+            -TargetPath $directTarget `
+            -CurrentBackupPath $directCurrent `
+            -ExpectedTargetSize $directSize `
+            -MaxAttempts 1 `
+            -IntervalMs 0
+        Assert-Equal 'ccq.cleanup.history.active-pid-preserved' $true (Test-Path -LiteralPath $activeBackup)
+        Assert-Equal 'ccq.cleanup.history.pid-overflow-preserved' $true (Test-Path -LiteralPath $overflowBackup)
+        $directRetained = @($directCleanup.RetainedPaths)
+        Assert-Equal 'ccq.cleanup.history.active-pid-reported' $true ($directRetained -contains [System.IO.Path]::GetFullPath($activeBackup))
+        Assert-Equal 'ccq.cleanup.history.pid-overflow-reported' $true ($directRetained -contains [System.IO.Path]::GetFullPath($overflowBackup))
+
+        # Cleanup 探针 4：target 尺寸不匹配时不允许任何删除，包括当前和 dead-PID backup。
+        $mismatchTarget = Join-Path $probeDir 'mismatch.exe'
+        $mismatchCurrent = "$mismatchTarget.backup.$PID"
+        $mismatchHistorical = "$mismatchTarget.backup.2147483644"
+        Set-Content -LiteralPath $mismatchTarget -Value 'MISMATCH-TARGET' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $mismatchCurrent -Value 'CURRENT-RECOVERY' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $mismatchHistorical -Value 'HISTORICAL-RECOVERY' -NoNewline -Encoding ASCII
+        $mismatchCleanup = Clear-CcqReplacementBackupsAfterVerifiedReplace `
+            -TargetPath $mismatchTarget `
+            -CurrentBackupPath $mismatchCurrent `
+            -ExpectedTargetSize 1 `
+            -MaxAttempts 1 `
+            -IntervalMs 0
+        Assert-Equal 'ccq.cleanup.target-mismatch.current-preserved' $true (Test-Path -LiteralPath $mismatchCurrent)
+        Assert-Equal 'ccq.cleanup.target-mismatch.history-preserved' $true (Test-Path -LiteralPath $mismatchHistorical)
+        Assert-Equal 'ccq.cleanup.target-mismatch.removes-none' 0 @($mismatchCleanup.RemovedPaths).Count
+
+        # Cleanup 探针 5：进程查询和目录枚举异常都必须 fail closed，保留候选。
+        $lookupTarget = Join-Path $probeDir 'lookup-error.exe'
+        $lookupBackup = "$lookupTarget.backup.2147483643"
+        Set-Content -LiteralPath $lookupTarget -Value 'LOOKUP-TARGET' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $lookupBackup -Value 'LOOKUP-RECOVERY' -NoNewline -Encoding ASCII
+        function Get-Process {
+            [CmdletBinding()]
+            param([int]$Id)
+            throw [System.UnauthorizedAccessException]::new('fixture process lookup failure')
+        }
+        $getProcessMockInstalled = $true
+        $lookupCleanup = Clear-CcqReplacementBackupsAfterVerifiedReplace `
+            -TargetPath $lookupTarget `
+            -CurrentBackupPath "$lookupTarget.backup.0" `
+            -ExpectedTargetSize (Get-Item -LiteralPath $lookupTarget).Length `
+            -MaxAttempts 1 `
+            -IntervalMs 0
+        Assert-Equal 'ccq.cleanup.lookup-error.preserved' $true (Test-Path -LiteralPath $lookupBackup)
+        Assert-Equal 'ccq.cleanup.lookup-error.reported' $true (@($lookupCleanup.RetainedPaths) -contains [System.IO.Path]::GetFullPath($lookupBackup))
+
+        $enumerationTarget = Join-Path $probeDir 'enumeration-error.exe'
+        $enumerationBackup = "$enumerationTarget.backup.2147483642"
+        Set-Content -LiteralPath $enumerationTarget -Value 'ENUM-TARGET' -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath $enumerationBackup -Value 'ENUM-RECOVERY' -NoNewline -Encoding ASCII
+        function Get-ChildItem {
+            [CmdletBinding()]
+            param([string]$LiteralPath, [switch]$Force)
+            throw [System.IO.IOException]::new('fixture enumeration failure')
+        }
+        $getChildItemMockInstalled = $true
+        $enumerationCleanup = Clear-CcqReplacementBackupsAfterVerifiedReplace `
+            -TargetPath $enumerationTarget `
+            -CurrentBackupPath "$enumerationTarget.backup.0" `
+            -ExpectedTargetSize (Get-Item -LiteralPath $enumerationTarget).Length `
+            -MaxAttempts 1 `
+            -IntervalMs 0
+        Assert-Equal 'ccq.cleanup.enumeration-error.preserved' $true (Test-Path -LiteralPath $enumerationBackup)
+        $enumerationDirectory = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($enumerationTarget))
+        if ($enumerationCleanup.WarningMessage -notmatch [regex]::Escape($enumerationDirectory)) {
+            Add-Issue "ccq.cleanup.enumeration-error warning 未指出保留目录: $($enumerationCleanup.WarningMessage)"
+        }
     } finally {
         if ($null -ne $probeLockStream) { $probeLockStream.Close(); $probeLockStream.Dispose() }
-        Remove-Item -LiteralPath $probeDir -Recurse -Force -ErrorAction SilentlyContinue
+        if ($null -ne $script:CcqRetryLockStream) {
+            $script:CcqRetryLockStream.Close(); $script:CcqRetryLockStream.Dispose()
+            $script:CcqRetryLockStream = $null
+        }
+        if ($scriptRemoveWrapperInstalled) {
+            Microsoft.PowerShell.Management\Remove-Item -Path 'Function:\script:Remove-Item' -Force -ErrorAction SilentlyContinue
+        }
+        if ($getProcessMockInstalled) {
+            Microsoft.PowerShell.Management\Remove-Item -LiteralPath 'Function:\Get-Process' -Force -ErrorAction SilentlyContinue
+        }
+        if ($getChildItemMockInstalled) {
+            Microsoft.PowerShell.Management\Remove-Item -LiteralPath 'Function:\Get-ChildItem' -Force -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $originalWriteUiWarning) {
+            Set-Item -Path 'Function:\script:Write-UiWarning' -Value $originalWriteUiWarning -Force
+        }
+        Microsoft.PowerShell.Management\Remove-Item -LiteralPath $probeDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     # 行为探针：mock Test-CcqExecutableLocked 返回 Locked=$true，断言 Invoke-FileDownload 不被调用。

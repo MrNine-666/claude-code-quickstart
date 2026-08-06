@@ -1,0 +1,2 @@
+{"file":".trellis/spec/project/installer/windows-core.md","reason":"Windows PS5.1 replacement, recovery artifact, retry and validation contract"}
+{"file":".trellis/tasks/07-31-installer-replace-residue-cleanup/research/backup-residue-probe.md","reason":"Measured post-replace backup cleanup race and existing coverage gap"}

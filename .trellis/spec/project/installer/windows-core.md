@@ -175,6 +175,33 @@ gzip 失败会删除两者，打印 raw 回退警告，且绝不触碰目标。�
 - `Get-CcqLockHolderProcesses` 使用 `return ,$array` 重塑结果，因此调用方直接读取
   `.Count`；参见上面的数组规则。
 
+### ccq Replacement Backup Cleanup
+
+`Replace-CcqExecutable` 只能在新 target 存在且尺寸等于本次 temp 的已知尺寸后调用：
+
+```powershell
+Clear-CcqReplacementBackupsAfterVerifiedReplace `
+  -TargetPath <absolute ccq.exe> `
+  -CurrentBackupPath <absolute current backup> `
+  -ExpectedTargetSize <positive Int64> `
+  -MaxAttempts 20 `
+  -IntervalMs 250
+# -> @{ RemovedPaths = @(...); RetainedPaths = @(...); WarningMessage = '...' }
+```
+
+helper 在删除前再次验证 target 存在且尺寸一致。当前事务 backup 使用 `20 x 250 ms`
+有界重试，因为来源 PID 就是仍在运行的 installer；历史项只扫描 target 直接同级、
+精确匹配 `<target-name>.backup.<digits>` 的普通非 reparse 文件，并且只在
+`Get-Process -Id <PID>` 以 `NoProcessFoundForGivenId` 明确证明 PID 不存在时删除。
+PID 活动或复用、解析溢出、进程/目录探测异常、目录/reparse point、删除失败及 target
+复验失败全部 fail closed：保留 artifact。
+
+清理是已验证 replacement 的非致命后置动作。保留项不得把 `Success` 降级为 false，
+但必须通过一条 warning 报告绝对路径；扫描失败时报告绝对目录。失败/回滚路径及
+同 PID collision 仍保留恢复 backup，绝不能调用此清理。此生命周期由
+`Process.ps1` 所有，不得扩展 `cleanup-policy.json` 的 Profile snapshot 范围，也不处理
+TUI `.ccq.exe.update-*.tmp` 或 macOS artifact。
+
 ## 4. Validation And Error Matrix
 
 | Condition | Required result |
@@ -196,6 +223,11 @@ gzip 失败会删除两者，打印 raw 回退警告，且绝不触碰目标。�
 | 重试耗尽且目标缺失 | 将 `backup` 回滚到目标；回滚失败时保留并报告路径 |
 | 替换前已存在同 PID backup | 在修改目标前停止；只删除新的 `temp`，保留恢复 backup 并报告路径 |
 | 替换后验证失败 | 从 `backup` 回滚；除非确认回滚成功，否则保留 `backup` |
+| 已验证替换后的当前 backup 短时占用 | 在 20 x 250 ms 窗口内重试；释放后删除，target 保持新版本 |
+| 已验证替换后的当前 backup 持续占用 | replacement 仍成功；保留 backup，并以 warning 报告绝对路径 |
+| 精确历史 backup 的来源 PID 明确不存在 | 删除该普通文件；不得触碰 target |
+| 历史 backup 的 PID 活动/复用或身份、类型、探测不确定 | 保留候选；不得用年龄或通配符推断可删除 |
+| cleanup 前 target 复验失败 | 不删除任何当前或历史 backup；warning 报告绝对 target 路径 |
 | ccq 已安装版本等于目标 | 报告当前版本；不提示、不下载 |
 | ccq 已安装版本不同 | 显示两个版本；菜单默认选择保留当前版本 |
 | 目标 Release tag 不可用 | 保留当前可执行文件；不得猜测 `latest` 不同 |
@@ -210,6 +242,8 @@ gzip 失败会删除两者，打印 raw 回退警告，且绝不触碰目标。�
 - 正确：版本不匹配后选择覆盖时，仍先下载到临时路径，再替换已有可执行文件。
 - 正确：有效 gzip fixture 完整解压到同目录 raw 临时文件，然后由已有
   `Replace-CcqExecutable` 消费。
+- 正确：新 target 验证成功后删除已退出 PID 的精确历史 backup，并保留活动 PID
+  或任何探测不确定的候选。
 - 基线：`Git` 已存在，生命周期报告跳过，不修改持久化状态文件。
 - 错误：从可能为 null 的 PowerShell 管道结果读取 `.Count`。
 - 错误：将 `ccq` 函数写入 `$PROFILE` 以提供命令。
@@ -220,6 +254,7 @@ gzip 失败会删除两者，打印 raw 回退警告，且绝不触碰目标。�
 - 错误：用 `Move-Item -Force` 落地下载的 ccq，并把原始 `ERROR_ALREADY_EXISTS`
   文本直接展示给用户。
 - 错误：未先确认目标存在就于失败路径删除 `backup`。
+- 错误：用 `*.backup.*` 通配符、文件年龄或一次失败的 PID 查询决定删除历史 backup。
 
 ## 6. Tests Required
 
@@ -239,6 +274,10 @@ gzip 失败会删除两者，打印 raw 回退警告，且绝不触碰目标。�
   `Restore-CcqExecutableBackup` 回滚到已验证的旧目标；同 PID backup 冲突时逐字节
   保留恢复 artifact 且目标不变。还要断言 probe 报告锁定后不会下载，并通过 probe
   返回后再次独占打开目标，证明其 stream 句柄已完整释放。
+- 同一合同还必须覆盖 replacement 成功后的 backup cleanup：当前 backup 短时锁释放后
+  删除，持续锁时保持 success 并以绝对路径告警；dead-PID 历史项删除；active PID、
+  malformed/overflow PID、非普通文件、进程查询异常、目录枚举异常和 target 尺寸变化
+  全部保留。故障注入的函数/cmdlet wrapper 必须在 `finally` 中拆除。
 - 合同测试中的每个反向断言都必须针对实际删除的旧代码做 mutation-check：粘回旧文本
   并确认断言触发，再恢复并确认 PASS。静默匹配不到任何内容的反向断言属于死代码。
   `Install-CcqExecutable` 中的 `\bMove-Item` 边界是已验证示例：`-match` 不区分大小写，
@@ -321,4 +360,16 @@ if ((Get-Item $TargetPath).Length -eq $tempSize) { $replaced = $true }
 # Correct: a successful replace always consumes temp; a locked failure leaves it.
 if (-not (Test-Path $TempPath) -and (Test-Path $TargetPath) -and
     (Get-Item $TargetPath).Length -eq $tempSize) { $replaced = $true }
+```
+
+```powershell
+# Wrong: 通配扫描和忽略 PID 状态会删除活动事务或唯一恢复副本。
+Get-ChildItem "$TargetPath.backup.*" | Remove-Item -Force
+
+# Correct: 先复验新 target，再由 helper 对当前 backup 有界重试；历史项仅在
+# 精确命名、普通文件且 PID 明确不存在时删除，其余一律保留并告警。
+$cleanup = Clear-CcqReplacementBackupsAfterVerifiedReplace `
+    -TargetPath $TargetPath -CurrentBackupPath $backupPath `
+    -ExpectedTargetSize $tempSize -MaxAttempts 20 -IntervalMs 250
+if ($cleanup.WarningMessage) { Write-UiWarning $cleanup.WarningMessage }
 ```

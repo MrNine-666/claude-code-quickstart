@@ -1858,6 +1858,180 @@ function Restore-CcqExecutableBackup {
     }
 }
 
+function Clear-CcqReplacementBackupsAfterVerifiedReplace {
+    <#
+    .SYNOPSIS
+    在新 target 通过尺寸校验后，清理当前事务和可确认无主的历史替换 backup。
+    .DESCRIPTION
+    当前事务 backup 使用有界重试；历史 backup 只有在精确匹配
+    <target>.backup.<PID> 且来源 PID 已退出时才删除。任何身份、文件类型、
+    进程或文件系统探测不确定性都会保留文件，并通过 WarningMessage 返回绝对路径。
+    .OUTPUTS
+    @{ RemovedPaths = @(...); RetainedPaths = @(...); WarningMessage = "" }
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TargetPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$CurrentBackupPath,
+
+        [Parameter(Mandatory = $true)]
+        [long]$ExpectedTargetSize,
+
+        [int]$MaxAttempts = 20,
+
+        [int]$IntervalMs = 250
+    )
+
+    $result = @{
+        RemovedPaths   = @()
+        RetainedPaths  = @()
+        WarningMessage = ""
+    }
+    $removedPaths = @()
+    $retainedPaths = @()
+
+    $targetFullPath = ""
+    $currentBackupFullPath = ""
+    $targetDirectory = ""
+    $targetName = ""
+    try {
+        $targetFullPath = [System.IO.Path]::GetFullPath($TargetPath)
+        $currentBackupFullPath = [System.IO.Path]::GetFullPath($CurrentBackupPath)
+        $targetDirectory = [System.IO.Path]::GetDirectoryName($targetFullPath)
+        $targetName = [System.IO.Path]::GetFileName($targetFullPath)
+    } catch {
+        $result.WarningMessage = "ccq.exe 替换已完成，但备份清理路径无法验证，已跳过清理。"
+        return $result
+    }
+
+    # 清理只属于已验证 replacement 的后置阶段。再次确认 target，防止验证后并发变化。
+    $targetVerified = $false
+    try {
+        if ($ExpectedTargetSize -gt 0 -and
+            (Test-Path -LiteralPath $targetFullPath -PathType Leaf)) {
+            $targetVerified = ((Get-Item -LiteralPath $targetFullPath -Force -ErrorAction Stop).Length -eq
+                $ExpectedTargetSize)
+        }
+    } catch {
+        $targetVerified = $false
+    }
+    if (-not $targetVerified) {
+        $result.WarningMessage = "ccq.exe 替换已完成，但目标校验状态已变化，已跳过备份清理: $targetFullPath"
+        return $result
+    }
+
+    $candidatePattern = '^' + [regex]::Escape($targetName) + '\.backup\.(?<Pid>\d+)$'
+    $currentName = [System.IO.Path]::GetFileName($currentBackupFullPath)
+    $currentDirectory = [System.IO.Path]::GetDirectoryName($currentBackupFullPath)
+    $currentIdentityValid = ([System.StringComparer]::OrdinalIgnoreCase.Equals($targetDirectory, $currentDirectory) -and
+        $currentName -match $candidatePattern)
+
+    # 当前事务 backup 的 PID 必然仍活动，因此不能套用历史 backup 的 PID 判定。
+    if (Test-Path -LiteralPath $currentBackupFullPath) {
+        if (-not $currentIdentityValid) {
+            $retainedPaths += $currentBackupFullPath
+        } else {
+            $currentRemoved = $false
+            for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+                try {
+                    $currentItem = Get-Item -LiteralPath $currentBackupFullPath -Force -ErrorAction Stop
+                    if ($currentItem -isnot [System.IO.FileInfo] -or
+                        (($currentItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+                        break
+                    }
+
+                    Remove-Item -LiteralPath $currentBackupFullPath -Force -ErrorAction Stop
+                    if (-not (Test-Path -LiteralPath $currentBackupFullPath)) {
+                        $currentRemoved = $true
+                        $removedPaths += $currentBackupFullPath
+                        break
+                    }
+                } catch {
+                    # 短时共享冲突和其他删除失败都只影响 cleanup，不改变 replacement 成功。
+                }
+
+                if ($attempt -lt $MaxAttempts) {
+                    Start-Sleep -Milliseconds $IntervalMs
+                }
+            }
+            if (-not $currentRemoved -and (Test-Path -LiteralPath $currentBackupFullPath)) {
+                $retainedPaths += $currentBackupFullPath
+            }
+        }
+    }
+
+    # 只扫描 target 的直接同级项，并在删除前逐项确认精确身份、普通文件和 PID 状态。
+    $candidates = @()
+    try {
+        $candidates = @(Get-ChildItem -LiteralPath $targetDirectory -Force -ErrorAction Stop)
+    } catch {
+        $result.RemovedPaths = @($removedPaths)
+        $result.RetainedPaths = @($retainedPaths)
+        $result.WarningMessage = "ccq.exe 替换已完成，但无法扫描历史备份，已保留未确认项。目录: $targetDirectory"
+        return $result
+    }
+
+    foreach ($candidate in $candidates) {
+        $candidateName = [string]$candidate.Name
+        if ($candidateName -notmatch $candidatePattern) { continue }
+
+        $candidatePath = [System.IO.Path]::GetFullPath([string]$candidate.FullName)
+        if ([System.StringComparer]::OrdinalIgnoreCase.Equals($candidatePath, $currentBackupFullPath)) {
+            continue
+        }
+
+        if ($candidate -isnot [System.IO.FileInfo] -or
+            (($candidate.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+            $retainedPaths += $candidatePath
+            continue
+        }
+
+        [int]$sourcePid = 0
+        if (-not [int]::TryParse([string]$matches['Pid'], [ref]$sourcePid)) {
+            $retainedPaths += $candidatePath
+            continue
+        }
+
+        $sourceProcess = $null
+        $pidConfirmedAbsent = $false
+        try {
+            $sourceProcess = Get-Process -Id $sourcePid -ErrorAction Stop
+        } catch {
+            # Get-Process 对已退出 PID 使用这个稳定的 fully-qualified error id；
+            # 其他异常代表探测不确定，必须保留 recovery artifact。
+            if ([string]$_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId*') {
+                $pidConfirmedAbsent = $true
+            }
+        }
+
+        if ($null -ne $sourceProcess -or -not $pidConfirmedAbsent) {
+            $retainedPaths += $candidatePath
+            continue
+        }
+
+        try {
+            Remove-Item -LiteralPath $candidatePath -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $candidatePath) {
+                $retainedPaths += $candidatePath
+            } else {
+                $removedPaths += $candidatePath
+            }
+        } catch {
+            $retainedPaths += $candidatePath
+        }
+    }
+
+    $result.RemovedPaths = @($removedPaths)
+    $result.RetainedPaths = @($retainedPaths)
+    if ($retainedPaths.Count -gt 0) {
+        $result.WarningMessage = "ccq.exe 替换已完成，但以下旧版本备份暂未清理: " +
+            ($retainedPaths -join ', ')
+    }
+    return $result
+}
+
 function Replace-CcqExecutable {
     <#
     .SYNOPSIS
@@ -2020,12 +2194,23 @@ function Replace-CcqExecutable {
         return $result
     }
 
-    # 成功路径：清理残留 temp/backup。Replace 成功后 temp 已被消费，backup 保留旧版本。
+    # 成功路径：temp 可直接回收；backup 只能在重新验证 target 后按 replacement cleanup 合同处理。
     if (Test-Path -LiteralPath $TempPath) {
         Remove-Item -LiteralPath $TempPath -Force -ErrorAction SilentlyContinue
     }
-    if (Test-Path -LiteralPath $backupPath) {
-        Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+    try {
+        $cleanupResult = Clear-CcqReplacementBackupsAfterVerifiedReplace `
+            -TargetPath $TargetPath `
+            -CurrentBackupPath $backupPath `
+            -ExpectedTargetSize $tempSize `
+            -MaxAttempts $maxAttempts `
+            -IntervalMs $intervalMs
+        if (-not [string]::IsNullOrWhiteSpace([string]$cleanupResult.WarningMessage)) {
+            Write-UiWarning $cleanupResult.WarningMessage
+        }
+    } catch {
+        # replacement 已通过最终校验；cleanup 异常不能把新 target 降级为失败。
+        Write-UiWarning "ccq.exe 替换已完成，但备份清理失败，已保留未确认项。备份路径: $backupPath"
     }
 
     $result.Success = $true
