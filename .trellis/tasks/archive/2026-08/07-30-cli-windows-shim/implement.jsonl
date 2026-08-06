@@ -1,0 +1,6 @@
+{"file":".trellis/spec/project/tui/cli-contract.md","reason":"实现 Windows direct executable resolution、detached/unref 和 immediate-return launch-class 合同，同时保持 POSIX execve。"}
+{"file":".trellis/spec/project/tui/provider-config-safety.md","reason":"保持 Claude/Codex provider/profile 校验、路径所有权与脱敏错误发生在 spawn 之前。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"实现同步发起失败与 Agent 后续结果分离的 Windows launch error contract。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"执行 focused regression、compiled Windows smoke 与完整 TUI 门禁。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"追踪 argv、provider/profile validation、direct executable resolution 和 process lifetime。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用现有 runWithInheritedTty 与 provider/profile owner，不增加 shell 或第二套事实源。"}
