@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/project/installer/index.md", "reason": "installer 预开发清单与跨平台 contract 导航"}
-{"file": ".trellis/spec/project/installer/platform-runtime.md", "reason": "Windows/macOS ccq handoff、平台兼容与验证矩阵"}
-{"file": ".trellis/spec/project/installer/windows-core.md", "reason": "PS5.1 core、临时文件与 Replace-CcqExecutable 安全边界"}
-{"file": ".trellis/spec/project/installer/build-release.md", "reason": "gzip raw 映射、十 artifact 与单文件 installer 构建契约"}

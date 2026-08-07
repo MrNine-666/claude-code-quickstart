@@ -1,6 +1,0 @@
-{"file":".trellis/spec/project/tui/cli-contract.md","reason":"检查 Windows 只直接 spawn absolute exe、调用 unref、立即返回 0，且 POSIX exit contract 无回归。"}
-{"file":".trellis/spec/project/tui/provider-config-safety.md","reason":"检查 provider/profile invalid paths 在 executable resolution 和 spawn 前失败。"}
-{"file":".trellis/spec/project/tui/quality-tooling.md","reason":"检查 focused gate、typecheck、lint、verify、check 与 compiled smoke 范围。"}
-{"file":".trellis/spec/backend/error-handling.md","reason":"检查同步 spawn failure 仍友好映射，Agent 后续结果不再被 Windows ccq 观察。"}
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 runtime owner、regression strength、Windows native process-tree evidence 和 full gates。"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"复核 argv 到 direct executable、spawn options、ccq exit 和 child lifetime 的端到端路径。"}

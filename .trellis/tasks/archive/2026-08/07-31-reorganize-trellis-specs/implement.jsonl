@@ -1,8 +1,0 @@
-{"file":".trellis/spec/index.md","reason":"规范根索引、project layer 路由和结构保真"}
-{"file":".trellis/spec/guides/development-workflow.md","reason":"项目文档语言约束的唯一长期 owner"}
-{"file":".trellis/spec/backend/index.md","reason":"Backend 工程层路由与质量检查"}
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend 工程层路由与质量检查"}
-{"file":".trellis/spec/project/index.md","reason":"Project 业务合同导航"}
-{"file":".trellis/tasks/07-31-reorganize-trellis-specs/research/spec-inventory.md","reason":"迁移前后 spec 文件集合、路径映射和引用消费者"}
-{"file":".trellis/tasks/07-31-reorganize-trellis-specs/research/migration-baseline.md","reason":"根 AGENTS 管理块和用户 installer 改动基线"}
-{"file":".trellis/tasks/07-31-reorganize-trellis-specs/research/document-language-inventory.md","reason":"项目文档范围、标题规则和托管/历史排除项"}

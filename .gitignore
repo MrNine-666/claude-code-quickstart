@@ -1,8 +1,8 @@
 # ─── 本地 AI 工具数据（不纳入版本控制）───
-.ace-tool/
 .claude/
 .agents/
 .codex/
+.trellis/
 
 # ─── 构建产物（由本地构建或 GitHub Actions 自动生成）───
 dist/

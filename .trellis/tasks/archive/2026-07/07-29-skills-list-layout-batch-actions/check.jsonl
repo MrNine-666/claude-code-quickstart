@@ -1,6 +1,0 @@
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify reducer/registry behavior, real rendering, narrow layouts, focus ownership, and full TUI gate coverage."}
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Require focused Skills gates, aggregate bun run check, and no weakened assertions or duplicated command logic."}
-{"file":".trellis/spec/project/tui/skills-lifecycle-contract.md","reason":"Audit same-name multi-source safety, unknown-source restrictions, exact destructive scope, and one final reconciliation."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Audit stable id snapshots, selection reconciliation, reducer purity, cursor bounds, modal/background isolation, and cancellation."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Audit shared component reuse, one-column scrolling, link fallback, selection/focus visuals, and busy overlay behavior."}
-{"file":".trellis/spec/project/tui/skills-batch-install-contract.md","reason":"Confirm installed-list changes do not regress install-page multi-select, target modal, or shared keybindings."}

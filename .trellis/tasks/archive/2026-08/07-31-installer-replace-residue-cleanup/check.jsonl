@@ -1,3 +1,0 @@
-{"file":".trellis/spec/project/installer/index.md","reason":"Installer package boundaries and required contract verification"}
-{"file":".trellis/spec/project/installer/windows-core.md","reason":"Replacement safety, rollback, PS5.1 and executable contract checks"}
-{"file":".trellis/tasks/07-31-installer-replace-residue-cleanup/research/backup-residue-probe.md","reason":"Confirm implementation closes the reproduced residue path without widening scope"}

@@ -1,5 +1,0 @@
-{"file":".trellis/spec/project/tui/skills-lifecycle-contract.md","reason":"逐条核对三态、六向顺序、失败恢复、lock、其它 Agent 和刷新语义"}
-{"file":".trellis/spec/project/tui/skills-batch-install-contract.md","reason":"回归检查普通安装、来源替换、选择保持和最终 detection 对账"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查 action、service、reducer、view、CLI 与文件事实的跨层数据流"}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查 add/remove 参数构建、env builder、snapshot 和 postflight 是否单一实现"}
-{"file":".trellis/spec/project/tui/index.md","reason":"核对 Skills 与 OpenTUI 项目硬约束及完整回归门禁"}

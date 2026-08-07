@@ -1,1 +1,0 @@
-{"file": ".trellis/spec/project/installer/windows-core.md", "reason": "Windows core 契约：ccq executable handoff 原子替换要求与失败保留 target 的 Error Matrix"}

@@ -1,7 +1,0 @@
-{"file":".trellis/spec/project/tui/skills-lifecycle-contract.md","reason":"现有 Skills 检测、物理拓扑、迁移、替换和复检契约；实现时需要把 CLI-only 列表事实与来源级实例安全写入 owner spec。"}
-{"file":".trellis/spec/project/tui/skills-batch-install-contract.md","reason":"保留 flat multi-select，同时把 name-only 占位与安装对账迁移为来源感知和目标根冲突。"}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Reducer 必须快照 logical instance identity，并只以 mutation 后的完整检测结果 reconciliation。"}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"CLI JSON 需在 core 从 unknown 严格解析为 discriminated readonly domain types。"}
-{"file":".trellis/spec/backend/error-handling.md","reason":"更新、删除和迁移必须区分 complete partial restored failed，并在命令后复检真实状态。"}
-{"file":".trellis/spec/project/tui/config-ownership.md","reason":"Skills 文件与官方 CLI 的所有权边界将新增严格受限的来源隔离删除例外。"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"本变更跨 key/view/reducer/service/core/CLI/filesystem，需要保持单向数据流与 mutation postflight。"}
