@@ -89,7 +89,10 @@ function resolveWrapperExecutable(
 
 	const wrapperDirectory = win32.dirname(normalizedWrapperPath);
 	const target = normalizeWindowsPath(win32.join(wrapperDirectory, match[2]));
-	return isAbsoluteExecutablePath(target) && !isWindowsAppsPath(target) && pathIsWithin(wrapperDirectory, target) && canReadExistingFile(fileExists, target)
+	return isAbsoluteExecutablePath(target) &&
+		!isWindowsAppsPath(target) &&
+		pathIsWithin(wrapperDirectory, target) &&
+		canReadExistingFile(fileExists, target)
 		? target
 		: null;
 }
