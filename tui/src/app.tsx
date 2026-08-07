@@ -45,7 +45,6 @@ import {
 	cleanupTempUpdate,
 	downloadUpdate,
 	formatSelfUpdateError,
-	restartExecutable,
 	type DownloadedSelfUpdate,
 	type DownloadUpdateProgress,
 	type SelfUpdatePlan
@@ -225,18 +224,6 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 		);
 	};
 
-	const restartUpdatedApp = async (): Promise<void> => {
-		renderer?.destroy();
-		const restarted = await restartExecutable();
-		if (!restarted.ok) {
-			const message = formatSelfUpdateError(restarted.error);
-			console.error(message);
-			process.exit(1);
-		}
-
-		process.exit(0);
-	};
-
 	const cancelUpdate = (): void => {
 		const controller = updateAbortRef.current;
 		if (!controller) {
@@ -282,7 +269,8 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 
 	const applyDownloadedUpdate = async (transaction: DownloadedSelfUpdate): Promise<void> => {
 		setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'applyStarted', transaction}));
-		const applied = await applyUpdate(transaction, {restartAfterApply: true});
+		// 更新完成后退出当前 TUI，由用户在原终端中重新运行 ccq；Windows helper 不得再启动新 cmd。
+		const applied = await applyUpdate(transaction, {restartAfterApply: false});
 		if (!applied.ok) {
 			const message = formatSelfUpdateError(applied.error);
 			toast.error(message);
@@ -503,7 +491,7 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 				</box>
 			</box>
 
-			{/* 检查更新浮窗：确认更新、更新进度与重启确认在同一 Modal 内完成 */}
+			{/* 检查更新浮窗：确认更新、更新进度与退出确认在同一 Modal 内完成 */}
 			<UpdateDialog
 				active={updateDialogOpen}
 				screen={updateScreen}
@@ -511,7 +499,7 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 				onUpdate={plan => void runUpdate(plan)}
 				onApplyUpdate={transaction => void applyDownloadedUpdate(transaction)}
 				onCancelUpdate={cancelUpdate}
-				onRestart={() => void restartUpdatedApp()}
+				onExit={onExit}
 				onRetry={retryUpdate}
 			/>
 			{busyOverlay ? (
@@ -653,7 +641,7 @@ function updateButtonLabel(status: UpdateStatus): string {
 		case 'latest':
 			return '已是最新';
 		case 'readyToRestart':
-			return '等待重启';
+			return '等待应用';
 		case 'updated':
 			return '更新完成';
 		case 'error':
@@ -668,7 +656,7 @@ export function UpdateDialog({
 	onUpdate,
 	onApplyUpdate,
 	onCancelUpdate,
-	onRestart,
+	onExit,
 	onRetry
 }: {
 	readonly active: boolean;
@@ -677,7 +665,7 @@ export function UpdateDialog({
 	readonly onUpdate: (plan: SelfUpdatePlan) => void;
 	readonly onApplyUpdate: (transaction: DownloadedSelfUpdate) => void;
 	readonly onCancelUpdate: () => void;
-	readonly onRestart: () => void;
+	readonly onExit: () => void;
 	readonly onRetry: (retry: SelfUpdateRetry) => void;
 }) {
 	useManageInput(keyName => {
@@ -702,7 +690,7 @@ export function UpdateDialog({
 		}
 
 		if (screen.kind === 'updated') {
-			if (isEnter) onRestart();
+			if (isEnter) onExit();
 			else if (isEsc) onClose();
 			return;
 		}
@@ -812,10 +800,10 @@ function updateDialogContent(screen: SelfUpdateScreen): {readonly title: string;
 							fg={colors.muted}
 							selectionBg={colors.selectionBg}
 							selectionFg={colors.selectionFg}
-						>{`  新版本 v${screen.transaction.plan.version} 将在重启后生效`}</text>
+						>{`  应用新版本后退出，重新运行 ccq 即可生效`}</text>
 					</box>
 				),
-				hint: 'Enter 应用并重启  Esc 稍后处理'
+				hint: 'Enter 应用并退出  Esc 稍后处理'
 			};
 		case 'updated':
 			return {
@@ -829,10 +817,10 @@ function updateDialogContent(screen: SelfUpdateScreen): {readonly title: string;
 							fg={colors.muted}
 							selectionBg={colors.selectionBg}
 							selectionFg={colors.selectionFg}
-						>{`  新版本 v${screen.version} 将在重启后生效`}</text>
+						>{`  新版本 v${screen.version} 已生效，按 Enter 退出后重新输入ccq启动`}</text>
 					</box>
 				),
-				hint: 'Enter 立即重启  Esc 稍后重启'
+				hint: 'Enter 退出  Esc 稍后退出'
 			};
 		case 'error':
 			return {

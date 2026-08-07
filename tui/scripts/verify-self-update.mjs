@@ -412,9 +412,10 @@ try {
 	assert.match(appSource, /<UpdateProgressBar[^>]*progress=\{screen\.progress\}/, '更新 Modal 必须渲染下载进度条');
 	assert.match(
 		appSource,
-		/const restartUpdatedApp[\s\S]*?renderer\?\.destroy\(\);[\s\S]*?await restartExecutable\(\)/,
-		'TUI POSIX restart 必须先 destroy renderer 再 spawn'
+		/applyUpdate\(transaction, \{restartAfterApply: false\}\)/,
+		'TUI 应用更新必须禁止 Windows helper 自动重启'
 	);
+	assert.doesNotMatch(appSource, /restartExecutable/, 'TUI 更新流程不得再启动新的 ccq 进程');
 	const fetchBinary = async () => new Response(binary, {status: 200});
 	const first = await downloadUpdate(plan, undefined, {fetch: fetchBinary, targetPath, platform: 'darwin'});
 	const second = await downloadUpdate(plan, undefined, {fetch: fetchBinary, targetPath, platform: 'darwin'});
@@ -1299,6 +1300,7 @@ try {
 	const withKeymap = child => React.createElement(KeymapProvider, {keymap: keymapHarness.keymap}, child);
 	let retryCount = 0;
 	let closeCount = 0;
+	let exitCount = 0;
 	const dialogProps = {
 		active: true,
 		onClose: () => {
@@ -1307,7 +1309,9 @@ try {
 		onUpdate: () => {},
 		onApplyUpdate: () => {},
 		onCancelUpdate: () => {},
-		onRestart: () => {},
+		onExit: () => {
+			exitCount += 1;
+		},
 		onRetry: () => {
 			retryCount += 1;
 		}
@@ -1352,6 +1356,29 @@ try {
 		assert.doesNotMatch(latestFrame, /处理中/, 'check retry 返回无更新时 modal 不得永久显示处理中');
 	} finally {
 		await act(async () => latestDialog.renderer.destroy());
+	}
+
+	const updatedDialog = await testRender(
+		withKeymap(
+			React.createElement(UpdateDialog, {
+				...dialogProps,
+				screen: {kind: 'updated', version: '2.5.0'}
+			})
+		),
+		{width: 64, height: 8}
+	);
+	try {
+		const updatedFrame = await updatedDialog.waitForFrame(frame => frame.includes('更新已应用'));
+		assert.match(updatedFrame, /Enter\s+退出/, '更新完成态必须提示 Enter 退出');
+		const closeCountBeforeExit = closeCount;
+		await act(async () => {
+			keymapHarness.host.press('enter');
+			await updatedDialog.renderOnce();
+		});
+		assert.equal(exitCount, 1, '更新完成态 Enter 必须退出 TUI，不得重启 ccq');
+		assert.equal(closeCount, closeCountBeforeExit, '更新完成态 Enter 不得只关闭浮窗');
+	} finally {
+		await act(async () => updatedDialog.renderer.destroy());
 	}
 
 	const fallbackDialog = await testRender(
