@@ -87,7 +87,9 @@ try {
 	}
 
 	const originalCodeHome = process.env.CODEX_HOME;
+	const originalCcqHome = process.env.CCQ_HOME;
 	process.env.PATH = [codeGraphBin, originalPath].filter(Boolean).join(delimiter);
+	process.env.CCQ_HOME = codeGraphHome;
 	process.env.CODEX_HOME = codexHome;
 	try {
 		const progress = [];
@@ -105,6 +107,11 @@ try {
 			delete process.env.CODEX_HOME;
 		} else {
 			process.env.CODEX_HOME = originalCodeHome;
+		}
+		if (originalCcqHome === undefined) {
+			delete process.env.CCQ_HOME;
+		} else {
+			process.env.CCQ_HOME = originalCcqHome;
 		}
 		process.env.PATH = originalPath;
 	}
