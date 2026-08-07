@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * TUI 构建脚本 - 交叉编译 4 平台可执行文件
+ * TUI 构建脚本 - 默认交叉编译 4 平台，也可通过 --target=<id> 只构建一个目标
  *
  * 产物：
  * - dist/ccq-windows-x64.exe（带自定义图标）
@@ -12,51 +12,89 @@
  * 图标：Windows x64 本机构建时自动嵌入 assets/ccq-icon.ico
  */
 
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { gzipAssetNameForRaw, packageGzipAsset } from "./package-gzip-assets.ts";
 
-const TARGETS = [
-  { platform: "windows", arch: "x64", ext: ".exe", icon: true },
-  { platform: "windows", arch: "arm64", ext: ".exe", icon: false }, // 交叉编译限制
-  { platform: "macos", arch: "x64", ext: "", icon: false },
-  { platform: "macos", arch: "arm64", ext: "", icon: false },
+export const BUILD_TARGETS = [
+  { id: "windows-x64", platform: "windows", arch: "x64", ext: ".exe", icon: true },
+  { id: "windows-arm64", platform: "windows", arch: "arm64", ext: ".exe", icon: false },
+  { id: "macos-x64", platform: "macos", arch: "x64", ext: "", icon: false },
+  { id: "macos-arm64", platform: "macos", arch: "arm64", ext: "", icon: false },
 ] as const;
+
+export type BuildTarget = (typeof BUILD_TARGETS)[number];
+export type BuildTargetRunner = (target: BuildTarget) => Promise<void>;
+
+const TARGETS_BY_ID = new Map<string, BuildTarget>(BUILD_TARGETS.map(target => [target.id, target]));
+const TARGET_USAGE = `用法: bun scripts/build.ts [--target=${BUILD_TARGETS.map(target => target.id).join("|")}]`;
 
 const DIST_DIR = join(import.meta.dir, "../../dist");
 const SRC_ENTRY = join(import.meta.dir, "../src/index.tsx");
 const ICON_PATH = join(import.meta.dir, "../assets/ccq-icon.ico");
 
-async function buildTarget(
-  platform: string,
-  arch: string,
-  ext: string,
-  useIcon: boolean
-): Promise<void> {
-  const target = `bun-${platform}-${arch}`;
-  const outfile = join(DIST_DIR, `ccq-${platform}-${arch}${ext}`);
+export function targetArtifactNames(target: BuildTarget): { readonly raw: string; readonly gzip: string } {
+  const raw = `ccq-${target.platform}-${target.arch}${target.ext}`;
+  return { raw, gzip: gzipAssetNameForRaw(raw) };
+}
 
-  console.log(`\n🔨 构建 ${target}...`);
+export function cleanTargetArtifacts(target: BuildTarget, directory = DIST_DIR): void {
+  const artifacts = targetArtifactNames(target);
+  rmSync(join(directory, artifacts.raw), { force: true });
+  rmSync(join(directory, artifacts.gzip), { force: true });
+}
+
+export function selectBuildTargets(args: readonly string[]): readonly BuildTarget[] {
+  if (args.length === 0) return BUILD_TARGETS;
+
+  const targetArguments = args.filter(argument => argument === "--target" || argument.startsWith("--target="));
+  if (targetArguments.length > 1) {
+    throw new Error(`只能选择一个 target，不能重复传入 --target。${TARGET_USAGE}`);
+  }
+  if (args.length !== 1) {
+    throw new Error(`不支持额外参数。${TARGET_USAGE}`);
+  }
+
+  const argument = args[0];
+  if (argument === undefined) {
+    throw new Error(TARGET_USAGE);
+  }
+  if (argument === "--target" || argument === "--target=") {
+    throw new Error(`--target 需要值。${TARGET_USAGE}`);
+  }
+  if (!argument.startsWith("--target=")) {
+    throw new Error(`不支持参数: ${argument}。${TARGET_USAGE}`);
+  }
+
+  const targetId = argument.slice("--target=".length);
+  const target = TARGETS_BY_ID.get(targetId);
+  if (!target) {
+    throw new Error(`未知 target: ${targetId}。${TARGET_USAGE}`);
+  }
+  return [target];
+}
+
+async function compileTarget(target: BuildTarget): Promise<void> {
+  const bunTarget = `bun-${target.platform}-${target.arch}`;
+  const artifacts = targetArtifactNames(target);
+  const outfile = join(DIST_DIR, artifacts.raw);
+
+  cleanTargetArtifacts(target);
+
+  console.log(`\n🔨 构建 ${bunTarget}...`);
   console.log(`   入口: ${SRC_ENTRY}`);
   console.log(`   产物: ${outfile}`);
 
-  const args = [
-    "bun",
-    "build",
-    "--compile",
-    `--target=${target}`,
-    `--outfile=${outfile}`,
-  ];
+  const args = ["bun", "build", "--compile", `--target=${bunTarget}`, `--outfile=${outfile}`];
 
-  // Windows x64 + 图标文件存在 + 本机是 Windows → 添加 --windows-icon
-  // Bun 限制：--windows-icon 只能在 Windows 本机构建时使用，不支持交叉编译
+  // Bun 限制：--windows-icon 只能在 Windows 本机构建时使用，不支持交叉编译。
   const isWindows = process.platform === "win32";
-  if (useIcon && isWindows && existsSync(ICON_PATH)) {
+  if (target.icon && isWindows && existsSync(ICON_PATH)) {
     args.push(`--windows-icon=${ICON_PATH}`);
     console.log(`   图标: ${ICON_PATH}`);
-  } else if (useIcon && !isWindows) {
+  } else if (target.icon && !isWindows) {
     console.log(`   ⚠️  跳过图标嵌入（交叉编译限制：--windows-icon 仅支持 Windows 本机构建）`);
-  } else if (useIcon) {
+  } else if (target.icon) {
     console.warn(`   ⚠️  图标文件不存在，跳过: ${ICON_PATH}`);
   }
 
@@ -66,48 +104,41 @@ async function buildTarget(
     stdout: "inherit",
     stderr: "inherit",
   });
-
   const exitCode = await proc.exited;
-
   if (exitCode !== 0) {
-    throw new Error(`构建 ${target} 失败，退出码: ${exitCode}`);
+    throw new Error(`构建 ${bunTarget} 失败，退出码: ${exitCode}`);
   }
 
-  console.log(`✓ ${target} 构建完成`);
+  console.log(`✓ ${bunTarget} 构建完成`);
 }
 
-async function main(): Promise<void> {
-  console.log("🚀 开始构建 TUI 可执行文件...\n");
-  console.log(`工作目录: ${import.meta.dir}`);
-  console.log(`产物目录: ${DIST_DIR}`);
+async function buildAndPackageTarget(target: BuildTarget): Promise<void> {
+  await compileTarget(target);
 
-  // 创建 dist 目录
-  if (!existsSync(DIST_DIR)) {
-    console.log(`\n📁 创建产物目录: ${DIST_DIR}`);
-    mkdirSync(DIST_DIR, { recursive: true });
-  }
+  // gzip 必须在最终 raw 字节（含图标/版本注入）之后生成。
+  const artifacts = targetArtifactNames(target);
+  const gzipResult = packageGzipAsset(join(DIST_DIR, artifacts.raw), join(DIST_DIR, artifacts.gzip));
+  const saved = ((1 - gzipResult.gzipSize / gzipResult.rawSize) * 100).toFixed(2);
+  console.log(`✓ ${artifacts.gzip} ${gzipResult.gzipSize} B (−${saved}%)`);
+}
 
-  // 交叉编译 4 个平台（arm64 失败不中断）
-  const results: Array<{ target: string; success: boolean; error?: string }> = [];
+export async function runBuildTargets(
+  targets: readonly BuildTarget[],
+  buildTarget: BuildTargetRunner = buildAndPackageTarget
+): Promise<void> {
+  const results: Array<{ target: BuildTarget; success: boolean; error?: string }> = [];
 
-  for (const { platform, arch, ext, icon } of TARGETS) {
-    const target = `${platform}-${arch}`;
+  for (const target of targets) {
     try {
-      await buildTarget(platform, arch, ext, icon);
-      // gzip 必须在最终 raw 字节（含图标/版本注入）之后生成
-      const rawName = `ccq-${platform}-${arch}${ext}`;
-      const gzipName = gzipAssetNameForRaw(rawName);
-      const gzipResult = packageGzipAsset(join(DIST_DIR, rawName), join(DIST_DIR, gzipName));
-      const saved = ((1 - gzipResult.gzipSize / gzipResult.rawSize) * 100).toFixed(2);
-      console.log(`✓ ${gzipName} ${gzipResult.gzipSize} B (−${saved}%)`);
+      await buildTarget(target);
       results.push({ target, success: true });
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      console.error(`\n⚠️  ${target} 构建失败: ${errMsg}`);
-      results.push({ target, success: false, error: errMsg });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`\n⚠️  ${target.id} 构建失败: ${errorMessage}`);
+      results.push({ target, success: false, error: errorMessage });
 
-      // arm64 交叉编译失败属于已知限制，不中断流程
-      if (arch === "arm64") {
+      // 默认四目标本地构建保留 arm64 已知限制的兼容行为。
+      if (target.arch === "arm64" && targets.length > 1) {
         console.log(`   → arm64 交叉编译失败是已知限制，继续构建其他平台...\n`);
       }
     }
@@ -117,22 +148,40 @@ async function main(): Promise<void> {
   console.log("产物列表:");
   for (const { target, success, error } of results) {
     if (success) {
-      console.log(`  ✓ ccq-${target}${target.startsWith("windows") ? ".exe" : ""}`);
+      console.log(`  ✓ ccq-${target.id}${target.platform === "windows" ? ".exe" : ""}`);
     } else {
-      console.log(`  ✗ ccq-${target}${target.startsWith("windows") ? ".exe" : ""} (${error})`);
+      console.log(`  ✗ ccq-${target.id}${target.platform === "windows" ? ".exe" : ""} (${error})`);
     }
   }
 
-  // 至少一个平台成功即视为构建成功
-  const successCount = results.filter(r => r.success).length;
+  const successCount = results.filter(result => result.success).length;
   if (successCount === 0) {
-    throw new Error("所有平台构建均失败");
+    throw new Error("所有选定平台构建均失败");
   }
 
   console.log(`\n成功: ${successCount}/${results.length} 个平台`);
 }
 
-main().catch((error) => {
-  console.error("\n❌ 构建失败:", error.message);
-  process.exit(1);
-});
+export async function main(targets: readonly BuildTarget[]): Promise<void> {
+  console.log("🚀 开始构建 TUI 可执行文件...\n");
+  console.log(`工作目录: ${import.meta.dir}`);
+  console.log(`产物目录: ${DIST_DIR}`);
+
+  if (!existsSync(DIST_DIR)) {
+    console.log(`\n📁 创建产物目录: ${DIST_DIR}`);
+    mkdirSync(DIST_DIR, { recursive: true });
+  }
+
+  await runBuildTargets(targets);
+}
+
+if (import.meta.main) {
+  try {
+    const targets = selectBuildTargets(process.argv.slice(2));
+    await main(targets);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("\n❌ 构建失败:", message);
+    process.exitCode = 1;
+  }
+}

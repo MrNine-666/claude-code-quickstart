@@ -119,19 +119,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 安装 Bun（TUI 构建运行时）
-        id: setup-bun-build
         uses: oven-sh/setup-bun@v2
         with:
-          # 临时使用 canary，直到包含 f64cade3 的稳定版发布。
-          bun-version: 'canary'
-          no-cache: true
+          bun-version: '1.3.14'
 
-      - name: 验证 Bun Windows FFI 构建修复
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bun tui/scripts/verify-build-runtime.mjs --installed-revision '${{ steps.setup-bun-build.outputs.bun-revision }}'
-
-      - name: 构建 TUI 可执行文件（4 平台交叉编译）
+      - name: 构建 TUI 可执行文件（三个稳定版交叉目标）
         run: |
           cd tui
           # --os=* --cpu=* 装齐所有平台的原生 optionalDependencies
@@ -165,15 +157,14 @@ jobs:
             echo "[SKIP] 非 tag 构建，保留 package.json 开发版本"
           fi
 
-          bun run build
-
-      - name: 生成确定性 gzip 更新资产
-        run: bun tui/scripts/package-gzip-assets.ts dist
+          bun scripts/build.ts --target=windows-x64
+          bun scripts/build.ts --target=macos-x64
+          bun scripts/build.ts --target=macos-arm64
 
       - name: 验证 TUI 可执行文件
         run: |
           set -eu
-          expected="$(bun -e 'const c=await Bun.file("installer/contracts/build.json").json(); console.log(c.BuildEntrypoints.ReleaseArtifacts.filter(x=>x.startsWith("ccq-")).join(" "))')"
+          expected="ccq-windows-x64.exe ccq-windows-x64.exe.gz ccq-macos-x64 ccq-macos-x64.gz ccq-macos-arm64 ccq-macos-arm64.gz"
           for file in ${expected}; do
             test -f "dist/${file}" || { echo "TUI 可执行文件不存在: ${file}" >&2; exit 1; }
             size_kb="$(du -k "dist/${file}" | cut -f1)"
@@ -187,12 +178,100 @@ jobs:
           path: |
             dist/ccq-windows-x64.exe
             dist/ccq-windows-x64.exe.gz
-            dist/ccq-windows-arm64.exe
-            dist/ccq-windows-arm64.exe.gz
             dist/ccq-macos-x64
             dist/ccq-macos-x64.gz
             dist/ccq-macos-arm64
             dist/ccq-macos-arm64.gz
+          retention-days: 7
+
+  build-tui-windows-arm64:
+    name: Build TUI executable (Windows ARM64 native canary)
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    needs:
+      - test-windows
+      - test-macos
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Bun canary（Windows ARM64 FFI runtime）
+        id: setup-bun-windows-arm64
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'canary'
+          no-cache: true
+
+      - name: 验证 Bun Windows FFI 构建修复
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bun tui/scripts/verify-build-runtime.mjs --installed-revision '${{ steps.setup-bun-windows-arm64.outputs.bun-revision }}'
+
+      - name: 构建 Windows ARM64 TUI 可执行文件
+        shell: pwsh
+        working-directory: tui
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          bun install --frozen-lockfile
+
+          # 与稳定 producer 使用同一 tag 版本注入合同。
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = $env:GITHUB_REF_NAME -replace '^v', ''
+            $env:CCQ_RELEASE_VERSION = $version
+            node -e '
+              const fs = require("fs");
+              const version = process.env.CCQ_RELEASE_VERSION;
+              if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)) {
+                throw new Error(`Invalid CCQ release version: ${version}`);
+              }
+              const file = "package.json";
+              const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+              pkg.version = version;
+              fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
+            '
+            $actual = bun src/index.tsx --version
+            if ($actual -ne $version) {
+              throw "TUI 内嵌版本异常: $actual (期望 $version)"
+            }
+            Write-Host "[PASS] TUI 发布版本已注入: $actual"
+          } else {
+            Write-Host '[SKIP] 非 tag 构建，保留 package.json 开发版本'
+          }
+
+          bun scripts/build.ts --target=windows-arm64
+
+      - name: 验证 Windows ARM64 原生产物
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = '.\dist\ccq-windows-arm64.exe'
+          $gzip = "$exe.gz"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "TUI 可执行文件不存在: $exe" }
+          if (-not (Test-Path -LiteralPath $gzip -PathType Leaf)) { throw "TUI gzip 不存在: $gzip" }
+
+          $expectedVersion = '0.0.0-dev'
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $expectedVersion = $env:GITHUB_REF_NAME -replace '^v', '' }
+          $versionOutput = @(& $exe --version 2>&1)
+          if ($LASTEXITCODE -ne 0) { throw "Windows ARM64 --version 失败: $($versionOutput -join "`n")" }
+          $actualVersion = (($versionOutput | Select-Object -First 1).ToString() -replace '[^\x20-\x7E]', '').Trim()
+          if ($actualVersion -ne $expectedVersion) {
+            throw "Windows ARM64 可执行文件版本异常: '$actualVersion' (期望 '$expectedVersion')"
+          }
+
+          $helpOutput = @(& $exe --help 2>&1)
+          if ($LASTEXITCODE -ne 0) { throw "Windows ARM64 --help 失败: $($helpOutput -join "`n")" }
+          Write-Host "[PASS] Windows ARM64 原生 --version/--help smoke: $actualVersion"
+
+      - name: 上传 Windows ARM64 TUI 可执行文件
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-tui-windows-arm64-${{ github.sha }}
+          path: |
+            dist/ccq-windows-arm64.exe
+            dist/ccq-windows-arm64.exe.gz
           retention-days: 7
 
   build-windows:
@@ -202,6 +281,7 @@ jobs:
     needs:
       - test-windows
       - build-tui
+      - build-tui-windows-arm64
 
     steps:
       - name: 检出代码
@@ -211,6 +291,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: built-tui-${{ github.sha }}
+          path: dist
+
+      - name: 下载 Windows ARM64 TUI 可执行文件
+        uses: actions/download-artifact@v4
+        with:
+          name: built-tui-windows-arm64-${{ github.sha }}
           path: dist
 
       - name: 清理非 Windows TUI 产物
@@ -427,6 +513,7 @@ jobs:
       - build-windows
       - build-macos
       - build-tui
+      - build-tui-windows-arm64
       - smoke-windows
       - smoke-macos
 
@@ -450,6 +537,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: built-tui-${{ github.sha }}
+          path: dist
+
+      - name: 下载 Windows ARM64 TUI 可执行文件
+        uses: actions/download-artifact@v4
+        with:
+          name: built-tui-windows-arm64-${{ github.sha }}
           path: dist
 
       - name: 验证 Release artifact 集合

@@ -520,13 +520,20 @@ try {
 	assert.match(overallTimedOut.ok ? '' : overallTimedOut.error.message, /超时/, '60 分钟总上限的注入路径必须保持超时语义');
 
 	const slowBytes = Buffer.from('slow-but-progressing');
+	const slowChunkDelayMs = 20;
+	const slowNoProgressTimeoutMs = 250;
+	const slowOverallTimeoutMs = 5000;
+	const slowTotalDurationMs = slowBytes.byteLength * slowChunkDelayMs;
+	assert.ok(slowChunkDelayMs < slowNoProgressTimeoutMs, '单个 chunk 间隔必须小于无进展阈值');
+	assert.ok(slowNoProgressTimeoutMs < slowTotalDurationMs, '总下载时间必须大于无进展阈值，证明计时器持续重置');
+	assert.ok(slowTotalDurationMs < slowOverallTimeoutMs, '慢速成功 fixture 必须小于 overall timeout');
 	let slowIndex = 0;
 	const slowDownload = await downloadUpdate(rawOnlyPlan(slowBytes), undefined, {
 		fetch: async () =>
 			new Response(
 				new ReadableStream({
 					async pull(controller) {
-						await new Promise(resolve => setTimeout(resolve, 5));
+						await new Promise(resolve => setTimeout(resolve, slowChunkDelayMs));
 						if (slowIndex >= slowBytes.byteLength) {
 							controller.close();
 							return;
@@ -539,8 +546,8 @@ try {
 			),
 		targetPath: join(targetDir, 'ccq-slow-progress'),
 		platform: 'darwin',
-		noProgressTimeoutMs: 25,
-		overallTimeoutMs: 2000
+		noProgressTimeoutMs: slowNoProgressTimeoutMs,
+		overallTimeoutMs: slowOverallTimeoutMs
 	});
 	assert.equal(slowDownload.ok, true, '持续收到字节必须重置无进展计时器');
 	if (slowDownload.ok) rmSync(slowDownload.transaction.tempPath, {force: true});
