@@ -361,40 +361,12 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 	// 左卡片 = Logo（纯色） + 下划线分隔 + menu
 	// 右卡片 = content（flexGrow，焦点驱动滚动） + 下划线分隔 + footer
 
-	// Toast 主题配置：根据当前主题动态设置颜色
-	const toastOptions = useMemo(
-		() => ({
-			style: {
-				backgroundColor: theme.colors.modalBackground,
-				foregroundColor: theme.colors.text,
-				borderColor: theme.borderColors.inactive,
-				mutedColor: theme.colors.muted,
-				borderStyle: 'rounded' as const,
-				paddingX: 1,
-				paddingY: 0
-			},
-			duration: 4000,
-			success: {
-				style: {borderColor: theme.colors.success},
-				duration: 3000
-			},
-			error: {
-				style: {borderColor: theme.colors.danger},
-				duration: 6000
-			},
-			warning: {
-				style: {borderColor: theme.colors.warning}
-			},
-			info: {
-				style: {borderColor: theme.colors.info}
-			}
-		}),
-		[theme]
-	);
+	// Toast 配色不再由此处注入：自实现的 ToastViewport 直接读 theme/index.ts 的 activeTheme
+	// 模块级导出（与 spinner / modal 等组件一致），主题切换时随 setActiveTheme 生效。
 
 	return (
 		<>
-			<ToastViewport position="bottom-right" stackingMode="stack" visibleToasts={3} toastOptions={toastOptions} />
+			<ToastViewport terminalWidth={terminalWidth} />
 			<box flexDirection="row" width={terminalWidth} height={terminalHeight}>
 				{/* 左侧导航栏 */}
 				<box

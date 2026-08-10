@@ -1,33 +1,6 @@
-// Toast 操作反馈封装（@opentui-ui/toast）
-// 用于显示操作成功/失败/警告等短暂提示
+// Toast 操作反馈入口（自实现，替代 @opentui-ui/toast）
+// 状态在 toast-store.ts，渲染在 toast-viewport.tsx；此文件只做对外聚合导出，
+// 保持既有 52 处调用点的 import 路径不变。
 
-import { Toaster, toast as openTuiToast } from '@opentui-ui/toast/react';
-
-export type ToastType = 'success' | 'error' | 'warning' | 'info';
-
-export type ToastOptions = {
-	readonly type: ToastType;
-	readonly message: string;
-	readonly duration?: number;
-};
-
-function toastOptions(duration?: number): { readonly duration: number } | undefined {
-	return duration === undefined ? undefined : {duration};
-}
-
-export const ToastViewport = Toaster;
-
-export const toast = {
-	success: (message: string, duration?: number) => {
-		openTuiToast.success(message, toastOptions(duration));
-	},
-	error: (message: string, duration?: number) => {
-		openTuiToast.error(message, toastOptions(duration));
-	},
-	warning: (message: string, duration?: number) => {
-		openTuiToast.warning(message, toastOptions(duration));
-	},
-	info: (message: string, duration?: number) => {
-		openTuiToast.info(message, toastOptions(duration));
-	}
-};
+export {toast, resetToasts, TOAST_DURATION, MAX_VISIBLE_TOASTS, type ToastType, type ToastEntry} from './toast-store.js';
+export {ToastViewport} from './toast-viewport.js';

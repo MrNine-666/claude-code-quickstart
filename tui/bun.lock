@@ -5,7 +5,6 @@
     "": {
       "name": "my-opentui-project",
       "dependencies": {
-        "@opentui-ui/toast": "^0.0.5",
         "@opentui/core": "0.4.5",
         "@opentui/keymap": "0.4.5",
         "@opentui/react": "0.4.5",
@@ -98,8 +97,6 @@
     "@img/sharp-win32-ia32": ["@img/sharp-win32-ia32@0.35.2", "https://registry.npmmirror.com/@img/sharp-win32-ia32/-/sharp-win32-ia32-0.35.2.tgz", { "os": "win32", "cpu": "ia32" }, "sha512-YYEhx9PImCC7T0tI8JDMi4DB9LwLCXCU5OWNYEXAxh5Q1ShKkyC6byxzoBJ3gEFDnH2lQckWuDe70G7mB2XJog=="],
 
     "@img/sharp-win32-x64": ["@img/sharp-win32-x64@0.35.2", "https://registry.npmmirror.com/@img/sharp-win32-x64/-/sharp-win32-x64-0.35.2.tgz", { "os": "win32", "cpu": "x64" }, "sha512-imoOyBcoM/iiUr4J6VPpCNjPnjvP/Gks95898yB8YqoGGYmHYbOyCuNv9FMhFgtaiHFGbHW8bxKqRV6VjtXThQ=="],
-
-    "@opentui-ui/toast": ["@opentui-ui/toast@0.0.5", "https://registry.npmmirror.com/@opentui-ui/toast/-/toast-0.0.5.tgz", { "peerDependencies": { "@opentui/core": "^0.1.63", "@opentui/react": "^0.1.63", "@opentui/solid": "^0.1.63" }, "optionalPeers": ["@opentui/react", "@opentui/solid"] }, "sha512-LOT5Bw0F5AEyhjSqpKgS7aSe7M7v+ahaAa4t3/K2dtWiT0CJ711UHXqM31KKN6yuHoUKRNs+g+643ety/a3lEw=="],
 
     "@opentui/core": ["@opentui/core@0.4.5", "https://registry.npmmirror.com/@opentui/core/-/core-0.4.5.tgz", { "dependencies": { "bun-ffi-structs": "0.2.4", "diff": "9.0.0", "marked": "17.0.1", "string-width": "7.2.0", "strip-ansi": "7.1.2" }, "optionalDependencies": { "@opentui/core-darwin-arm64": "0.4.5", "@opentui/core-darwin-x64": "0.4.5", "@opentui/core-linux-arm64": "0.4.5", "@opentui/core-linux-arm64-musl": "0.4.5", "@opentui/core-linux-x64": "0.4.5", "@opentui/core-linux-x64-musl": "0.4.5", "@opentui/core-win32-arm64": "0.4.5", "@opentui/core-win32-x64": "0.4.5" }, "peerDependencies": { "web-tree-sitter": "0.25.10" } }, "sha512-JsgRTPkA6e+Vxmumxai6SElOSlRQkbzNKHlCfemlArRiLhfC1IZ9RXJo2QH4xSu+uBOWAM90uss73/pPlkdEig=="],
 

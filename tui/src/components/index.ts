@@ -11,7 +11,7 @@ export {
 	type BusyOverlayState,
 	type SpinnerProps
 } from './spinner.js';
-export {toast, ToastViewport, type ToastType, type ToastOptions} from './toast.js';
+export {toast, ToastViewport, resetToasts, type ToastType, type ToastEntry} from './toast.js';
 export {Card, type CardProps} from './card.js';
 export {ActionHint, type ActionHintProps} from './action-hint.js';
 export {ViewHeader, type ViewHeaderProps} from './view-header.js';
