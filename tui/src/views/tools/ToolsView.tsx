@@ -44,12 +44,15 @@ export function ToolsView({services, cache, active = true, contentWidth, onSubMo
 	const columns = useMemo(() => computeColumns(contentWidth ?? 52), [contentWidth]);
 	const scrollRef = useRef<import('@opentui/core').ScrollBoxRenderable>(null);
 
+	// 依赖只取 cache.refresh（引用稳定）而非整个 cache：cache 会随检测 state 变化而重建，
+	// 若整体入依赖会带着 busyOverlayState 一起失效，触发 onBusyStateChange 循环。
+	const refreshCache = cache.refresh;
 	const cancelBusyTask = useCallback(() => {
 		if (!taskCancellation.cancel()) return;
 		dispatch({type: 'cancel-busy'});
 		toast.info('已取消任务，正在刷新状态');
-		cache.refresh({forceRefresh: true});
-	}, [cache, taskCancellation]);
+		refreshCache({forceRefresh: true});
+	}, [refreshCache, taskCancellation]);
 
 	useEffect(() => {
 		if (detection.status === 'success') {

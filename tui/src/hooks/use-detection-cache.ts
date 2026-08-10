@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import type {DetectionState} from '../services/async-detection.js';
 import type {DetectionRunner, DetectionRunOptions, DetectionStateSink} from '../services/detection-runner.js';
 
@@ -47,18 +47,26 @@ export function useDetectionCache<Result>(services: DetectionCacheServices<Resul
 		void services.runDetection(runner);
 	}, [services]);
 
-	const refreshAndWait = async (options?: DetectionRunOptions): Promise<DetectionState<Result> | undefined> => {
-		const runner = runnerRef.current;
-		if (!runner) {
-			return undefined;
-		}
+	// refresh / refreshAndWait 必须保持引用稳定：视图侧会把它们放进 useCallback/useMemo 依赖，
+	// 每渲染重建会让 busyOverlayState 每次都是新对象，进而 setBusyOverlay → 重渲染 → 死循环。
+	const refreshAndWait = useCallback(
+		async (options?: DetectionRunOptions): Promise<DetectionState<Result> | undefined> => {
+			const runner = runnerRef.current;
+			if (!runner) {
+				return undefined;
+			}
 
-		return refreshDetectionRunner(services, runner, options);
-	};
+			return refreshDetectionRunner(services, runner, options);
+		},
+		[services]
+	);
 
-	const refresh = (options?: DetectionRunOptions): void => {
-		void refreshAndWait(options);
-	};
+	const refresh = useCallback(
+		(options?: DetectionRunOptions): void => {
+			void refreshAndWait(options);
+		},
+		[refreshAndWait]
+	);
 
-	return {state, refresh, refreshAndWait};
+	return useMemo(() => ({state, refresh, refreshAndWait}), [state, refresh, refreshAndWait]);
 }
