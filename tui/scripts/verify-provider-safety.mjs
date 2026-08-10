@@ -317,8 +317,6 @@ const codexUserSurfaceSources = [
 	'../src/views/provider/ProviderFormView.tsx',
 	'../src/cli/help.ts',
 	'../src/cli/index.ts',
-	'../src/cli/commands/cc.ts',
-	'../src/cli/commands/cx.ts',
 	'../src/cli/commands/ls.ts',
 	'../src/cli/commands/use.ts'
 ].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');

@@ -1,7 +1,7 @@
 // `ccq use <name>` — 设默认 provider/profile。
 // Claude: 复用 core/provider.ts 的 switchProvider，写入 ~/.claude/settings.json。
 // Codex: 复用 core/codex.ts 的 setDefaultCodexProfile，结构化写 ~/.codex/config.toml。
-// 与 `ccq cc` / `ccq cx` 明确区分：use 写盘；启动类不写盘。
+// use 会写盘，持久修改默认供应商。
 
 import { getProviderList, switchProvider } from '../../core/provider.js';
 import {

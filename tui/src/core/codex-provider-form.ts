@@ -295,7 +295,7 @@ export function buildCodexProviderFormModel(input: {
 				label: 'API Key',
 				value: values.apiKey,
 				// Codex 侧与 Claude 侧的关键差异：密钥明文落在 profile TOML 的 experimental_bearer_token，
-				// 不进 ccq vault、不由 ccq cx 注入 env，故须让用户知道它存在哪。
+				// 不进 ccq vault、不由 ccq 注入 env，故须让用户知道它存在哪。
 				helpText: platformUrl
 					? `在 ${platformUrl} 创建；明文写入 TOML 的 experimental_bearer_token。`
 					: '明文写入 TOML 的 experimental_bearer_token。'

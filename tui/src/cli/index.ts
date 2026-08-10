@@ -4,8 +4,6 @@
 
 import type { CliIntent } from './argv.js';
 import { helpFor, HELP_GENERAL } from './help.js';
-import { runCc } from './commands/cc.js';
-import { runCx } from './commands/cx.js';
 import { runLs } from './commands/ls.js';
 import { runTools } from './commands/tools.js';
 import { runUninstall } from './commands/uninstall.js';
@@ -39,12 +37,6 @@ export async function runCli(intent: CliIntent): Promise<number> {
 			return 1;
 		}
 
-		case 'cc':
-			return runCc(intent.name, intent.passthrough);
-
-		case 'cx':
-			return runCx(intent.name, intent.passthrough);
-
 		case 'ls':
 			return runLs(intent.tool);
 
@@ -62,12 +54,6 @@ export async function runCli(intent: CliIntent): Promise<number> {
 
 		case 'unknown': {
 			// 未知动词或缺参数的已知动词
-			if (intent.verb === 'cc') {
-				console.error('cc 缺少供应商名称。');
-				console.error('用法: ccq cc <name> [claude-args...]');
-				return 1;
-			}
-
 			if (intent.verb === 'ls') {
 				console.error('ls 参数无效。');
 				console.error('用法: ccq ls [--tool claude|codex]');

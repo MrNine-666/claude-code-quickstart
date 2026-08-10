@@ -2344,7 +2344,7 @@ function Install-CcqExecutable {
                 $pidList = ($procs | ForEach-Object { "PID $($_.ProcessId)" }) -join ', '
                 $msg += "（检测到 ccq 进程: $pidList）"
             }
-            $msg += "。请先关闭所有 ccq 窗口（含 'ccq cc' 启动的会话）后重试；若仍失败请确认文件未被占用且可写。"
+            $msg += "。请先关闭所有 ccq 窗口后重试；若仍失败请确认文件未被占用且可写。"
             $result.ErrorMessage = $msg
             Write-UiDanger "ccq 可执行文件安装失败: $msg"
             # 命令行单独打印：ErrorMessage 保持单行可读，明细帮助用户定位是哪个会话还开着。

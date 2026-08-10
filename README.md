@@ -27,8 +27,8 @@ Windows 与 macOS 双平台的 CLI Agent（Claude Code / Codex）开发环境自
 
 - **一键装好开发环境**：一条命令搞定 Windows / macOS 双平台的 Node.js / Git 与 `ccq` 管理控制台，已装组件实时检测自动跳过，无需手动处理版本、编码与初始化顺序
 - **Agent 与插件统一管理**：Claude Code / Codex 等 CLI Agent 与 Ccline / CcgWorkflow / OpenSpec / Trellis / CodeGraph 等周边工具，都能在「工具管理」里快捷安装 / 更新 / 卸载
-- **终端一键启动控制台**：装好后在任意终端输入 `ccq` 即进入管理控制台，也可用 `ccq cc` / `ccq cx` 等子命令直接启动对应 Agent
-- **供应商快捷配置**：内置智谱 GLM / MiniMax / Kimi / DeepSeek 等供应商模板，填个 Key 就能用；Codex 侧支持官方登录（`codex login`）与指定供应商启动
+- **终端一键启动控制台**：装好后在任意终端输入 `ccq` 即进入管理控制台
+- **供应商快捷配置**：内置智谱 GLM / MiniMax / Kimi / DeepSeek 等供应商模板，填个 Key 就能用；Codex 侧支持官方登录（`codex login`）以及供应商配置与切换
 - **配置文件与供应商隔离**：每个供应商独立存放在专属 Profile 文件（Claude Code 存 `~/.claude/providers/`，Codex 存 `~/.codex/<key>.config.toml`），与主配置（`settings.json` / `config.toml`）物理分离；切换或设默认供应商时只按字段所有权合并供应商相关内容（Token / Base URL / 模型键），不触碰语言、权限、hooks、statusLine 等其他配置，MCP 也各自独立存放，切换供应商不会影响其余任何配置
 - **配置与规则一键导入**：推荐的 `settings.json` 配置与全局规则（CLAUDE.md）可一键补全导入，只补缺失项、不覆盖你已有的设置
 - **MCP 多 Agent 开关**：内置 Context7 / DeepWiki / Playwright / Exa 等 MCP 模板，凭据录入一次持久保存，可按 Claude Code / Codex 分别启用或禁用
@@ -213,8 +213,6 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 | Command | Description |
 |---|---|
 | `ccq` | 进入 OpenTUI 6 菜单管理控制台 |
-| `ccq cc <provider> [claude-args...]` | 临时使用指定 provider 启动 Claude Code；不写盘，后续参数透传给 `claude` |
-| `ccq cx [profile] [codex-args...]` | 启动 Codex；指定 profile 时使用 `codex --profile <profile>`，不注入 ccq vault/env |
 | `ccq ls [--tool claude\|codex]` | 列出 Claude provider 或 Codex profile；默认 `--tool claude` |
 | `ccq use <provider> [--tool claude\|codex]` | 设置 Claude 默认 provider 或 Codex 默认 profile；Codex 结构化写 `CODEX_HOME/config.toml` |
 | `ccq update [--check]` | 检查或更新 ccq 可执行文件；`--check` 只检查不下载 |
@@ -222,12 +220,12 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 | `ccq tools uninstall <name> [--yes\|-y]` | 卸载指定工具；默认要求 y/N 确认，传 `--yes` 或 `-y` 跳过确认 |
 | `ccq uninstall [--yes\|-y]` | 卸载 ccq 本体；默认要求 y/N 确认，传 `--yes` 或 `-y` 跳过确认 |
 
-卸载类命令在非 TTY 环境必须传 `--yes` 或 `-y`，否则会拒绝执行以避免误删；`ccq cc` / `ccq cx` 是启动类动词（继承 TTY、参数透传给底层工具），`ccq use` 是管理类动词（修改持久默认配置）。
+卸载类命令在非 TTY 环境必须传 `--yes` 或 `-y`，否则会拒绝执行以避免误删；`ccq use` 会修改持久默认配置。
 
 ### 1) Tool Management (Tools)
 
 - Agent 组常显 ClaudeCode / CodexCli / AntigravityCli；Ccline 仅 Claude Code；OpenSpec / Trellis / CcgWorkflow / CodeGraph 在两种上下文可见
-- 安装 / 更新 / 卸载（强确认 + snapshot 保护）；CodeGraph 安装/更新后校验当前 Agent MCP 接入，更新后重接入已安装的 cc/cx，卸载最后一个 CodeGraph MCP 后自动移除共享 CLI；CcgWorkflow Codex Mode 使用官方非交互 install/uninstall
+- 安装 / 更新 / 卸载（强确认 + snapshot 保护）；CodeGraph 安装/更新后校验当前 Agent MCP 接入，更新后重接入已安装的 Claude/Codex 两侧，卸载最后一个 CodeGraph MCP 后自动移除共享 CLI；CcgWorkflow Codex Mode 使用官方非交互 install/uninstall
 - 侧边栏底部「检查更新」按钮可更新 ccq 可执行文件本体：发现新版本后弹窗确认，更新中在弹窗内显示 loading（Enter 禁用，Esc 停止更新），完成后可选择立即重启或稍后重启
 
 ![工具管理](./assets/screenshots/tui-tool.png)
@@ -236,7 +234,7 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 
 - Claude Code Header 下：供应商 Profile 的新增 / 编辑 / 删除 / 切换 / 设置默认；配置写入 `~/.claude/settings.json` 的 `env`，Profile 保存到 `~/.claude/providers/`
 - Codex Header 下：管理 `$CODEX_HOME/<key>.config.toml`（默认 `~/.codex/<key>.config.toml`）官方 profile 文件；key 同时作为文件名、`--profile` 名、provider id 与默认显示名
-- Codex API key 直写 `[model_providers.<key>].experimental_bearer_token`，不进入 ccq vault、不由 `ccq cx` 注入 env；`official login` 类型通过 `codex login` 完成认证
+- Codex API key 直写 `[model_providers.<key>].experimental_bearer_token`，不进入 ccq vault、不由 ccq 注入 env；`official login` 类型通过 `codex login` 完成认证
 - 内置供应商：智谱 GLM（默认 glm-5.2）、MiniMax（默认 MiniMax-M3）、Kimi Coding Plan 1M（默认 k3[1m]）、Kimi Coding Plan 256K（默认 k3-256k）、DeepSeek（默认 deepseek-v4-flash，预填 effort/上下文窗口 env）、自定义供应商
   - 两个 Kimi 模板同一端点、同一 Key，只差上下文档位：1M 版需 Allegretto 及以上套餐，256K 版 Moderato 及以上即可且 token 消耗约为 1M 版一半；Andante 档可在表单里把模型改为 `kimi-for-coding`
 - Codex 内置一键模板：由 `providers.json` 各供应商的 `Codex` 段声明，与 Claude 侧同一份契约统一管理；当前 MiniMax、DeepSeek（仅 deepseek-v4-flash 支持 Responses）

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {readFileSync} from 'node:fs';
+import {existsSync, readFileSync} from 'node:fs';
 
 // 自实现 Toast + 调试控制台门禁：
 // 1) Toast 不得再依赖 @opentui-ui/toast（peer 锁 @opentui/core ^0.1.63，与运行时 0.4.5 的
@@ -26,6 +26,7 @@ const sourceFiles = execFileSync('git', ['ls-files', 'src', 'scripts', 'tests'],
 
 for (const path of sourceFiles) {
 	if (path.endsWith('verify-toast-debug-console.mjs')) continue;
+	if (!existsSync(new URL(`../${path}`, import.meta.url))) continue;
 	const source = read(`../${path}`);
 	assert.doesNotMatch(source, /from ['"]@opentui-ui\/toast['"]/, `${path} 不得再从 @opentui-ui/toast import（该包与 @opentui/core 0.4.5 不兼容）`);
 }
