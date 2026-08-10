@@ -3,27 +3,43 @@ import {execCommand, formatCommandInstruction, type ProgressCallback} from './ex
 import {atomicWrite} from './fs-utils.js';
 import {claudeDir, claudeJsonPath, settingsPath} from './paths.js';
 import type {AgentContext} from '../state/manage-state.js';
-import {codeGraphInstallCommands, ccgWorkflowInstallCommands} from './tools-lifecycle.js';
+import {
+	codeGraphInstallCommands,
+	ccgWorkflowInstallCommands,
+	gitNexusSetupCommands,
+	gitNexusFailureDiagnostic,
+	GITNEXUS_INSTALL_PACKAGE_SPEC
+} from './tools-lifecycle.js';
 import {hasCodeGraphIntegration, hasCodexCcgWorkflowMode, readCodexCcgWorkflowVersion} from './tools-integrations.js';
 import {refreshNpmGlobalBinPath} from './npm-path.js';
 
 // 工具安装 core：受管 agent/工具的 registry（单一真理源）+ 安装原语（内部实现层）。
 // 与 tools-manage.ts（门面/编排层）同属一个逻辑模块「tools 域」，仅按体量分文件（避免 1200 行巨文件）。
 // registry 收编全部平级 agent 与工具（ClaudeCode 与 CodexCli/AntigravityCli 平权，不再特殊化）：
-//   ClaudeCode / CodexCli / AntigravityCli 为主 agent，其余为伴随/三方工具。
+//   ClaudeCode / CodexCli / AntigravityCli 为主 agent，其余为伴随、工作流与知识图谱工具。
 // 全部经 core/exec.ts 的 execCommand spawn 外部命令（HC-TUI-NODE-ONLY），不调 PS/zsh 步骤函数。
 // 安装命令矩阵对齐 installer 步骤（design TDR-5）：
 //   ClaudeCode   npm install -g @anthropic-ai/claude-code + 检测确认
 //   Ccline       npm install -g @cometix/ccline + settings.json statusLine（仅补缺失）
 //   CcgWorkflow  npx ccg-workflow@latest init --skip-prompt --skip-mcp + mcpServers 快照保护
 //   OpenSpec/CodexCli  npm install -g
+//   GitNexus     npm install -g gitnexus@latest + gitnexus setup --coding-agent claude,codex
 //   AntigravityCli     平台 shell 脚本（Win irm|iex / mac curl|bash）
 // Update 检测已收缩（HC-FU-08）：CcgWorkflow 不再写指纹种子，仅以命令可用性判定安装状态。
 // CcgWorkflow env 推荐项已迁移至 ClaudeConfig 推荐配置（contracts/claude-config.json），本模块不再写 env。
 
 type JsonObject = Record<string, unknown>;
 
-export type ToolId = 'ClaudeCode' | 'Ccline' | 'CcgWorkflow' | 'OpenSpec' | 'Trellis' | 'CodeGraph' | 'CodexCli' | 'AntigravityCli';
+export type ToolId =
+	| 'ClaudeCode'
+	| 'Ccline'
+	| 'CcgWorkflow'
+	| 'OpenSpec'
+	| 'Trellis'
+	| 'CodeGraph'
+	| 'GitNexus'
+	| 'CodexCli'
+	| 'AntigravityCli';
 
 export type ToolInstallKind = 'npm' | 'ccg-init' | 'shell-script';
 
@@ -123,13 +139,24 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 	{
 		id: 'CodeGraph',
 		name: 'CodeGraph',
-		description: '本地代码知识图谱',
+		description: '调用图索引，按需查询精准上下文',
 		kind: 'npm',
 		command: 'codegraph',
 		versionArgs: ['--version'],
 		npmPackage: '@colbymchenry/codegraph',
 		docsUrl: 'https://github.com/colbymchenry/codegraph',
 		cliAliases: ['code-graph']
+	},
+	{
+		id: 'GitNexus',
+		name: 'GitNexus',
+		description: '知识图谱自动增强搜索与分析',
+		kind: 'npm',
+		command: 'gitnexus',
+		versionArgs: ['-V'],
+		npmPackage: 'gitnexus',
+		docsUrl: 'https://github.com/abhigyanpatwari/GitNexus',
+		cliAliases: ['gitnexus', 'git-nexus']
 	},
 	{
 		id: 'CodexCli',
@@ -216,26 +243,36 @@ function friendlyError(text: string, fallback: string): string {
 	return fallback;
 }
 
-/** npm install -g <package>。 */
+/**
+ * npm install -g <package>。
+ * - `packageSpec` 可带 dist-tag（GitNexus 首装用 gitnexus@latest），registry 包名事实不变。
+ * - `preserveDiagnostic` 保留上游原文（GitNexus 的 Node engine / 原生依赖失败只出现在 stderr 里，R10）。
+ */
 async function installNpmPackage(
 	definition: ToolDefinition,
 	onProgress?: ProgressCallback,
-	exec: typeof execCommand = execCommand
+	exec: typeof execCommand = execCommand,
+	options: {readonly packageSpec?: string; readonly preserveDiagnostic?: boolean} = {}
 ): Promise<void> {
 	if (!definition.npmPackage) {
 		throw new Error(`${definition.id} 缺少 npm 包名`);
 	}
 
-	const args = ['install', '-g', definition.npmPackage];
+	const spec = options.packageSpec ?? definition.npmPackage;
+	const args = ['install', '-g', spec];
 	onProgress?.({
 		level: 'info',
-		message: `npm install -g ${definition.npmPackage}`,
+		message: `npm install -g ${spec}`,
 		componentId: definition.id,
 		instruction: formatCommandInstruction('npm', args)
 	});
 	const result = await exec('npm', args, {timeout: INSTALL_TIMEOUT_MS});
 	if (result.code !== 0) {
-		throw new Error(friendlyError(result.stderr || result.stdout, `npm install 失败 (exit ${result.code})`));
+		throw new Error(
+			options.preserveDiagnostic
+				? gitNexusFailureDiagnostic('npm install 失败', result.code, result.stderr, result.stdout)
+				: friendlyError(result.stderr || result.stdout, `npm install 失败 (exit ${result.code})`)
+		);
 	}
 
 	await refreshNpmGlobalBinPath(onProgress, definition.id, exec);
@@ -285,6 +322,27 @@ async function postInstallCodeGraph(
 	if (!hasCodeGraphIntegration(context)) {
 		const label = context === 'cx' ? 'Codex' : 'Claude Code';
 		throw new Error(`CodeGraph ${label} MCP 写入失败`);
+	}
+}
+
+/** GitNexus 后置：CLI 就绪后一次性接入 Claude Code + Codex（上游整体 setup，无 per-Agent 语义）。 */
+async function postInstallGitNexus(onProgress?: ProgressCallback, exec: typeof execCommand = execCommand): Promise<void> {
+	const [command] = gitNexusSetupCommands();
+	if (!command) {
+		return;
+	}
+
+	onProgress?.({
+		level: 'info',
+		message: `${command.cmd} ${command.args.join(' ')}`,
+		componentId: 'GitNexus',
+		instruction: formatCommandInstruction(command.cmd, command.args)
+	});
+	const result = await exec(command.cmd, [...command.args], {timeout: INSTALL_TIMEOUT_MS});
+	if (result.code !== 0) {
+		// 保留上游 Node.js / 原生依赖 / 平台诊断：通用 fallback 只在网络/权限模式下有意义，
+		// GitNexus 的 engine 与 native dependency 失败只出现在 stderr 里（R10）。
+		throw new Error(gitNexusFailureDiagnostic('GitNexus 编辑器接入失败', result.code, result.stderr, result.stdout));
 	}
 }
 
@@ -480,6 +538,16 @@ export async function installTool(
 				if (definition.id === 'CodeGraph') {
 					await ensureCodeGraphCli(definition, onProgress, exec);
 					await postInstallCodeGraph(context, onProgress, exec);
+					break;
+				}
+
+				if (definition.id === 'GitNexus') {
+					// npm 失败不执行 setup；setup 失败不报告完整成功（后置 detectTool 收敛真实 CLI 事实）。
+					await installNpmPackage(definition, onProgress, exec, {
+						packageSpec: GITNEXUS_INSTALL_PACKAGE_SPEC,
+						preserveDiagnostic: true
+					});
+					await postInstallGitNexus(onProgress, exec);
 					break;
 				}
 

@@ -18,6 +18,7 @@ import {
 	codeGraphRemoveCliCommands,
 	codeGraphUninstallCommands,
 	ccgWorkflowUninstallCommands,
+	gitNexusIntegrationCleanupCommands,
 	type LifecycleCommand
 } from './tools-lifecycle.js';
 import {hasUpdate} from './semver.js';
@@ -73,18 +74,19 @@ export type InstallComponentDeps = {
 const INSTALL_TIMEOUT_MS = 300000;
 
 /**
- * 全部受管组件定义（8 项）：ClaudeCode + 7 工具，直接复用 registry（DRY，单一真理源）。
+ * 全部受管组件定义（9 项）：ClaudeCode + 8 工具，直接复用 registry（DRY，单一真理源）。
  * 顺序即 TOOL_DEFINITIONS 顺序（ClaudeCode 首位）；分组展示顺序由 sortComponentsByToolGroup 决定。
  */
 export const COMPONENT_DEFINITIONS: readonly ComponentDefinition[] = TOOL_DEFINITIONS;
 
 // ── 分组与可见性 / 共享投影（shared-resource-injection-ui）────────────────────
 // group: agent = 主 Agent（Claude Code / Codex 两上下文常显）；
-//        companion = 仅 Claude Code（Ccline）；tool = 两上下文通用（OpenSpec/CcgWorkflow/CodeGraph）。
+//        companion = 仅 Claude Code（Ccline）；workflow = 开发过程约束（OpenSpec/Trellis/CcgWorkflow）；
+//        knowledge-graph = 代码知识图谱（CodeGraph/GitNexus）。
 // sharingKind: Tools 共享列表呈现分类（inject 双态 / 全局 CLI / Agent 独占）。
 // Tools UI 主路径 = projectSharedToolComponents；filterVisibleComponents 仅兼容 legacy 门禁。
 
-export type ToolGroup = 'agent' | 'companion' | 'tool';
+export type ToolGroup = 'agent' | 'companion' | 'workflow' | 'knowledge-graph';
 
 /** 共享列表呈现分类（COMPONENT_META 单一事实源）。 */
 export type ResourceSharingKind = 'shared-cli-per-agent-inject' | 'fully-shared-no-inject' | 'agent-exclusive';
@@ -108,19 +110,23 @@ export const COMPONENT_META: Readonly<Record<ComponentId, ComponentMeta>> = {
 	CodexCli: {group: 'agent', contexts: BOTH_CONTEXTS, sharingKind: 'agent-exclusive'},
 	AntigravityCli: {group: 'agent', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
 	Ccline: {group: 'companion', contexts: ['cc'], sharingKind: 'agent-exclusive'},
-	OpenSpec: {group: 'tool', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
-	Trellis: {group: 'tool', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
-	CcgWorkflow: {group: 'tool', contexts: BOTH_CONTEXTS, sharingKind: 'shared-cli-per-agent-inject'},
-	CodeGraph: {group: 'tool', contexts: BOTH_CONTEXTS, sharingKind: 'shared-cli-per-agent-inject'}
+	OpenSpec: {group: 'workflow', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
+	Trellis: {group: 'workflow', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
+	CcgWorkflow: {group: 'workflow', contexts: BOTH_CONTEXTS, sharingKind: 'shared-cli-per-agent-inject'},
+	CodeGraph: {group: 'knowledge-graph', contexts: BOTH_CONTEXTS, sharingKind: 'shared-cli-per-agent-inject'},
+	// GitNexus 上游只支持按 Agent setup，不支持按 Agent uninstall（`uninstall --force` 清理全部编辑器接入），
+	// 因此采用整体接入/整体卸载，不提供单侧开关。
+	GitNexus: {group: 'knowledge-graph', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'}
 };
 
-/** 分组展示顺序（agent → companion → tool）。 */
-export const TOOL_GROUP_ORDER: readonly ToolGroup[] = ['agent', 'companion', 'tool'];
+/** 分组展示顺序（agent → companion → tool → knowledge-graph）。 */
+export const TOOL_GROUP_ORDER: readonly ToolGroup[] = ['agent', 'companion', 'workflow', 'knowledge-graph'];
 
 export const TOOL_GROUP_META: Readonly<Record<ToolGroup, ToolGroupDisplayMeta>> = {
 	agent: {label: 'Agent', description: 'Claude Code / Codex / Antigravity 等主入口 CLI'},
 	companion: {label: 'statusLine', description: '状态栏与伴随增强'},
-	tool: {label: '三方工具', description: 'OpenSpec / CCG Workflow / CodeGraph 等通用工具'}
+	workflow: {label: '工作流', description: '约束开发过程，规范 Agent 的协作与交付'},
+	'knowledge-graph': {label: '代码知识图谱', description: '索引代码结构，为 Agent 提供架构级上下文'}
 };
 
 export type ToolGroupSection<T extends {readonly id: ComponentId}> = {
@@ -378,6 +384,9 @@ export function uninstallImpactNotice(id: ComponentId, options: {readonly fullUn
 			return '将卸载 Claude Code，相关配置和数据不会删除。';
 		case 'CodexCli':
 			return '将卸载 Codex CLI，相关配置和数据不会删除。';
+		case 'GitNexus':
+			// 上游 `gitnexus uninstall --force` 无 target 筛选：会清理所有检测到的编辑器接入。
+			return '将清理所有检测到的编辑器接入（含 Cursor、OpenCode 等非本工具安装的接入），并卸载全局 gitnexus CLI；仓库 .gitnexus/ 索引会保留。';
 		default:
 			return '确认卸载此组件？此操作不可撤销。';
 	}
@@ -396,8 +405,8 @@ function friendlyError(text: string, fallback: string): string {
 }
 
 /**
- * 检测全部受管组件（8 项），不聚合 Skills/MCP（11.7）。
- * 复用 update.checkCliToolUpdates（返回正好 8 个 CLI 组件：ClaudeCode/Ccline/CcgWorkflow/OpenSpec/Trellis/CodeGraph/CodexCli + AntigravityCli），
+ * 检测全部受管组件（9 项），不聚合 Skills/MCP（11.7）。
+ * 复用 update.checkCliToolUpdates（返回正好 9 个 CLI 组件：ClaudeCode/Ccline/CcgWorkflow/OpenSpec/Trellis/CodeGraph/GitNexus/CodexCli + AntigravityCli），
  * join COMPONENT_DEFINITIONS 静态字段（description/kind/command 等）。
  */
 export async function detectComponents(onProgress?: ProgressCallback, forceRefresh = false): Promise<ManagedComponent[]> {
@@ -532,6 +541,20 @@ export async function uninstallComponent(
 						break;
 					}
 
+					if (definition.id === 'GitNexus') {
+						// 整体卸载：先官方清理全部编辑器接入，成功后才移除全局 CLI。
+						// 第一步失败即中止（保留 CLI 便于修复重试）；绝不运行 `gitnexus clean`，绝不触碰仓库 .gitnexus/。
+						await runLifecycleCommands(gitNexusIntegrationCleanupCommands(), exec, 'GitNexus', onProgress);
+						try {
+							await uninstallNpmPackage(definition, exec, onProgress);
+						} catch (error) {
+							const message = error instanceof Error ? error.message : String(error);
+							throw new Error(`编辑器接入已清理，但全局 gitnexus CLI 卸载失败: ${message}`);
+						}
+
+						break;
+					}
+
 					await uninstallNpmPackage(definition, exec, onProgress);
 					if (definition.id === 'Ccline') {
 						restoreCclineStatusLine(onProgress);
@@ -630,7 +653,7 @@ async function uninstallCodeGraph(context: AgentContext, onProgress?: ProgressCa
 	}
 }
 
-/** 11.10 npm 全局卸载（ClaudeCode / OpenSpec / CodexCli / Ccline）。 */
+/** 11.10 npm 全局卸载（ClaudeCode / OpenSpec / CodexCli / Ccline / GitNexus）。 */
 async function uninstallNpmPackage(
 	definition: ComponentDefinition,
 	exec: typeof execCommand,

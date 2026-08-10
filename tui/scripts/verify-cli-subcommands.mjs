@@ -374,6 +374,8 @@ try {
 	assert.equal(resolveToolId('trellis'), 'Trellis', 'Trellis 别名不得遗漏');
 	assert.equal(resolveToolId('claude-code'), 'ClaudeCode');
 	assert.equal(resolveToolId('code-graph'), 'CodeGraph');
+	assert.equal(resolveToolId('gitnexus'), 'GitNexus', 'GitNexus canonical 小写别名可解析');
+	assert.equal(resolveToolId('git-nexus'), 'GitNexus', 'GitNexus 连字符别名可解析');
 
 	let forceRefreshSeen = null;
 	const updateExitCode = await runToolsUpdate(undefined, {

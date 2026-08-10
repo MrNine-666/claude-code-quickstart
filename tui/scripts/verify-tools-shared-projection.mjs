@@ -16,7 +16,7 @@ process.env.CCQ_HOME = home;
 const {projectSharedToolComponents, isInjectableComponent, COMPONENT_DEFINITIONS} = await import('../src/core/tools-manage.ts');
 const {codeGraphInstallCommands, codeGraphUninstallCommands} = await import('../src/core/tools-lifecycle.ts');
 
-const EXPECTED_IDS = ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'Ccline', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph'];
+const EXPECTED_IDS = ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'Ccline', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus'];
 
 // detected 全集（模拟检测结果）。projectSharedToolComponents 不按 context 过滤。
 const detected = COMPONENT_DEFINITIONS.map(def => ({
@@ -30,7 +30,7 @@ const detected = COMPONENT_DEFINITIONS.map(def => ({
 // ── 列表 agentContext 不变性：投影不接受 context 参数，结果对 cc/cx 都相同 ──────
 const projected = projectSharedToolComponents(detected);
 const ids = projected.map(c => c.id);
-assert.deepEqual(ids, EXPECTED_IDS, '共享投影返回全 8 组件并按分组顺序排列（含 Ccline / Trellis）');
+assert.deepEqual(ids, EXPECTED_IDS, '共享投影返回全 9 组件并按分组顺序排列（含 Ccline / Trellis / GitNexus）');
 assert.ok(ids.includes('Ccline'), 'Ccline 常显');
 // 投影为纯函数，输入不含 context —— 两次调用结果结构一致即证明与上下文无关。
 const projectedAgain = projectSharedToolComponents(detected);
@@ -54,7 +54,7 @@ assert.equal(codegraph.injectByAgent.cx.integrated, false, 'Codex 侧未注入�
 console.log('[PASS] 6.1 双态独立：CodeGraph 仅注入 Claude Code 时 cc=已注入/cx=未注入');
 
 // ── 非 inject 类无 injectByAgent ──────────────────────────────────────────────
-for (const id of ['OpenSpec', 'Trellis', 'AntigravityCli', 'ClaudeCode', 'CodexCli', 'Ccline']) {
+for (const id of ['OpenSpec', 'Trellis', 'AntigravityCli', 'ClaudeCode', 'CodexCli', 'Ccline', 'GitNexus']) {
 	const component = dualProjected.find(c => c.id === id);
 	assert.ok(component, `${id} 在投影中存在`);
 	assert.equal(component.injectByAgent, undefined, `${id}（非 inject 类）不得含 injectByAgent`);
@@ -102,6 +102,17 @@ assert.equal(resolveToolsPrimaryAction({...openSpec, installed: true, hasUpdate:
 assert.equal(resolveToolsPrimaryAction({...openSpec, installed: true, hasUpdate: false}), 'latest', '普通最新工具 Enter 只提示已是最新');
 assert.equal(resolveToolsPrimaryAction({...codegraph, hasUpdate: true}), 'manage', '管理型工具即使有更新，Enter 仍优先打开 Modal');
 console.log('[PASS] Tools Enter 主操作优先级：manage > install/update/latest');
+
+// ── GitNexus：整体接入/整体卸载，不得出现 Agent 开关 Modal（AC1/R7）───────────
+const gitnexus = dualProjected.find(c => c.id === 'GitNexus');
+assert.ok(gitnexus, 'GitNexus 在共享投影中存在');
+assert.equal(gitnexus.sharingKind, 'fully-shared-no-inject', 'GitNexus 为整体共享类（无单侧开关）');
+assert.equal(gitnexus.injectByAgent, undefined, 'GitNexus 不得携带双侧 inject 快照');
+assert.equal(resolveToolsPrimaryAction({...gitnexus, installed: false, hasUpdate: null}), 'install', 'GitNexus 未安装 Enter 执行安装');
+assert.equal(resolveToolsPrimaryAction({...gitnexus, installed: true, hasUpdate: true}), 'update', 'GitNexus 有更新 Enter 执行更新');
+assert.equal(resolveToolsPrimaryAction({...gitnexus, installed: true, hasUpdate: false}), 'latest', 'GitNexus 最新时 Enter 只提示已是最新');
+assert.notEqual(resolveToolsPrimaryAction({...gitnexus, installed: true, hasUpdate: true}), 'manage', 'GitNexus 绝不打开 Agent 开关 Modal');
+console.log('[PASS] GitNexus 整体接入模型：无 Agent 开关 Modal，Enter 按安装/更新事实分派');
 
 // 光标落在 CodeGraph（cc 已注入 / cx 未注入），进入开关 Modal。
 const gridState = {

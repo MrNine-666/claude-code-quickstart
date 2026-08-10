@@ -7,6 +7,8 @@ import type {AgentContext} from '../state/manage-state.js';
 //   - CodeGraph：CLI 安装与 per-Agent 集成分离（install 接入当前 Agent；默认 uninstall 只解除集成，
 //     不 npm uninstall、不删 .codegraph/ 项目索引；移除 CLI 为独立高级动作）。
 //   - CcgWorkflow：Claude Code 与 Codex Mode 均走官方非交互命令；ccq 不自行猜测删除 config.toml。
+//   - GitNexus：整体接入/整体卸载（上游无 per-Agent uninstall），setup 一次配置 claude+codex，
+//     卸载先清理全部编辑器接入再交由通用 npm 生命周期移除 CLI；绝不 analyze/clean/serve/wiki。
 
 /** 单条待执行命令（cmd + args），供 tools-manage/tools-install 交给 execCommand 执行。 */
 export type LifecycleCommand = {
@@ -62,4 +64,44 @@ export function ccgWorkflowUninstallCommands(context: AgentContext): readonly Li
 	}
 
 	return [{cmd: 'npx', args: ['--yes', 'ccg-workflow', 'uninstall']}];
+}
+
+// ── GitNexus 生命周期 ─────────────────────────────────────────────────────────
+// 上游只支持 `setup --coding-agent <ids>` 选择性接入，不支持按 Agent 卸载：
+// `gitnexus uninstall --force` 会清理所有检测到的编辑器接入。因此 GitNexus 采用
+// 整体接入 / 整体卸载模型（COMPONENT_META 为 fully-shared-no-inject），不提供单侧开关。
+
+/** GitNexus 首次安装使用的 npm 包 spec（registry 的 npmPackage 保持无 dist-tag，供 outdated/view 复用）。 */
+export const GITNEXUS_INSTALL_PACKAGE_SPEC = 'gitnexus@latest';
+
+/** GitNexus 非交互接入 Claude Code + Codex（npm 安装/更新后执行）。 */
+export function gitNexusSetupCommands(): readonly LifecycleCommand[] {
+	return [{cmd: 'gitnexus', args: ['setup', '--coding-agent', 'claude,codex']}];
+}
+
+/** 失败诊断上限：保留可操作尾部，避免超长 stack 淹没进度日志。 */
+const GITNEXUS_DIAGNOSTIC_MAX = 400;
+
+/**
+ * GitNexus 生命周期失败信息：阶段 + exit code + 上游诊断尾部。
+ * GitNexus 有 Node.js engine（`^22.18.0 || >=24.11.0`）与原生依赖约束（glibc / MSVC / OpenSSL 3），
+ * 这些事实只出现在上游 stderr/stdout 里，通用 fallback 只识别网络/权限模式会吞掉它们，故此处显式保留。
+ */
+export function gitNexusFailureDiagnostic(stage: string, code: number, stderr: string, stdout = ''): string {
+	const base = `${stage} (exit ${code})`;
+	const raw = (stderr || stdout).replace(/\s+/g, ' ').trim();
+	if (!raw) {
+		return base;
+	}
+
+	const tail = raw.length > GITNEXUS_DIAGNOSTIC_MAX ? `...${raw.slice(-GITNEXUS_DIAGNOSTIC_MAX)}` : raw;
+	return `${base}: ${tail}`;
+}
+
+/**
+ * GitNexus 编辑器接入清理（整体卸载第一步）。
+ * 上游无 target 筛选：会清理所有检测到的编辑器接入。绝不 `clean`，绝不触碰仓库 `.gitnexus/` 索引。
+ */
+export function gitNexusIntegrationCleanupCommands(): readonly LifecycleCommand[] {
+	return [{cmd: 'gitnexus', args: ['uninstall', '--force']}];
 }

@@ -8,7 +8,7 @@ import {execCommand, formatCommandInstruction, type ProgressCallback} from './ex
 import {refreshNpmGlobalBinPath} from './npm-path.js';
 import {hasUpdate} from './semver.js';
 import {installTool, TOOL_DEFINITIONS} from './tools-install.js';
-import {codeGraphInstallCommands} from './tools-lifecycle.js';
+import {codeGraphInstallCommands, gitNexusSetupCommands, gitNexusFailureDiagnostic} from './tools-lifecycle.js';
 import {
 	hasCodeGraphIntegration,
 	installedCodeGraphContexts,
@@ -319,8 +319,8 @@ async function buildAntigravityStatus(): Promise<UpdateComponent> {
 	};
 }
 
-// export 供 tools-manage.ts 的 detectComponents 复用：返回 8 个 CLI 组件
-// （ClaudeCode/Ccline/CcgWorkflow/OpenSpec/Trellis/CodeGraph/CodexCli + AntigravityCli），不含 Skills/MCP。
+// export 供 tools-manage.ts 的 detectComponents 复用：返回 9 个 CLI 组件
+// （ClaudeCode/Ccline/CcgWorkflow/OpenSpec/Trellis/CodeGraph/GitNexus/CodexCli + AntigravityCli），不含 Skills/MCP。
 export async function checkCliToolUpdates(outdated: NpmOutdated, forceRefresh = false): Promise<UpdateComponent[]> {
 	await refreshNpmGlobalBinPath();
 	const latestByPackage = await resolveNpmViewLatest(Object.values(NPM_COMPONENT_MAP), forceRefresh);
@@ -589,6 +589,29 @@ async function reinstallCodeGraphIntegrations(exec: typeof execCommand, onProgre
 }
 
 /**
+ * GitNexus 更新后重放官方 setup（npm 更新只换 CLI，编辑器接入需重新写入）。
+ * setup 失败即抛错，由 applyUpdates 记为该 item 的 failed，不影响其他组件。
+ */
+async function reapplyGitNexusSetup(exec: typeof execCommand, onProgress?: ProgressCallback): Promise<void> {
+	const [command] = gitNexusSetupCommands();
+	if (!command) {
+		return;
+	}
+
+	onProgress?.({
+		level: 'info',
+		message: `${command.cmd} ${command.args.join(' ')}`,
+		componentId: 'GitNexus',
+		instruction: formatCommandInstruction(command.cmd, command.args)
+	});
+	const result = await exec(command.cmd, [...command.args], {timeout: 300000});
+	if (result.code !== 0) {
+		// 与安装路径同源：保留 setup 阶段 exit code 与上游 Node.js / 原生依赖诊断（R10）。
+		throw new Error(gitNexusFailureDiagnostic('GitNexus 编辑器接入刷新失败', result.code, result.stderr, result.stdout));
+	}
+}
+
+/**
  * 应用选中组件更新。先 createSnapshot 再执行更新命令（snapshot-before-write，design D12）。
  * snapshot 失败直接抛错，不执行任何更新命令。
  */
@@ -631,11 +654,20 @@ export async function applyUpdates(
 				});
 				const result = await exec('npm', args, {timeout: 120000});
 				if (result.code !== 0) {
-					throw new Error(`npm install 失败 (exit ${result.code})`);
+					// GitNexus 的 Node engine / 原生依赖失败只出现在上游 stderr 里（R10），其余组件保持既有简洁信息。
+					throw new Error(
+						component.id === 'GitNexus'
+							? gitNexusFailureDiagnostic('npm install 失败', result.code, result.stderr, result.stdout)
+							: `npm install 失败 (exit ${result.code})`
+					);
 				}
 
 				if (component.id === 'CodeGraph') {
 					await reinstallCodeGraphIntegrations(exec, onProgress);
+				}
+
+				if (component.id === 'GitNexus') {
+					await reapplyGitNexusSetup(exec, onProgress);
 				}
 
 				onProgress?.({level: 'success', message: `${component.name} 已更新`, componentId: component.id});
