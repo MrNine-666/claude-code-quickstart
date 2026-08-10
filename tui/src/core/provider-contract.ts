@@ -11,6 +11,29 @@ export type BuiltinProvider = {
 	readonly modelEnv?: Readonly<Record<string, string>>;
 	readonly extraEnv?: Readonly<Record<string, string>>;
 	readonly requireModelConfig?: boolean;
+	/**
+	 * Claude 侧接入限制说明（套餐门槛、上下文档位约束等），呈现为表单 providerType 字段的 helpText。
+	 * 与 codex.note 平行：前者说 Claude 侧、后者说 Codex 侧，二者互不回退。
+	 */
+	readonly note?: string;
+	/**
+	 * Codex 侧接入形态。缺省即「该供应商不能被 Codex 原生接入」，不在 Codex 表单出现。
+	 * Codex CLI 只认 wire_api="responses"，故仅自身提供 Responses 兼容端点者才声明本字段；
+	 * 仅暴露 Chat Completions 的供应商（GLM / Kimi）直连会 404/空流，需经网关转协议。
+	 * baseUrl/model 与 Claude 侧不同源：Responses 端点与模型 ID 常与 Anthropic 兼容端点不一致。
+	 */
+	readonly codex?: CodexProviderTemplate;
+};
+
+/**
+ * 内置供应商的 Codex 侧一键模板（对应契约 `Codex` 段）。
+ * baseUrl/model 为必要字段——缺一即生成不出合法 profile TOML，规范化时整段丢弃。
+ * note 可选，记录该供应商的接入限制（如仅某模型支持 Responses）。
+ */
+export type CodexProviderTemplate = {
+	readonly baseUrl: string;
+	readonly model: string;
+	readonly note?: string;
 };
 
 export type ProviderRuntimeConfig = {
@@ -38,6 +61,12 @@ type RawBuiltinProvider = {
 	ModelEnv?: Record<string, string>;
 	ExtraEnv?: Record<string, string>;
 	RequireModelConfig?: boolean;
+	Note?: string;
+	Codex?: {
+		BaseUrl?: string;
+		Model?: string;
+		Note?: string;
+	};
 };
 
 /** 将 providers.json 契约（PascalCase）规范化为运行时配置（camelCase）。 */
@@ -58,6 +87,8 @@ function normalizeContract(raw: RawProviderContract): ProviderRuntimeConfig {
 			modelEnv?: Record<string, string>;
 			extraEnv?: Record<string, string>;
 			requireModelConfig?: boolean;
+			note?: string;
+			codex?: CodexProviderTemplate;
 		} = {
 			name: String(p?.Name ?? ''),
 			description: String(p?.Description ?? ''),
@@ -81,6 +112,23 @@ function normalizeContract(raw: RawProviderContract): ProviderRuntimeConfig {
 
 		if (p?.RequireModelConfig !== undefined) {
 			item.requireModelConfig = Boolean(p.RequireModelConfig);
+		}
+
+		if (!isNullOrWhiteSpace(p?.Note)) {
+			item.note = String(p.Note);
+		}
+
+		// Codex 段：baseUrl 与 model 皆非空才视为可接入，缺一即无法生成合法 profile TOML。
+		if (p?.Codex && typeof p.Codex === 'object' && !isNullOrWhiteSpace(p.Codex.BaseUrl) && !isNullOrWhiteSpace(p.Codex.Model)) {
+			const codex: {baseUrl: string; model: string; note?: string} = {
+				baseUrl: String(p.Codex.BaseUrl),
+				model: String(p.Codex.Model)
+			};
+			if (!isNullOrWhiteSpace(p.Codex.Note)) {
+				codex.note = String(p.Codex.Note);
+			}
+
+			item.codex = codex;
 		}
 
 		builtinProviders[key] = item;

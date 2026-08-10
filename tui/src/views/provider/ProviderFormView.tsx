@@ -1,7 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {TextAttributes, type KeyEvent, type ScrollBoxRenderable, type TextareaRenderable} from '@opentui/core';
 import {useKeyboard, useRenderer} from '@opentui/react';
-import {toast} from '@opentui-ui/toast';
+import {toast} from '../../components/toast.js';
 import {FormPanel, firstEditableIndex, nextEditableIndex} from '../../components/form/FormPanel.js';
 import {ThemedScrollbox} from '../../components/themed-scrollbox.js';
 import {handleTextareaEditKeys, handleTextareaIndentKey} from '../../components/editor/textarea-edit-keys.js';

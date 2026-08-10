@@ -10,6 +10,7 @@ import {
 	type CodexProfile
 } from './codex.js';
 import {codexAuthJsonPath} from './paths.js';
+import {loadProviderContract, type CodexProviderTemplate} from './provider-contract.js';
 import {isNullOrWhiteSpace, normalizeBaseUrl} from './text-utils.js';
 import type {FormField, SelectOption} from '../components/form/field-types.js';
 
@@ -43,25 +44,36 @@ export type CodexTomlValuesResult =
 export const CODEX_OFFICIAL_LOGIN_TYPE = 'officialLogin';
 export const CODEX_CUSTOM_TYPE = 'custom';
 
-type CodexProviderTemplate = {
-	readonly label: string;
-	readonly profileKey: string;
-	readonly baseUrl: string;
-	readonly model: string;
-};
+/**
+ * Codex 内置一键模板：唯一事实源为 contracts/providers.json 各供应商的 `Codex` 段，
+ * 与 Claude 侧同一份契约统一管理（新增供应商/改端点/改文案只动契约）。
+ *
+ * 声明 `Codex` 段即代表该供应商可被 Codex 原生接入——Codex CLI 只认 wire_api="responses"，
+ * 故仅自身提供 Responses 兼容端点者才有该段（当前 MiniMax、DeepSeek）；GLM / Kimi 仅暴露
+ * Chat Completions，直连会 404/空流，需经 LiteLLM/OmniRoute 等网关转协议，故契约中无 Codex 段。
+ * Codex 侧 baseUrl/model 与 Claude 侧不同源：Responses 端点与模型 ID 常与 Anthropic 兼容端点不一致。
+ *
+ * 不含结构性条目（official login / custom）：二者都不是「某家供应商是否支持 Responses」的判断对象，
+ * 故不靠 Codex 段声明可用性，由 buildProviderTypeOptions 直接补齐。
+ */
+function codexBuiltinTemplates(): {key: string; label: string; template: CodexProviderTemplate}[] {
+	const {builtinProviders} = loadProviderContract();
+	const templates: {key: string; label: string; template: CodexProviderTemplate}[] = [];
+	for (const [key, provider] of Object.entries(builtinProviders)) {
+		if (!provider.codex) {
+			continue;
+		}
 
-// 仅保留 Codex 原生可接入的供应商：MiniMax 提供 Responses API 兼容端点。
-// GLM / Kimi / DeepSeek 仅暴露 Chat Completions，而 Codex CLI 自 v0.138 起只认 wire_api="responses"，
-// 直连会 404/空流，需经 LiteLLM/OmniRoute 等网关转协议——故不在此内置为一键模板。
-const CODEX_PROVIDER_ORDER = ['minimax'] as const;
-const CODEX_PROVIDER_TEMPLATES: Readonly<Record<(typeof CODEX_PROVIDER_ORDER)[number], CodexProviderTemplate>> = {
-	minimax: {
-		label: 'MiniMax',
-		profileKey: 'minimax',
-		baseUrl: 'https://api.minimax.io/v1',
-		model: 'MiniMax-M3'
+		templates.push({key, label: provider.name || key, template: provider.codex});
 	}
-};
+
+	return templates;
+}
+
+/** 自定义供应商显示名：取契约 custom 条目的 Name，与 Claude 侧同源，保证两侧文案一致。 */
+function customProviderLabel(): string {
+	return loadProviderContract().builtinProviders[CODEX_CUSTOM_TYPE]?.name || CODEX_CUSTOM_TYPE;
+}
 
 const AUTH_JSON_SECRET_KEYS = new Set(['access_token', 'refresh_token', 'id_token', 'api_key', 'apikey', 'token', 'secret']);
 
@@ -74,21 +86,51 @@ function toCodexProviderType(providerType: string): CodexProviderType {
 }
 
 function buildProviderTypeOptions(): SelectOption[] {
-	// official login 是结构性单例的虚拟条目（不落盘、可幂等激活），恒定展示，无需按存在性隐藏。
+	// 两个结构性条目不由契约的 Codex 段声明可用性，恒定展示：
+	//   - official login：认证方式而非供应商（~/.codex/auth.json 全局单例，不落盘、无端点无模型）。
+	//   - custom：用户手填的逃生口，"是否支持 Responses"取决于用户填什么，非供应商属性。
+	// 中间的一键模板随契约顺序；custom 的显示名取自契约，与 Claude 侧同文案。
 	return [
 		{value: CODEX_OFFICIAL_LOGIN_TYPE, label: 'official login'},
-		...CODEX_PROVIDER_ORDER.map((key) => ({value: key, label: CODEX_PROVIDER_TEMPLATES[key].label})),
-		{value: CODEX_CUSTOM_TYPE, label: '自定义 API 供应商'}
+		...codexBuiltinTemplates().map(({key, label}) => ({value: key, label})),
+		{value: CODEX_CUSTOM_TYPE, label: customProviderLabel()}
 	];
 }
 
 function templateFor(providerType: string): Pick<CodexProviderFormValues, 'profileKey' | 'baseUrl' | 'model' | 'apiKey'> {
-	if (providerType in CODEX_PROVIDER_TEMPLATES) {
-		const template = CODEX_PROVIDER_TEMPLATES[providerType as keyof typeof CODEX_PROVIDER_TEMPLATES];
-		return {profileKey: template.profileKey, baseUrl: template.baseUrl, model: template.model, apiKey: ''};
+	const builtin = codexBuiltinTemplates().find(({key}) => key === providerType);
+	if (builtin) {
+		// profileKey 默认取契约 key：与 Claude 侧 profile 命名同源，且天然满足 safeCodexProfileKey。
+		return {profileKey: builtin.key, baseUrl: builtin.template.baseUrl, model: builtin.template.model, apiKey: ''};
 	}
 
+	// custom / 未知类型：全空，profileKey 留空强制用户命名，避免多个自定义供应商落到同一文件名。
 	return {profileKey: '', baseUrl: '', model: '', apiKey: ''};
+}
+
+/** 契约 Codex.Note：该供应商的接入限制说明，无则返回 undefined（自定义/无声明供应商）。 */
+function templateNote(providerType: string): string | undefined {
+	return codexBuiltinTemplates().find(({key}) => key === providerType)?.template.note;
+}
+
+/** 契约 PlatformUrl：该供应商的 API Key 申请页，两侧共用同一字段。 */
+function platformUrlFor(providerType: string): string | undefined {
+	const url = loadProviderContract().builtinProviders[providerType]?.platformUrl;
+	return isNullOrWhiteSpace(url) ? undefined : url;
+}
+
+/**
+ * 供应商类型字段提示：随所选类型变化（与 Claude 侧同构）。
+ * 取值优先级 Codex.Note → Description；official login 不在契约内，用固定文案。
+ * 刻意不回退顶层 Note——那是 Claude 侧的接入限制（套餐档位等），与 Codex 侧无关。
+ */
+function providerTypeHelpText(providerType: string): string {
+	if (isOfficialLogin(providerType)) {
+		return '使用 codex login 认证，靠 ~/.codex/auth.json（全局单例），不落 profile 文件。';
+	}
+
+	const provider = loadProviderContract().builtinProviders[providerType];
+	return provider?.codex?.note || provider?.description || '写入 ~/.codex/<文件名>.config.toml 供应商配置文件。';
 }
 
 function redactAuthJsonValue(value: unknown, key = ''): unknown {
@@ -207,7 +249,8 @@ export function buildCodexProviderFormModel(input: {
 			label: '供应商类型',
 			value: values.providerType,
 			options: buildProviderTypeOptions(),
-			helpText: '供应商独立管理；official login 使用 codex login（不落盘），自定义 API 供应商写入供应商配置 TOML。'
+			// 随所选类型变化：展示该供应商的契约 Codex.Note（接入限制），回退 Description。
+			helpText: providerTypeHelpText(values.providerType)
 		});
 	}
 
@@ -231,10 +274,32 @@ export function buildCodexProviderFormModel(input: {
 						helpText: '填写文件名主体；保存为 ~/.codex/<文件名>.config.toml，并作为 codex --profile 名称。'
 					}
 		);
+		const platformUrl = platformUrlFor(values.providerType);
 		fields.push(
-			{id: 'baseUrl', type: 'text', label: 'Base URL', value: values.baseUrl},
-			{id: 'model', type: 'text', label: '默认模型', value: values.model},
-			{id: 'apiKey', type: 'secret', label: 'API Key', value: values.apiKey}
+			{
+				id: 'baseUrl',
+				type: 'text',
+				label: 'Base URL',
+				value: values.baseUrl,
+				// Codex 与 Claude 侧不同源的最常见误填点：Codex CLI 自 v0.138 起只认 wire_api="responses"，
+				// 填成供应商的 Anthropic 兼容端点会 404/空流。
+				helpText: '须填供应商的 Responses 兼容端点，除 DeepSeek 外一般都需要拼接/v1。'
+			},
+			// 契约 Codex.Note 记录该供应商的接入限制（如仅某模型支持 Responses），
+			// 挂在模型字段上让用户在改模型前先看到。
+			// 供应商级限制说明已归 providerType 字段（Codex.Note），此处只说字段自身语义，避免同段文案重复出现。
+			{id: 'model', type: 'text', label: '默认模型', value: values.model, helpText: '写入 TOML 的 model 键，作为该 profile 的默认模型。'},
+			{
+				id: 'apiKey',
+				type: 'secret',
+				label: 'API Key',
+				value: values.apiKey,
+				// Codex 侧与 Claude 侧的关键差异：密钥明文落在 profile TOML 的 experimental_bearer_token，
+				// 不进 ccq vault、不由 ccq cx 注入 env，故须让用户知道它存在哪。
+				helpText: platformUrl
+					? `在 ${platformUrl} 创建；明文写入 TOML 的 experimental_bearer_token。`
+					: '明文写入 TOML 的 experimental_bearer_token。'
+			}
 		);
 	} else if (values.authEditable) {
 		// 编辑 official：JSON 由底部 textarea 明文可编辑，此处仅留一行说明，避免与 textarea 内容重复。
@@ -264,7 +329,11 @@ export function buildCodexProviderFormModel(input: {
 			options: [
 				{value: 'yes', label: '是'},
 				{value: 'no', label: '否'}
-			]
+			],
+			// 两种类型的激活语义不同：official login 是「清空供应商键回到登录态」，真实 provider 是「写入供应商键」。
+			helpText: isOfficialLogin(values.providerType)
+				? '激活即清空 ~/.codex/config.toml 的供应商键，让 codex 回到 auth.json 登录态；选「否」则不改动当前默认。'
+				: '激活即把本 profile 写入 ~/.codex/config.toml 的供应商键并设为默认；选「否」仅保存文件，之后可在列表中切换。'
 		});
 	}
 

@@ -62,20 +62,30 @@ const MODEL_KEY_ORDER = [
 	'ANTHROPIC_DEFAULT_SONNET_MODEL'
 ];
 
+/**
+ * 三个受管模型键的用途说明。第三方供应商下这些别名不存在，须逐个指向真实模型 ID；
+ * 留空的档位会静默失败（Claude Code 不报错也无 UI 提示），故在表单里逐字段点明归属。
+ */
+const MODEL_KEY_HELP: Readonly<Record<string, string>> = {
+	ANTHROPIC_DEFAULT_HAIKU_MODEL: '调用 haiku 时实际调用的模型。',
+	ANTHROPIC_DEFAULT_OPUS_MODEL: '调用 opus 时实际调用的模型。',
+	ANTHROPIC_DEFAULT_SONNET_MODEL: '调用 sonnet 时实际调用的模型。'
+};
+
 /** 自定义供应商类型标识（providerType radio 的非内置选项值）。 */
 export const PROVIDER_CUSTOM_TYPE = 'custom';
 
-/** providerType radio 选项：内置供应商（label=name）+ 自定义。 */
+/**
+ * providerType radio 选项：全部由契约派生（label=Name），顺序即契约顺序。
+ * custom 是契约内的占位条目（BaseUrl 为空、无 ModelEnv），位于契约末尾故天然排在最后，
+ * 不再于代码中硬编码追加——新增供应商或改文案只动 providers.json。
+ */
 function buildProviderTypeOptions(): SelectOption[] {
 	const config = loadProviderContract();
-	const options: SelectOption[] = Object.entries(config.builtinProviders)
-		.filter(([key]) => key !== PROVIDER_CUSTOM_TYPE)
-		.map(([key, p]) => ({
-			value: key,
-			label: p.name || key
-		}));
-	options.push({value: PROVIDER_CUSTOM_TYPE, label: '自定义供应商'});
-	return options;
+	return Object.entries(config.builtinProviders).map(([key, p]) => ({
+		value: key,
+		label: p.name || key
+	}));
 }
 
 /** 默认供应商类型：首个内置供应商，无内置时回退自定义。 */
@@ -175,42 +185,66 @@ export function buildProviderFormModel(input: ProviderFormInput): ProviderFormMo
 
 	const fields: FormField[] = [];
 
+	const selected = providerType ? config.builtinProviders[providerType] : undefined;
+
 	// add 模式首字段：供应商类型 radio（方向键切换，切换后覆盖其余字段为该类型模板）。
+	// helpText 展示所选供应商的契约 Note（套餐门槛、上下文档位等接入限制），无 Note 时回退 Description。
 	if (input.mode !== 'edit') {
+		const typeHelp = selected?.note || selected?.description;
 		fields.push({
 			id: 'providerType',
 			type: 'radio',
 			label: '供应商类型',
 			value: providerType,
-			options: buildProviderTypeOptions()
+			options: buildProviderTypeOptions(),
+			...(typeHelp ? {helpText: typeHelp} : {})
 		});
 	}
 
 	// 字段顺序：[providerType] → 文件名 → baseUrl → apiKey → 3 模型键 → activate
 	fields.push(
 		input.mode === 'edit'
-			? {id: 'profileKey', type: 'readonly', label: '文件名', value: values.profileKey}
+			? {
+					id: 'profileKey',
+					type: 'readonly',
+					label: '文件名',
+					value: values.profileKey,
+					helpText: '对应 ~/.claude/providers/<文件名>.json，创建后不可改名。'
+				}
 			: {
 					id: 'profileKey',
 					type: 'text',
 					label: '文件名',
-					value: values.profileKey
+					value: values.profileKey,
+					helpText: '填写文件名主体；保存为 ~/.claude/providers/<文件名>.json。若同名文件已存在，将拒绝创建，请更换文件名后重试。'
 			  },
 		{
 			id: 'baseUrl',
 			type: 'text',
 			label: 'Base URL',
-			value: values.baseUrl
+			value: values.baseUrl,
+			// 最常见的接入错误：填了供应商的 OpenAI 兼容端点。多数供应商两套端点路径不同（如 DeepSeek 的
+			// /anthropic 与根域），填错通常表现为 404 或空响应。
+			helpText: '须填供应商的 Anthropic 兼容端点，无需拼接/v1。'
 		},
-		{id: 'apiKey', type: 'secret', label: 'API Key', value: values.apiKey}
+		{
+			id: 'apiKey',
+			type: 'secret',
+			label: 'API Key',
+			value: values.apiKey,
+			helpText: selected?.platformUrl ? `在 ${selected.platformUrl} 创建；写入 profile 后以脱敏形式展示。` : '写入 profile 后以脱敏形式展示。'
+		}
 	);
 
+	// 三个模型键映射 Claude Code 的 opus/sonnet/haiku 别名。第三方供应商下留空的档位会静默失败
+	// （无报错、无 UI 提示），故逐个说明其归属用途，尤其 haiku 还承担后台任务。
 	for (const key of MODEL_KEY_ORDER) {
 		fields.push({
 			id: key,
 			type: 'text',
 			label: labels[key] ?? key,
-			value: values.modelEnv[key] ?? ''
+			value: values.modelEnv[key] ?? '',
+			helpText: MODEL_KEY_HELP[key]
 		});
 	}
 
@@ -223,7 +257,8 @@ export function buildProviderFormModel(input: ProviderFormInput): ProviderFormMo
 			options: [
 				{value: 'yes', label: '是'},
 				{value: 'no', label: '否'}
-			]
+			],
+			helpText: '激活即把本 profile 的 env 写入 ~/.claude/settings.json 并切为当前供应商；选「否」仅保存，之后可在列表中切换。'
 		});
 	}
 

@@ -39,34 +39,67 @@
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M3",
         "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M3",
         "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M3"
+      },
+      "Codex": {
+        "BaseUrl": "https://api.minimax.io/v1",
+        "Model": "MiniMax-M3"
       }
     },
     "moonshot": {
-      "Name": "Kimi Coding Plan",
-      "Description": "Kimi Coding Plan 专属 API",
+      "Name": "Kimi Coding Plan (1M)",
+      "Description": "Kimi Coding Plan 专属 API（K3 1M）",
+      "Note": "K3 需 Moderato 及以上套餐，1M 上下文需 Allegretto 及以上；低档套餐请改用 256K 模板。上下文窗口 env 须与模型档位一致，改模型时同步改窗口值。",
       "BaseUrl": "https://api.kimi.com/coding",
       "PlatformUrl": "https://www.kimi.com/code/console",
+      "ModelEnv": {
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "k3[1m]",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "k3[1m]",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "k3[1m]"
+      },
       "ExtraEnv": {
-        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": 262144
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": 1048576,
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": 1048576
+      }
+    },
+    "moonshot-256k": {
+      "Name": "Kimi Coding Plan (256K)",
+      "Description": "Kimi Coding Plan 专属 API（K3 256K）",
+      "Note": "K3 需 Moderato 及以上套餐；token 消耗约为 1M 版一半。Andante 档可将模型改为 kimi-for-coding。上下文窗口 env 须与模型档位一致。",
+      "BaseUrl": "https://api.kimi.com/coding",
+      "PlatformUrl": "https://www.kimi.com/code/console",
+      "ModelEnv": {
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "k3-256k",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "k3-256k",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "k3-256k"
+      },
+      "ExtraEnv": {
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": 262144,
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": 262144
       }
     },
     "deepseek": {
       "Name": "DeepSeek",
       "Description": "DeepSeek Anthropic API",
+      "Note": "官方推荐 opus/sonnet 走 deepseek-v4-pro[1m]、haiku 走 flash 的分层映射；本模板全槽位用 flash（0731 正式版在 agentic 基准上超过 v4-pro-preview 且便宜约 3 倍）。",
       "BaseUrl": "https://api.deepseek.com/anthropic",
       "PlatformUrl": "https://platform.deepseek.com/api_keys",
       "ModelEnv": {
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1m]",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro[1m]"
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-flash",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash"
       },
       "ExtraEnv": {
-        "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-v4-flash",
-        "CLAUDE_CODE_EFFORT_LEVEL": "max"
+        "CLAUDE_CODE_EFFORT_LEVEL": "max",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": 786432
+      },
+      "Codex": {
+        "BaseUrl": "https://api.deepseek.com/",
+        "Model": "deepseek-v4-flash",
+        "Note": "当前仅 deepseek-v4-flash 支持 Codex。"
       }
     },
     "custom": {
-      "Name": "自定义供应商",
+      "Name": "自定义",
       "Description": "手动配置 Base URL 和 API Key",
       "BaseUrl": "",
       "PlatformUrl": ""

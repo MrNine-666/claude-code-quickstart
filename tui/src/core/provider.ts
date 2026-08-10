@@ -659,7 +659,8 @@ function addProviderUnlocked(opts: AddProviderOptions): AddProviderResult {
 		}
 
 		providerBaseUrl = normalizeBaseUrl(opts.baseUrl);
-		providerName = opts.name || '自定义供应商';
+		// 默认显示名取契约 custom 条目的 Name，与表单里的类型选项文案同源。
+		providerName = opts.name || config.builtinProviders.custom?.name || '自定义供应商';
 		// §2.7：profileKey 优先，未填时回退 newCustomProviderKey 派生
 		selectedKey = !isNullOrWhiteSpace(opts.profileKey)
 			? String(opts.profileKey).trim()
