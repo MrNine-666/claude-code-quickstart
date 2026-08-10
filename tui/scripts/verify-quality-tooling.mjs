@@ -40,7 +40,14 @@ assert.match(workflow, /pull_request:/);
 assert.match(workflow, /push:[\s\S]*branches:[\s\S]*- main/);
 assert.match(workflow, /contents: read/);
 assert.match(workflow, /runs-on: macos-latest/);
-assert.match(workflow, /fetch-depth: 0/);
+assert.match(
+	workflow,
+	/uses: actions\/checkout@11d5960a326750d5838078e36cf38b85af677262[\s\S]{0,120}fetch-depth: 0[\s\S]{0,120}persist-credentials: false/
+);
+assert.match(workflow, /uses: oven-sh\/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6/);
+for (const [, action, revision] of workflow.matchAll(/^\s+uses: ([^@\s]+)@([^\s]+)$/gm)) {
+	assert.match(revision, /^[0-9a-f]{40}$/, `${action} 必须固定到不可变 commit SHA`);
+}
 assert.match(workflow, /bun-version: '1\.3\.14'/);
 assert.match(workflow, /bun install --frozen-lockfile/);
 assert.match(workflow, /CCQ_FORMAT_BASE:/);

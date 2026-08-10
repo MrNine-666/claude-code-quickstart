@@ -222,6 +222,34 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 
 卸载类命令在非 TTY 环境必须传 `--yes` 或 `-y`，否则会拒绝执行以避免误删；`ccq use` 会修改持久默认配置。
 
+### 指定供应商启动 Agent
+
+`ccq` 负责管理供应商配置，不代理启动 Agent。需要临时指定供应商并在当前终端启动时，直接调用底层 CLI：
+
+```powershell
+# 临时指定 Claude Code 供应商
+claude --settings ~/.claude/providers/custom.json
+
+# 临时指定 Codex 供应商
+codex --profile custom
+```
+
+Agent 参数可以直接追加：
+
+```powershell
+claude --settings ~/.claude/providers/custom.json -p "你好"
+codex --profile custom -m gpt-5
+```
+
+如需持久设为默认供应商，先执行：
+
+```powershell
+ccq use custom --tool claude
+ccq use custom --tool codex
+```
+
+之后分别直接运行 `claude` 或 `codex`。这些命令直接使用当前终端，`ccq` 不参与 Agent 进程生命周期。
+
 ### 1) Tool Management (Tools)
 
 - Agent 组常显 ClaudeCode / CodexCli / AntigravityCli；Ccline 仅 Claude Code；OpenSpec / Trellis / CcgWorkflow / CodeGraph 在两种上下文可见

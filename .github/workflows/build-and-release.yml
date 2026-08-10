@@ -1,20 +1,31 @@
 name: Build and Release
 
 on:
+  pull_request:
+    paths:
+      - 'installer/**'
+      - 'tui/**'
+      - '.github/workflows/build-and-release.yml'
+      - '.trellis/spec/project/installer/**'
   push:
     branches:
       - main
     tags:
       - 'v*.*.*'
+    paths:
+      - 'installer/**'
+      - 'tui/**'
+      - '.github/workflows/build-and-release.yml'
+      - '.trellis/spec/project/installer/**'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   # 同一 ref 的新 run 自动取消旧的排队 run，避免 macOS runner 排队堆积
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
   test-windows:
@@ -24,10 +35,12 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
       - name: 安装 Bun（Windows helper 运行时测试）
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: '1.3.14'
 
@@ -71,11 +84,9 @@ jobs:
             Write-Host "[PASS] $file"
           }
 
-      - name: 运行 contracts JS 回归测试
+      - name: 运行 installer contracts 回归测试
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          Write-Host "[SKIP] contracts 回归测试已迁移至 TUI 构建验证" -ForegroundColor Yellow
+        run: pwsh -NoProfile -File .\installer\contracts\Test-Contracts.ps1
 
   test-macos:
     name: Test macOS (12+ compatible)
@@ -84,7 +95,9 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
       - name: 验证 zsh 入口语法
         run: |
@@ -101,11 +114,6 @@ jobs:
             printf '[PASS] %s\n' "$file"
           done
 
-      - name: 运行 contracts JS 回归测试
-        run: |
-          set -eu
-          echo "[SKIP] contracts 回归测试已迁移至 TUI 构建验证"
-
   build-tui:
     name: Build TUI executables (cross-compile)
     runs-on: ubuntu-latest
@@ -116,10 +124,12 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
       - name: 安装 Bun（TUI 构建运行时）
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: '1.3.14'
 
@@ -135,18 +145,7 @@ jobs:
 
           # 发布版本以 git tag 为唯一数据源：仓库内 package.json 保持开发态版本，tag 构建时自动注入。
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            version="${GITHUB_REF_NAME#v}"
-            CCQ_RELEASE_VERSION="${version}" node -e '
-              const fs = require("fs");
-              const version = process.env.CCQ_RELEASE_VERSION;
-              if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)) {
-                throw new Error(`Invalid CCQ release version: ${version}`);
-              }
-              const file = "package.json";
-              const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
-              pkg.version = version;
-              fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
-            '
+            version="$(node scripts/release-metadata.mjs --tag="${GITHUB_REF_NAME}" --package=package.json)"
             actual="$(bun src/index.tsx --version)"
             if [ "${actual}" != "${version}" ]; then
               echo "TUI 内嵌版本异常: ${actual} (期望 ${version})" >&2
@@ -172,7 +171,7 @@ jobs:
           done
 
       - name: 上传 TUI 可执行文件
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: built-tui-${{ github.sha }}
           path: |
@@ -194,11 +193,13 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
       - name: 安装 Bun canary（Windows ARM64 FFI runtime）
         id: setup-bun-windows-arm64
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 'canary'
           no-cache: true
@@ -219,19 +220,7 @@ jobs:
 
           # 与稳定 producer 使用同一 tag 版本注入合同。
           if ($env:GITHUB_REF_TYPE -eq 'tag') {
-            $version = $env:GITHUB_REF_NAME -replace '^v', ''
-            $env:CCQ_RELEASE_VERSION = $version
-            node -e '
-              const fs = require("fs");
-              const version = process.env.CCQ_RELEASE_VERSION;
-              if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)) {
-                throw new Error(`Invalid CCQ release version: ${version}`);
-              }
-              const file = "package.json";
-              const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
-              pkg.version = version;
-              fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
-            '
+            $version = node scripts/release-metadata.mjs "--tag=$env:GITHUB_REF_NAME" '--package=package.json'
             $actual = bun src/index.tsx --version
             if ($actual -ne $version) {
               throw "TUI 内嵌版本异常: $actual (期望 $version)"
@@ -263,10 +252,13 @@ jobs:
 
           $helpOutput = @(& $exe --help 2>&1)
           if ($LASTEXITCODE -ne 0) { throw "Windows ARM64 --help 失败: $($helpOutput -join "`n")" }
-          Write-Host "[PASS] Windows ARM64 原生 --version/--help smoke: $actualVersion"
+
+          $nonTtyOutput = @(& $exe 2>&1)
+          if ($LASTEXITCODE -ne 0) { throw "Windows ARM64 non-TTY 失败: $($nonTtyOutput -join "`n")" }
+          Write-Host "[PASS] Windows ARM64 原生 --version/--help/non-TTY smoke: $actualVersion"
 
       - name: 上传 Windows ARM64 TUI 可执行文件
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: built-tui-windows-arm64-${{ github.sha }}
           path: |
@@ -285,16 +277,18 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
       - name: 下载 TUI 可执行文件
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: built-tui-${{ github.sha }}
           path: dist
 
       - name: 下载 Windows ARM64 TUI 可执行文件
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: built-tui-windows-arm64-${{ github.sha }}
           path: dist
@@ -333,7 +327,7 @@ jobs:
           }
 
       - name: 上传 Windows 构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: built-windows-${{ github.sha }}
           path: |
@@ -353,10 +347,12 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
       - name: 下载 Windows x64 可执行文件
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: built-tui-${{ github.sha }}
           path: tui-dist
@@ -384,24 +380,21 @@ jobs:
           }
           Write-Host "[PASS] Windows x64 可执行文件版本: $actualVersion" -ForegroundColor Green
 
+          $helpOutput = @(& $exe --help 2>&1)
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows x64 --help 失败: $($helpOutput -join "`n")"
+          }
+
           # Non-TTY 模式：应输出提示并退出码 0
           $output = & $exe 2>&1
           if ($LASTEXITCODE -ne 0) {
             throw "Windows x64 可执行文件退出码异常: $LASTEXITCODE"
           }
-          Write-Host "[PASS] Windows x64 可执行文件 smoke 通过" -ForegroundColor Green
+          Write-Host "[PASS] Windows x64 --version/--help/non-TTY smoke 通过" -ForegroundColor Green
 
       - name: Smoke 测试运行中 ccq.exe 自卸载
         shell: pwsh
         run: pwsh -NoProfile -File .\tui\scripts\test-windows-compiled-uninstall.ps1 -SourceExe .\tui-dist\ccq-windows-x64.exe
-
-      - name: P-11 验证：契约内嵌离线加载
-        shell: pwsh
-        run: |
-          # 可执行文件应能在无 tui/contracts/ 源目录的情况下加载内嵌契约
-          # 这里我们只能间接验证：non-TTY 模式成功启动即证明契约加载成功
-          # （因为 TUI 启动时会加载契约初始化）
-          Write-Host "[PASS] P-11 契约内嵌验证通过（可执行文件成功启动）" -ForegroundColor Green
 
   build-macos:
     name: Build macOS artifacts
@@ -413,10 +406,12 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
       - name: 下载 TUI 可执行文件
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: built-tui-${{ github.sha }}
           path: dist
@@ -450,7 +445,7 @@ jobs:
           zsh -n dist/install.sh
 
       - name: 上传 macOS 构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: built-macos-${{ github.sha }}
           path: |
@@ -470,46 +465,83 @@ jobs:
 
     steps:
       - name: 下载 macOS x64 可执行文件
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: built-tui-${{ github.sha }}
           path: tui-dist
 
-      - name: Smoke 测试 macOS x64 可执行文件
+      - name: Smoke 测试 macOS x64/ARM64 可执行文件
         run: |
           set -eu
-          exe="./tui-dist/ccq-macos-x64"
-          test -f "${exe}" || { echo "macOS x64 可执行文件不存在" >&2; exit 1; }
-          chmod +x "${exe}"
 
           expected_version="0.0.0-dev"
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             expected_version="${GITHUB_REF_NAME#v}"
           fi
-          actual_version="$(${exe} --version)"
-          if [ "${actual_version}" != "${expected_version}" ]; then
-            echo "macOS x64 可执行文件版本异常: ${actual_version} (期望 ${expected_version})" >&2
-            exit 1
-          fi
-          echo "[PASS] macOS x64 可执行文件版本: ${actual_version}"
 
-          # Non-TTY 模式：应输出提示并退出码 0
-          output=$("${exe}" 2>&1 || true)
-          echo "[PASS] macOS x64 可执行文件 smoke 通过"
+          run_ccq() {
+            target_arch="$1"
+            shift
+            if [ "${target_arch}" = "x64" ]; then
+              arch -x86_64 "$@"
+            else
+              "$@"
+            fi
+          }
 
-      - name: P-11 验证：契约内嵌离线加载
-        run: |
-          # 可执行文件应能在无 tui/contracts/ 源目录的情况下加载内嵌契约
-          # 这里我们只能间接验证：non-TTY 模式成功启动即证明契约加载成功
-          # （因为 TUI 启动时会加载契约初始化）
-          echo "[PASS] P-11 契约内嵌验证通过（可执行文件成功启动）"
+          for target_arch in x64 arm64; do
+            exe="./tui-dist/ccq-macos-${target_arch}"
+            test -f "${exe}" || { echo "macOS ${target_arch} 可执行文件不存在" >&2; exit 1; }
+            chmod +x "${exe}"
+
+            actual_version="$(run_ccq "${target_arch}" "${exe}" --version)"
+            if [ "${actual_version}" != "${expected_version}" ]; then
+              echo "macOS ${target_arch} 可执行文件版本异常: ${actual_version} (期望 ${expected_version})" >&2
+              exit 1
+            fi
+
+            help_output="$(run_ccq "${target_arch}" "${exe}" --help)"
+            output="$(run_ccq "${target_arch}" "${exe}" 2>&1)"
+            echo "[PASS] macOS ${target_arch} --version/--help/non-TTY smoke: ${actual_version}"
+          done
+
+  release-quality:
+    name: Release quality gate
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 安装 Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.3.14'
+
+      - name: 安装依赖
+        working-directory: tui
+        run: bun install --frozen-lockfile
+
+      - name: 运行发布质量门
+        working-directory: tui
+        env:
+          CCQ_FORMAT_BASE: HEAD^
+        run: bun run check
 
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write
     needs:
+      - release-quality
       - build-windows
       - build-macos
       - build-tui
@@ -519,28 +551,30 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
       - name: 下载 Windows 构建产物
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: built-windows-${{ github.sha }}
           path: dist
 
       - name: 下载 macOS 构建产物
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: built-macos-${{ github.sha }}
           path: dist
 
       - name: 下载 TUI 可执行文件
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: built-tui-${{ github.sha }}
           path: dist
 
       - name: 下载 Windows ARM64 TUI 可执行文件
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: built-tui-windows-arm64-${{ github.sha }}
           path: dist
@@ -565,12 +599,16 @@ jobs:
             printf '[PASS] %s %s KB\n' "${exe}" "${size_kb}"
           done
 
+      - name: 解析 Release 元数据
+        id: release-metadata
+        run: node tui/scripts/release-metadata.mjs --tag="${GITHUB_REF_NAME}" --github-output="${GITHUB_OUTPUT}"
+
       - name: 创建或更新 GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           files: dist/*
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+          prerelease: ${{ steps.release-metadata.outputs.prerelease }}
           body: |
             ## 云端一键安装
 
