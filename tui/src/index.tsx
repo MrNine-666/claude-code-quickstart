@@ -7,6 +7,7 @@ import {setActiveTheme, type AppThemeMode} from './theme/index.js';
 import {parseCli} from './cli/argv.js';
 import {runCli} from './cli/index.js';
 import {copyTextWithFeedback} from './utils/copy-feedback.js';
+import {isAppModifier} from './utils/keyboard.js';
 import {createTuiExitController} from './core/tui-exit.js';
 
 // argv 子命令路由（HC-CLI-SUBCOMMAND）：有子命令 → 走非交互路径，不进 TUI。
@@ -46,6 +47,26 @@ const renderer = await createCliRenderer({
 renderer.on('selection', selection => {
 	copyTextWithFeedback(renderer, selection.getSelectedText());
 });
+// 调试控制台：TUI 接管了 stdout，直接 console.log 会被渲染帧覆盖看不见。OpenTUI 自带
+// TerminalConsole 覆盖层，把 console.* 收进可滚动面板；consoleMode 默认已是
+// 'console-overlay'，只需按需 show/toggle。
+//
+// 键位用 Ctrl+G 而非 F-key：macOS 上 F9 被 Mission Control / 媒体键占用，需按住 Fn 才是裸
+// F9，且不少终端不转发；Ctrl+G 历史含义是 BEL，现代 TUI 基本不用。与本项目 appShortcutKey
+// 的 ctrl+<key> 约定一致（全平台 Ctrl，不用 Cmd），且 ctrl+o / ctrl+t 已被占用，g 是空的。
+//
+// 开关来源：dev 由 .env.development 提供 CCQ_DEBUG=1（bun run dev 设了 NODE_ENV=development，
+// Bun 据此自动加载该文件）。生产二进制构建时传了 --no-compile-autoload-dotenv，不读任何
+// .env，因此默认关闭；仍可用 `CCQ_DEBUG=1 ccq` 从 shell 显式打开，作为线上排查的逃生口。
+if (process.env.CCQ_DEBUG === '1') {
+	renderer.console.show();
+	renderer.keyInput.on('keypress', key => {
+		if (key.name === 'g' && isAppModifier(key)) {
+			renderer.console.toggle();
+		}
+	});
+}
+
 // @opentui/keymap 自带 @opentui/core 依赖；Bun 会保留一份嵌套副本。
 // 运行时版本已对齐到 0.4.5，这里只做 CliRenderer 私有类型桥接。
 const keymap = createDefaultOpenTuiKeymap(renderer as never);

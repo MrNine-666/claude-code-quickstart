@@ -85,7 +85,17 @@ async function compileTarget(target: BuildTarget): Promise<void> {
   console.log(`   入口: ${SRC_ENTRY}`);
   console.log(`   产物: ${outfile}`);
 
-  const args = ["bun", "build", "--compile", `--target=${bunTarget}`, `--outfile=${outfile}`];
+  // --no-compile-autoload-dotenv：编译产物默认会读取「运行目录」下的 .env（Bun 默认 autoload
+  // 开启）。若用户 cwd 恰好有一个写着 CCQ_DEBUG=1 的 .env，生产版会意外弹出调试控制台。
+  // 关掉 autoload 后，生产二进制对任何 .env 免疫，调试控制台只能在源码 dev 模式下开启。
+  const args = [
+    "bun",
+    "build",
+    "--compile",
+    "--no-compile-autoload-dotenv",
+    `--target=${bunTarget}`,
+    `--outfile=${outfile}`
+  ];
 
   // Bun 限制：--windows-icon 只能在 Windows 本机构建时使用，不支持交叉编译。
   const isWindows = process.platform === "win32";
