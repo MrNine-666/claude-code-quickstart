@@ -42,7 +42,7 @@ assert.match(workflow, /contents: read/);
 assert.match(workflow, /runs-on: macos-latest/);
 assert.match(
 	workflow,
-	/uses: actions\/checkout@11d5960a326750d5838078e36cf38b85af677262[\s\S]{0,120}fetch-depth: 0[\s\S]{0,120}persist-credentials: false/
+	/uses: actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1[\s\S]{0,120}fetch-depth: 0[\s\S]{0,120}persist-credentials: false/
 );
 assert.match(workflow, /uses: oven-sh\/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6/);
 for (const [, action, revision] of workflow.matchAll(/^\s+uses: ([^@\s]+)@([^\s]+)$/gm)) {

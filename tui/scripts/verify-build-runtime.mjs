@@ -7,6 +7,13 @@ import {join} from 'node:path';
 const root = join(import.meta.dirname, '..');
 const repoRoot = join(root, '..');
 const windowsFfiFixRevision = 'f64cade36214f2a5b724da8d7557ca4dad069d81';
+const expectedActionPins = new Map([
+	['actions/checkout', '3d3c42e5aac5ba805825da76410c181273ba90b1'],
+	['actions/upload-artifact', '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'],
+	['actions/download-artifact', '3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'],
+	['oven-sh/setup-bun', '0c5077e51419868618aeaa5fe8019c62421857d6'],
+	['softprops/action-gh-release', '3d0d9888cb7fd7b750713d6e236d1fcb99157228']
+]);
 
 function read(path) {
 	return readFileSync(path, 'utf8');
@@ -107,6 +114,7 @@ async function verifyRepositoryContract() {
 	assert.ok(actionUses.length > 0, 'Release workflow 必须声明 actions');
 	for (const [, action, revision] of actionUses) {
 		assert.match(revision, /^[0-9a-f]{40}$/, `${action} 必须固定到不可变 commit SHA`);
+		assert.equal(revision, expectedActionPins.get(action), `${action} 必须使用已审计的 Node.js 24 action pin`);
 	}
 	const checkoutCount = actionUses.filter(([, action]) => action === 'actions/checkout').length;
 	assert.equal((workflow.match(/persist-credentials: false/g) ?? []).length, checkoutCount, '每个 checkout 都必须禁用持久凭据');
@@ -115,6 +123,12 @@ async function verifyRepositoryContract() {
 	assert.doesNotMatch(workflow, /\[SKIP\] contracts 回归测试|P-11 验证|P-11 契约内嵌验证/);
 	assert.match(releaseQualityJob, /if: startsWith\(github\.ref, 'refs\/tags\/v'\)/);
 	assert.match(releaseQualityJob, /bun install --frozen-lockfile/);
+	assert.match(releaseQualityJob, /id: release-quality-base/);
+	assert.match(releaseQualityJob, /git describe --tags --abbrev=0 "\$\{GITHUB_REF_NAME\}\^" --match 'v\*\.\*\.\*'/);
+	assert.match(releaseQualityJob, /node tui\/scripts\/release-metadata\.mjs --tag="\$\{base\}" >\/dev\/null/);
+	assert.match(releaseQualityJob, /git rev-list --max-parents=0 HEAD/);
+	assert.match(releaseQualityJob, /CCQ_FORMAT_BASE: \$\{\{ steps\.release-quality-base\.outputs\.base \}\}/);
+	assert.doesNotMatch(releaseQualityJob, /CCQ_FORMAT_BASE: HEAD\^/);
 	assert.match(releaseQualityJob, /run: bun run check/);
 	assert.match(releaseJob, /needs:\s*\n\s+- release-quality/);
 

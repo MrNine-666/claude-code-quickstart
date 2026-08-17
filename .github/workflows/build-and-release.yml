@@ -35,7 +35,7 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
@@ -95,7 +95,7 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
@@ -124,7 +124,7 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
@@ -171,7 +171,7 @@ jobs:
           done
 
       - name: 上传 TUI 可执行文件
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: built-tui-${{ github.sha }}
           path: |
@@ -193,7 +193,7 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
@@ -258,7 +258,7 @@ jobs:
           Write-Host "[PASS] Windows ARM64 原生 --version/--help/non-TTY smoke: $actualVersion"
 
       - name: 上传 Windows ARM64 TUI 可执行文件
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: built-tui-windows-arm64-${{ github.sha }}
           path: |
@@ -277,18 +277,18 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
       - name: 下载 TUI 可执行文件
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: built-tui-${{ github.sha }}
           path: dist
 
       - name: 下载 Windows ARM64 TUI 可执行文件
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: built-tui-windows-arm64-${{ github.sha }}
           path: dist
@@ -327,7 +327,7 @@ jobs:
           }
 
       - name: 上传 Windows 构建产物
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: built-windows-${{ github.sha }}
           path: |
@@ -347,12 +347,12 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
       - name: 下载 Windows x64 可执行文件
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: built-tui-${{ github.sha }}
           path: tui-dist
@@ -406,12 +406,12 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
       - name: 下载 TUI 可执行文件
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: built-tui-${{ github.sha }}
           path: dist
@@ -445,7 +445,7 @@ jobs:
           zsh -n dist/install.sh
 
       - name: 上传 macOS 构建产物
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: built-macos-${{ github.sha }}
           path: |
@@ -465,7 +465,7 @@ jobs:
 
     steps:
       - name: 下载 macOS x64 可执行文件
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: built-tui-${{ github.sha }}
           path: tui-dist
@@ -513,7 +513,7 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -527,10 +527,26 @@ jobs:
         working-directory: tui
         run: bun install --frozen-lockfile
 
+      - name: 解析发布质量基线
+        id: release-quality-base
+        run: |
+          set -euo pipefail
+          if base="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" --match 'v*.*.*' 2>/dev/null)"; then
+            node tui/scripts/release-metadata.mjs --tag="${base}" >/dev/null
+          else
+            base="$(git rev-list --max-parents=0 HEAD)"
+          fi
+          if [ -z "${base}" ]; then
+            echo "无法解析发布质量基线" >&2
+            exit 1
+          fi
+          echo "base=${base}" >> "${GITHUB_OUTPUT}"
+          echo "[PASS] 发布质量基线: ${base}"
+
       - name: 运行发布质量门
         working-directory: tui
         env:
-          CCQ_FORMAT_BASE: HEAD^
+          CCQ_FORMAT_BASE: ${{ steps.release-quality-base.outputs.base }}
         run: bun run check
 
   release:
@@ -551,30 +567,30 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
       - name: 下载 Windows 构建产物
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: built-windows-${{ github.sha }}
           path: dist
 
       - name: 下载 macOS 构建产物
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: built-macos-${{ github.sha }}
           path: dist
 
       - name: 下载 TUI 可执行文件
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: built-tui-${{ github.sha }}
           path: dist
 
       - name: 下载 Windows ARM64 TUI 可执行文件
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: built-tui-windows-arm64-${{ github.sha }}
           path: dist
@@ -604,7 +620,7 @@ jobs:
         run: node tui/scripts/release-metadata.mjs --tag="${GITHUB_REF_NAME}" --github-output="${GITHUB_OUTPUT}"
 
       - name: 创建或更新 GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
           files: dist/*
           generate_release_notes: true
