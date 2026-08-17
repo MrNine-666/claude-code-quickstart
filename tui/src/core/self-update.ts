@@ -43,6 +43,7 @@ const GITHUB_REPO = 'MrNine-666/claude-code-quickstart';
 const RELEASE_API_URL = 'https://api.github.com/repos/' + GITHUB_REPO + '/releases/latest';
 const CHECK_TIMEOUT_MS = 15000;
 const DOWNLOAD_TIMEOUT_MS = 300000;
+const RELEASE_ERROR_PREVIEW_LIMIT = 4096;
 const SHA256_PATTERN = /^sha256:([a-f0-9]{64})$/i;
 /** 手动重定向上限：GitHub asset -> 签名 CDN 通常只需 1 跳。 */
 export const SELF_UPDATE_MAX_REDIRECTS = 5;
@@ -120,6 +121,7 @@ export type SelfUpdateError = {
 	/** 当前阶段的前置事务已失效时，UI 应回到哪个阶段恢复。 */
 	readonly retryStage?: SelfUpdateStage;
 	readonly cause?: string;
+	readonly suggestion?: string;
 	readonly status?: number;
 	readonly targetPath?: string;
 	readonly tempPath?: string;
@@ -216,9 +218,100 @@ export function formatSelfUpdateError(error: SelfUpdateError): string {
 	if (error.targetPath) details.push('目标: ' + error.targetPath);
 	if (error.tempPath) details.push('临时文件: ' + error.tempPath);
 	if (error.cause && error.cause !== error.message) details.push(error.cause);
-	return details.length > 0
-		? stageLabel[error.stage] + '失败：' + error.message + '（' + details.join('；') + '）'
-		: stageLabel[error.stage] + '失败：' + error.message;
+	const summary =
+		details.length > 0
+			? stageLabel[error.stage] + '失败：' + error.message + '（' + details.join('；') + '）'
+			: stageLabel[error.stage] + '失败：' + error.message;
+	return error.suggestion ? summary + '\n建议：' + error.suggestion : summary;
+}
+
+async function readResponsePreview(response: Response): Promise<string> {
+	const reader = response.body?.getReader();
+	if (!reader) return '';
+
+	const decoder = new TextDecoder();
+	let preview = '';
+	let bytesRead = 0;
+	try {
+		while (bytesRead < RELEASE_ERROR_PREVIEW_LIMIT) {
+			const {done, value} = await reader.read();
+			if (done) break;
+			if (!value) continue;
+			const remaining = RELEASE_ERROR_PREVIEW_LIMIT - bytesRead;
+			const chunk = value.subarray(0, remaining);
+			bytesRead += chunk.byteLength;
+			preview += decoder.decode(chunk, {stream: bytesRead < RELEASE_ERROR_PREVIEW_LIMIT});
+			if (value.byteLength > remaining) break;
+		}
+		preview += decoder.decode();
+		return preview;
+	} catch {
+		return '';
+	} finally {
+		await reader.cancel().catch(() => {});
+	}
+}
+
+async function makeReleaseHttpError(response: Response): Promise<SelfUpdateError> {
+	const preview = await readResponsePreview(response);
+	const status = response.status;
+	const remaining = response.headers.get('x-ratelimit-remaining')?.trim();
+	const rateLimited = status === 429 || remaining === '0' || /(?:API|secondary) rate limit(?: exceeded)?/i.test(preview);
+
+	if ((status === 403 || status === 429) && rateLimited) {
+		return makeSelfUpdateError('check', 'GitHub API 请求额度已用完', {
+			status,
+			suggestion: '未认证请求按出口 IP 计数，代理或共享网络会共用额度；请稍后重试，或切换代理节点'
+		});
+	}
+
+	if (status === 407) {
+		return makeSelfUpdateError('check', '代理服务器要求认证', {
+			status,
+			suggestion: '请检查代理账号配置，或更换无需认证的代理节点后重试'
+		});
+	}
+
+	if (status === 403) {
+		const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+		const server = response.headers.get('server')?.toLowerCase() ?? '';
+		const likelyGateway = contentType.includes('text/html') || (server !== '' && !server.includes('github'));
+		return likelyGateway
+			? makeSelfUpdateError('check', '代理或网络网关拒绝了 GitHub 请求', {
+					status,
+					suggestion: '请切换代理节点或启用 TUN 后重新检查；仅开启浏览器代理通常无效'
+				})
+			: makeSelfUpdateError('check', 'GitHub 拒绝了版本检查请求', {
+					status,
+					suggestion: '当前出口 IP 可能被 GitHub 风控，或请求被代理/网关拦截；请稍后重试或切换代理节点'
+				});
+	}
+
+	if (status === 401) {
+		return makeSelfUpdateError('check', 'GitHub API 返回未授权', {
+			status,
+			suggestion: '公开 Release 不需要登录；请检查代理是否修改了请求，或切换网络后重试'
+		});
+	}
+
+	if (status === 404) {
+		return makeSelfUpdateError('check', '未找到 GitHub Release 信息', {
+			status,
+			suggestion: '请稍后重试；若持续出现，请确认正在使用正式发布版本'
+		});
+	}
+
+	if (status >= 500) {
+		return makeSelfUpdateError('check', 'GitHub 服务暂时不可用', {
+			status,
+			suggestion: '请稍后重新检查更新；持续失败时可切换网络或代理节点'
+		});
+	}
+
+	return makeSelfUpdateError('check', 'GitHub Release API 请求失败', {
+		status,
+		suggestion: '请检查网络或代理设置后重新检查更新'
+	});
 }
 
 function getAssetName(platform: NodeJS.Platform, arch: string): string {
@@ -279,7 +372,7 @@ export async function checkLatestVersion(deps: CheckLatestVersionDeps = {}): Pro
 			signal: controller.signal
 		});
 		if (!response.ok) {
-			return {ok: false, error: makeSelfUpdateError('check', 'GitHub Release API 请求失败', {status: response.status})};
+			return {ok: false, error: await makeReleaseHttpError(response)};
 		}
 
 		const data = (await response.json()) as LatestReleaseResponse;

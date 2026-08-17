@@ -230,6 +230,56 @@ try {
 		'无效 gzip 元数据必须被忽略，仅保留 identity transport'
 	);
 
+	// ── Release API 错误：分类、建议与不可信正文隔离 ───────────────────────────
+	const rateLimitedCheck = await checkLatestVersion({
+		fetch: async () =>
+			new Response(JSON.stringify({message: 'API rate limit exceeded for 203.0.113.7'}), {
+				status: 403,
+				headers: {
+					'content-type': 'application/json',
+					'x-ratelimit-remaining': '0'
+				}
+			}),
+		currentVersion: '2.4.0',
+		platform: 'darwin',
+		arch: 'arm64'
+	});
+	assert.equal(rateLimitedCheck.ok, false);
+	const rateLimitedMessage = rateLimitedCheck.ok ? '' : formatSelfUpdateError(rateLimitedCheck.error);
+	assert.match(rateLimitedMessage, /GitHub API 请求额度已用完/);
+	assert.match(rateLimitedMessage, /未认证请求按出口 IP 计数/);
+	assert.match(rateLimitedMessage, /HTTP 403/);
+	assert.doesNotMatch(rateLimitedMessage, /203\.0\.113\.7/, 'GitHub 响应正文不得原样进入用户错误');
+
+	const proxyBlockedCheck = await checkLatestVersion({
+		fetch: async () =>
+			new Response('<html>Access Denied proxy-secret-marker</html>', {
+				status: 403,
+				headers: {'content-type': 'text/html', server: 'example-gateway'}
+			}),
+		currentVersion: '2.4.0',
+		platform: 'darwin',
+		arch: 'arm64'
+	});
+	assert.equal(proxyBlockedCheck.ok, false);
+	const proxyBlockedMessage = proxyBlockedCheck.ok ? '' : formatSelfUpdateError(proxyBlockedCheck.error);
+	assert.match(proxyBlockedMessage, /代理或网络网关拒绝了 GitHub 请求/);
+	assert.match(proxyBlockedMessage, /切换代理节点或启用 TUN/);
+	assert.doesNotMatch(proxyBlockedMessage, /proxy-secret-marker/, '代理 HTML 正文不得进入用户错误');
+
+	const serviceUnavailableCheck = await checkLatestVersion({
+		fetch: async () => new Response('upstream internal marker', {status: 503}),
+		currentVersion: '2.4.0',
+		platform: 'darwin',
+		arch: 'arm64'
+	});
+	assert.equal(serviceUnavailableCheck.ok, false);
+	const serviceUnavailableMessage = serviceUnavailableCheck.ok ? '' : formatSelfUpdateError(serviceUnavailableCheck.error);
+	assert.match(serviceUnavailableMessage, /GitHub 服务暂时不可用/);
+	assert.match(serviceUnavailableMessage, /稍后重新检查更新/);
+	assert.doesNotMatch(serviceUnavailableMessage, /upstream internal marker/);
+	console.log('[PASS] ccq 自更新：Release API 错误分类与安全建议');
+
 	const prereleaseNumericUpgrade = await checkLatestVersion({
 		fetch: releaseFetch('2.4.0-beta.10', platformAsset),
 		currentVersion: '2.4.0-beta.2',
@@ -410,11 +460,7 @@ try {
 	assert.match(appSource, /<UpdateDialog[\s\S]*?onRetry=\{/, '更新浮窗必须接线 onRetry');
 	assert.match(appSource, /onProgress:\s*progress =>/, 'TUI 下载必须把 core 进度接入 reducer');
 	assert.match(appSource, /<UpdateProgressBar[^>]*progress=\{screen\.progress\}/, '更新 Modal 必须渲染下载进度条');
-	assert.match(
-		appSource,
-		/applyUpdate\(transaction, \{restartAfterApply: false\}\)/,
-		'TUI 应用更新必须禁止 Windows helper 自动重启'
-	);
+	assert.match(appSource, /applyUpdate\(transaction, \{restartAfterApply: false\}\)/, 'TUI 应用更新必须禁止 Windows helper 自动重启');
 	assert.doesNotMatch(appSource, /restartExecutable/, 'TUI 更新流程不得再启动新的 ccq 进程');
 	const fetchBinary = async () => new Response(binary, {status: 200});
 	const first = await downloadUpdate(plan, undefined, {fetch: fetchBinary, targetPath, platform: 'darwin'});
@@ -1245,6 +1291,7 @@ try {
 
 	let applyOptions = null;
 	const cliOutput = [];
+	const cliProgressOutput = [];
 	const originalLog = console.log;
 	console.log = (...args) => cliOutput.push(args.join(' '));
 	try {
@@ -1256,7 +1303,16 @@ try {
 				latestVersion: cliPlan.version,
 				plan: cliPlan
 			}),
-			download: async () => ({ok: true, transaction: cliTransaction}),
+			download: async (_plan, _signal, options) => {
+				options.onProgress({
+					downloadedBytes: 5,
+					totalBytes: 10,
+					percentage: 50,
+					assetName: cliPlan.transports[0].assetName,
+					encoding: cliPlan.transports[0].encoding
+				});
+				return {ok: true, transaction: cliTransaction};
+			},
 			apply: async (_transaction, options) => {
 				applyOptions = options;
 				return {
@@ -1265,6 +1321,10 @@ try {
 					targetPath: windowsTarget,
 					restartStarted: false
 				};
+			},
+			progressOutput: {
+				isTTY: true,
+				write: text => cliProgressOutput.push(text)
 			}
 		});
 		assert.equal(updateCode, 0);
@@ -1280,6 +1340,8 @@ try {
 		cliOutput.some(line => line.includes('替换并重启')),
 		false
 	);
+	assert.match(cliProgressOutput.join(''), /\r\[============------------\]\s+50%\s+5 B \/ 10 B\s+raw\n/);
+	console.log('[PASS] ccq update CLI 下载进度条');
 
 	const React = (await import('react')).default;
 	const {act} = await import('react');
@@ -1327,13 +1389,20 @@ try {
 		withKeymap(
 			React.createElement(UpdateDialog, {
 				...dialogProps,
-				screen: {kind: 'error', message: 'network failed', retry: {stage: 'check'}}
+				screen: {
+					kind: 'error',
+					message: '检查更新失败：GitHub 拒绝了版本检查请求（HTTP 403）\n建议：切换代理节点后重试',
+					retry: {stage: 'check'}
+				}
 			})
 		),
-		{width: 64, height: 10}
+		{width: 72, height: 12}
 	);
 	try {
-		await errorDialog.waitForFrame(frame => frame.includes('重新检查更新'));
+		const errorFrame = await errorDialog.waitForFrame(frame => frame.includes('重新检查更新'));
+		assert.match(errorFrame, /✗ 检查更新失败/, '错误弹窗应直接展示阶段错误');
+		assert.match(errorFrame, /建议：切换代理节点后重试/, '错误弹窗应展示可执行建议');
+		assert.doesNotMatch(errorFrame, /✗ 更新失败：检查更新失败/, '错误弹窗不得重复“更新失败”前缀');
 		await act(async () => {
 			keymapHarness.host.press('enter');
 			await errorDialog.renderOnce();

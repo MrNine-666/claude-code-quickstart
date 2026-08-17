@@ -803,7 +803,7 @@ function updateDialogContent(screen: SelfUpdateScreen): {readonly title: string;
 							fg={colors.danger}
 							selectionBg={colors.selectionBg}
 							selectionFg={colors.selectionFg}
-						>{`✗ 更新失败：${screen.message}`}</text>
+						>{`✗ ${screen.message}`}</text>
 						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 							{`  可重试：${updateRetryLabel(screen.retry)}`}
 						</text>
