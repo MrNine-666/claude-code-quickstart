@@ -23,18 +23,19 @@ try {
 	const options = providerTypeField?.type === 'radio' ? providerTypeField.options : [];
 	assert.deepEqual(
 		options.map(option => option.value),
-		['officialLogin', 'minimax', 'deepseek', 'custom'],
-		'Codex 供应商类型仅含 official login、Codex 原生可接入的 MiniMax/DeepSeek 与自定义'
+		['officialLogin', 'glm', 'minimax', 'deepseek', 'custom'],
+		'Codex 供应商类型仅含 official login、Codex 原生可接入的智谱 GLM/MiniMax/DeepSeek 与自定义'
 	);
 	assert.ok(options.some(option => option.value === 'officialLogin' && option.label === 'official login'), 'Codex 增加 official login 类型');
+	assert.ok(options.some(option => option.value === 'glm' && /GLM/.test(option.label)), 'Codex 内置智谱 GLM（GLM-5.3 支持 Responses）');
 	assert.ok(options.some(option => option.value === 'minimax' && /MiniMax/.test(option.label)), 'Codex 保留 MiniMax 内置类型');
 	assert.ok(options.some(option => option.value === 'custom'), 'Codex 保留自定义供应商类型');
 	assert.equal(options.at(-1)?.value, 'custom', 'custom 恒定排在选项末位（结构性条目，非契约 Codex 段派生）');
 	assert.equal(options.some(option => /OpenAI-compatible/i.test(option.label)), false, '不得新增 OpenAI-compatible 标签');
 	assert.equal(options.some(option => option.value === 'bailian'), false, 'Codex 不再提供阿里云百炼类型');
 	assert.ok(options.some(option => option.value === 'deepseek' && /DeepSeek/.test(option.label)), 'Codex 内置 DeepSeek（V4 起原生 Responses）');
-	// GLM/Kimi 仍仅 Chat Completions，Codex 只认 Responses，直连不可用，故不内置一键模板。
-	assert.equal(options.some(option => ['zhipu', 'moonshot'].includes(option.value)), false, 'Codex 不内置仅 Chat Completions 的 GLM/Kimi');
+	// Kimi 仍仅 Chat Completions，Codex 只认 Responses，直连不可用，故不内置一键模板。
+	assert.equal(options.some(option => ['moonshot', 'moonshot-256k'].includes(option.value)), false, 'Codex 不内置仅 Chat Completions 的 Kimi');
 	assert.equal(add.fields.some(field => field.id === 'codexProfileToml'), false, '表单字段区不得展示写死 TOML readonly 字段');
 	// 默认 add 表单默认 official login（虚拟条目，无文件名字段）；文件名文案在真实供应商类型下校验。
 	const customAdd = buildCodexProviderFormModel({mode: 'add', providerType: 'custom'});
@@ -49,6 +50,13 @@ try {
 	console.log('[PASS] 5.4 Codex provider 类型：official login 恒定展示 + 内置供应商 + custom，无 OpenAI-compatible');
 
 	// ── 内置供应商模板：仅保留 Codex 原生可接入者，按官方 Responses 兼容 base_url 预填 ──
+	const codexGlm = buildCodexProviderFormModel({mode: 'add', providerType: 'glm'}).values;
+	assert.equal(codexGlm.profileKey, 'glm');
+	assert.equal(codexGlm.baseUrl, 'https://open.bigmodel.cn/api/v1');
+	assert.equal(codexGlm.model, 'glm-5.3');
+	assert.match(codexGlm.toml, /base_url\s*=\s*"https:\/\/open\.bigmodel\.cn\/api\/v1"/, '智谱 Responses base_url 写入 TOML');
+	assert.doesNotMatch(codexGlm.toml, /wire_api\s*=/, '智谱模板省略 Codex 默认 wire_api');
+
 	const minimax = buildCodexProviderFormModel({mode: 'add', providerType: 'minimax'}).values;
 	assert.equal(minimax.profileKey, 'minimax');
 	assert.equal(minimax.baseUrl, 'https://api.minimax.io/v1');
@@ -57,10 +65,10 @@ try {
 	const codexDeepseek = buildCodexProviderFormModel({mode: 'add', providerType: 'deepseek'}).values;
 	assert.equal(codexDeepseek.profileKey, 'deepseek');
 	assert.equal(codexDeepseek.baseUrl, 'https://api.deepseek.com/');
-	// Responses 端点为根域（非 /anthropic），且当前仅 v4-flash 支持 Codex。
-	assert.equal(codexDeepseek.model, 'deepseek-v4-flash');
+	// Responses 端点为根域（非 /anthropic），默认使用 v4-pro。
+	assert.equal(codexDeepseek.model, 'deepseek-v4-pro');
 	assert.match(codexDeepseek.toml, /base_url\s*=\s*"https:\/\/api\.deepseek\.com"/, 'base_url 落盘去尾斜杠');
-	console.log('[PASS] Codex 内置供应商模板预填官方 Responses 兼容 base_url（MiniMax + DeepSeek）');
+	console.log('[PASS] Codex 内置供应商模板预填官方 Responses 兼容 base_url（智谱 GLM + MiniMax + DeepSeek）');
 
 	// ── Codex 模板唯一事实源 = providers.json 的 Codex 段（与 Claude 侧统一契约管理）──
 	const {builtinProviders} = loadProviderContract();
@@ -96,15 +104,16 @@ try {
 	assert.equal(customValues.model, '', 'custom 不预填 model');
 	assert.equal(customValues.profileKey, '', 'custom profileKey 须留空强制用户命名');
 	// Codex 侧端点与 Claude 侧不同源：Responses 端点常与 Anthropic 兼容端点不一致，不得复用同一字段。
+	assert.notEqual(builtinProviders.glm.codex.baseUrl, builtinProviders.glm.baseUrl, '智谱 Codex baseUrl 独立于 Claude 侧 BaseUrl');
 	assert.notEqual(builtinProviders.deepseek.codex.baseUrl, builtinProviders.deepseek.baseUrl, 'Codex baseUrl 独立于 Claude 侧 BaseUrl');
 	// 仅暴露 Chat Completions 的供应商不得有 Codex 段（直连 Codex 会 404/空流）。
-	for (const key of ['glm', 'moonshot', 'moonshot-256k']) {
+	for (const key of ['moonshot', 'moonshot-256k']) {
 		assert.equal(builtinProviders[key]?.codex, undefined, `${key} 仅 Chat Completions，不得声明 Codex 段`);
 	}
 	console.log('[PASS] Codex 模板唯一事实源为 providers.json Codex 段（与 Claude 侧统一管理）');
 
 	// ── 字段提示（helpText）：每个字段都须有说明，含 official login 与 custom 两个结构性条目 ──
-	for (const type of ['officialLogin', 'minimax', 'deepseek', 'custom']) {
+	for (const type of ['officialLogin', 'glm', 'minimax', 'deepseek', 'custom']) {
 		for (const field of buildCodexProviderFormModel({mode: 'add', providerType: type}).fields) {
 			assert.ok(field.helpText?.trim(), `add/${type} 的 ${field.id} 须有 helpText`);
 		}
@@ -124,13 +133,15 @@ try {
 	// providerType 提示随类型变化（与 Claude 侧同构）：Codex.Note → Description，official login 用固定文案。
 	const typeHelpFor = type =>
 		buildCodexProviderFormModel({mode: 'add', providerType: type}).fields.find(f => f.id === 'providerType').helpText;
+	assert.equal(typeHelpFor('glm'), builtinProviders.glm.codex.note, '智谱展示契约 Codex.Note');
+	assert.match(typeHelpFor('glm'), /Responses/, '智谱 Codex.Note 须说明 Responses 支持');
 	assert.equal(typeHelpFor('deepseek'), builtinProviders.deepseek.codex.note, '有 Codex.Note 的供应商展示该 Note');
 	assert.doesNotMatch(typeHelpFor('deepseek'), /models\.json/, 'DeepSeek 不得提示未明确要求的 models.json 额外配置');
 	assert.equal(typeHelpFor('minimax'), builtinProviders.minimax.description, '无 Codex.Note 时回退 Description');
 	assert.equal(typeHelpFor('custom'), builtinProviders.custom.description, 'custom 展示契约 Description');
 	assert.match(typeHelpFor('officialLogin'), /codex login/, 'official login 用固定文案（不在契约内）');
-	const distinctTypeHelps = new Set(['officialLogin', 'minimax', 'deepseek', 'custom'].map(typeHelpFor));
-	assert.equal(distinctTypeHelps.size, 4, '四种类型的提示须各不相同（随类型变化，非静态文案）');
+	const distinctTypeHelps = new Set(['officialLogin', 'glm', 'minimax', 'deepseek', 'custom'].map(typeHelpFor));
+	assert.equal(distinctTypeHelps.size, 5, '五种类型的提示须各不相同（随类型变化，非静态文案）');
 	// 刻意不回退顶层 Note：那是 Claude 侧的接入限制（套餐档位等），串到 Codex 侧会误导。
 	assert.equal(
 		typeHelpFor('deepseek').includes(builtinProviders.deepseek.note),

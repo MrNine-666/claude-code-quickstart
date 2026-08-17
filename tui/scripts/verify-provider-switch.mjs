@@ -47,7 +47,7 @@ switchProvider(a.key);
 let env = readSettings().env;
 assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'sk-ds-aaaaaaaa');
 assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic');
-assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'deepseek-v4-flash', 'A 模型键写入');
+assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'deepseek-v4-pro', 'A 模型键写入');
 assert.equal(env.CLAUDE_CODE_EFFORT_LEVEL, 'max', 'A extra env 写入');
 assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '80', 'ClaudeConfig 非 provider env 保留');
 console.log('[PASS] 8.3 设置默认 A：模型键 + extra env + ClaudeConfig env 保留');

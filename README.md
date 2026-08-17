@@ -263,9 +263,9 @@ ccq use custom --tool codex
 - Claude Code Header 下：供应商 Profile 的新增 / 编辑 / 删除 / 切换 / 设置默认；配置写入 `~/.claude/settings.json` 的 `env`，Profile 保存到 `~/.claude/providers/`
 - Codex Header 下：管理 `$CODEX_HOME/<key>.config.toml`（默认 `~/.codex/<key>.config.toml`）官方 profile 文件；key 同时作为文件名、`--profile` 名、provider id 与默认显示名
 - Codex API key 直写 `[model_providers.<key>].experimental_bearer_token`，不进入 ccq vault、不由 ccq 注入 env；`official login` 类型通过 `codex login` 完成认证
-- 内置供应商：智谱 GLM（默认 glm-5.2）、MiniMax（默认 MiniMax-M3）、Kimi Coding Plan 1M（默认 k3[1m]）、Kimi Coding Plan 256K（默认 k3-256k）、DeepSeek（默认 deepseek-v4-flash，预填 effort/上下文窗口 env）、自定义供应商
+- 内置供应商：智谱 GLM（默认 glm-5.3）、MiniMax（默认 MiniMax-M3）、Kimi Coding Plan 1M（默认 k3[1m]）、Kimi Coding Plan 256K（默认 k3-256k）、DeepSeek（默认 deepseek-v4-pro，预填 effort/上下文窗口 env）、自定义供应商
   - 两个 Kimi 模板同一端点、同一 Key，只差上下文档位：1M 版需 Allegretto 及以上套餐，256K 版 Moderato 及以上即可且 token 消耗约为 1M 版一半；Andante 档可在表单里把模型改为 `kimi-for-coding`
-- Codex 内置一键模板：由 `providers.json` 各供应商的 `Codex` 段声明，与 Claude 侧同一份契约统一管理；当前 MiniMax、DeepSeek（仅 deepseek-v4-flash 支持 Responses）
+- Codex 内置一键模板：由 `providers.json` 各供应商的 `Codex` 段声明，与 Claude 侧同一份契约统一管理；当前智谱 GLM（glm-5.3）、MiniMax、DeepSeek（deepseek-v4-pro）
 
 ![供应商管理](./assets/screenshots/tui-providers.png)
 

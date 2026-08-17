@@ -48,8 +48,8 @@ export const CODEX_CUSTOM_TYPE = 'custom';
  * Codex 内置一键模板：唯一事实源为 contracts/providers.json 各供应商的 `Codex` 段，
  * 与 Claude 侧同一份契约统一管理（新增供应商/改端点/改文案只动契约）。
  *
- * 声明 `Codex` 段即代表该供应商可被 Codex 原生接入——Codex CLI 只认 wire_api="responses"，
- * 故仅自身提供 Responses 兼容端点者才有该段（当前 MiniMax、DeepSeek）；GLM / Kimi 仅暴露
+ * 声明 `Codex` 段即代表该供应商可被 Codex 原生接入——Codex CLI 当前仅支持 Responses，
+ * 故仅自身提供 Responses 兼容端点者才有该段（当前智谱 GLM、MiniMax、DeepSeek）；Kimi 仅暴露
  * Chat Completions，直连会 404/空流，需经 LiteLLM/OmniRoute 等网关转协议，故契约中无 Codex 段。
  * Codex 侧 baseUrl/model 与 Claude 侧不同源：Responses 端点与模型 ID 常与 Anthropic 兼容端点不一致。
  *
@@ -281,7 +281,7 @@ export function buildCodexProviderFormModel(input: {
 				type: 'text',
 				label: 'Base URL',
 				value: values.baseUrl,
-				// Codex 与 Claude 侧不同源的最常见误填点：Codex CLI 自 v0.138 起只认 wire_api="responses"，
+				// Codex 与 Claude 侧不同源的最常见误填点：Codex CLI 当前仅支持 Responses，
 				// 填成供应商的 Anthropic 兼容端点会 404/空流。
 				helpText: '须填供应商的 Responses 兼容端点，除 DeepSeek 外一般都需要拼接/v1。'
 			},

@@ -40,7 +40,7 @@ writeProfile('zhipu', {
 writeProfile('deepseek', {
 	_meta: {provider: 'deepseek'},
 	env: {ANTHROPIC_AUTH_TOKEN: 'sk-ds-bbbbbbbb', ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic'},
-	modelMapping: {opus: 'deepseek-v4-pro[1m]', sonnet: 'deepseek-v4-pro[1m]', haiku: 'deepseek-v4-flash'}
+	modelMapping: {opus: 'deepseek-v4-pro', sonnet: 'deepseek-v4-pro', haiku: 'deepseek-v4-flash'}
 });
 
 // fixture 3：已是新格式单层 env → skipped
@@ -84,8 +84,8 @@ console.log('[PASS] 8.1 复合迁移：单层 env / 无顶层旧字段 / 模型�
 const ds = readProfile('deepseek');
 assert.deepEqual(Object.keys(ds), ['env']);
 assert.equal('modelMapping' in ds, false, '无顶层 modelMapping');
-assert.equal(ds.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'deepseek-v4-pro[1m]', 'legacy opus → env');
-assert.equal(ds.env.ANTHROPIC_DEFAULT_SONNET_MODEL, 'deepseek-v4-pro[1m]', 'legacy sonnet → env');
+assert.equal(ds.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'deepseek-v4-pro', 'legacy opus → env');
+assert.equal(ds.env.ANTHROPIC_DEFAULT_SONNET_MODEL, 'deepseek-v4-pro', 'legacy sonnet → env');
 assert.equal(ds.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'deepseek-v4-flash', 'legacy haiku → env');
 console.log('[PASS] 8.1 legacy modelMapping 别名 → env 受管模型键');
 

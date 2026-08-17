@@ -18,8 +18,8 @@ export type BuiltinProvider = {
 	readonly note?: string;
 	/**
 	 * Codex 侧接入形态。缺省即「该供应商不能被 Codex 原生接入」，不在 Codex 表单出现。
-	 * Codex CLI 只认 wire_api="responses"，故仅自身提供 Responses 兼容端点者才声明本字段；
-	 * 仅暴露 Chat Completions 的供应商（GLM / Kimi）直连会 404/空流，需经网关转协议。
+	 * Codex CLI 当前仅支持 Responses，故仅自身提供 Responses 兼容端点者才声明本字段；
+	 * 仅暴露 Chat Completions 的供应商（当前 Kimi）直连会 404/空流，需经网关转协议。
 	 * baseUrl/model 与 Claude 侧不同源：Responses 端点与模型 ID 常与 Anthropic 兼容端点不一致。
 	 */
 	readonly codex?: CodexProviderTemplate;

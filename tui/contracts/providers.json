@@ -26,8 +26,13 @@
       "PlatformUrl": "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
       "ModelEnv": {
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4.5-air",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.2",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2"
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.3",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.3"
+      },
+      "Codex": {
+        "BaseUrl": "https://open.bigmodel.cn/api/v1",
+        "Model": "glm-5.3",
+        "Note": "GLM-5.3 已支持 OpenAI Responses，可用于 Codex。"
       }
     },
     "minimax": {
@@ -80,13 +85,13 @@
     "deepseek": {
       "Name": "DeepSeek",
       "Description": "DeepSeek Anthropic API",
-      "Note": "官方推荐 opus/sonnet 走 deepseek-v4-pro[1m]、haiku 走 flash 的分层映射；本模板全槽位用 flash（0731 正式版在 agentic 基准上超过 v4-pro-preview 且便宜约 3 倍）。",
+      "Note": "官方推荐 opus/sonnet 走 deepseek-v4-pro、haiku 走 flash 的分层映射。",
       "BaseUrl": "https://api.deepseek.com/anthropic",
       "PlatformUrl": "https://platform.deepseek.com/api_keys",
       "ModelEnv": {
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-flash",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash"
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro"
       },
       "ExtraEnv": {
         "CLAUDE_CODE_EFFORT_LEVEL": "max",
@@ -94,8 +99,8 @@
       },
       "Codex": {
         "BaseUrl": "https://api.deepseek.com/",
-        "Model": "deepseek-v4-flash",
-        "Note": "当前仅 deepseek-v4-flash 支持 Codex。"
+        "Model": "deepseek-v4-pro",
+        "Note": "当前 DeepSeek 已支持接入 Codex。"
       }
     },
     "custom": {

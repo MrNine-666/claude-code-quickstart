@@ -34,7 +34,8 @@ console.log('[PASS] 文本/凭据工具');
 // ── provider 表单 ─────────────────────────────────────────────────────────
 const builtinForm = buildProviderFormModel({mode: 'add-builtin', builtinKey: 'glm'});
 assert.equal(builtinForm.values.baseUrl, 'https://open.bigmodel.cn/api/anthropic');
-assert.equal(builtinForm.values.modelEnv.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.2');
+assert.equal(builtinForm.values.modelEnv.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.3');
+assert.equal(builtinForm.values.modelEnv.ANTHROPIC_DEFAULT_SONNET_MODEL, 'glm-5.3');
 assert.deepEqual(validateProviderForm('add-builtin', {...builtinForm.values, apiKey: ''}), ['API Key 不能为空']);
 
 const customForm = buildProviderFormModel({mode: 'add-custom'});

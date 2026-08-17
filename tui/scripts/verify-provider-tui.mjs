@@ -80,7 +80,7 @@ assertUserFieldsIntact('add+activate');
 let settings = readSettings();
 assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, 'sk-glm-aaaaaaaaaaaa', 'AUTH_TOKEN 应写入');
 assert.equal(settings.env.ANTHROPIC_BASE_URL, 'https://open.bigmodel.cn/api/anthropic', 'BASE_URL 应写入');
-assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.2', '受管模型键应写入');
+assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.3', '受管模型键应写入');
 assert.equal(settings.env.EXISTING, 'keep-me', '已有非受管 env 键应保留');
 console.log('[PASS] 5.7 add+activate 字段所有权');
 
@@ -172,6 +172,7 @@ const codexValues = {
 };
 const toml = codexProviderFormAdapter.buildText(codexValues);
 assert.match(toml, /experimental_bearer_token\s*=\s*"sk-codex-secret-never-log"/, 'Codex adapter 生成真实 TOML');
+assert.doesNotMatch(toml, /wire_api\s*=/, 'Codex adapter 省略默认 wire_api');
 const parsed = codexProviderFormAdapter.parseText(codexValues, toml);
 assert.equal(parsed.ok, true, 'Codex adapter 可从 TOML 回填字段');
 const preservedValues = codexProviderFormAdapter.recordToValues(

@@ -86,6 +86,9 @@ console.log('[PASS] 8.2 端到端：用户文件名落盘 + env 区写入 env');
 // ── 内置模板表单结构（HC-12 单层 env：env 区走底部 JSON，不再是表单字段） ──
 const builtinForm = buildProviderFormModel({mode: 'add-builtin', builtinKey: 'deepseek'});
 assert.equal(builtinForm.mode, 'add-builtin');
+assert.equal(builtinForm.values.modelEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'deepseek-v4-flash');
+assert.equal(builtinForm.values.modelEnv.ANTHROPIC_DEFAULT_OPUS_MODEL, 'deepseek-v4-pro');
+assert.equal(builtinForm.values.modelEnv.ANTHROPIC_DEFAULT_SONNET_MODEL, 'deepseek-v4-pro');
 assert.ok(Array.isArray(builtinForm.fields), '应返回 fields 数组');
 // add 模式首字段为供应商类型 radio
 assert.equal(builtinForm.fields[0].id, 'providerType', 'add 模式首字段为供应商类型');

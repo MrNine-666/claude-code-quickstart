@@ -64,6 +64,7 @@ try {
 		apiKey: rawKey
 	});
 	assert.match(toml, /model_provider\s*=\s*"deepseek"/, 'profile TOML 写 model_provider');
+	assert.doesNotMatch(toml, /wire_api\s*=/, 'ccq 生成的 profile 省略 Codex 默认 wire_api');
 	assert.match(toml, /experimental_bearer_token\s*=\s*"sk-secret-should-never-leak"/, 'API key 写入 experimental_bearer_token');
 	assert.equal(/env_key\s*=|requires_openai_auth\s*=|\[model_providers\.deepseek\.auth\]/.test(toml), false,
 		'API-key provider table 不得含 env_key/auth/requires_openai_auth');
@@ -115,6 +116,7 @@ try {
 	assert.match(baseConfig, /approval_policy\s*=\s*"on-request"/, '默认切换保留非供应商配置 approval_policy');
 	assert.match(baseConfig, /\[mcp_servers\.context7\]/, '默认切换保留 MCP table，不整体覆盖 config.toml');
 	assert.match(baseConfig, /model_provider\s*=\s*"deepseek"/, '写入默认 model_provider');
+	assert.doesNotMatch(baseConfig, /wire_api\s*=/, '默认切换不写入可省略的 wire_api');
 	assert.match(baseConfig, /experimental_bearer_token\s*=\s*"sk-secret-should-never-leak"/, '导入新 provider table 到 base config');
 	assert.equal(/profile\s*=\s*"|\[profiles\./.test(baseConfig), false, 'base config 清理 legacy profile selector');
 	assert.equal(/model\s*=\s*"old"/.test(baseConfig), false, '删除旧 profile 的残留 model 值');
