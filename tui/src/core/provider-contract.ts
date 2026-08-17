@@ -164,9 +164,7 @@ export function resetProviderContractCache(): void {
 }
 
 /** 旧版别名映射（opus/sonnet/haiku）→ 受管模型 env 键。 */
-export function getManagedModelEnvFromLegacyAliases(
-	legacyAliases: Record<string, string> | undefined | null
-): Record<string, string> {
+export function getManagedModelEnvFromLegacyAliases(legacyAliases: Record<string, string> | undefined | null): Record<string, string> {
 	const result: Record<string, string> = {};
 	if (!legacyAliases) {
 		return result;

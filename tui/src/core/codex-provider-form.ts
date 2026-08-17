@@ -139,7 +139,7 @@ function redactAuthJsonValue(value: unknown, key = ''): unknown {
 	}
 
 	if (Array.isArray(value)) {
-		return value.map((item) => redactAuthJsonValue(item));
+		return value.map(item => redactAuthJsonValue(item));
 	}
 
 	if (value && typeof value === 'object') {
@@ -187,7 +187,8 @@ function makeValues(input: {
 	readonly existingProfiles?: readonly Pick<CodexProfile, 'providerType'>[];
 }): CodexProviderFormValues {
 	if (input.mode === 'edit' && input.profile) {
-		const providerType = input.profile.providerType === 'officialLogin' ? CODEX_OFFICIAL_LOGIN_TYPE : (input.providerType ?? CODEX_CUSTOM_TYPE);
+		const providerType =
+			input.profile.providerType === 'officialLogin' ? CODEX_OFFICIAL_LOGIN_TYPE : (input.providerType ?? CODEX_CUSTOM_TYPE);
 		const editingOfficial = isOfficialLogin(providerType);
 		// 从真实 TOML 回填明文 apiKey，让 secret 字段展示密码格式（与 Claude 侧一致）；official 无 TOML。
 		const editApiKey = editingOfficial || !input.rawToml ? '' : extractCodexApiKeyFromToml(input.profile.key, input.rawToml);
@@ -198,14 +199,17 @@ function makeValues(input: {
 			model: input.profile.model,
 			apiKey: editApiKey,
 			// official 编辑态无 profile TOML（虚拟条目，靠 auth.json）；仅真实 provider 生成 TOML。
-			toml: editingOfficial ? '' : (input.rawToml ?? valuesToToml({
-				profileKey: input.profile.key,
-				providerType,
-				baseUrl: input.profile.baseUrl,
-				model: input.profile.model,
-				apiKey: '',
-				activateAfterSave: false
-			})),
+			toml: editingOfficial
+				? ''
+				: (input.rawToml ??
+					valuesToToml({
+						profileKey: input.profile.key,
+						providerType,
+						baseUrl: input.profile.baseUrl,
+						model: input.profile.model,
+						apiKey: '',
+						activateAfterSave: false
+					})),
 			// 编辑 official：textarea 回填明文 auth.json 供直接编辑；其他 provider 无 authJson 语义。
 			authJson: editingOfficial ? readCodexAuthJsonRaw() : readCodexAuthJsonPreview(),
 			authEditable: editingOfficial,
@@ -288,7 +292,13 @@ export function buildCodexProviderFormModel(input: {
 			// 契约 Codex.Note 记录该供应商的接入限制（如仅某模型支持 Responses），
 			// 挂在模型字段上让用户在改模型前先看到。
 			// 供应商级限制说明已归 providerType 字段（Codex.Note），此处只说字段自身语义，避免同段文案重复出现。
-			{id: 'model', type: 'text', label: '默认模型', value: values.model, helpText: '写入 TOML 的 model 键，作为该 profile 的默认模型。'},
+			{
+				id: 'model',
+				type: 'text',
+				label: '默认模型',
+				value: values.model,
+				helpText: '写入 TOML 的 model 键，作为该 profile 的默认模型。'
+			},
 			{
 				id: 'apiKey',
 				type: 'secret',
@@ -316,7 +326,8 @@ export function buildCodexProviderFormModel(input: {
 			type: 'readonly',
 			label: '官方登录状态',
 			value: values.authJson,
-			helpText: 'official login 靠 ~/.codex/auth.json（全局单例）。请先运行 `codex login` 完成登录，或进入编辑（E）直接修改 auth.json。'
+			helpText:
+				'official login 靠 ~/.codex/auth.json（全局单例）。请先运行 `codex login` 完成登录，或进入编辑（E）直接修改 auth.json。'
 		});
 	}
 

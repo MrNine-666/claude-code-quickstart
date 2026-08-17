@@ -1,12 +1,6 @@
 // `ccq update` — 检查并更新 ccq 可执行文件本体。
 
-import {
-	applyUpdate,
-	checkLatestVersion,
-	downloadUpdate,
-	formatSelfUpdateError,
-	type DownloadUpdateProgress
-} from '../../core/update.js';
+import {applyUpdate, checkLatestVersion, downloadUpdate, formatSelfUpdateError, type DownloadUpdateProgress} from '../../core/update.js';
 import {CCQ_VERSION} from '../../version.js';
 
 type UpdateProgressOutput = {
