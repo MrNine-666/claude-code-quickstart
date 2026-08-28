@@ -14,7 +14,6 @@ import {
 	isNullOrWhiteSpace,
 	maskApiKey,
 	normalizeBaseUrl,
-	testProviderAuthTokenMatch,
 	testProviderBaseUrlMatch,
 	testProviderKey
 } from './text-utils.js';
@@ -369,6 +368,146 @@ export function getManagedModelSummary(profile: ProviderProfile | null): string 
 
 // ── 数据层（Profile 扫描 / 活跃身份匹配 / 展示数据） ─────────────────────────
 
+type ProviderRuntimeProjection = {
+	readonly item: ProviderListItem;
+	readonly env: Record<string, string>;
+};
+
+const providerIdentityRequiredEnvKeys = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL'] as const;
+
+/**
+ * 从 profile 生成 switch 实际写入 settings.env 的 provider-owned runtime env。
+ * 顺序须与 switchProviderUnlocked 保持一致：URL/Token → 受管模型键 → profile.env 其余键。
+ */
+function getEffectiveProviderEnv(profile: ProviderProfile): Record<string, string> {
+	const effectiveEnv: Record<string, string> = {};
+	const profileEnv = profile.env ?? {};
+	const authToken = profileEnv.ANTHROPIC_AUTH_TOKEN;
+	const baseUrl = profileEnv.ANTHROPIC_BASE_URL;
+
+	if (typeof authToken === 'string' && !isNullOrWhiteSpace(authToken)) {
+		effectiveEnv.ANTHROPIC_AUTH_TOKEN = authToken;
+	}
+
+	if (typeof baseUrl === 'string' && !isNullOrWhiteSpace(baseUrl)) {
+		effectiveEnv.ANTHROPIC_BASE_URL = baseUrl;
+	}
+
+	for (const [key, value] of Object.entries(getManagedModelEnv(profile))) {
+		effectiveEnv[key] = value;
+	}
+
+	for (const [key, value] of Object.entries(profileEnv)) {
+		if (key === 'ANTHROPIC_AUTH_TOKEN' || key === 'ANTHROPIC_BASE_URL') {
+			continue;
+		}
+
+		effectiveEnv[key] = value;
+	}
+
+	return effectiveEnv;
+}
+
+function getProviderRuntimeProjections(profiles: readonly ProviderListItem[]): ProviderRuntimeProjection[] {
+	const projections: ProviderRuntimeProjection[] = [];
+	for (const item of profiles) {
+		try {
+			const profile = readJsonFile<ProviderProfile | null>(item.profilePath, null);
+			if (profile) {
+				projections.push({item, env: getEffectiveProviderEnv(profile)});
+			}
+		} catch {
+			// 与扫描层一致：读取失败的 profile 不参与 runtime identity 判定。
+		}
+	}
+
+	return projections;
+}
+
+function providerOwnedEnvKeys(projections: readonly ProviderRuntimeProjection[]): Set<string> {
+	const keys = new Set<string>([...providerIdentityRequiredEnvKeys, ...cfg().managedModelEnvKeys]);
+	for (const projection of projections) {
+		for (const key of Object.keys(projection.env)) {
+			keys.add(key);
+		}
+	}
+
+	return keys;
+}
+
+function hasEnvKey(env: Record<string, string>, key: string): boolean {
+	return Object.hasOwn(env, key);
+}
+
+function providerEnvValueMatches(
+	key: string,
+	settingsValue: string | undefined,
+	profileValue: string | undefined
+): boolean {
+	if (settingsValue === undefined || profileValue === undefined) {
+		return false;
+	}
+
+	return key === 'ANTHROPIC_BASE_URL'
+		? testProviderBaseUrlMatch(settingsValue, profileValue)
+		: settingsValue === profileValue;
+}
+
+function matchesFullProviderProjection(
+	settings: Record<string, string>,
+	projection: ProviderRuntimeProjection,
+	ownedKeys: ReadonlySet<string>
+): boolean {
+	for (const key of ownedKeys) {
+		const settingsHasKey = hasEnvKey(settings, key);
+		const profileHasKey = hasEnvKey(projection.env, key);
+		if (settingsHasKey !== profileHasKey) {
+			return false;
+		}
+
+		if (settingsHasKey && !providerEnvValueMatches(key, settings[key], projection.env[key])) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/** 兼容历史 settings 缺失 provider-owned 字段；已存在冲突值绝不回退。 */
+function matchesLegacyProviderProjection(
+	settings: Record<string, string>,
+	projection: ProviderRuntimeProjection,
+	ownedKeys: ReadonlySet<string>
+): boolean {
+	const settingsBaseUrl = settings.ANTHROPIC_BASE_URL;
+	const profileBaseUrl = projection.env.ANTHROPIC_BASE_URL;
+	if (
+		!hasEnvKey(settings, 'ANTHROPIC_BASE_URL') ||
+		!hasEnvKey(projection.env, 'ANTHROPIC_BASE_URL') ||
+		!providerEnvValueMatches('ANTHROPIC_BASE_URL', settingsBaseUrl, profileBaseUrl)
+	) {
+		return false;
+	}
+
+	for (const key of ownedKeys) {
+		if (key === 'ANTHROPIC_BASE_URL') {
+			continue;
+		}
+
+		const settingsHasKey = hasEnvKey(settings, key);
+		const profileHasKey = hasEnvKey(projection.env, key);
+		if (!settingsHasKey) {
+			continue;
+		}
+
+		if (!profileHasKey || !providerEnvValueMatches(key, settings[key], projection.env[key])) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
 /**
  * §2.8.1：收集当前 settings.env 中属于「某个 provider profile 受管」的键集合。
  * 即所有已存在 provider profile 的 env 键的并集——切换供应商时这些键都应被清理后重写，
@@ -385,8 +524,8 @@ function collectPreviousProviderManagedKeys(): Set<string> {
 			continue;
 		}
 
-		if (profile?.env) {
-			for (const k of Object.keys(profile.env)) {
+		if (profile) {
+			for (const k of Object.keys(getEffectiveProviderEnv(profile))) {
 				keys.add(k);
 			}
 		}
@@ -433,45 +572,38 @@ export function getProviderList(): ProviderListItem[] {
 	return results;
 }
 
-/** 从 Profile 列表解析当前活跃供应商（BaseUrl + Token 精确身份匹配）。 */
+/** 从 settings 的完整 provider-owned runtime env 投影解析唯一活跃供应商。 */
 function resolveActiveProfile(
 	profiles: readonly ProviderListItem[],
-	baseUrl: string,
-	authToken: string
+	settings: Record<string, string>
 ): ProviderListItem | null {
-	if (profiles.length === 0 || isNullOrWhiteSpace(baseUrl)) {
+	if (profiles.length === 0 || isNullOrWhiteSpace(settings.ANTHROPIC_BASE_URL)) {
 		return null;
 	}
 
-	const baseMatches = profiles.filter(p => testProviderBaseUrlMatch(baseUrl, p.baseUrl));
-	if (baseMatches.length === 0) {
+	const projections = getProviderRuntimeProjections(profiles);
+	if (projections.length === 0) {
 		return null;
 	}
 
-	const tokenMatches = baseMatches.filter(p => testProviderAuthTokenMatch(authToken, p.authToken));
-	if (tokenMatches.length > 0) {
-		return tokenMatches[0]!;
+	const ownedKeys = providerOwnedEnvKeys(projections);
+	const exactMatches = projections.filter(projection => matchesFullProviderProjection(settings, projection, ownedKeys));
+	if (exactMatches.length === 1) {
+		return exactMatches[0]?.item ?? null;
 	}
 
-	// 兼容旧 Profile / 手工半配置：仅当缺少可比较 Token 时退回历史 BaseUrl 匹配
-	const profilesWithToken = baseMatches.filter(p => !isNullOrWhiteSpace(p.authToken));
-	if (isNullOrWhiteSpace(authToken) || profilesWithToken.length === 0) {
-		return baseMatches[0]!;
+	if (exactMatches.length > 1) {
+		return null;
 	}
 
-	return null;
+	const legacyMatches = projections.filter(projection => matchesLegacyProviderProjection(settings, projection, ownedKeys));
+	return legacyMatches.length === 1 ? legacyMatches[0]?.item ?? null : null;
 }
 
 /** 识别当前活跃供应商。 */
 export function getActiveProvider(): {key: string; baseUrl: string; profilePath: string} | null {
 	const env = settingsEnv(readSettings());
-	const baseUrl = env.ANTHROPIC_BASE_URL || '';
-	const authToken = env.ANTHROPIC_AUTH_TOKEN || '';
-	if (isNullOrWhiteSpace(baseUrl)) {
-		return null;
-	}
-
-	const active = resolveActiveProfile(getProviderList(), baseUrl, authToken);
+	const active = resolveActiveProfile(getProviderList(), env);
 	if (!active) {
 		return null;
 	}
@@ -483,9 +615,7 @@ export function getActiveProvider(): {key: string; baseUrl: string; profilePath:
 export function getDisplayData(): ProviderDisplayData {
 	const profiles = getProviderList();
 	const env = settingsEnv(readSettings());
-	const baseUrl = env.ANTHROPIC_BASE_URL || '';
-	const authToken = env.ANTHROPIC_AUTH_TOKEN || '';
-	const active = resolveActiveProfile(profiles, baseUrl, authToken);
+	const active = resolveActiveProfile(profiles, env);
 	const activeKey = active ? active.key : '';
 
 	const displayProfiles: ProviderDisplayProfile[] = profiles.map(p => ({
@@ -538,6 +668,7 @@ function switchProviderUnlocked(
 
 	const env = settings.env as Record<string, string>;
 	const config = cfg();
+	const effectiveEnv = getEffectiveProviderEnv(profile);
 
 	// §2.8.1：设置默认前，先识别并清理上一活跃供应商写入 settings.env 的受管键，
 	// 避免切换后残留旧供应商 env；非 provider 来源的 env（如 ClaudeConfig 写入的
@@ -553,38 +684,12 @@ function switchProviderUnlocked(
 		delete env[k];
 	}
 
-	// 1. AUTH_TOKEN + BASE_URL（仅来自 profile.env）
-	if (profile.env) {
-		const authToken = profile.env.ANTHROPIC_AUTH_TOKEN;
-		const baseUrl = profile.env.ANTHROPIC_BASE_URL;
-
-		if (typeof authToken === 'string' && !isNullOrWhiteSpace(authToken)) {
-			env.ANTHROPIC_AUTH_TOKEN = authToken;
-		}
-
-		if (typeof baseUrl === 'string' && !isNullOrWhiteSpace(baseUrl)) {
-			env.ANTHROPIC_BASE_URL = baseUrl;
-		}
-	}
-
-	// 2. 清理旧版顶层别名映射字段
+	// 清理旧版顶层别名映射字段。
 	delete settings[config.legacyModelKey];
 
-	// 3. 写入当前 Profile 的模型配置（受管模型键）
-	for (const [k, v] of Object.entries(getManagedModelEnv(profile))) {
-		env[k] = v;
-	}
-
-	// 4. 写入 profile.env 全量除 token/baseUrl 外的所有键（供应商携带的 env 字段），
-	//    模型键已由步骤 3 覆盖。
-	if (profile.env) {
-		for (const [k, v] of Object.entries(profile.env)) {
-			if (k === 'ANTHROPIC_AUTH_TOKEN' || k === 'ANTHROPIC_BASE_URL') {
-				continue;
-			}
-
-			env[k] = v;
-		}
+	// 写入与 active resolver 共享的完整 runtime env 投影。
+	for (const [envKey, value] of Object.entries(effectiveEnv)) {
+		env[envKey] = value;
 	}
 
 	// ★ 绝不触碰：model / language / permissions / hooks / statusLine / mcpServers
@@ -745,11 +850,7 @@ function editProviderUnlocked(key: string, updates: EditProviderUpdates): {succe
 	const previousOwnedKeys = new Set(Object.keys(profile.env ?? {}));
 	const settingsBefore = readSettingsForMutation();
 	const settingsBeforeEnv = settingsEnv(settingsBefore);
-	const activeBefore = resolveActiveProfile(
-		getProviderList(),
-		settingsBeforeEnv.ANTHROPIC_BASE_URL ?? '',
-		settingsBeforeEnv.ANTHROPIC_AUTH_TOKEN ?? ''
-	);
+	const activeBefore = resolveActiveProfile(getProviderList(), settingsBeforeEnv);
 	const wasActive = Boolean(activeBefore && activeBefore.key === key);
 
 	if (!profile.env) {
@@ -855,11 +956,7 @@ function deleteProviderUnlocked(key: string, opts?: {force?: boolean}): {success
 
 	const settingsBefore = readSettingsForMutation();
 	const settingsBeforeEnv = settingsEnv(settingsBefore);
-	const active = resolveActiveProfile(
-		getProviderList(),
-		settingsBeforeEnv.ANTHROPIC_BASE_URL ?? '',
-		settingsBeforeEnv.ANTHROPIC_AUTH_TOKEN ?? ''
-	);
+	const active = resolveActiveProfile(getProviderList(), settingsBeforeEnv);
 	const isActive = Boolean(active && active.key === key);
 
 	if (isActive && !options.force) {
