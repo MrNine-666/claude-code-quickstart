@@ -84,6 +84,12 @@ export function runPrimaryAction(
 		case 'update':
 			updateOne(component, services, dispatch, cache, taskCancellation);
 			return;
+		case 'repair':
+			updateOne(component, services, dispatch, cache, taskCancellation);
+			return;
+		case 'blocked':
+			toast.error(component.lifecycle?.diagnostic ?? `${component.name} 当前不可操作`);
+			return;
 		case 'latest':
 			toast.success(`${component.name} 已是最新`);
 	}
@@ -250,9 +256,18 @@ function installOne(
 			if (signal.aborted) return;
 			if (outcome.success) {
 				toast.success(`${component.name} 安装成功`);
-				dispatch({type: 'item-patched', id: component.id, patch: successfulInstallPatch(component, outcome.version)});
+				dispatch({
+					type: 'item-patched',
+					id: component.id,
+					patch: successfulInstallPatch(component, outcome.version, outcome.lifecycle)
+				});
 			} else {
-				dispatch({type: 'item-failed', id: component.id, error: outcome.error ?? `${component.name} 安装失败`});
+				dispatch({
+					type: 'item-failed',
+					id: component.id,
+					error: outcome.error ?? `${component.name} 安装失败`,
+					...(outcome.lifecycle ? {patch: dshLifecyclePatch(component, outcome.lifecycle)} : {})
+				});
 			}
 			cache.refresh();
 		})
@@ -267,13 +282,18 @@ function installOne(
 		});
 }
 
-export function successfulInstallPatch(component: ManagedComponent, installedVersion?: string): ComponentPatch {
+export function successfulInstallPatch(
+	component: ManagedComponent,
+	installedVersion?: string,
+	lifecycle?: ManagedComponent['lifecycle']
+): ComponentPatch {
 	const currentVersion = installedVersion ?? component.currentVersion;
 	return {
 		installed: true,
 		hasUpdate: false,
 		currentVersion,
-		statusHint: undefined,
+		statusHint: lifecycle?.prereleaseWarning,
+		lifecycle,
 		sharedInstalled: true,
 		sharedVersion: currentVersion
 	};
@@ -295,10 +315,15 @@ function updateOne(
 			if (signal.aborted) return;
 			const failed = result.updatedItems.some(item => item.startsWith(`failed::${component.id}`));
 			if (failed) {
-				dispatch({type: 'item-failed', id: component.id, error: `${component.name} 更新失败`});
+				dispatch({
+					type: 'item-failed',
+					id: component.id,
+					error: `${component.name} 更新失败: ${updateFailureMessage(result.updatedItems, component.id, '未返回失败详情')}`,
+					...(result.dshLifecycle ? {patch: dshLifecyclePatch(component, result.dshLifecycle)} : {})
+				});
 			} else {
 				toast.success(`${component.name} 已更新`);
-				dispatch({type: 'item-patched', id: component.id, patch: successfulUpdatePatch(component)});
+				dispatch({type: 'item-patched', id: component.id, patch: successfulUpdatePatch(component, result.dshLifecycle)});
 			}
 			cache.refresh();
 		})
@@ -313,14 +338,25 @@ function updateOne(
 		});
 }
 
-export function successfulUpdatePatch(component: ManagedComponent): ComponentPatch {
+/** Preserve the operation-layer diagnostic encoded in an applyUpdates failure record. */
+export function updateFailureMessage(updatedItems: readonly string[], id: string, fallback: string): string {
+	const prefix = `failed::${id}::`;
+	const record = updatedItems.find(item => item.startsWith(prefix));
+	const detail = record?.slice(prefix.length).trim();
+	return detail || fallback;
+}
+
+export function successfulUpdatePatch(component: ManagedComponent, lifecycle?: ManagedComponent['lifecycle']): ComponentPatch {
 	const shared = component as SharedManagedComponent;
-	const currentVersion = component.latestVersion || component.currentVersion;
+	const nextLifecycle = component.id === 'DeepSeekHarness' ? lifecycle : undefined;
+	const currentVersion =
+		nextLifecycle?.packageVersion || nextLifecycle?.commandVersion || component.latestVersion || component.currentVersion;
 	const patch: ComponentPatch = {
 		installed: true,
 		hasUpdate: false,
 		currentVersion,
-		statusHint: undefined
+		statusHint: nextLifecycle?.prereleaseWarning,
+		lifecycle: nextLifecycle
 	};
 	if (shared.id === 'CcgWorkflow' && shared.injectByAgent) {
 		return {
@@ -336,17 +372,44 @@ export function successfulUpdatePatch(component: ManagedComponent): ComponentPat
 	return {...patch, sharedInstalled: true, sharedVersion: currentVersion};
 }
 
+/** 将 DSH 操作失败的最终 lifecycle 投影回卡片，避免错误文本掩盖 postflight 事实。 */
+export function dshLifecyclePatch(component: ManagedComponent, lifecycle: NonNullable<ManagedComponent['lifecycle']>): ComponentPatch {
+	const currentVersion = lifecycle.packageVersion || lifecycle.commandVersion;
+	const repairable = lifecycle.repairRequired;
+	const detail = lifecycle.state === 'managed' || lifecycle.state === 'not-installed' ? '' : lifecycle.diagnostic;
+	const statusHint = [detail, lifecycle.prereleaseWarning].filter(Boolean).join(' ') || undefined;
+	return {
+		installed: lifecycle.state === 'managed' || repairable,
+		currentVersion,
+		latestVersion: component.latestVersion,
+		hasUpdate: lifecycle.state === 'managed' ? component.hasUpdate : repairable ? true : null,
+		statusHint,
+		lifecycle,
+		sharedInstalled: lifecycle.state === 'managed' || repairable,
+		sharedVersion: currentVersion
+	};
+}
+
 export function settleBatchUpdateComponents(
 	components: readonly ManagedComponent[],
 	targets: readonly ManagedComponent[],
-	failedIds: ReadonlySet<string>
+	failedIds: ReadonlySet<string>,
+	dshLifecycle?: ManagedComponent['lifecycle']
 ): readonly ManagedComponent[] {
 	const successfulTargets = new Map(
 		targets.filter(component => !failedIds.has(component.id)).map(component => [component.id, component] as const)
 	);
 	return components.map(component => {
 		const target = successfulTargets.get(component.id);
-		return target ? ({...component, ...successfulUpdatePatch(target)} as ManagedComponent) : component;
+		if (!target && component.id === 'DeepSeekHarness' && failedIds.has(component.id) && dshLifecycle) {
+			return {...component, ...dshLifecyclePatch(component, dshLifecycle)} as ManagedComponent;
+		}
+		return target
+			? ({
+					...component,
+					...successfulUpdatePatch(target, target.id === 'DeepSeekHarness' ? dshLifecycle : undefined)
+				} as ManagedComponent)
+			: component;
 	});
 }
 
@@ -369,18 +432,15 @@ export function updateAll(
 		.updateComponents(targets, progressSink(dispatch, targets[0]?.id ?? 'batch-update'), undefined, signal)
 		.then(result => {
 			if (signal.aborted) return;
-			const failedIds = new Set<string>(
-				result.updatedItems
-					.filter(item => item.startsWith('failed::'))
-					.map(item => item.split('::')[1])
-					.filter((id): id is string => Boolean(id))
-			);
-			const components = settleBatchUpdateComponents(view.components, targets, failedIds);
+			const failedItems = result.updatedItems.filter(item => item.startsWith('failed::'));
+			const failedIds = new Set<string>(failedItems.map(item => item.split('::')[1]).filter((id): id is string => Boolean(id)));
+			const components = settleBatchUpdateComponents(view.components, targets, failedIds, result.dshLifecycle);
 			const updatedCount = targets.length - failedIds.size;
+			const failureDetails = [...failedIds].map(id => `${id}: ${updateFailureMessage(failedItems, id, '未返回失败详情')}`);
 			const summary =
 				failedIds.size === 0
 					? `已更新 ${targets.length} 个组件`
-					: `${updatedCount}/${targets.length} 成功，失败: ${[...failedIds].join(', ')}`;
+					: `${updatedCount}/${targets.length} 成功，失败: ${failureDetails.join('；')}`;
 			if (failedIds.size === 0) {
 				toast.success(summary);
 				dispatch({type: 'batch-done', components});
@@ -417,12 +477,22 @@ export function runUninstall(
 			if (signal.aborted) return;
 			if (outcome.success) {
 				toast.success(`${component.name} 已卸载`);
-				dispatch({type: 'item-patched', id: component.id, patch: uninstallSuccessPatch(component, fullUninstall)});
+				if (outcome.warning) toast.warning(outcome.warning);
+				dispatch({
+					type: 'item-patched',
+					id: component.id,
+					patch: uninstallSuccessPatch(component, fullUninstall, outcome.lifecycle, outcome.warning)
+				});
 			} else {
 				const message = outcome.manualHint
 					? `${outcome.error ?? '卸载失败'}\n${outcome.manualHint}`
 					: (outcome.error ?? `${component.name} 卸载失败`);
-				dispatch({type: 'item-failed', id: component.id, error: message});
+				dispatch({
+					type: 'item-failed',
+					id: component.id,
+					error: message,
+					...(outcome.lifecycle ? {patch: dshLifecyclePatch(component, outcome.lifecycle)} : {})
+				});
 			}
 			cache.refresh();
 		})
@@ -437,13 +507,20 @@ export function runUninstall(
 		});
 }
 
-export function uninstallSuccessPatch(component: ManagedComponent, fullUninstall: boolean): ComponentPatch {
+export function uninstallSuccessPatch(
+	component: ManagedComponent,
+	fullUninstall: boolean,
+	lifecycle?: ManagedComponent['lifecycle'],
+	warning?: string
+): ComponentPatch {
+	const isDsh = component.id === 'DeepSeekHarness';
 	const patch: ComponentPatch = {
-		installed: false,
+		installed: isDsh && lifecycle ? lifecycle.state === 'managed' || lifecycle.repairRequired : false,
 		hasUpdate: null,
 		currentVersion: '',
 		latestVersion: '',
-		statusHint: undefined,
+		statusHint: isDsh && lifecycle?.state === 'external' ? (warning ?? lifecycle.diagnostic) : isDsh ? warning : undefined,
+		lifecycle: isDsh ? lifecycle : undefined,
 		sharedInstalled: false,
 		sharedVersion: ''
 	};
@@ -481,6 +558,7 @@ export function toolStatusDot(component: SharedManagedComponent, status: Compone
 	if (status === 'installing') return {kind: 'installing', label: '安装中'};
 	if (status === 'updating') return {kind: 'updating', label: '更新中'};
 	if (status === 'uninstalling') return {kind: 'uninstalling', label: '卸载中'};
+	if (component.id === 'DeepSeekHarness' && component.lifecycle) return dshStatusDot(component);
 	if (component.sharingKind === 'shared-cli-per-agent-inject') return injectSharedDot(component);
 	if (!component.installed) return {kind: 'notInstalled', label: '未安装'};
 	if (component.hasUpdate === true) {
@@ -488,6 +566,36 @@ export function toolStatusDot(component: SharedManagedComponent, status: Compone
 	}
 	if (component.hasUpdate === false) return {kind: 'latest', label: component.currentVersion || '最新'};
 	return {kind: 'latest', label: `${component.currentVersion || '已安装'} · 无法检测更新`};
+}
+
+function dshStatusDot(component: SharedManagedComponent): {kind: StatusDotKind; label: string} {
+	const lifecycle = component.lifecycle;
+	if (!lifecycle) return {kind: 'unknown', label: '状态未知'};
+
+	switch (lifecycle.state) {
+		case 'not-installed':
+			return {kind: 'notInstalled', label: '未安装'};
+		case 'managed':
+			if (component.hasUpdate === true) {
+				return {kind: 'updatable', label: `${component.currentVersion || '-'} → ${component.latestVersion || '-'}`};
+			}
+			return {
+				kind: 'latest',
+				label: component.currentVersion || '最新'
+			};
+		case 'broken':
+			return {kind: 'failed', label: '需修复'};
+		case 'version-mismatch':
+			return {kind: 'failed', label: '版本不一致'};
+		case 'external':
+			return {kind: 'failed', label: '外部 dsh'};
+		case 'path-conflict':
+			return {kind: 'failed', label: 'PATH 冲突'};
+		case 'npm-unavailable':
+			return {kind: 'failed', label: 'npm 不可用'};
+		case 'verification-unknown':
+			return {kind: 'failed', label: '需验证'};
+	}
 }
 
 function injectSharedDot(component: SharedManagedComponent): {kind: StatusDotKind; label: string} {

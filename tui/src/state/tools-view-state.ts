@@ -63,6 +63,7 @@ export type ComponentPatch = {
 	readonly latestVersion?: string;
 	readonly hasUpdate?: boolean | null;
 	readonly statusHint?: string;
+	readonly lifecycle?: ManagedComponent['lifecycle'];
 	readonly sharedInstalled?: boolean;
 	readonly sharedVersion?: string;
 	readonly injectByAgent?: SharedManagedComponent['injectByAgent'];
@@ -82,7 +83,13 @@ export type ToolsViewAction =
 	| {readonly type: 'item-start'; readonly id: ComponentId; readonly action: ComponentAction}
 	| {readonly type: 'item-done'; readonly id: ComponentId; readonly components: readonly ManagedComponent[]}
 	| {readonly type: 'item-patched'; readonly id: ComponentId; readonly patch: ComponentPatch}
-	| {readonly type: 'item-failed'; readonly id: ComponentId; readonly error: string; readonly components?: readonly ManagedComponent[]}
+	| {
+			readonly type: 'item-failed';
+			readonly id: ComponentId;
+			readonly error: string;
+			readonly patch?: ComponentPatch;
+			readonly components?: readonly ManagedComponent[];
+		}
 	| {readonly type: 'batch-start'; readonly action: ComponentAction; readonly ids: readonly ComponentId[]}
 	| {readonly type: 'batch-done'; readonly components: readonly ManagedComponent[]}
 	| {readonly type: 'batch-failed'; readonly error: string; readonly components?: readonly ManagedComponent[]}
@@ -107,10 +114,27 @@ export function cursorComponent(state: ToolsViewState): ManagedComponent | undef
 	return state.components[state.cursor];
 }
 
-export type ToolsPrimaryAction = 'manage' | 'install' | 'update' | 'latest';
+export type ToolsPrimaryAction = 'manage' | 'install' | 'update' | 'repair' | 'blocked' | 'latest';
 
 /** Resolve the grid Enter action from the selected component's current facts. */
 export function resolveToolsPrimaryAction(component: ManagedComponent): ToolsPrimaryAction {
+	if (component.lifecycle) {
+		switch (component.lifecycle.state) {
+			case 'not-installed':
+				return 'install';
+			case 'managed':
+				return component.hasUpdate === true ? 'update' : 'latest';
+			case 'broken':
+			case 'version-mismatch':
+				return 'repair';
+			case 'external':
+			case 'path-conflict':
+			case 'npm-unavailable':
+			case 'verification-unknown':
+				return 'blocked';
+		}
+	}
+
 	if (isInjectableComponent(component.id)) {
 		return 'manage';
 	}
@@ -186,6 +210,7 @@ function patchComponent(components: readonly ManagedComponent[], id: ComponentId
 		latestVersion: patch.latestVersion ?? beforeShared.latestVersion,
 		hasUpdate: hasPatchField('hasUpdate') ? (patch.hasUpdate ?? null) : beforeShared.hasUpdate,
 		statusHint: hasPatchField('statusHint') ? patch.statusHint : beforeShared.statusHint,
+		lifecycle: hasPatchField('lifecycle') ? patch.lifecycle : beforeShared.lifecycle,
 		sharedInstalled: patch.sharedInstalled ?? beforeShared.sharedInstalled,
 		sharedVersion: patch.sharedVersion ?? beforeShared.sharedVersion,
 		injectByAgent: patch.injectByAgent ?? beforeShared.injectByAgent
@@ -194,6 +219,10 @@ function patchComponent(components: readonly ManagedComponent[], id: ComponentId
 }
 
 function canRequestUninstall(component: ManagedComponent): boolean {
+	if (component.lifecycle) {
+		return component.lifecycle.canUninstall;
+	}
+
 	const shared = component as SharedManagedComponent;
 	if (shared.sharingKind === 'shared-cli-per-agent-inject') {
 		const hasInject = Boolean(shared.injectByAgent && Object.values(shared.injectByAgent).some(s => s.integrated));
@@ -263,7 +292,13 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 		case 'request-uninstall': {
 			const current = cursorComponent(state);
 			if (!current || !canRequestUninstall(current)) {
-				return {...state, errorText: '该组件未安装，无需卸载'};
+				return {
+					...state,
+					errorText:
+						current?.lifecycle && !current.lifecycle.canUninstall
+							? current.lifecycle.diagnostic
+							: '该组件未安装，无需卸载'
+				};
 			}
 
 			return {
@@ -354,7 +389,10 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				errorText: undefined
 			};
 
-		case 'item-failed':
+		case 'item-failed': {
+			const components = action.patch
+				? patchComponent(action.components ?? state.components, action.id, action.patch)
+				: (action.components ?? state.components);
 			return {
 				...state,
 				mode: 'grid',
@@ -363,7 +401,7 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				injectTargetIndex: 0,
 				injectDraft: undefined,
 				loaded: action.components !== undefined ? true : state.loaded,
-				components: action.components ?? state.components,
+				components,
 				itemStatus: omit(state.itemStatus, action.id),
 				itemError: {...state.itemError, [action.id]: action.error},
 				progressByComponent: omit(state.progressByComponent, action.id),
@@ -371,6 +409,7 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				latestProgressId: state.latestProgressId === action.id ? undefined : state.latestProgressId,
 				errorText: action.error
 			};
+		}
 
 		case 'batch-start':
 			return {

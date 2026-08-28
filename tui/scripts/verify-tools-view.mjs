@@ -2,12 +2,7 @@ import assert from 'node:assert/strict';
 import {mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {
-	installMultipleTools,
-	readMcpSnapshot,
-	restoreMcpSnapshot,
-	TOOL_DEFINITIONS
-} from '../src/core/tools-install.ts';
+import {installMultipleTools, readMcpSnapshot, restoreMcpSnapshot, TOOL_DEFINITIONS} from '../src/core/tools-install.ts';
 
 // Phase 6 工具安装菜单门禁：守住两条核心不变量——
 //   P-6 批量安装失败隔离：第 N 个工具失败时，第 N+1 个仍执行；
@@ -43,14 +38,43 @@ const versionedOutcomes = await installMultipleTools(['CodexCli'], undefined, as
 assert.equal(versionedOutcomes[0].version, '0.142.5', '安装成功结果应保留 version 字段，供 UI patch 使用');
 console.log('[PASS] 安装结果保留版本号用于卡片局部更新');
 
-// ── registry 完整性：ClaudeCode 收编后 9 项齐备，ClaudeCode 首位与其余 agent 平权 ──────
+// 卡片必须消费 statusHint：DSH 的外部安装、PATH 冲突、npm 不可用和预发布风险
+// 都不能只停留在核心投影里；固定一行且 overflow hidden，避免长诊断改变网格尺寸。
+const toolsHomeSource = readFileSync(new URL('../src/views/tools/ToolsHomeView.tsx', import.meta.url), 'utf8');
+assert.match(toolsHomeSource, /<StatusHint text=\{component\.statusHint\} \/>/, '工具卡片渲染 statusHint');
+assert.match(toolsHomeSource, /function StatusHint\(\{text\}: \{readonly text\?: string\}\)/, '工具卡片提供状态提示组件');
+assert.match(toolsHomeSource, /<box height=\{1\} overflow="hidden">[\s\S]*\{text \?\? ''\}/, '状态提示固定单行并截断长诊断');
+console.log('[PASS] 工具卡片展示 statusHint 且保持固定提示行');
+
+const toolsActionsSource = readFileSync(new URL('../src/views/tools/tools-view-actions.ts', import.meta.url), 'utf8');
+assert.match(toolsActionsSource, /label: component\.currentVersion \|\| '最新'/, '版本标签只使用原始版本号');
+assert.match(toolsActionsSource, /prereleaseWarning/, '预发布状态通过独立 warning 字段表达');
+assert.doesNotMatch(toolsActionsSource, /component\.currentVersion[^\n]*预发布/, '版本号不得拼接预发布文案');
+console.log('[PASS] 版本号与预发布警告分离');
+
+// ── registry 完整性：ClaudeCode 收编后 10 项齐备，ClaudeCode 首位与其余 agent 平权 ──────
 const ids = TOOL_DEFINITIONS.map(item => item.id);
-assert.deepEqual(ids, ['ClaudeCode', 'Ccline', 'CcgWorkflow', 'OpenSpec', 'Trellis', 'CodeGraph', 'GitNexus', 'CodexCli', 'AntigravityCli'], '9 项 registry 齐备且顺序固定（ClaudeCode 首位）');
+assert.deepEqual(
+	ids,
+	[
+		'ClaudeCode',
+		'Ccline',
+		'CcgWorkflow',
+		'OpenSpec',
+		'Trellis',
+		'CodeGraph',
+		'GitNexus',
+		'CodexCli',
+		'AntigravityCli',
+		'DeepSeekHarness'
+	],
+	'10 项 registry 齐备且顺序固定（ClaudeCode 首位）'
+);
 for (const tool of TOOL_DEFINITIONS) {
 	assert.ok(tool.command && tool.versionArgs.length > 0, `${tool.id} 有检测命令`);
 	assert.ok(tool.kind, `${tool.id} 有安装 kind`);
 }
-console.log('[PASS] registry 完整性（ClaudeCode 收编后 9 项齐备，与其余 agent 平权）');
+console.log('[PASS] registry 完整性（ClaudeCode 收编后 10 项齐备，与其余 agent 平权）');
 
 // ── CodeGraph 安装后按 agentContext 接入当前 Agent（非交互，命令来自 lifecycle resolver）────
 const {codeGraphInstallCommands} = await import('../src/core/tools-lifecycle.ts');

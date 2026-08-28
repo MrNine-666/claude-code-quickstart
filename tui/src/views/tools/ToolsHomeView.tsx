@@ -133,6 +133,7 @@ function CardBody({component}: {readonly component: SharedManagedComponent}) {
 						version={component.injectByAgent?.cx?.version}
 					/>
 				</box>
+				<StatusHint text={component.statusHint} />
 				<box height={1} overflow="hidden">
 					<DocsLink text={component.description} url={component.docsUrl} />
 				</box>
@@ -142,9 +143,20 @@ function CardBody({component}: {readonly component: SharedManagedComponent}) {
 	return (
 		<box flexDirection="column">
 			<box height={1} />
+			<StatusHint text={component.statusHint} />
 			<box height={1} overflow="hidden">
 				<DocsLink text={component.description} url={component.docsUrl} />
 			</box>
+		</box>
+	);
+}
+
+function StatusHint({text}: {readonly text?: string}) {
+	return (
+		<box height={1} overflow="hidden">
+			<text fg={colors.warning} attributes={TextAttributes.DIM} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+				{text ?? ''}
+			</text>
 		</box>
 	);
 }

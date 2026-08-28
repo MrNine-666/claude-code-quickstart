@@ -16,12 +16,19 @@ import {resolveHome, settingsPath} from './paths.js';
 import type {AgentContext} from '../state/manage-state.js';
 import {
 	codeGraphRemoveCliCommands,
-	codeGraphUninstallCommands,
 	ccgWorkflowUninstallCommands,
 	gitNexusIntegrationCleanupCommands,
 	type LifecycleCommand
 } from './tools-lifecycle.js';
 import {hasUpdate} from './semver.js';
+import {
+	DSH_TOOL_ID,
+	detectDshLifecycle,
+	dshCanUninstall,
+	uninstallDsh,
+	type DshDetectionDeps,
+	type DshLifecycleProjection
+} from './dsh-lifecycle.js';
 import {
 	hasCodeGraphIntegration,
 	hasClaudeCodeGraphIntegration,
@@ -54,6 +61,7 @@ export type ManagedComponent = ComponentDefinition & {
 	readonly latestVersion: string;
 	readonly hasUpdate: boolean | null;
 	readonly statusHint?: string;
+	readonly lifecycle?: DshLifecycleProjection;
 };
 
 /** 单组件安装结果（对齐 ToolInstallOutcome 结构）。 */
@@ -61,12 +69,14 @@ export type ComponentInstallOutcome = {
 	readonly id: ComponentId;
 	readonly success: boolean;
 	readonly version?: string;
+	readonly lifecycle?: DshLifecycleProjection;
 	readonly error?: string;
 };
 
 /** 安装依赖注入（供测试 mock exec；统一透传 installTool，含 ClaudeCode）。 */
 export type InstallComponentDeps = {
 	readonly exec?: typeof execCommand;
+	readonly dshDetect?: (deps?: DshDetectionDeps) => Promise<DshLifecycleProjection>;
 	// 当前 Agent 上下文（design D4/D5）：CodeGraph 接入目标与 CcgWorkflow Codex 引导按此分支，默认 Claude Code。
 	readonly agentContext?: AgentContext;
 };
@@ -74,7 +84,7 @@ export type InstallComponentDeps = {
 const INSTALL_TIMEOUT_MS = 300000;
 
 /**
- * 全部受管组件定义（9 项）：ClaudeCode + 8 工具，直接复用 registry（DRY，单一真理源）。
+ * 全部受管组件定义（10 项）：ClaudeCode + 9 工具，直接复用 registry（DRY，单一真理源）。
  * 顺序即 TOOL_DEFINITIONS 顺序（ClaudeCode 首位）；分组展示顺序由 sortComponentsByToolGroup 决定。
  */
 export const COMPONENT_DEFINITIONS: readonly ComponentDefinition[] = TOOL_DEFINITIONS;
@@ -109,6 +119,7 @@ export const COMPONENT_META: Readonly<Record<ComponentId, ComponentMeta>> = {
 	ClaudeCode: {group: 'agent', contexts: BOTH_CONTEXTS, sharingKind: 'agent-exclusive'},
 	CodexCli: {group: 'agent', contexts: BOTH_CONTEXTS, sharingKind: 'agent-exclusive'},
 	AntigravityCli: {group: 'agent', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
+	DeepSeekHarness: {group: 'agent', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
 	Ccline: {group: 'companion', contexts: ['cc'], sharingKind: 'agent-exclusive'},
 	OpenSpec: {group: 'workflow', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
 	Trellis: {group: 'workflow', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
@@ -380,6 +391,8 @@ export function uninstallImpactNotice(id: ComponentId, options: {readonly fullUn
 	}
 
 	switch (id) {
+		case 'DeepSeekHarness':
+			return '仅卸载受管的 DeepSeek Harness npm 包，保留用户配置、会话和凭据；外部 dsh 不会被接管或删除。';
 		case 'ClaudeCode':
 			return '将卸载 Claude Code，相关配置和数据不会删除。';
 		case 'CodexCli':
@@ -405,8 +418,8 @@ function friendlyError(text: string, fallback: string): string {
 }
 
 /**
- * 检测全部受管组件（9 项），不聚合 Skills/MCP（11.7）。
- * 复用 update.checkCliToolUpdates（返回正好 9 个 CLI 组件：ClaudeCode/Ccline/CcgWorkflow/OpenSpec/Trellis/CodeGraph/GitNexus/CodexCli + AntigravityCli），
+ * 检测全部受管组件（10 项），不聚合 Skills/MCP（11.7）。
+ * 复用 update.checkCliToolUpdates（返回正好 10 个 CLI 组件：ClaudeCode/Ccline/CcgWorkflow/OpenSpec/Trellis/CodeGraph/GitNexus/CodexCli + AntigravityCli + DeepSeekHarness），
  * join COMPONENT_DEFINITIONS 静态字段（description/kind/command 等）。
  */
 export async function detectComponents(onProgress?: ProgressCallback, forceRefresh = false): Promise<ManagedComponent[]> {
@@ -426,7 +439,8 @@ export async function detectComponents(onProgress?: ProgressCallback, forceRefre
 			currentVersion: match.currentVersion,
 			latestVersion: match.latestVersion,
 			hasUpdate: match.hasUpdate,
-			statusHint: match.statusHint
+			statusHint: match.statusHint,
+			lifecycle: match.lifecycle
 		};
 	});
 }
@@ -445,7 +459,7 @@ export async function installComponent(
 		return {id, success: false, error: '未知组件'};
 	}
 
-	return installTool(id, onProgress, deps.agentContext ?? 'cc', {exec: deps.exec});
+	return installTool(id, onProgress, deps.agentContext ?? 'cc', {exec: deps.exec, dshDetect: deps.dshDetect});
 }
 
 /** ManagedComponent → UpdateComponent 映射（applyUpdates 按 type 分发）。
@@ -462,7 +476,8 @@ function toUpdateComponent(component: ManagedComponent): UpdateComponent {
 		currentVersion: component.currentVersion,
 		latestVersion: component.latestVersion,
 		hasUpdate: component.hasUpdate,
-		statusHint: component.statusHint
+		statusHint: component.statusHint,
+		lifecycle: component.lifecycle
 	};
 }
 
@@ -486,6 +501,8 @@ export async function updateComponents(
 export type ComponentUninstallOutcome = {
 	readonly id: ComponentId;
 	readonly success: boolean;
+	readonly lifecycle?: DshLifecycleProjection;
+	readonly warning?: string;
 	readonly error?: string;
 	readonly manualHint?: string;
 };
@@ -494,6 +511,9 @@ export type ComponentUninstallOutcome = {
 export type UninstallComponentDeps = {
 	readonly exec?: typeof execCommand;
 	readonly createSnapshotFn?: () => string;
+	readonly dshDetect?: (deps?: DshDetectionDeps) => Promise<DshLifecycleProjection>;
+	readonly env?: NodeJS.ProcessEnv;
+	readonly platform?: NodeJS.Platform;
 	// 单侧 eject 目标（Enter 路径）：CodeGraph/CcgWorkflow 默认只解除该 Agent 集成。
 	readonly agentContext?: AgentContext;
 	// d 全量卸载：inject 类解除两侧注入 + 共享 CLI/包；与 agentContext 互斥优先 fullUninstall。
@@ -517,6 +537,19 @@ export async function uninstallComponent(
 		return {id, success: false, error: '未知组件'};
 	}
 
+	const exec = deps.exec ?? execCommand;
+	if (definition.id === DSH_TOOL_ID) {
+		try {
+			const lifecycle = await (deps.dshDetect ?? detectDshLifecycle)({exec, env: deps.env, platform: deps.platform});
+			if (!dshCanUninstall(lifecycle)) {
+				return {id, success: false, error: lifecycle.diagnostic, lifecycle};
+			}
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return {id, success: false, error: message};
+		}
+	}
+
 	// 11.15 snapshot-before-write：快照失败则中止，不执行任何卸载命令/删除
 	const makeSnapshot = deps.createSnapshotFn ?? createSnapshot;
 	try {
@@ -528,8 +561,9 @@ export async function uninstallComponent(
 		return {id, success: false, error: `快照失败: ${message}`};
 	}
 
-	const exec = deps.exec ?? execCommand;
 	const context: AgentContext = deps.agentContext ?? 'cc';
+	let dshLifecycle: DshLifecycleProjection | undefined;
+	let dshWarning: string | undefined;
 	try {
 		if (deps.fullUninstall && isInjectableComponent(id)) {
 			await fullUninstallInjectable(id, exec, onProgress);
@@ -561,6 +595,23 @@ export async function uninstallComponent(
 					}
 
 					break;
+				case 'dsh': {
+					const outcome = await uninstallDsh(onProgress, {
+						exec,
+						detect: deps.dshDetect,
+						env: deps.env,
+						platform: deps.platform
+					});
+					dshLifecycle = outcome.lifecycle;
+					dshWarning = outcome.warning;
+					if (!outcome.success) {
+						throw new Error(outcome.error ?? 'DeepSeek Harness 卸载失败');
+					}
+					if (outcome.warning) {
+						onProgress?.({level: 'warning', message: outcome.warning, componentId: id});
+					}
+					break;
+				}
 				case 'ccg-init':
 					// design D5：CcgWorkflow 安装/卸载统一走官方非交互命令。
 					// Claude Code → `npx ccg-workflow uninstall`；Codex → `npx ccg-workflow codex-mode uninstall`。
@@ -574,11 +625,22 @@ export async function uninstallComponent(
 		}
 
 		onProgress?.({level: 'success', message: `${definition.name} 已卸载`, componentId: id});
-		return {id, success: true};
+		return {
+			id,
+			success: true,
+			...(dshLifecycle ? {lifecycle: dshLifecycle} : {}),
+			...(dshWarning ? {warning: dshWarning} : {})
+		};
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		onProgress?.({level: 'danger', message: `${definition.name} 卸载失败: ${message}`, componentId: id});
-		return {id, success: false, error: message};
+		return {
+			id,
+			success: false,
+			error: message,
+			...(dshLifecycle ? {lifecycle: dshLifecycle} : {}),
+			...(dshWarning ? {warning: dshWarning} : {})
+		};
 	}
 }
 

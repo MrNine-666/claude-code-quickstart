@@ -36,10 +36,28 @@ export async function runToolsUpdate(name: string | undefined, deps: ToolsUpdate
 		return 0;
 	}
 
-	const result = await update(targets.components, createConsoleProgress());
-	console.log(`更新快照: ${result.snapshotPath}`);
+	let result: Awaited<ReturnType<typeof update>>;
+	try {
+		result = await update(targets.components, createConsoleProgress());
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
 	const failed = result.updatedItems.filter(item => item.startsWith('failed::'));
+	if (result.snapshotPath) {
+		console.log(`更新快照: ${result.snapshotPath}`);
+	}
+	for (const item of failed) {
+		console.error(updateFailureDiagnostic(item));
+	}
 	return failed.length > 0 ? 1 : 0;
+}
+
+function updateFailureDiagnostic(item: string): string {
+	const [status, id, ...detailParts] = item.split('::');
+	const detail = detailParts.join('::').trim();
+	if (status !== 'failed' || !id) return item;
+	return detail ? `${id} 更新失败: ${detail}` : `${id} 更新失败`;
 }
 
 async function runToolsUninstall(name: string | undefined, assumedYes: boolean): Promise<number> {
@@ -70,11 +88,17 @@ async function runToolsUninstall(name: string | undefined, assumedYes: boolean):
 		console.error(outcome.error ?? '卸载失败');
 		return 1;
 	}
+	if (outcome.warning) {
+		console.warn(outcome.warning);
+	}
 
 	return 0;
 }
 
-function selectUpdateTargets(components: readonly ManagedComponent[], name: string | undefined): {ok: true; components: readonly ManagedComponent[]} | {ok: false; error: string} {
+function selectUpdateTargets(
+	components: readonly ManagedComponent[],
+	name: string | undefined
+): {ok: true; components: readonly ManagedComponent[]} | {ok: false; error: string} {
 	if (name) {
 		const id = resolveToolId(name);
 		if (!id) {
@@ -86,6 +110,10 @@ function selectUpdateTargets(components: readonly ManagedComponent[], name: stri
 			return {ok: false, error: `未找到工具: ${name}`};
 		}
 
+		if (component.lifecycle && !component.lifecycle.canUpdate && component.lifecycle.state !== 'managed') {
+			return {ok: false, error: component.lifecycle.diagnostic};
+		}
+
 		return {ok: true, components: component.hasUpdate === true ? [component] : []};
 	}
 
@@ -94,9 +122,8 @@ function selectUpdateTargets(components: readonly ManagedComponent[], name: stri
 
 export function resolveToolId(name: string): ComponentId | null {
 	const normalized = name.trim().toLowerCase();
-	const definition = TOOL_DEFINITIONS.find(item =>
-		item.id.toLowerCase() === normalized ||
-		item.cliAliases?.some(alias => alias.toLowerCase() === normalized)
+	const definition = TOOL_DEFINITIONS.find(
+		item => item.id.toLowerCase() === normalized || item.cliAliases?.some(alias => alias.toLowerCase() === normalized)
 	);
 	return definition?.id ?? null;
 }

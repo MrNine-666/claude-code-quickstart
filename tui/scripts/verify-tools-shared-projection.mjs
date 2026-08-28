@@ -16,7 +16,18 @@ process.env.CCQ_HOME = home;
 const {projectSharedToolComponents, isInjectableComponent, COMPONENT_DEFINITIONS} = await import('../src/core/tools-manage.ts');
 const {codeGraphInstallCommands, codeGraphUninstallCommands} = await import('../src/core/tools-lifecycle.ts');
 
-const EXPECTED_IDS = ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'Ccline', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus'];
+const EXPECTED_IDS = [
+	'ClaudeCode',
+	'CodexCli',
+	'AntigravityCli',
+	'DeepSeekHarness',
+	'Ccline',
+	'OpenSpec',
+	'Trellis',
+	'CcgWorkflow',
+	'CodeGraph',
+	'GitNexus'
+];
 
 // detected 全集（模拟检测结果）。projectSharedToolComponents 不按 context 过滤。
 const detected = COMPONENT_DEFINITIONS.map(def => ({
@@ -30,11 +41,15 @@ const detected = COMPONENT_DEFINITIONS.map(def => ({
 // ── 列表 agentContext 不变性：投影不接受 context 参数，结果对 cc/cx 都相同 ──────
 const projected = projectSharedToolComponents(detected);
 const ids = projected.map(c => c.id);
-assert.deepEqual(ids, EXPECTED_IDS, '共享投影返回全 9 组件并按分组顺序排列（含 Ccline / Trellis / GitNexus）');
+assert.deepEqual(ids, EXPECTED_IDS, '共享投影返回全 10 组件并按分组顺序排列（含 DeepSeekHarness / Ccline / Trellis / GitNexus）');
 assert.ok(ids.includes('Ccline'), 'Ccline 常显');
 // 投影为纯函数，输入不含 context —— 两次调用结果结构一致即证明与上下文无关。
 const projectedAgain = projectSharedToolComponents(detected);
-assert.deepEqual(projectedAgain.map(c => c.id), ids, '重复投影可见集合稳定（context-independent）');
+assert.deepEqual(
+	projectedAgain.map(c => c.id),
+	ids,
+	'重复投影可见集合稳定（context-independent）'
+);
 console.log('[PASS] 6.1 列表 agentContext 不变性：共享投影全集常显含 Ccline');
 
 // ── 双态独立：仅 Claude Code 注入 CodeGraph ────────────────────────────────────
@@ -54,7 +69,7 @@ assert.equal(codegraph.injectByAgent.cx.integrated, false, 'Codex 侧未注入�
 console.log('[PASS] 6.1 双态独立：CodeGraph 仅注入 Claude Code 时 cc=已注入/cx=未注入');
 
 // ── 非 inject 类无 injectByAgent ──────────────────────────────────────────────
-for (const id of ['OpenSpec', 'Trellis', 'AntigravityCli', 'ClaudeCode', 'CodexCli', 'Ccline', 'GitNexus']) {
+for (const id of ['OpenSpec', 'Trellis', 'AntigravityCli', 'DeepSeekHarness', 'ClaudeCode', 'CodexCli', 'Ccline', 'GitNexus']) {
 	const component = dualProjected.find(c => c.id === id);
 	assert.ok(component, `${id} 在投影中存在`);
 	assert.equal(component.injectByAgent, undefined, `${id}（非 inject 类）不得含 injectByAgent`);
@@ -73,15 +88,17 @@ assert.deepEqual(
 	[{cmd: 'codegraph', args: ['install', '--target=codex', '--location=global', '--yes']}],
 	'inject Codex 目标解析为 --target=codex'
 );
-assert.deepEqual(
-	codeGraphUninstallCommands('cx'),
-	codeGraphUninstallCommands('cx'),
-	'eject 命令按 target 稳定解析'
-);
+assert.deepEqual(codeGraphUninstallCommands('cx'), codeGraphUninstallCommands('cx'), 'eject 命令按 target 稳定解析');
 const cxUninstall = codeGraphUninstallCommands('cx');
-assert.ok(cxUninstall.some(cmd => cmd.args.includes('--target=codex')), 'eject Codex 目标解析为 --target=codex');
+assert.ok(
+	cxUninstall.some(cmd => cmd.args.includes('--target=codex')),
+	'eject Codex 目标解析为 --target=codex'
+);
 const ccInstall = codeGraphInstallCommands('cc');
-assert.ok(ccInstall.some(cmd => cmd.args.includes('--target=claude')), 'inject Claude Code 目标解析为 --target=claude');
+assert.ok(
+	ccInstall.some(cmd => cmd.args.includes('--target=claude')),
+	'inject Claude Code 目标解析为 --target=claude'
+);
 console.log('[PASS] 6.1 显式 target 解析：inject/eject 命令随 target 而非全局上下文');
 
 // ── 开关草稿状态机：Enter 打开用实际态初始化草稿，空格切换草稿，Enter 前不落盘 ────
@@ -93,6 +110,17 @@ const {
 	resolveToolsPrimaryAction,
 	updatableComponents
 } = await import('../src/state/tools-view-state.ts');
+const {
+	dshLifecyclePatch,
+	injectChangesAction,
+	runInjectChanges,
+	settleBatchUpdateComponents,
+	successfulInstallPatch,
+	successfulUpdatePatch,
+	toolStatusDot,
+	updateFailureMessage,
+	uninstallSuccessPatch
+} = await import('../src/views/tools/tools-view-actions.ts');
 
 // ── 网格 Enter 主操作：管理 Modal 优先，普通工具按安装/更新事实分派 ──────────
 const openSpec = dualProjected.find(c => c.id === 'OpenSpec');
@@ -102,6 +130,82 @@ assert.equal(resolveToolsPrimaryAction({...openSpec, installed: true, hasUpdate:
 assert.equal(resolveToolsPrimaryAction({...openSpec, installed: true, hasUpdate: false}), 'latest', '普通最新工具 Enter 只提示已是最新');
 assert.equal(resolveToolsPrimaryAction({...codegraph, hasUpdate: true}), 'manage', '管理型工具即使有更新，Enter 仍优先打开 Modal');
 console.log('[PASS] Tools Enter 主操作优先级：manage > install/update/latest');
+
+// ── DeepSeek Harness：损坏/版本不一致可修复，外部与 PATH 冲突只读 ─────────────
+const dsh = dualProjected.find(c => c.id === 'DeepSeekHarness');
+assert.ok(dsh, 'DeepSeekHarness 在共享投影中存在');
+const dshLifecycle = state => ({
+	owner: 'DeepSeekHarness',
+	state,
+	packageName: '@deepseek-ai/dsh',
+	packageVersion: state === 'version-mismatch' ? '1.2.3' : '',
+	commandVersion: state === 'version-mismatch' ? '1.2.2' : '',
+	packagePresent: ['managed', 'broken', 'version-mismatch', 'path-conflict'].includes(state),
+	commandPresent: !['not-installed', 'verification-unknown'].includes(state),
+	canInstall: state === 'not-installed',
+	canUpdate: state === 'managed' || state === 'broken' || state === 'version-mismatch',
+	canUninstall: state === 'managed' || state === 'broken' || state === 'version-mismatch',
+	repairRequired: state === 'broken' || state === 'version-mismatch',
+	diagnostic: `fixture: ${state}`
+});
+assert.equal(resolveToolsPrimaryAction({...dsh, lifecycle: dshLifecycle('broken')}), 'repair', 'DSH broken Enter 进入修复');
+assert.equal(
+	resolveToolsPrimaryAction({...dsh, lifecycle: dshLifecycle('version-mismatch')}),
+	'repair',
+	'DSH version-mismatch Enter 进入修复'
+);
+assert.equal(resolveToolsPrimaryAction({...dsh, lifecycle: dshLifecycle('external')}), 'blocked', 'DSH external Enter 只读阻断');
+assert.equal(resolveToolsPrimaryAction({...dsh, lifecycle: dshLifecycle('path-conflict')}), 'blocked', 'DSH PATH 冲突 Enter 只读阻断');
+const verificationUnknownLifecycle = dshLifecycle('verification-unknown');
+assert.equal(verificationUnknownLifecycle.canInstall, false, 'DSH verification-unknown 禁止安装');
+assert.equal(verificationUnknownLifecycle.canUpdate, false, 'DSH verification-unknown 禁止更新');
+assert.equal(verificationUnknownLifecycle.canUninstall, false, 'DSH verification-unknown 禁止卸载');
+assert.equal(
+	resolveToolsPrimaryAction({...dsh, lifecycle: verificationUnknownLifecycle}),
+	'blocked',
+	'DSH verification-unknown Enter 只读阻断'
+);
+assert.deepEqual(
+	toolStatusDot({...dsh, lifecycle: verificationUnknownLifecycle}, 'idle'),
+	{kind: 'failed', label: '需验证'},
+	'DSH verification-unknown 显示需验证状态'
+);
+
+const brokenDsh = {...dsh, installed: true, currentVersion: '1.2.3', hasUpdate: false, lifecycle: undefined};
+const brokenDshLifecycle = dshLifecycle('broken');
+const failedDshState = reduceToolsViewState(
+	{...createInitialToolsViewState(), components: [brokenDsh], loaded: true},
+	{
+		type: 'item-failed',
+		id: 'DeepSeekHarness',
+		error: 'DSH postflight 失败',
+		patch: dshLifecyclePatch(brokenDsh, brokenDshLifecycle)
+	}
+);
+assert.equal(failedDshState.components[0].lifecycle.state, 'broken', '单项 DSH 失败保留最终 broken lifecycle');
+assert.equal(failedDshState.components[0].installed, true, 'broken DSH 保留可修复安装事实');
+assert.equal(failedDshState.components[0].hasUpdate, true, 'broken DSH 继续参加修复更新');
+assert.deepEqual(
+	updatableComponents(failedDshState).map(component => component.id),
+	['DeepSeekHarness'],
+	'broken DSH 出现在全部更新目标中'
+);
+assert.equal(
+	updateFailureMessage(['failed::DeepSeekHarness::npm 命令失败 (exit 23): fixture mutation failure'], 'DeepSeekHarness', 'fallback'),
+	'npm 命令失败 (exit 23): fixture mutation failure',
+	'DSH 单项更新错误必须保留 core mutation diagnostic'
+);
+
+const mismatchDshLifecycle = dshLifecycle('version-mismatch');
+const batchFailedDsh = settleBatchUpdateComponents([brokenDsh], [brokenDsh], new Set(['DeepSeekHarness']), mismatchDshLifecycle)[0];
+assert.equal(batchFailedDsh.lifecycle.state, 'version-mismatch', '批量 DSH 失败保留最终 version-mismatch lifecycle');
+assert.equal(batchFailedDsh.hasUpdate, true, '批量 DSH 版本不一致继续参加修复更新');
+assert.deepEqual(
+	updatableComponents({...createInitialToolsViewState(), components: [batchFailedDsh], loaded: true}).map(component => component.id),
+	['DeepSeekHarness'],
+	'version-mismatch DSH 出现在全部更新目标中'
+);
+console.log('[PASS] DSH repair/blocked 主操作、需验证状态与单项/批量失败 lifecycle/error 收敛');
 
 // ── GitNexus：整体接入/整体卸载，不得出现 Agent 开关 Modal（AC1/R7）───────────
 const gitnexus = dualProjected.find(c => c.id === 'GitNexus');
@@ -213,15 +317,6 @@ const pendingCodegraph = {
 		cx: {context: 'cx', integrated: false}
 	}
 };
-const {
-	injectChangesAction,
-	settleBatchUpdateComponents,
-	runInjectChanges,
-	successfulInstallPatch,
-	successfulUpdatePatch,
-	toolStatusDot,
-	uninstallSuccessPatch
-} = await import('../src/views/tools/tools-view-actions.ts');
 const injectResult = await runInjectChanges(
 	pendingCodegraph,
 	[{ctx: 'cc', desired: true}],
@@ -251,7 +346,12 @@ console.log('[PASS] CodeGraph 首次仅安装 Claude Code 时右上角立即显�
 
 // ── CodeGraph 逐 Agent 关闭最后一侧：共享 CLI 必须保留（移除 CLI 仅整体卸载路径负责）─────
 const lastSideEject = await runInjectChanges(
-	{...patchedCodegraph, sharedInstalled: true, sharedVersion: '1.4.1', injectByAgent: {cc: {context: 'cc', integrated: true}, cx: {context: 'cx', integrated: false}}},
+	{
+		...patchedCodegraph,
+		sharedInstalled: true,
+		sharedVersion: '1.4.1',
+		injectByAgent: {cc: {context: 'cc', integrated: true}, cx: {context: 'cx', integrated: false}}
+	},
 	[{ctx: 'cc', desired: false}],
 	{
 		injectComponent: async () => {
@@ -272,7 +372,10 @@ console.log('[PASS] CodeGraph 逐 Agent 关闭最后一侧保留共享 CLI 状�
 // ── 双侧变更部分失败：保留已完成侧并返回错误，禁止丢弃磁盘真实状态 ───────────────
 const partialResult = await runInjectChanges(
 	{...patchedCodegraph, injectByAgent: {cc: {context: 'cc', integrated: true}, cx: {context: 'cx', integrated: false}}},
-	[{ctx: 'cc', desired: false}, {ctx: 'cx', desired: true}],
+	[
+		{ctx: 'cc', desired: false},
+		{ctx: 'cx', desired: true}
+	],
 	{
 		injectComponent: async () => ({id: 'CodeGraph', success: false, error: 'Codex 接入失败'}),
 		ejectComponent: async () => ({id: 'CodeGraph', success: true})
@@ -294,7 +397,14 @@ console.log('[PASS] 双侧变更部分失败保留已完成侧状态');
 
 // ── 进度时态：纯卸载显示卸载中，含安装的混合操作显示安装中 ────────────────────
 assert.equal(injectChangesAction([{ctx: 'cc', desired: false}]), 'uninstall', '纯 eject 使用卸载时态');
-assert.equal(injectChangesAction([{ctx: 'cc', desired: false}, {ctx: 'cx', desired: true}]), 'install', '混合变更含安装时使用安装时态');
+assert.equal(
+	injectChangesAction([
+		{ctx: 'cc', desired: false},
+		{ctx: 'cx', desired: true}
+	]),
+	'install',
+	'混合变更含安装时使用安装时态'
+);
 console.log('[PASS] 开关进度时态区分安装与纯卸载');
 
 // ── 全量卸载 patch：null/undefined/双侧快照均须真实覆盖旧值 ────────────────────
@@ -316,7 +426,11 @@ assert.equal(fullyUninstalled.injectByAgent.cc.integrated, false, '全量卸载�
 assert.equal(fullyUninstalled.injectByAgent.cx.integrated, false, '全量卸载清空 Codex 侧');
 assert.equal(fullyUninstalled.sharedVersion, '', '全量卸载清空共享版本');
 assert.equal(fullyUninstalledState.loaded, true, '局部 patch 不改变 loaded');
-assert.equal(updatableComponents({...fullyUninstalledState, components: [{...fullyUninstalled, hasUpdate: true}]}).length, 0, '未安装组件即使收到脏更新态也不得进入全部更新');
+assert.equal(
+	updatableComponents({...fullyUninstalledState, components: [{...fullyUninstalled, hasUpdate: true}]}).length,
+	0,
+	'未安装组件即使收到脏更新态也不得进入全部更新'
+);
 console.log('[PASS] 全量卸载 patch 清空更新态、提示、共享版本与双侧状态');
 
 // ── 单项更新 patch：共享/双侧版本与 currentVersion 同步前进 ────────────────────
@@ -360,9 +474,11 @@ console.log('[PASS] 单项更新 patch 同步共享 CLI 与双侧版本');
 // ── Codex-only CCG：共享投影必须派生 installed/hasUpdate，允许 u 更新 ──────────
 mkdirSync(join(home, '.codex'), {recursive: true});
 writeFileSync(join(home, '.codex', '.ccg-version'), '3.1.0\n', 'utf8');
-const codexOnlyDetected = detected.map(component => component.id === 'CcgWorkflow'
-	? {...component, installed: false, currentVersion: '', latestVersion: '3.2.0', hasUpdate: null}
-	: component);
+const codexOnlyDetected = detected.map(component =>
+	component.id === 'CcgWorkflow'
+		? {...component, installed: false, currentVersion: '', latestVersion: '3.2.0', hasUpdate: null}
+		: component
+);
 const codexOnlyCcg = projectSharedToolComponents(codexOnlyDetected).find(component => component.id === 'CcgWorkflow');
 assert.equal(codexOnlyCcg.injectByAgent.cc.integrated, false, 'Codex-only CCG 的 Claude Code 侧未安装');
 assert.equal(codexOnlyCcg.injectByAgent.cx.integrated, true, 'Codex-only CCG 的 Codex 侧已安装');
@@ -378,7 +494,10 @@ console.log('[PASS] CodeGraph 配置残留但 CLI 缺失显示「CLI 不可用�
 
 // ── updateAll：成功/失败检测结果都必须先走共享投影，失败后仍刷新 ───────────────
 const toolsViewSource = readFileSync(new URL('../src/views/tools/tools-view-actions.ts', import.meta.url), 'utf8');
-const updateAllSource = toolsViewSource.slice(toolsViewSource.indexOf('export function updateAll'), toolsViewSource.indexOf('export function runUninstall'));
+const updateAllSource = toolsViewSource.slice(
+	toolsViewSource.indexOf('export function updateAll'),
+	toolsViewSource.indexOf('export function runUninstall')
+);
 const settledBatch = settleBatchUpdateComponents(
 	[installedWithUpdate, {...openSpec, installed: true, currentVersion: '1.0.0', latestVersion: '1.1.0', hasUpdate: true}],
 	[installedWithUpdate],

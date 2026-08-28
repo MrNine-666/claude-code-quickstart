@@ -8,6 +8,16 @@ import {execCommand, formatCommandInstruction, type ProgressCallback} from './ex
 import {refreshNpmGlobalBinPath} from './npm-path.js';
 import {hasUpdate} from './semver.js';
 import {installTool, TOOL_DEFINITIONS} from './tools-install.js';
+import {
+	DSH_PACKAGE_NAME,
+	DSH_TOOL_ID,
+	detectDshLifecycle,
+	dshCanUpdate,
+	dshHasUpdate,
+	updateDsh,
+	type DshDetectionDeps,
+	type DshLifecycleProjection
+} from './dsh-lifecycle.js';
 import {codeGraphInstallCommands, gitNexusSetupCommands, gitNexusFailureDiagnostic} from './tools-lifecycle.js';
 import {
 	hasCodeGraphIntegration,
@@ -44,6 +54,7 @@ export type UpdateComponent = {
 	readonly latestVersion: string;
 	readonly hasUpdate: boolean | null;
 	readonly statusHint?: string;
+	readonly lifecycle?: DshLifecycleProjection;
 };
 
 type NpmOutdated = Record<string, {latest?: string}>;
@@ -106,7 +117,12 @@ export async function getNpmOutdatedGlobal(forceRefresh = false): Promise<NpmOut
 		}
 	}
 
-	const result = await execCommand('npm', ['outdated', '-g', '--json'], {timeout: 30000});
+	let result: Awaited<ReturnType<typeof execCommand>>;
+	try {
+		result = await execCommand('npm', ['outdated', '-g', '--json'], {timeout: 30000});
+	} catch {
+		return {};
+	}
 	let outdated: NpmOutdated = {};
 	if (result.stdout && result.stdout.trim()) {
 		try {
@@ -284,8 +300,13 @@ async function buildNpmComponentStatus(
 	id: string,
 	packageName: string,
 	outdated: NpmOutdated,
-	latestByPackage: NpmViewCache
+	latestByPackage: NpmViewCache,
+	dshLifecycle?: DshLifecycleProjection
 ): Promise<UpdateComponent> {
+	if (id === DSH_TOOL_ID) {
+		return buildDshComponentStatus(packageName, outdated, latestByPackage, dshLifecycle);
+	}
+
 	const commandInfo = COMMAND_COMPONENTS[id];
 	const versionInfo = commandInfo
 		? await getCommandVersion(commandInfo.command, commandInfo.versionArgs)
@@ -305,6 +326,41 @@ async function buildNpmComponentStatus(
 	};
 }
 
+async function buildDshComponentStatus(
+	packageName: string,
+	outdated: NpmOutdated,
+	latestByPackage: NpmViewCache,
+	dshLifecycle?: DshLifecycleProjection
+): Promise<UpdateComponent> {
+	const lifecycle = dshLifecycle ?? (await detectDshLifecycle());
+	const remote = outdated[packageName];
+	const latestVersion = remote?.latest || latestByPackage[packageName] || lifecycle.packageVersion || lifecycle.commandVersion;
+	const currentVersion = lifecycle.packageVersion || lifecycle.commandVersion;
+	const repairable = lifecycle.repairRequired;
+	const installed = lifecycle.state === 'managed' || repairable;
+	const hasUpdate = repairable
+		? true
+		: lifecycle.state === 'managed'
+			? latestVersion
+				? (dshHasUpdate(currentVersion, latestVersion) ?? false)
+				: false
+			: null;
+	const detail = lifecycle.state === 'managed' || lifecycle.state === 'not-installed' ? '' : lifecycle.diagnostic;
+	const warnings = [detail, lifecycle.prereleaseWarning].filter(Boolean).join(' ');
+	return {
+		id: DSH_TOOL_ID,
+		name: 'DeepSeek Harness',
+		type: 'npm',
+		package: DSH_PACKAGE_NAME,
+		installed,
+		currentVersion,
+		latestVersion,
+		hasUpdate,
+		...(warnings ? {statusHint: warnings} : {}),
+		lifecycle
+	};
+}
+
 async function buildAntigravityStatus(): Promise<UpdateComponent> {
 	const versionInfo = await getCommandVersion('agy', ['--version']);
 	return {
@@ -319,9 +375,12 @@ async function buildAntigravityStatus(): Promise<UpdateComponent> {
 	};
 }
 
-// export 供 tools-manage.ts 的 detectComponents 复用：返回 9 个 CLI 组件
-// （ClaudeCode/Ccline/CcgWorkflow/OpenSpec/Trellis/CodeGraph/GitNexus/CodexCli + AntigravityCli），不含 Skills/MCP。
+// export 供 tools-manage.ts 的 detectComponents 复用：返回 10 个 CLI 组件
+// （ClaudeCode/Ccline/CcgWorkflow/OpenSpec/Trellis/CodeGraph/GitNexus/CodexCli + AntigravityCli + DeepSeekHarness），不含 Skills/MCP。
 export async function checkCliToolUpdates(outdated: NpmOutdated, forceRefresh = false): Promise<UpdateComponent[]> {
+	// 保留调用方进入检测时的 PATH：refreshNpmGlobalBinPath 会前置 npm bin，
+	// 但 DSH 必须按用户原始 PATH 判断外部命令遮蔽，不能被检测准备动作掩盖。
+	const dshLifecycle = await detectDshLifecycle({env: {...process.env}});
 	await refreshNpmGlobalBinPath();
 	const latestByPackage = await resolveNpmViewLatest(Object.values(NPM_COMPONENT_MAP), forceRefresh);
 	const components: UpdateComponent[] = [];
@@ -330,7 +389,9 @@ export async function checkCliToolUpdates(outdated: NpmOutdated, forceRefresh = 
 			// 非全局包：config.toml 本地版本 + npm view 远程版本（不依赖 outdated 全局列表）
 			components.push(await buildCcgWorkflowStatus(latestByPackage));
 		} else {
-			components.push(await buildNpmComponentStatus(id, packageName, outdated, latestByPackage));
+			components.push(
+				await buildNpmComponentStatus(id, packageName, outdated, latestByPackage, id === DSH_TOOL_ID ? dshLifecycle : undefined)
+			);
 		}
 	}
 
@@ -540,6 +601,7 @@ export function rollbackFromSnapshot(snapshotPath: string): void {
 export type ApplyUpdatesResult = {
 	readonly snapshotPath: string;
 	readonly updatedItems: readonly string[];
+	readonly dshLifecycle?: DshLifecycleProjection;
 };
 
 // 可选依赖注入：默认指向真实 createSnapshot / execCommand，仅供测试断言
@@ -548,6 +610,7 @@ export type ApplyUpdatesDeps = {
 	readonly createSnapshotFn?: () => string;
 	readonly exec?: typeof execCommand;
 	readonly agentContext?: AgentContext;
+	readonly dshDetect?: (deps?: DshDetectionDeps) => Promise<DshLifecycleProjection>;
 };
 
 function ccgWorkflowUpdateContexts(activeContext: AgentContext = 'cc'): AgentContext[] {
@@ -622,16 +685,56 @@ export async function applyUpdates(
 ): Promise<ApplyUpdatesResult> {
 	const makeSnapshot = deps.createSnapshotFn ?? createSnapshot;
 	const exec = deps.exec ?? execCommand;
+	const detectDsh = deps.dshDetect ?? detectDshLifecycle;
+	let dshPreflight: DshLifecycleProjection | undefined;
+	for (const component of components) {
+		if (component.id !== DSH_TOOL_ID) continue;
+		const lifecycle = await detectDsh({exec});
+		if (!dshCanUpdate(lifecycle)) {
+			if (components.length === 1) {
+				// 单项竞态拒绝也要返回最终 ownership projection，供 TUI 收敛卡片；
+				// 此时没有 mutation，不创建 snapshot，也不执行 npm 写命令。
+				return {
+					snapshotPath: '',
+					updatedItems: [`failed::${DSH_TOOL_ID}::${lifecycle.diagnostic}`],
+					dshLifecycle: lifecycle
+				};
+			}
+			dshPreflight = lifecycle;
+		}
+	}
 	const snapshotPath = makeSnapshot();
 	onProgress?.({level: 'success', message: `更新快照已创建（${snapshotPath}）`});
 
 	const updatedItems: string[] = [];
+	let dshLifecycle: DshLifecycleProjection | undefined;
 
 	for (const component of components) {
 		onProgress?.({level: 'info', message: `更新: ${component.name}`, componentId: component.id});
 
 		try {
-			if (component.id === 'CcgWorkflow') {
+			if (component.id === DSH_TOOL_ID) {
+				if (dshPreflight && !dshCanUpdate(dshPreflight)) {
+					const message = dshPreflight.diagnostic;
+					dshLifecycle = dshPreflight;
+					onProgress?.({level: 'danger', message: `更新失败: ${message}`, componentId: component.id});
+					updatedItems.push(`failed::${component.id}::${message}`);
+					continue;
+				}
+				const outcome = await updateDsh(onProgress, {exec, detect: detectDsh});
+				dshLifecycle = outcome.lifecycle;
+				if (!outcome.success) {
+					throw new Error(outcome.error ?? 'DeepSeek Harness 更新失败');
+				}
+				dshLifecycle = outcome.lifecycle;
+				onProgress?.({level: 'success', message: `${component.name} 已更新`, componentId: component.id});
+				if (outcome.warning) {
+					onProgress?.({level: 'warning', message: outcome.warning, componentId: component.id});
+				}
+				updatedItems.push(
+					`updated::${component.id}::${component.currentVersion || 'none'}->${outcome.version || component.latestVersion || 'latest'}`
+				);
+			} else if (component.id === 'CcgWorkflow') {
 				const contexts = ccgWorkflowUpdateContexts(deps.agentContext);
 				for (const context of contexts) {
 					await installTool('CcgWorkflow', onProgress, context);
@@ -688,7 +791,7 @@ export async function applyUpdates(
 		}
 	}
 
-	return {snapshotPath, updatedItems};
+	return {snapshotPath, updatedItems, ...(dshLifecycle ? {dshLifecycle} : {})};
 }
 
 /** 生成更新汇总（对齐旧 generateUpdateSummary）。 */

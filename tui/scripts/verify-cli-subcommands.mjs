@@ -131,6 +131,8 @@ try {
 	assert.equal(resolveToolId('code-graph'), 'CodeGraph');
 	assert.equal(resolveToolId('gitnexus'), 'GitNexus', 'GitNexus canonical 小写别名可解析');
 	assert.equal(resolveToolId('git-nexus'), 'GitNexus', 'GitNexus 连字符别名可解析');
+	assert.equal(resolveToolId('dsh'), 'DeepSeekHarness', 'DeepSeek Harness 短别名可解析');
+	assert.equal(resolveToolId('deepseek-harness'), 'DeepSeekHarness', 'DeepSeek Harness 长别名可解析');
 
 	let forceRefreshSeen = null;
 	const updateExitCode = await runToolsUpdate(undefined, {
@@ -144,6 +146,37 @@ try {
 	});
 	assert.equal(updateExitCode, 0);
 	assert.equal(forceRefreshSeen, true, '显式 tools update 必须绕过远程缓存');
+	const updateErrors = [];
+	const originalUpdateError = console.error;
+	console.error = (...args) => updateErrors.push(args.join(' '));
+	try {
+		const failedDshUpdateExitCode = await runToolsUpdate('dsh', {
+			detect: async () => [
+				{
+					id: 'DeepSeekHarness',
+					name: 'DeepSeek Harness',
+					type: 'npm',
+					package: '@deepseek-ai/dsh',
+					installed: true,
+					currentVersion: '1.2.3',
+					latestVersion: '1.2.4',
+					hasUpdate: true
+				}
+			],
+			update: async () => ({
+				snapshotPath: '',
+				updatedItems: ['failed::DeepSeekHarness::fixture DSH postflight ownership diagnostic']
+			})
+		});
+		assert.equal(failedDshUpdateExitCode, 1, 'DSH 更新失败必须返回非零');
+	} finally {
+		console.error = originalUpdateError;
+	}
+	assert.equal(
+		updateErrors.some(line => line.includes('fixture DSH postflight ownership diagnostic')),
+		true,
+		'CLI 必须输出 DSH 更新失败的保留诊断'
+	);
 	console.log('[PASS] 工具 registry 单一事实源 + 显式更新强制刷新');
 
 	// ── provider/profile 展示 ───────────────────────────────────────────────────

@@ -5,8 +5,8 @@ import {join} from 'node:path';
 
 // Phase 11B tools-manage core 门禁：工具管理单一真理源（design TDR-11）。
 // 覆盖：
-// - COMPONENT_DEFINITIONS 9 组件齐备（ClaudeCode + 8 工具）+ 顺序（11.4/11.6）
-// - detectComponents 返回 9 项且不聚合 Skills/MCP（11.5/11.7）
+// - COMPONENT_DEFINITIONS 10 组件齐备（ClaudeCode + 9 工具）+ 顺序（11.4/11.6）
+// - detectComponents 返回 10 项且不聚合 Skills/MCP（11.5/11.7）
 // - CcgWorkflow 版本取自 config.toml（复用 update.ts 检测，单一真理源）
 // - installComponent('ClaudeCode') 走 npm install + 检测确认（11.6/11.8，deps.exec 注入 mock）
 
@@ -28,9 +28,11 @@ writeFileSync(
 		'@cometix/ccline': '',
 		'ccg-workflow': '',
 		'@fission-ai/openspec': '',
+		'@mindfoldhq/trellis': '',
 		'@colbymchenry/codegraph': '',
 		gitnexus: '',
-		'@openai/codex': ''
+		'@openai/codex': '',
+		'@deepseek-ai/dsh': ''
 	}),
 	'utf8'
 );
@@ -55,8 +57,8 @@ const {
 const ids = COMPONENT_DEFINITIONS.map(c => c.id);
 assert.deepEqual(
 	ids,
-	['ClaudeCode', 'Ccline', 'CcgWorkflow', 'OpenSpec', 'Trellis', 'CodeGraph', 'GitNexus', 'CodexCli', 'AntigravityCli'],
-	'9 组件齐备且定义顺序固定（ClaudeCode + 8 工具）'
+	['ClaudeCode', 'Ccline', 'CcgWorkflow', 'OpenSpec', 'Trellis', 'CodeGraph', 'GitNexus', 'CodexCli', 'AntigravityCli', 'DeepSeekHarness'],
+	'10 组件齐备且定义顺序固定（ClaudeCode + 9 工具）'
 );
 for (const def of COMPONENT_DEFINITIONS) {
 	assert.ok(def.name && def.description, `${def.id} 有 name + description`);
@@ -65,7 +67,7 @@ for (const def of COMPONENT_DEFINITIONS) {
 }
 const claude = COMPONENT_DEFINITIONS.find(c => c.id === 'ClaudeCode');
 assert.equal(claude.npmPackage, '@anthropic-ai/claude-code', 'ClaudeCode npm 包名');
-console.log('[PASS] COMPONENT_DEFINITIONS 9 组件齐备 (11.4/11.6)');
+console.log('[PASS] COMPONENT_DEFINITIONS 10 组件齐备 (11.4/11.6)');
 
 // ── GitNexus registry 事实（R1/AC7）───────────────────────────────────────────
 const gitnexusDef = COMPONENT_DEFINITIONS.find(c => c.id === 'GitNexus');
@@ -98,7 +100,7 @@ assert.equal(COMPONENT_META.CodeGraph.group, 'knowledge-graph', 'CodeGraph 属�
 assert.equal(COMPONENT_META.GitNexus.group, 'knowledge-graph', 'GitNexus 属于代码知识图谱组');
 const groupedDefinitions = groupComponentsByToolGroup(COMPONENT_DEFINITIONS);
 assert.deepEqual(groupedDefinitions.map(section => section.label), ['Agent', 'statusLine', '工作流', '代码知识图谱'], '分组结构输出 label + grid sections');
-assert.deepEqual(groupedDefinitions.flatMap(section => section.components.map(component => component.id)), ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'Ccline', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus'], '分组展示顺序按 Agent/statusLine/工作流/代码知识图谱重排，组内 CodeGraph → GitNexus');
+assert.deepEqual(groupedDefinitions.flatMap(section => section.components.map(component => component.id)), ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'DeepSeekHarness', 'Ccline', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus'], '分组展示顺序按 Agent/statusLine/工作流/代码知识图谱重排，组内 CodeGraph → GitNexus');
 console.log('[PASS] 工具管理分组事实源与展示顺序');
 
 // ── 1.1 CodexCli 官方包名与命令（HC-CODEX-OFFICIAL-PACKAGE）──────────────────
@@ -162,9 +164,9 @@ assert.match(
 );
 console.log('[PASS] 工具单项生命周期成功后同步 App 层检测缓存');
 
-// ── detectComponents 返回 9 项 + 不聚合 Skills/MCP（11.5/11.7）────────────────
+// ── detectComponents 返回 10 项 + 不聚合 Skills/MCP（11.5/11.7）───────────────
 const components = await detectComponents();
-assert.equal(components.length, 9, 'detectComponents 返回 9 项（不聚合 Skills/MCP）');
+assert.equal(components.length, 10, 'detectComponents 返回 10 项（不聚合 Skills/MCP）');
 const hasSkillsOrMcp = components.some(c => /^Skill:|^Mcp:/.test(c.id));
 assert.equal(hasSkillsOrMcp, false, '不含 Skill:/Mcp: 前缀组件（11.7 不聚合 Skills/MCP）');
 
@@ -176,7 +178,7 @@ assert.equal(ccg.hasUpdate, false, 'CcgWorkflow 无远程数据时不误报更�
 
 // ClaudeCode 纳入受管检测（11.6）
 assert.ok(components.some(c => c.id === 'ClaudeCode'), 'ClaudeCode 纳入受管检测（11.6）');
-console.log('[PASS] detectComponents 9 项 + 不聚合 Skills/MCP + CcgWorkflow 版本源 (11.5/11.7)');
+console.log('[PASS] detectComponents 10 项 + 不聚合 Skills/MCP + CcgWorkflow 版本源 (11.5/11.7)');
 
 // ── Codex Header 下工具安装态不得复用 Claude/global 状态 ────────────────────────
 {
@@ -192,14 +194,14 @@ console.log('[PASS] detectComponents 9 项 + 不聚合 Skills/MCP + CcgWorkflow 
 		return component;
 	});
 	const claudeVisibleWithoutIntegration = filterVisibleComponents(globalInstalled, 'cc');
-	assert.deepEqual(claudeVisibleWithoutIntegration.map(c => c.id), ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'Ccline', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus'], 'Claude Code Header 下可见组件按 Agent/statusLine/工作流/代码知识图谱展示');
+	assert.deepEqual(claudeVisibleWithoutIntegration.map(c => c.id), ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'DeepSeekHarness', 'Ccline', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus'], 'Claude Code Header 下可见组件按 Agent/statusLine/工作流/代码知识图谱展示');
 	const claudeCodeGraph = claudeVisibleWithoutIntegration.find(c => c.id === 'CodeGraph');
 	assert.equal(claudeCodeGraph.installed, false, 'Claude Code 未接入 CodeGraph 时不得仅凭全局 codegraph CLI 显示已安装');
 	assert.equal(claudeCodeGraph.hasUpdate, null, 'Claude Code 未接入 CodeGraph 时不显示更新态');
 	assert.match(claudeCodeGraph.statusHint, /Claude Code 未接入 CodeGraph/, 'Claude Code CodeGraph 缺失提示明确');
 
 	const codexVisibleWithoutIntegration = filterVisibleComponents(globalInstalled, 'cx');
-	assert.deepEqual(codexVisibleWithoutIntegration.map(c => c.id), ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus'], 'Codex Header 下隐藏空 statusLine 组并保持分组顺序');
+	assert.deepEqual(codexVisibleWithoutIntegration.map(c => c.id), ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'DeepSeekHarness', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus'], 'Codex Header 下隐藏空 statusLine 组并保持分组顺序');
 	assert.deepEqual(groupComponentsByToolGroup(codexVisibleWithoutIntegration).map(section => section.label), ['Agent', '工作流', '代码知识图谱'], 'Codex Header 下空 statusLine 分组不展示');
 	const codexCcg = codexVisibleWithoutIntegration.find(c => c.id === 'CcgWorkflow');
 	const codexCodeGraph = codexVisibleWithoutIntegration.find(c => c.id === 'CodeGraph');

@@ -12,6 +12,7 @@ import {
 } from './tools-lifecycle.js';
 import {hasCodeGraphIntegration, hasCodexCcgWorkflowMode, readCodexCcgWorkflowVersion} from './tools-integrations.js';
 import {refreshNpmGlobalBinPath} from './npm-path.js';
+import {DSH_TOOL_ID, detectDshLifecycle, installDsh, type DshDetectionDeps, type DshLifecycleProjection} from './dsh-lifecycle.js';
 
 // 工具安装 core：受管 agent/工具的 registry（单一真理源）+ 安装原语（内部实现层）。
 // 与 tools-manage.ts（门面/编排层）同属一个逻辑模块「tools 域」，仅按体量分文件（避免 1200 行巨文件）。
@@ -39,9 +40,10 @@ export type ToolId =
 	| 'CodeGraph'
 	| 'GitNexus'
 	| 'CodexCli'
-	| 'AntigravityCli';
+	| 'AntigravityCli'
+	| 'DeepSeekHarness';
 
-export type ToolInstallKind = 'npm' | 'ccg-init' | 'shell-script';
+export type ToolInstallKind = 'npm' | 'ccg-init' | 'shell-script' | 'dsh';
 
 /** 单个受管 agent/工具静态定义（registry 单一真理源）。 */
 export type ToolDefinition = {
@@ -68,6 +70,7 @@ export type ToolInstallOutcome = {
 	readonly id: ToolId;
 	readonly success: boolean;
 	readonly version?: string;
+	readonly lifecycle?: DshLifecycleProjection;
 	readonly error?: string;
 };
 
@@ -75,6 +78,7 @@ export type ToolInstallOutcome = {
  *  registry 收编 ClaudeCode 后，原 ClaudeCode 专属的注入能力下沉为全工具通用。 */
 export type InstallToolDeps = {
 	readonly exec?: typeof execCommand;
+	readonly dshDetect?: (deps?: DshDetectionDeps) => Promise<DshLifecycleProjection>;
 };
 
 const INSTALL_TIMEOUT_MS = 300000;
@@ -178,6 +182,17 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		versionArgs: ['--version'],
 		docsUrl: 'https://antigravity.google/docs/cli',
 		cliAliases: ['agy', 'antigravity', 'antigravity-cli']
+	},
+	{
+		id: 'DeepSeekHarness',
+		name: 'DeepSeek Harness',
+		description: 'DeepSeek官方CLI编码智能体',
+		kind: 'dsh',
+		command: 'dsh',
+		versionArgs: ['--version'],
+		npmPackage: '@deepseek-ai/dsh',
+		docsUrl: 'https://github.com/deepseek-ai/deepseek-harness',
+		cliAliases: ['dsh', 'deepseek-harness']
 	}
 ];
 
@@ -213,6 +228,19 @@ async function execVersionCommand(
 
 /** 检测单个工具（命令可用性 + 版本）。 */
 export async function detectTool(definition: ToolDefinition, exec: typeof execCommand = execCommand): Promise<ToolStatus> {
+	if (definition.id === DSH_TOOL_ID) {
+		try {
+			const lifecycle = await detectDshLifecycle({exec});
+			return {
+				id: definition.id,
+				installed: lifecycle.state === 'managed',
+				version: lifecycle.packageVersion || lifecycle.commandVersion
+			};
+		} catch {
+			return {id: definition.id, installed: false, version: ''};
+		}
+	}
+
 	try {
 		const result = await execVersionCommand(definition.command, definition.versionArgs, exec);
 		if (result.code !== 0) {
@@ -528,7 +556,24 @@ export async function installTool(
 	const exec = deps.exec ?? execCommand;
 	try {
 		let installedVersion: string | undefined;
-		switch (definition.kind) {
+		let dshLifecycle: DshLifecycleProjection | undefined;
+			switch (definition.kind) {
+			case 'dsh': {
+				const outcome = await installDsh(onProgress, {exec, detect: deps.dshDetect});
+				if (!outcome.success) {
+					return {
+						id,
+						success: false,
+						error: outcome.error ?? 'DeepSeek Harness 安装失败',
+						...(outcome.lifecycle ? {lifecycle: outcome.lifecycle} : {})
+					};
+				}
+
+				installedVersion = outcome.version;
+				dshLifecycle = outcome.lifecycle;
+				if (outcome.warning) onProgress?.({level: 'warning', message: outcome.warning, componentId: id});
+				break;
+			}
 			case 'npm':
 				if (definition.id === 'ClaudeCode') {
 					installedVersion = await installClaudeCode(definition, onProgress, exec);
@@ -563,6 +608,15 @@ export async function installTool(
 			case 'shell-script':
 				await installAntigravity(onProgress, exec);
 				break;
+		}
+
+		if (definition.kind === 'dsh') {
+			onProgress?.({
+				level: 'success',
+				message: `${definition.name} 安装成功${installedVersion ? ` (${installedVersion})` : ''}`,
+				componentId: id
+			});
+			return {id, success: true, version: installedVersion, lifecycle: dshLifecycle};
 		}
 
 		// CCG Workflow 和 shell-script 类型需要 PATH 更新，安装后立即检测会失败（环境变量未生效）
