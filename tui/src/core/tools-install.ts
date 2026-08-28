@@ -557,7 +557,7 @@ export async function installTool(
 	try {
 		let installedVersion: string | undefined;
 		let dshLifecycle: DshLifecycleProjection | undefined;
-			switch (definition.kind) {
+		switch (definition.kind) {
 			case 'dsh': {
 				const outcome = await installDsh(onProgress, {exec, detect: deps.dshDetect});
 				if (!outcome.success) {

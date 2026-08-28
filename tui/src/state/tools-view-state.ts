@@ -89,7 +89,7 @@ export type ToolsViewAction =
 			readonly error: string;
 			readonly patch?: ComponentPatch;
 			readonly components?: readonly ManagedComponent[];
-		}
+	  }
 	| {readonly type: 'batch-start'; readonly action: ComponentAction; readonly ids: readonly ComponentId[]}
 	| {readonly type: 'batch-done'; readonly components: readonly ManagedComponent[]}
 	| {readonly type: 'batch-failed'; readonly error: string; readonly components?: readonly ManagedComponent[]}
@@ -295,9 +295,7 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				return {
 					...state,
 					errorText:
-						current?.lifecycle && !current.lifecycle.canUninstall
-							? current.lifecycle.diagnostic
-							: '该组件未安装，无需卸载'
+						current?.lifecycle && !current.lifecycle.canUninstall ? current.lifecycle.diagnostic : '该组件未安装，无需卸载'
 				};
 			}
 

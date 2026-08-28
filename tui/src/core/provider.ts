@@ -1,27 +1,10 @@
 import {existsSync, mkdirSync, readdirSync, renameSync, unlinkSync} from 'node:fs';
 import {basename, join} from 'node:path';
 import {createHash} from 'node:crypto';
-import {
-	readJsonFile,
-	readJsonFileStrict,
-	SECRET_FILE_MODE,
-	withProfileLock,
-	writeJsonAtomic
-} from './fs-utils.js';
+import {readJsonFile, readJsonFileStrict, SECRET_FILE_MODE, withProfileLock, writeJsonAtomic} from './fs-utils.js';
 import {providersDir, settingsPath, claudeJsonPath} from './paths.js';
-import {
-	escapeRegex,
-	isNullOrWhiteSpace,
-	maskApiKey,
-	normalizeBaseUrl,
-	testProviderBaseUrlMatch,
-	testProviderKey
-} from './text-utils.js';
-import {
-	getManagedModelEnvFromLegacyAliases,
-	loadProviderContract,
-	type ProviderRuntimeConfig
-} from './provider-contract.js';
+import {escapeRegex, isNullOrWhiteSpace, maskApiKey, normalizeBaseUrl, testProviderBaseUrlMatch, testProviderKey} from './text-utils.js';
+import {getManagedModelEnvFromLegacyAliases, loadProviderContract, type ProviderRuntimeConfig} from './provider-contract.js';
 
 // ── 类型 ────────────────────────────────────────────────────────────────────
 
@@ -160,7 +143,7 @@ function ensureOnboardingMarked(): string | undefined {
 		return '供应商已保存，但 onboarding 标记跳过：~/.claude.json 损坏或无法解析';
 	}
 
-	const data: Record<string, unknown> = result.status === 'missing' ? {} : result.value as Record<string, unknown>;
+	const data: Record<string, unknown> = result.status === 'missing' ? {} : (result.value as Record<string, unknown>);
 	if (data.hasCompletedOnboarding === true) {
 		return undefined;
 	}
@@ -176,7 +159,7 @@ function ensureOnboardingMarked(): string | undefined {
 }
 
 function settingsEnv(settings: Record<string, unknown>): Record<string, string> {
-	return isRecord(settings.env) ? settings.env as Record<string, string> : {};
+	return isRecord(settings.env) ? (settings.env as Record<string, string>) : {};
 }
 
 function stringFingerprint(text: string): string {
@@ -351,11 +334,7 @@ export function getManagedModelSummary(profile: ProviderProfile | null): string 
 	}
 
 	const labels = cfg().modelEnvLabels;
-	const orderedKeys = [
-		'ANTHROPIC_DEFAULT_HAIKU_MODEL',
-		'ANTHROPIC_DEFAULT_OPUS_MODEL',
-		'ANTHROPIC_DEFAULT_SONNET_MODEL'
-	];
+	const orderedKeys = ['ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL'];
 	const parts: string[] = [];
 	for (const key of orderedKeys) {
 		if (modelEnv[key]) {
@@ -439,18 +418,12 @@ function hasEnvKey(env: Record<string, string>, key: string): boolean {
 	return Object.hasOwn(env, key);
 }
 
-function providerEnvValueMatches(
-	key: string,
-	settingsValue: string | undefined,
-	profileValue: string | undefined
-): boolean {
+function providerEnvValueMatches(key: string, settingsValue: string | undefined, profileValue: string | undefined): boolean {
 	if (settingsValue === undefined || profileValue === undefined) {
 		return false;
 	}
 
-	return key === 'ANTHROPIC_BASE_URL'
-		? testProviderBaseUrlMatch(settingsValue, profileValue)
-		: settingsValue === profileValue;
+	return key === 'ANTHROPIC_BASE_URL' ? testProviderBaseUrlMatch(settingsValue, profileValue) : settingsValue === profileValue;
 }
 
 function matchesFullProviderProjection(
@@ -573,10 +546,7 @@ export function getProviderList(): ProviderListItem[] {
 }
 
 /** 从 settings 的完整 provider-owned runtime env 投影解析唯一活跃供应商。 */
-function resolveActiveProfile(
-	profiles: readonly ProviderListItem[],
-	settings: Record<string, string>
-): ProviderListItem | null {
+function resolveActiveProfile(profiles: readonly ProviderListItem[], settings: Record<string, string>): ProviderListItem | null {
 	if (profiles.length === 0 || isNullOrWhiteSpace(settings.ANTHROPIC_BASE_URL)) {
 		return null;
 	}
@@ -597,7 +567,7 @@ function resolveActiveProfile(
 	}
 
 	const legacyMatches = projections.filter(projection => matchesLegacyProviderProjection(settings, projection, ownedKeys));
-	return legacyMatches.length === 1 ? legacyMatches[0]?.item ?? null : null;
+	return legacyMatches.length === 1 ? (legacyMatches[0]?.item ?? null) : null;
 }
 
 /** 识别当前活跃供应商。 */
@@ -638,10 +608,7 @@ export function getDisplayData(): ProviderDisplayData {
 // 公开函数用 withProfileLock 包裹；内部 *Unlocked 避免重入死锁（对齐旧 provider-manager.js）。
 
 /** 切换活跃供应商（读 Profile → 合并 settings.json，严格字段所有权，HC-SETTINGS-OWNERSHIP）。 */
-function switchProviderUnlocked(
-	key: string,
-	additionalCleanupKeys: Iterable<string> = []
-): {success: boolean; providerName: string} {
+function switchProviderUnlocked(key: string, additionalCleanupKeys: Iterable<string> = []): {success: boolean; providerName: string} {
 	const profiles = getProviderList();
 	if (profiles.length === 0) {
 		throw new Error('未找到供应商 Profile，请先添加供应商');
@@ -798,9 +765,7 @@ function addProviderUnlocked(opts: AddProviderOptions): AddProviderResult {
 
 	// 用户经 JSON 直填 env 为真源时以其为优先；未传入时回退模板 ExtraEnv。
 	const templateExtraEnv = template?.extraEnv as Record<string, string> | undefined;
-	const mergedEnv: Record<string, string> = opts.env !== undefined
-		? {...opts.env}
-		: {...(templateExtraEnv ?? {})};
+	const mergedEnv: Record<string, string> = opts.env !== undefined ? {...opts.env} : {...(templateExtraEnv ?? {})};
 
 	if (Object.keys(mergedEnv).length > 0) {
 		mergeEnvIntoProfile(profile, mergedEnv);
