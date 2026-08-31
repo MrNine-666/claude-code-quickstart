@@ -121,6 +121,7 @@ jobs:
     needs:
       - test-windows
       - test-macos
+      - release-quality
 
     steps:
       - name: 检出代码
@@ -190,6 +191,7 @@ jobs:
     needs:
       - test-windows
       - test-macos
+      - release-quality
 
     steps:
       - name: 检出代码
@@ -507,7 +509,6 @@ jobs:
 
   release-quality:
     name: Release quality gate
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-latest
     timeout-minutes: 30
 
@@ -529,10 +530,17 @@ jobs:
 
       - name: 解析发布质量基线
         id: release-quality-base
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          if base="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" --match 'v*.*.*' 2>/dev/null)"; then
-            node tui/scripts/release-metadata.mjs --tag="${base}" >/dev/null
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            base="$(node tui/scripts/resolve-release-quality-base.mjs --tag="${GITHUB_REF_NAME}")"
+          elif [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            base="${PR_BASE_SHA}"
+          elif [ -n "${PUSH_BEFORE_SHA}" ] && [ "${PUSH_BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]; then
+            base="${PUSH_BEFORE_SHA}"
           else
             base="$(git rev-list --max-parents=0 HEAD)"
           fi
@@ -540,6 +548,7 @@ jobs:
             echo "无法解析发布质量基线" >&2
             exit 1
           fi
+          git rev-parse --verify "${base}^{commit}" >/dev/null
           echo "base=${base}" >> "${GITHUB_OUTPUT}"
           echo "[PASS] 发布质量基线: ${base}"
 

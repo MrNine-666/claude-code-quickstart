@@ -8,7 +8,7 @@ export const WINDOWS_HELPER_INTERVAL_MS = 250;
 
 export type SpawnProcess = typeof nodeSpawn;
 
-const WINDOWS_HELPER_READY_TIMEOUT_MS = 5000;
+export const WINDOWS_HELPER_READY_TIMEOUT_MS = 30000;
 const WINDOWS_HELPER_READY_POLL_MS = 25;
 
 export function uniqueWindowsHelperPath(directory: string, prefix: string): string {

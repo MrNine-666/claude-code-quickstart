@@ -24,7 +24,7 @@ function workflowJob(workflow, name) {
 	const start = workflow.indexOf(marker);
 	assert.notEqual(start, -1, `workflow 缺少 job: ${name}`);
 	const bodyStart = start + marker.length;
-	const nextJob = workflow.slice(bodyStart).match(/\n  [a-z0-9-]+:\n/);
+	const nextJob = workflow.slice(bodyStart).match(/\n {2}[a-z0-9-]+:\n/);
 	return workflow.slice(bodyStart, nextJob ? bodyStart + nextJob.index : undefined);
 }
 
@@ -57,7 +57,7 @@ async function verifyInstalledRevision(value) {
 		headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
 	}
 
-	const compareUrl = `https://api.github.com/repos/oven-sh/bun/compare/` + `${windowsFfiFixRevision}...${installedRevision}`;
+	const compareUrl = `https://api.github.com/repos/oven-sh/bun/compare/${windowsFfiFixRevision}...${installedRevision}`;
 	const response = await fetch(compareUrl, {headers});
 	if (!response.ok) {
 		throw new Error(`Bun revision 比较失败: HTTP ${response.status} ${await response.text()}`);
@@ -121,15 +121,18 @@ async function verifyRepositoryContract() {
 
 	assert.match(testWindowsJob, /pwsh -NoProfile -File \.\\installer\\contracts\\Test-Contracts\.ps1/);
 	assert.doesNotMatch(workflow, /\[SKIP\] contracts 回归测试|P-11 验证|P-11 契约内嵌验证/);
-	assert.match(releaseQualityJob, /if: startsWith\(github\.ref, 'refs\/tags\/v'\)/);
+	assert.doesNotMatch(releaseQualityJob, /if: startsWith\(github\.ref, 'refs\/tags\/v'\)/);
 	assert.match(releaseQualityJob, /bun install --frozen-lockfile/);
 	assert.match(releaseQualityJob, /id: release-quality-base/);
-	assert.match(releaseQualityJob, /git describe --tags --abbrev=0 "\$\{GITHUB_REF_NAME\}\^" --match 'v\*\.\*\.\*'/);
-	assert.match(releaseQualityJob, /node tui\/scripts\/release-metadata\.mjs --tag="\$\{base\}" >\/dev\/null/);
+	assert.match(releaseQualityJob, /node tui\/scripts\/resolve-release-quality-base\.mjs --tag="\$\{GITHUB_REF_NAME\}"/);
+	assert.match(releaseQualityJob, /PR_BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
+	assert.match(releaseQualityJob, /PUSH_BEFORE_SHA: \$\{\{ github\.event\.before \}\}/);
+	assert.match(releaseQualityJob, /git rev-parse --verify "\$\{base\}\^\{commit\}"/);
 	assert.match(releaseQualityJob, /git rev-list --max-parents=0 HEAD/);
 	assert.match(releaseQualityJob, /CCQ_FORMAT_BASE: \$\{\{ steps\.release-quality-base\.outputs\.base \}\}/);
-	assert.doesNotMatch(releaseQualityJob, /CCQ_FORMAT_BASE: HEAD\^/);
 	assert.match(releaseQualityJob, /run: bun run check/);
+	assert.match(stableJob, /needs:[\s\S]{0,160}- release-quality/);
+	assert.match(windowsArm64Job, /needs:[\s\S]{0,160}- release-quality/);
 	assert.match(releaseJob, /needs:\s*\n\s+- release-quality/);
 
 	assert.match(stableJob, /runs-on: ubuntu-latest/);
@@ -212,6 +215,26 @@ async function verifyRepositoryContract() {
 		prerelease: true
 	});
 	assert.equal(releaseMetadata.parseReleaseTag('v1.2.3+build.7').prerelease, false);
+	assert.equal(releaseMetadata.compareReleaseTags('v1.2.3', 'v1.2.4'), -1);
+	assert.equal(releaseMetadata.compareReleaseTags('v1.2.4-rc.10', 'v1.2.4-rc.2'), 1);
+	assert.equal(releaseMetadata.compareReleaseTags('v1.2.4+build.1', 'v1.2.4+build.2'), 0);
+	const releaseBaseSource = read(join(root, 'scripts', 'resolve-release-quality-base.mjs'));
+	assert.match(releaseBaseSource, /fileURLToPath\(import\.meta\.url\) === resolve\(entrypoint\)/);
+	const {resolveReleaseQualityBase, selectPreviousReleaseTag} = await import('./resolve-release-quality-base.mjs');
+	assert.equal(
+		selectPreviousReleaseTag('v2.4.7', ['v2.4.5', 'v2.4.6', 'v2.4.8', 'invalid']),
+		'v2.4.6',
+		'覆盖旧 tag 时不得选择更高版本作为质量基线'
+	);
+	const rootCommit = '1111111111111111111111111111111111111111';
+	assert.equal(
+		resolveReleaseQualityBase('v1.0.0', args => {
+			if (args.at(-1) === 'v1.0.0^{commit}') return rootCommit;
+			throw new Error('root commit has no parent');
+		}),
+		rootCommit,
+		'首个 release 位于根提交时，质量基线必须回退到该根提交'
+	);
 	for (const invalidTag of ['1.2.3', 'v1.2', 'v01.2.3', 'v1.2.3-01', 'v1.2.3-']) {
 		assert.throws(() => releaseMetadata.parseReleaseTag(invalidTag), /Invalid CCQ release/);
 	}

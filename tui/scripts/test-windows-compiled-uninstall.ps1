@@ -24,9 +24,6 @@ try {
 
     $uninstallOutput = @(& $targetExe uninstall --yes 2>&1)
     $uninstallExitCode = $LASTEXITCODE
-    if ($uninstallExitCode -ne 0) {
-        throw "ccq uninstall failed with exit code ${uninstallExitCode}:`n$($uninstallOutput -join "`n")"
-    }
 
     $newHelpers = @()
     $deadline = (Get-Date).AddSeconds(20)
@@ -41,15 +38,42 @@ try {
         Start-Sleep -Milliseconds 250
     } while ((Get-Date) -lt $deadline)
 
+    $helperLog = Join-Path $targetDir 'ccq-uninstall.log'
+    $logContent = if (Test-Path -LiteralPath $helperLog) { Get-Content -LiteralPath $helperLog -Raw } else { '(no ccq-uninstall.log)' }
+    $seenHelpers = @(
+        Get-ChildItem -LiteralPath $targetDir -Force -Filter '.ccq-uninstall-*.ps1' -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.FullName }
+    )
+    $seenReadyFiles = @(
+        Get-ChildItem -LiteralPath $targetDir -Force -Filter '.ccq-uninstall-*.ps1.ready' -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.FullName }
+    )
+
+    if ($uninstallExitCode -ne 0) {
+        $processes = @(
+            Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.Name -in @('powershell.exe', 'pwsh.exe') -and
+                    $_.CommandLine -and
+                    ($_.CommandLine -match 'ccq-uninstall|EncodedCommand')
+                } |
+                ForEach-Object { "pid=$($_.ProcessId) name=$($_.Name) command=$($_.CommandLine)" }
+        )
+        $diag = @(
+            "ccq uninstall failed with exit code ${uninstallExitCode}.",
+            "uninstall output:`n$($uninstallOutput -join "`n")",
+            "target exists after wait: $(Test-Path -LiteralPath $targetExe)",
+            "residual helpers: $($seenHelpers -join ', ')",
+            "residual ready files: $($seenReadyFiles -join ', ')",
+            "helper log:`n$logContent",
+            "matching PowerShell processes:`n$($processes -join "`n")"
+        ) -join "`n----`n"
+        throw $diag
+    }
+
     if (Test-Path -LiteralPath $targetExe) {
         # 决定性诊断：helper 未删除 exe 时，dump uninstall 输出、helper 落盘日志与残留 helper，
         # 避免只凭 20s 超时结论盲猜（helper 未启动 / Wait-Process 后死亡 / 删除被拒各有不同日志痕迹）。
-        $helperLog = Join-Path $targetDir 'ccq-uninstall.log'
-        $logContent = if (Test-Path -LiteralPath $helperLog) { Get-Content -LiteralPath $helperLog -Raw } else { '(no ccq-uninstall.log)' }
-        $seenHelpers = @(
-            Get-ChildItem -LiteralPath $targetDir -Force -Filter '.ccq-uninstall-*.ps1' -ErrorAction SilentlyContinue |
-                ForEach-Object { $_.FullName }
-        )
         $diag = @(
             'The running ccq.exe was not removed after its parent exited.',
             "uninstall exit code: ${uninstallExitCode}",
