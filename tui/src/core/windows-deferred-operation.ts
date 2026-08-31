@@ -52,14 +52,10 @@ function quotePowerShellLiteral(value: string): string {
 }
 
 function encodePowerShellInvocation(helperPath: string, readyPath: string, args: readonly string[]): string {
-	const renderedArgs = args.map(arg =>
-		/^-[A-Za-z][A-Za-z0-9-]*$/.test(arg) ? arg : quotePowerShellLiteral(arg)
+	const renderedArgs = args.map(arg => (/^-[A-Za-z][A-Za-z0-9-]*$/.test(arg) ? arg : quotePowerShellLiteral(arg)));
+	const command = [`& ${quotePowerShellLiteral(helperPath)}`, `-ReadyPath ${quotePowerShellLiteral(readyPath)}`, ...renderedArgs].join(
+		' '
 	);
-	const command = [
-		`& ${quotePowerShellLiteral(helperPath)}`,
-		`-ReadyPath ${quotePowerShellLiteral(readyPath)}`,
-		...renderedArgs
-	].join(' ');
 	return Buffer.from(command, 'utf16le').toString('base64');
 }
 
@@ -73,26 +69,20 @@ export async function spawnDetachedPowerShell(
 	const encodedCommand = encodePowerShellInvocation(helperPath, readyPath, args);
 	// Bun 1.3.14 keeps detached Windows children in its kill-on-close job object.
 	// `start` creates the helper outside that job so it can outlive the ccq process.
-	const child = spawnProcess('cmd.exe', [
-		'/d',
-		'/c',
-		'start',
-		'',
-		'/b',
-		'powershell.exe',
-		'-NoProfile',
-		'-ExecutionPolicy',
-		'Bypass',
-		'-EncodedCommand',
-		encodedCommand
-	], {
-		stdio: 'ignore',
-		windowsHide: true
-	});
+	const child = spawnProcess(
+		'cmd.exe',
+		['/d', '/c', 'start', '', '/b', 'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encodedCommand],
+		{
+			stdio: 'ignore',
+			windowsHide: true
+		}
+	);
 	try {
 		await waitForBootstrap(child);
 		await waitForReadyFile(readyPath, readyTimeoutMs);
 	} finally {
-		try { rmSync(readyPath, {force: true}); } catch {}
+		try {
+			rmSync(readyPath, {force: true});
+		} catch {}
 	}
 }
