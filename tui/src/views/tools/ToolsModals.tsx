@@ -49,15 +49,17 @@ export function ToolsInjectTargetModal({view}: {readonly view: ToolsViewState}) 
 		<Modal
 			active
 			title={`管理开关：${shared?.name ?? ''}`}
-			hint="↑/↓ 选择  空格 切换装/卸  Enter 应用  Esc 取消"
+			hint="↑/↓ 选择  空格 切换可用目标  Enter 应用  Esc 取消"
 			width={TOOLS_MODAL_WIDTH}
 		>
 			<box flexDirection="column">
 				{AGENT_CONTEXT_ORDER.map(ctx => {
 					const enabled = Boolean(draft?.[ctx]);
 					const focused = ctx === selected;
-					const version = shared?.injectByAgent?.[ctx]?.version;
-					const stateLabel = enabled ? (version ? `● 已安装 ${version}` : '● 已安装') : '○ 卸载';
+					const snapshot = shared?.injectByAgent?.[ctx];
+					const version = snapshot?.version;
+					const unsupported = Boolean(snapshot?.statusHint);
+					const stateLabel = unsupported ? '⊘ 不支持' : enabled ? (version ? `● 已安装 ${version}` : '● 已安装') : '○ 卸载';
 					return (
 						<box key={ctx} flexDirection="row">
 							<text
@@ -70,7 +72,7 @@ export function ToolsInjectTargetModal({view}: {readonly view: ToolsViewState}) 
 								{`${focused ? '›' : ' '} ${AGENT_CONTEXT_LABELS[ctx]} `}
 							</text>
 							<text
-								fg={enabled ? colors.success : colors.muted}
+								fg={unsupported ? colors.warning : enabled ? colors.success : colors.muted}
 								selectionBg={colors.selectionBg}
 								selectionFg={colors.selectionFg}
 								flexShrink={0}

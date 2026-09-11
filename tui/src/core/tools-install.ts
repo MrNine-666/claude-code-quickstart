@@ -34,6 +34,8 @@ type JsonObject = Record<string, unknown>;
 export type ToolId =
 	| 'ClaudeCode'
 	| 'Ccline'
+	| 'PiCli'
+	| 'PiWeb'
 	| 'CcgWorkflow'
 	| 'OpenSpec'
 	| 'Trellis'
@@ -52,10 +54,12 @@ export type ToolDefinition = {
 	readonly description: string;
 	readonly kind: ToolInstallKind;
 	readonly command: string; // 检测用命令
-	readonly versionArgs: readonly string[];
+	readonly versionArgs: readonly string[]; // 检测用参数；命令不一定支持 --version
+	readonly reportsVersion?: boolean; // 检测输出是否包含可用于展示/更新比较的版本号，默认 true
 	readonly npmPackage?: string; // kind === 'npm'（CcgWorkflow 虽为 ccg-init，仍标注 npm 引擎包名供 update 派生）
 	readonly docsUrl?: string; // 官方文档 / 仓库地址（卡片描述可跳转，OSC-8 超链接）
 	readonly cliAliases?: readonly string[]; // ccq tools 命令别名（canonical id 自动可用）
+	readonly minNodeVersion?: string;
 };
 
 /** 工具检测状态（供列表展示）。 */
@@ -83,6 +87,7 @@ export type InstallToolDeps = {
 
 const INSTALL_TIMEOUT_MS = 300000;
 const DETECT_TIMEOUT_MS = 5000;
+export const PI_MIN_NODE_VERSION = '22.19.0';
 
 export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 	{
@@ -106,6 +111,32 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		npmPackage: '@cometix/ccline',
 		docsUrl: 'https://github.com/Haleclipse/CCometixLine',
 		cliAliases: ['ccline']
+	},
+	{
+		id: 'PiCli',
+		name: 'Pi Agent CLI',
+		description: 'Pi 官方编码智能体 CLI',
+		kind: 'npm',
+		command: 'pi',
+		versionArgs: ['--version'],
+		npmPackage: '@earendil-works/pi-coding-agent',
+		docsUrl: 'https://github.com/badlogic/pi-mono',
+		cliAliases: ['pi', 'pi-agent'],
+		minNodeVersion: '22.19.0'
+	},
+	{
+		id: 'PiWeb',
+		name: 'Pi Web',
+		description: 'Pi 的全局 Web 伴随工具',
+		kind: 'npm',
+		command: 'pi-web',
+		// Pi Web 当前 CLI 不支持 --version；--help 会无副作用地退出并证明命令可用。
+		versionArgs: ['--help'],
+		reportsVersion: false,
+		npmPackage: '@agegr/pi-web',
+		docsUrl: 'https://www.npmjs.com/package/@agegr/pi-web',
+		cliAliases: ['pi-web'],
+		minNodeVersion: '22.19.0'
 	},
 	{
 		id: 'CcgWorkflow',
@@ -201,9 +232,24 @@ function isObject(value: unknown): value is JsonObject {
 }
 
 /** 解析版本号（取首个 x.y.z）。 */
-function parseVersion(text: string): string {
+export function parseToolVersion(text: string): string {
 	const match = text.trim().match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?/);
-	return match ? match[0] : text.trim();
+	return match?.[0] ?? '';
+}
+
+/** Compare a Node/semver-like version without accepting a partial or invalid version. */
+export function isVersionAtLeast(version: string, minimum: string): boolean {
+	const parse = (value: string): readonly [number, number, number] | null => {
+		const match = value.trim().replace(/^v/i, '').match(/^(\d+)\.(\d+)\.(\d+)/);
+		return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+	};
+	const actual = parse(version);
+	const expected = parse(minimum);
+	if (!actual || !expected) return false;
+	for (let index = 0; index < 3; index += 1) {
+		if (actual[index] !== expected[index]) return actual[index]! > expected[index]!;
+	}
+	return true;
 }
 
 function isTimeoutError(error: unknown): boolean {
@@ -247,7 +293,11 @@ export async function detectTool(definition: ToolDefinition, exec: typeof execCo
 			return {id: definition.id, installed: false, version: ''};
 		}
 
-		return {id: definition.id, installed: true, version: parseVersion(result.stdout || result.stderr || '')};
+		return {
+			id: definition.id,
+			installed: true,
+			version: definition.reportsVersion === false ? '' : parseToolVersion(result.stdout || result.stderr || '')
+		};
 	} catch {
 		return {id: definition.id, installed: false, version: ''};
 	}
@@ -280,17 +330,17 @@ async function installNpmPackage(
 	definition: ToolDefinition,
 	onProgress?: ProgressCallback,
 	exec: typeof execCommand = execCommand,
-	options: {readonly packageSpec?: string; readonly preserveDiagnostic?: boolean} = {}
+	options: {readonly packageSpec?: string; readonly preserveDiagnostic?: boolean; readonly ignoreScripts?: boolean} = {}
 ): Promise<void> {
 	if (!definition.npmPackage) {
 		throw new Error(`${definition.id} 缺少 npm 包名`);
 	}
 
 	const spec = options.packageSpec ?? definition.npmPackage;
-	const args = ['install', '-g', spec];
+	const args = ['install', '-g', ...(options.ignoreScripts ? ['--ignore-scripts'] : []), spec];
 	onProgress?.({
 		level: 'info',
-		message: `npm install -g ${spec}`,
+		message: `npm ${args.join(' ')}`,
 		componentId: definition.id,
 		instruction: formatCommandInstruction('npm', args)
 	});
@@ -304,6 +354,31 @@ async function installNpmPackage(
 	}
 
 	await refreshNpmGlobalBinPath(onProgress, definition.id, exec);
+}
+
+export async function ensureNodeVersion(definition: ToolDefinition, exec: typeof execCommand, onProgress?: ProgressCallback): Promise<void> {
+	const minimum = definition.minNodeVersion;
+	if (!minimum) return;
+
+	let result: Awaited<ReturnType<typeof execCommand>>;
+	try {
+		// TUI 本身由 Bun 启动，process.execPath 指向 bun.exe；Pi 的 Node 要求必须检查
+		// PATH 中 npm 实际使用的 Node，而不能把 Bun 版本当成 Node 版本。
+		result = await exec('node', ['--version'], {timeout: DETECT_TIMEOUT_MS});
+	} catch (error) {
+		throw new Error(`Node.js 版本检查失败: ${error instanceof Error ? error.message : String(error)}`);
+	}
+
+	if (result.code !== 0) {
+		throw new Error(`Node.js 版本检查失败 (exit ${result.code})`);
+	}
+
+	const version = parseToolVersion(result.stdout || result.stderr || '');
+	if (!isVersionAtLeast(version, minimum)) {
+		throw new Error(`${definition.name} 要求 Node.js >= ${minimum}，当前为 ${version || '未知版本'}`);
+	}
+
+	onProgress?.({level: 'info', message: `Node.js ${version} 满足 ${definition.name} 的最低版本要求`, componentId: definition.id});
 }
 
 async function ensureCodeGraphCli(
@@ -324,7 +399,7 @@ async function ensureCodeGraphCli(
 	await installNpmPackage(definition, onProgress, exec);
 }
 
-/** CodeGraph 后置：CLI 就绪后非交互接入当前 Agent（agentContext → --target=claude|codex）。 */
+/** CodeGraph 后置：CLI 就绪后非交互接入当前 Agent。 */
 async function postInstallCodeGraph(
 	context: AgentContext,
 	onProgress?: ProgressCallback,
@@ -349,7 +424,7 @@ async function postInstallCodeGraph(
 
 	if (!hasCodeGraphIntegration(context)) {
 		const label = context === 'cx' ? 'Codex' : 'Claude Code';
-		throw new Error(`CodeGraph ${label} MCP 写入失败`);
+		throw new Error(`CodeGraph ${label} 接入 postflight 检测失败`);
 	}
 }
 
@@ -536,7 +611,7 @@ async function installClaudeCode(
 		throw new Error('安装后命令不可用');
 	}
 
-	return parseVersion(check.stdout || check.stderr || '');
+	return parseToolVersion(check.stdout || check.stderr || '');
 }
 
 /** 安装单个工具（按 kind 分发 + 后置处理 + 检测确认）。
@@ -555,6 +630,10 @@ export async function installTool(
 
 	const exec = deps.exec ?? execCommand;
 	try {
+		if (context === 'pi' && (id === 'CcgWorkflow' || id === 'CodeGraph')) {
+			return {id, success: false, error: `${definition.name} 不支持 Pi Agent 接入`};
+		}
+
 		let installedVersion: string | undefined;
 		let dshLifecycle: DshLifecycleProjection | undefined;
 		switch (definition.kind) {
@@ -596,7 +675,8 @@ export async function installTool(
 					break;
 				}
 
-				await installNpmPackage(definition, onProgress, exec);
+				await ensureNodeVersion(definition, exec, onProgress);
+				await installNpmPackage(definition, onProgress, exec, {ignoreScripts: definition.id === 'PiCli'});
 				if (definition.id === 'Ccline') {
 					await postInstallCcline(onProgress);
 				}

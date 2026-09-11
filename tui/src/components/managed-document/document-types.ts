@@ -17,24 +17,27 @@ export type ManagedDocumentImportResult =
 	| {readonly ok: true; readonly text: string; readonly message: string}
 	| {readonly ok: false; readonly error: string};
 
+export type ManagedDocumentOpenResult = {readonly ok: true} | {readonly ok: false; readonly error: string};
+
 export type ManagedDocumentAdapter = {
 	readonly key: string;
 	readonly title: string;
 	readonly subtitle: string;
-	readonly headerNotice?: string;
 	readonly emptyMessage: string;
 	readonly emptyHintLabel: string;
 	readonly editorTitle: string;
-	readonly recommendationTitle: string;
-	readonly recommendationUnavailableMessage: string;
-	readonly recommendationContent: string;
+	readonly recommendationTitle?: string;
+	readonly recommendationUnavailableMessage?: string;
+	readonly recommendationContent?: string;
 	readonly previewFiletype: CodePreviewFiletype;
-	readonly recommendationFiletype: CodePreviewFiletype;
+	readonly recommendationFiletype?: CodePreviewFiletype;
 	readonly editorFiletype: EditorFiletype;
 	readonly editorIsJson?: boolean;
 	readonly saveSuccessMessage: string;
+	readonly openSuccessMessage?: string;
 	readonly load: () => ManagedDocumentSnapshot;
 	readonly createInitial: () => string;
-	readonly importInto: (editorText: string) => ManagedDocumentImportResult;
+	readonly importInto?: (editorText: string) => ManagedDocumentImportResult;
+	readonly openExternal?: () => Promise<ManagedDocumentOpenResult>;
 	readonly save: (content: string) => ManagedDocumentSaveResult;
 };

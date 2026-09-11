@@ -31,7 +31,7 @@ const root = mkdtempSync(join(tmpdir(), 'ccq-dsh-lifecycle-'));
 
 assert.match(
 	updateSource,
-	/const dshLifecycle = await detectDshLifecycle\(\{env: \{\.\.\.process\.env\}\}\);[\s\S]{0,180}await refreshNpmGlobalBinPath\(\);/,
+	/const dshLifecycle = await detectDshLifecycle\(\{env: \{\.\.\.process\.env\}(?:, exec)?\}\);[\s\S]{0,180}await refreshNpmGlobalBinPath\([^;]*\);/,
 	'DSH 检测必须先于 npm global bin PATH 刷新，保留外部 PATH 冲突事实'
 );
 console.log('[PASS] DSH detection preserves original PATH precedence before generic refresh');

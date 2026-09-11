@@ -64,7 +64,7 @@ import {
 		'进入安装页应复用 App 缓存，不得仅因页面切换再次刷新'
 	);
 	assert.doesNotMatch(checkboxSource, /TextAttributes\.INVERSE/, 'Checkbox active/checked 应使用主题前景色，不得反转为背景色');
-	assert.match(skillsViewSource, /focusIndicator="leading"/, 'Skills 安装页 active 应仅使用 leading Checkbox 作为焦点指示');
+	assert.match(skillsViewSource, /focusIndicator="card"/, 'Skills 安装页 active 应复用 Card 的边框与背景作为焦点指示');
 	assert.match(
 		skillsViewSource,
 		/titleColor: active && index === view\.resultIndex \? colors\.primary : colors\.text/,
@@ -77,7 +77,7 @@ import {
 	);
 	assert.match(
 		cardSource,
-		/<box flexDirection="row" flexShrink=\{0\} width=\{3\} height=\{1\} justifyContent="center" marginRight=\{1\}>/,
+		/<box(?=[^>]*flexDirection="row")(?=[^>]*flexShrink=\{0\})(?=[^>]*width=\{3\})(?=[^>]*height=\{1\})(?=[^>]*justifyContent="center")(?=[^>]*marginRight=\{1\})[^>]*>/,
 		'Card leading 标记必须固定在标题首行顶对齐'
 	);
 	assert.match(
@@ -452,7 +452,7 @@ function sharedRow(name, over = {}) {
 			`installedIndex 越界: ${state.installedIndex}`
 		);
 		assert.ok(state.resultIndex >= 0 && state.resultIndex < Math.max(state.results.length, 1), `resultIndex 越界: ${state.resultIndex}`);
-		assert.ok(state.targetIndex >= 0 && state.targetIndex < 2, `targetIndex 越界: ${state.targetIndex}`);
+		assert.ok(state.targetIndex >= 0 && state.targetIndex < 3, `targetIndex 越界: ${state.targetIndex}`);
 		if (state.mode === 'select-install-target') {
 			assert.equal(state.installDraft.cx, true, '新安装目标的 Codex 仍只读恒勾');
 		}
@@ -497,14 +497,19 @@ function sharedRow(name, over = {}) {
 	assert.equal(selected.mode, 'select-install-target', 'select-skill 进安装目标 Modal');
 	assert.equal(selected.installDraft.cc, true, '安装草稿默认 Claude Code 勾选');
 	assert.equal(selected.installDraft.cx, true, '安装草稿默认 Codex 勾选');
+	assert.equal(selected.installDraft.pi, false, '安装草稿默认不额外安装 Pi 全局原生目录');
 	assert.equal(selectedResult(selected)?.name, 'org/a@x', '安装目标仍指向当前光标 skill');
 
-	// 安装目标 Modal：↑/↓ loop 选侧、空格仅切 Claude Code（Codex no-op）
+	// 安装目标 Modal：C/X shared install projection 默认恒勾；Pi 是独立入口。
 	const navToCodex = reduceSkillsViewState(selected, {type: 'install-target-nav', delta: 1});
 	assert.equal(navToCodex.targetIndex, 1, 'nav 到 Codex 侧');
 	const toggleCodex = reduceSkillsViewState(navToCodex, {type: 'install-target-toggle'});
 	assert.equal(toggleCodex.installDraft.cx, true, '空格切 Codex 为 no-op（恒 true）');
-	const navLoop = reduceSkillsViewState(navToCodex, {type: 'install-target-nav', delta: 1});
+	const navToPi = reduceSkillsViewState(navToCodex, {type: 'install-target-nav', delta: 1});
+	assert.equal(navToPi.targetIndex, 2, 'nav 到 Pi 目标');
+	const togglePi = reduceSkillsViewState(navToPi, {type: 'install-target-toggle'});
+	assert.equal(togglePi.installDraft.pi, true, '空格可切换 Pi 目标');
+	const navLoop = reduceSkillsViewState(navToPi, {type: 'install-target-nav', delta: 1});
 	assert.equal(navLoop.targetIndex, 0, 'nav 首尾相接 loop 回 Claude Code');
 	const toggleClaudeOff = reduceSkillsViewState(navLoop, {type: 'install-target-toggle'});
 	assert.equal(toggleClaudeOff.installDraft.cc, false, '空格切 Claude Code 生效（可取消）');
@@ -744,6 +749,22 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 	);
 	assert.equal(conflictSpawned, false, '同名冲突不得启动任何命令');
 
+	let projectTargetSpawned = false;
+	await assert.rejects(
+		() => installSearchResultsToTargets(
+			[sourceAOne],
+			['pi-project'],
+			undefined,
+			async () => {
+				projectTargetSpawned = true;
+				return {code: 0, stdout: '', stderr: ''};
+			}
+		),
+		/未选择安装目标/,
+		'Skills TUI 批量安装不得接受项目 Pi target'
+	);
+	assert.equal(projectTargetSpawned, false, '项目 Pi target 不得启动任何命令');
+
 	console.log('[PASS] 扁平跨来源批量安装按 source 合并、顺序执行、失败隔离并防御同名冲突');
 }
 
@@ -975,6 +996,39 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 	assert.equal(ccOnlyArgs.length, 1, '仅选 cc 也只调一次');
 	assert.deepEqual(agentsOf(ccOnlyArgs[0]).sort(), ['claude-code', 'codex'], '含 cc 补 cx，一次双 --agent');
 
+	// 仅 Pi 也必须补 Codex canonical，省略 --copy 让 Pi 目录成为 canonical 的软链接。
+	const piOnlyArgs = [];
+	const piOnlyOptions = [];
+	await installResultToTargets(
+		{name: 'org/repo@x', source: 'org/repo', description: ''},
+		['pi'],
+		undefined,
+		async (_cmd, args, options) => {
+			piOnlyArgs.push(args);
+			piOnlyOptions.push(options);
+			return {code: 0, stdout: '', stderr: ''};
+		}
+	);
+	assert.equal(piOnlyArgs.length, 1, '仅 Pi 只调一次');
+	assert.deepEqual(agentsOf(piOnlyArgs[0]).sort(), ['codex', 'pi'], '仅 Pi 必须补 Codex canonical');
+	assert.equal(piOnlyArgs[0].includes('--copy'), false, 'Pi 必须使用 symlink 模式而非 copy');
+	assert.match(piOnlyOptions[0].env.CODEX_HOME, /\.agents$/, 'Pi symlink 安装必须把 CODEX_HOME 定向到 canonical .agents');
+
+	// C/X/Pi 一次安装仍只调用一个 source batch，三个 agent 共享同一 canonical。
+	const allTargetArgs = [];
+	await installSearchResultsToTargets(
+		[{name: 'org/repo@x', source: 'org/repo', description: ''}],
+		['cc', 'cx', 'pi'],
+		undefined,
+		async (_cmd, args) => {
+			allTargetArgs.push(args);
+			return {code: 0, stdout: '', stderr: ''};
+		}
+	);
+	assert.equal(allTargetArgs.length, 1, 'C/X/Pi 安装必须只调用一次');
+	assert.deepEqual(agentsOf(allTargetArgs[0]).sort(), ['claude-code', 'codex', 'pi'], 'C/X/Pi 必须共享一次 canonical 安装');
+	assert.equal(allTargetArgs[0].includes('--copy'), false, 'C/X/Pi 共享安装不得使用 copy');
+
 	// 仅 cx：单 Agent + --copy，并用 scoped CODEX_HOME 物化到 canonical .agents。
 	const cxOnlyArgs = [];
 	const cxOnlyOptions = [];
@@ -1082,10 +1136,10 @@ console.log('[PASS] Phase 5 Skills TUI 门禁全部通过');
 		installed: [{...sharedRow('local-only', {claude: true, codex: false}), storage: storage('claude-only', 'local-only')}]
 	};
 	const topologyRows = [
-		{kind: 'claude-only', draft: {cc: true, cx: false}},
-		{kind: 'canonical-only', draft: {cc: false, cx: true}},
-		{kind: 'shared-symlink', draft: {cc: true, cx: true}},
-		{kind: 'shared-copy', draft: {cc: true, cx: true}}
+		{kind: 'claude-only', draft: {cc: true, cx: false, pi: false}},
+		{kind: 'canonical-only', draft: {cc: false, cx: true, pi: false}},
+		{kind: 'shared-symlink', draft: {cc: true, cx: true, pi: false}},
+		{kind: 'shared-copy', draft: {cc: true, cx: true, pi: false}}
 	];
 	for (const {kind, draft} of topologyRows) {
 		const row = {

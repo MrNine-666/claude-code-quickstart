@@ -5,6 +5,7 @@ import { getProviderList, getActiveProvider } from '../../core/provider.js';
 import { scanCodexProfiles, type CodexProfileListItem } from '../../core/codex.js';
 import type { ProviderListItem } from '../../core/provider.js';
 import type { ToolTarget } from '../argv.js';
+import {loadPiProviderDisplay} from '../../core/pi-provider.js';
 
 /** 列出 provider 展示行（含活跃标记）。供 ls 命令与 cc 未找到时复用。 */
 export function listProvidersForDisplay(list: ProviderListItem[], activeKey?: string): string[] {
@@ -61,7 +62,28 @@ function runCodexLs(): number {
 	return 0;
 }
 
+function runPiLs(): number {
+	const display = loadPiProviderDisplay();
+	for (const failure of display.loadFailures ?? []) {
+		console.error(`警告：Pi ${failure.key} 无法读取：${failure.reason}`);
+	}
+	if (display.profiles.length === 0) {
+		console.log('当前没有任何 Pi Provider。');
+		console.log('运行 `ccq` 进入 TUI，在 Pi 上下文的供应商页中新建。');
+		return 0;
+	}
+
+	console.log('Pi Provider（* = 当前默认）:');
+	for (const profile of display.profiles) {
+		const marker = profile.isActive ? '*' : ' ';
+		const auth = profile.authKind === 'oauth' ? 'OAuth' : profile.authKind === 'api_key' ? 'API Key' : '未认证';
+		const modelCount = `${profile.modelCount ?? 0} models`;
+		console.log(`  ${marker} ${profile.key.padEnd(24)} ${(profile.displayName ?? '').padEnd(28)} ${auth.padEnd(8)} ${modelCount}`);
+	}
+	return 0;
+}
+
 /** 执行 ls 子命令。返回退出码。 */
 export function runLs(tool: ToolTarget = 'claude'): number {
-	return tool === 'codex' ? runCodexLs() : runClaudeLs();
+	return tool === 'codex' ? runCodexLs() : tool === 'pi' ? runPiLs() : runClaudeLs();
 }

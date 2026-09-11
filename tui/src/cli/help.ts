@@ -15,7 +15,7 @@ export const HELP_GENERAL = `${USAGE_HEADER}
   ccq <verb> [object] [--flags]
 
 子命令:
-  ls [--tool <tool>]      列出供应商并标记当前默认（tool=claude|codex，默认 claude）
+  ls [--tool <tool>]      列出供应商并标记当前默认（tool=claude|codex|pi，默认 claude）
   use <name> [--tool <tool>]
                           设默认供应商（默认 tool=claude）
   update [--check]        检查或更新 ccq 可执行文件
@@ -40,11 +40,13 @@ export const HELP_LS = `ccq ls — 列出供应商
   ccq ls
   ccq ls --tool claude
   ccq ls --tool codex
+  ccq ls --tool pi
 
 行为:
   - 默认等价 ccq ls --tool claude
   - claude：扫描 ~/.claude/providers/*.json，列出 key + BaseUrl，并标记当前默认供应商
   - codex：扫描 ~/.codex 下的 <key>.config.toml，列出供应商并标记当前默认
+  - pi：扫描 ~/.pi/agent/auth.json、models.json 与 settings.json，按 provider 展示认证状态、来源与模型数量，并标记当前默认
   - 非 TTY 友好（纯文本输出，可在管道/CI 中使用）
 `;
 
@@ -54,12 +56,14 @@ export const HELP_USE = `ccq use — 设默认供应商
   ccq use <name>
   ccq use <name> --tool claude
   ccq use <name> --tool codex
+  ccq use <provider> --tool pi
 
 行为:
   - 默认等价 ccq use <name> --tool claude
   - claude：将 <name> 的 env 合并写入 ~/.claude/settings.json（持久生效）
   - codex：读取 ~/.codex/<name>.config.toml，并结构化写入 ~/.codex/config.toml
   - codex 不写 profile = "<name>" 或 [profiles.<name>]
+  - pi：仅更新 ~/.pi/agent/settings.json 的 defaultProvider；不维护 defaultModel，也不写入 Claude/Codex profile
 `;
 
 export const HELP_UPDATE = `ccq update — 更新 ccq 可执行文件

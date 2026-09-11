@@ -7,10 +7,10 @@ import {readFileSync} from 'node:fs';
 // shared-resource-injection-ui：追加 Tools 隐藏 Header 时 agentContext 保留不变量（Task 2.4/6.3）。
 
 // ── 冻结的 Header 契约 ────────────────────────────────────────────────────────
-const AGENT_CONTEXTS = ['cc', 'cx']; // 内部键（短名）
+const AGENT_CONTEXTS = ['cc', 'cx', 'pi']; // 内部键（短名）
 const DEFAULT_AGENT_CONTEXT = 'cc'; // 默认 Claude Code
-const HEADER_VISIBLE_LABELS = {cc: 'Claude Code', cx: 'Codex'}; // UI 全称，不展示缩写
-const MENU_ORDER = ['tools', 'provider', 'config', 'prompts', 'mcp', 'skills']; // 6 菜单，Header 切换不改顺序
+const HEADER_VISIBLE_LABELS = {cc: 'Claude Code', cx: 'Codex', pi: 'Pi'}; // UI 全称，不展示缩写
+const MENU_ORDER = ['tools', 'provider', 'config', 'prompts', 'mcp', 'skills', 'extensions']; // Header 切换不改顺序
 
 // 默认上下文为 Claude Code
 assert.equal(DEFAULT_AGENT_CONTEXT, 'cc', '默认 agentContext 应为 cc（Claude Code）');
@@ -22,17 +22,17 @@ for (const ctx of AGENT_CONTEXTS) {
 	assert.ok(label, `${ctx} 应有可见标签`);
 	assert.equal(/^(cc|cx)$/i.test(label), false, `Header 可见标签不得为缩写: ${label}`);
 }
-assert.deepEqual(Object.values(HEADER_VISIBLE_LABELS).sort(), ['Claude Code', 'Codex'], 'Header 全称标签集合固定');
+assert.deepEqual(Object.values(HEADER_VISIBLE_LABELS).sort(), ['Claude Code', 'Codex', 'Pi'], 'Header 全称标签集合固定');
 
-// 左侧 6 菜单：Header 切换不改变菜单顺序（模拟切换 N 次，顺序恒定）
-assert.equal(MENU_ORDER.length, 6, '左侧保持 6 菜单');
+// 左侧 7 菜单：Header 切换不改变菜单顺序（模拟切换 N 次，顺序恒定）
+assert.equal(MENU_ORDER.length, 7, '左侧保持 7 菜单');
 for (let i = 0; i < 20; i++) {
 	const ctx = AGENT_CONTEXTS[i % AGENT_CONTEXTS.length];
 	// 切换 agentContext 不应重排 MENU_ORDER
-	assert.deepEqual(MENU_ORDER, ['tools', 'provider', 'config', 'prompts', 'mcp', 'skills'], `切换到 ${ctx} 后菜单顺序不变`);
+	assert.deepEqual(MENU_ORDER, ['tools', 'provider', 'config', 'prompts', 'mcp', 'skills', 'extensions'], `切换到 ${ctx} 后菜单顺序不变`);
 }
 
-console.log('[PASS] 1.4 agentContext 骨架：默认 Claude Code + 6 菜单顺序恒定 + Header 全称标签');
+console.log('[PASS] 1.4 agentContext 骨架：默认 Claude Code + 7 菜单顺序恒定 + Header 全称标签');
 
 // ── Tools / MCP 隐藏 Header：agentContext 不被进出这两个模块改写（Task 2.4/6.3 + 10.2/13.3）──
 // app.tsx 用 AGENT_HEADER_HIDDEN_MODULES（含 tools + mcp）决定不渲染 AgentHeader，并把残留 header 焦点强制回 view；

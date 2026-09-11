@@ -10,6 +10,7 @@ export type ModalProps = {
 	readonly hint?: string;
 	readonly tone?: ModalTone;
 	readonly width?: number;
+	readonly height?: number;
 	readonly children: React.ReactNode;
 };
 
@@ -20,6 +21,7 @@ export function Modal({
 	hint,
 	tone = 'default',
 	width = DEFAULT_MODAL_WIDTH,
+	height,
 	children
 }: ModalProps) {
 	if (!active) {
@@ -42,6 +44,7 @@ export function Modal({
 		>
 			<box
 				width={width}
+				height={height}
 				flexDirection="column"
 				borderStyle="rounded"
 				borderColor={accent}
@@ -50,7 +53,7 @@ export function Modal({
 				title={title}
 				titleColor={accent}
 			>
-				<box marginTop={1} flexDirection="column">
+				<box marginTop={1} flexDirection="column" flexGrow={1} minHeight={0}>
 					{children}
 				</box>
 				{hint ? (

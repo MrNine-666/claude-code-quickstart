@@ -122,22 +122,31 @@ const listState = (installed, over = {}) => ({
 	// 管理态同样快照。
 	const managing = reduceSkillsViewState(state, {type: 'manage-inject'});
 	assert.equal(managing.pendingInstanceId, target.id, '管理态必须快照 instance id');
-	// 草稿只由该 Item 的 agents 派生，不依赖列表排序位置。
+	// 草稿由该 Item 的 agents 数组派生，不依赖列表排序位置或物理目录形态。
 	assert.deepEqual(
 		managing.installDraft,
-		{cc: target.agents.includes('Claude Code'), cx: target.agents.includes('Codex')},
+		{cc: target.agents.includes('Claude Code'), cx: target.agents.includes('Codex'), pi: false},
 		'草稿必须严格等于选中 Item 的 agents 投影'
 	);
 
 	const codexItem = listState(items(rec({agents: ['Codex']})));
 	assert.deepEqual(
 		reduceSkillsViewState(codexItem, {type: 'manage-inject'}).installDraft,
-		{cc: false, cx: true},
+		{cc: false, cx: true, pi: false},
 		'Codex 实例草稿为仅 Codex'
 	);
 
 	const shared = listState(items(rec({agents: ['Claude Code', 'Codex']})));
-	assert.deepEqual(reduceSkillsViewState(shared, {type: 'manage-inject'}).installDraft, {cc: true, cx: true});
+	assert.deepEqual(reduceSkillsViewState(shared, {type: 'manage-inject'}).installDraft, {cc: true, cx: true, pi: false});
+
+	// Pi 的管理状态与卡片状态都必须只由 skills list 的 agents 数组决定；
+	// 即使 CLI projection path 仍指向共享根，也不能因为 Pi 使用实体目录而丢失 Pi 目标。
+	const allAgents = listState(items(rec({agents: ['Claude Code', 'Codex', 'Pi']})));
+	assert.deepEqual(
+		reduceSkillsViewState(allAgents, {type: 'manage-inject'}).installDraft,
+		{cc: true, cx: true, pi: true},
+		'管理草稿必须按 agents 数组保留 Pi 目标，不得用存储根覆盖 Pi 状态'
+	);
 
 	console.log('[PASS] B-3 Modal/确认态快照 instance id 并由 agents 派生草稿');
 }
@@ -146,7 +155,7 @@ const listState = (installed, over = {}) => ({
 {
 	const codexRoot = listState(items(rec({path: '/h/.codex/skills/pdf', agents: ['Codex']})));
 	const managing = reduceSkillsViewState(codexRoot, {type: 'manage-inject'});
-	assert.deepEqual(managing.installDraft, {cc: false, cx: true});
+	assert.deepEqual(managing.installDraft, {cc: false, cx: true, pi: false});
 
 	const submitted = reduceSkillsViewState(managing, {type: 'request-topology-change'});
 	assert.equal(submitted.mode, 'confirm-topology-change', '.codex 实例即使目标同侧也必须进入迁移确认');
@@ -163,7 +172,22 @@ const listState = (installed, over = {}) => ({
 	assert.notEqual(zero.mode, 'confirm-topology-change');
 	assert.match(zero.errorText ?? '', /至少保留一个/);
 
-	console.log('[PASS] B-3b .codex 同侧确认仍触发迁移，受管根同侧为 no-op');
+	const piRoot = listState(items(rec({path: '/h/.pi/agent/skills/pdf', agents: ['Pi']})));
+	const piManaging = reduceSkillsViewState(piRoot, {type: 'manage-inject'});
+	assert.deepEqual(
+		piManaging.installDraft,
+		{cc: false, cx: false, pi: true},
+		'Pi global-only 实例默认只进入 Pi global 独立目标'
+	);
+	const piSubmitted = reduceSkillsViewState(piManaging, {type: 'request-topology-change'});
+	assert.equal(piSubmitted.mode, 'confirm-topology-change', 'Pi global-only 实体目录保持 Pi 目标时应确认迁移为 canonical 软链接');
+	const piDisabled = reduceSkillsViewState(
+		{...piManaging, installDraft: {cc: true, cx: false, pi: false}},
+		{type: 'request-topology-change'}
+	);
+	assert.equal(piDisabled.mode, 'confirm-topology-change', 'Pi global-only 切换到 Claude Code 应进入独立目标确认');
+
+	console.log('[PASS] B-3b .codex/Pi global 旧源确认迁移，受管根同侧为 no-op');
 }
 
 // ── 4) 搜索页来源感知 + 目标根冲突 ──────────────────────────────────────────

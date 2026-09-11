@@ -85,3 +85,58 @@ export function codexProfilePath(key: string): string {
 export function codexAgentsPath(): string {
 	return join(codexDir(), 'AGENTS.md');
 }
+
+/** Pi 主目录：`~/.pi`，测试通过 CCQ_HOME 隔离。 */
+export function piDir(): string {
+	return join(resolveHome(), '.pi');
+}
+
+/** Pi Agent 用户目录：`~/.pi/agent`。 */
+export function piAgentDir(): string {
+	return join(piDir(), 'agent');
+}
+
+/** Pi 全局设置文件 `~/.pi/agent/settings.json`。 */
+export function piSettingsPath(): string {
+	return join(piAgentDir(), 'settings.json');
+}
+
+/** Pi 认证文件 `~/.pi/agent/auth.json`。 */
+export function piAuthJsonPath(): string {
+	return join(piAgentDir(), 'auth.json');
+}
+
+/** Pi 模型配置文件 `~/.pi/agent/models.json`。 */
+export function piModelsJsonPath(): string {
+	return join(piAgentDir(), 'models.json');
+}
+
+/** Pi MCP adapter 的 CCQ 状态/ownership sidecar；适配器本身不读取此文件。 */
+export function piMcpAdapterOverridesPath(): string {
+	return join(piAgentDir(), 'mcp-adapter-overrides.json');
+}
+
+/** Pi MCP adapter 实际读取的 Pi 全局标准 MCP 配置，包含 mcpServers 定义。 */
+export function piMcpConfigPath(): string {
+	return join(piAgentDir(), 'mcp.json');
+}
+
+/** Pi 全局规则文件 `~/.pi/agent/AGENTS.md`。 */
+export function piAgentsPath(): string {
+	return join(piAgentDir(), 'AGENTS.md');
+}
+
+/** Pi 全局 Skills 目录 `~/.pi/agent/skills`。 */
+export function piGlobalSkillsDir(): string {
+	return join(piAgentDir(), 'skills');
+}
+
+/** 当前项目 Pi settings（只读探测，配置页不会写入）。 */
+export function piProjectSettingsPath(): string {
+	return join(process.cwd(), '.pi', 'settings.json');
+}
+
+/** 当前项目的 Pi Skills 目录 `.pi/skills`。 */
+export function piProjectSkillsDir(): string {
+	return join(process.cwd(), '.pi', 'skills');
+}

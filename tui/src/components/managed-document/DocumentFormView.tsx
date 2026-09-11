@@ -10,7 +10,6 @@ import type {ManagedDocumentSaveResult} from './document-types.js';
 export type DocumentFormViewProps = {
 	readonly title: string;
 	readonly subtitle: string;
-	readonly headerRight?: React.ReactNode;
 	readonly editorTitle: string;
 	readonly editInitial: string;
 	readonly editorActive: boolean;
@@ -34,7 +33,6 @@ export type DocumentFormViewProps = {
 export function DocumentFormView({
 	title,
 	subtitle,
-	headerRight,
 	editorTitle,
 	editInitial,
 	editorActive,
@@ -76,7 +74,7 @@ export function DocumentFormView({
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title={title} subtitle={subtitle} right={headerRight} />
+			<ViewHeader title={title} subtitle={subtitle} />
 			<box flexDirection="row" flexGrow={1} minHeight={0} border={false} gap={1} marginTop={1}>
 				{showRecommendation ? (
 					<box key="recommend-panel" flexDirection="column" flexGrow={1} flexBasis={0} minWidth={0}>

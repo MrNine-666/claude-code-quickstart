@@ -12,6 +12,7 @@ import {Spinner, busyActionTitle} from '../src/components/spinner.tsx';
 const appSource = readFileSync(new URL('../src/app.tsx', import.meta.url), 'utf8');
 const themeSource = readFileSync(new URL('../src/theme/index.ts', import.meta.url), 'utf8');
 const documentFormSource = readFileSync(new URL('../src/components/managed-document/DocumentFormView.tsx', import.meta.url), 'utf8');
+const viewHeaderSource = readFileSync(new URL('../src/components/view-header.tsx', import.meta.url), 'utf8');
 const spinnerSource = readFileSync(new URL('../src/components/spinner.tsx', import.meta.url), 'utf8');
 const execSource = readFileSync(new URL('../src/core/exec.ts', import.meta.url), 'utf8');
 const componentsIndexSource = readFileSync(new URL('../src/components/index.ts', import.meta.url), 'utf8');
@@ -22,8 +23,8 @@ const skillsActionsSource = readFileSync(new URL('../src/views/skills/skills-vie
 
 assert.match(
 	appSource,
-	/<AgentHeader agentContext=\{state\.agentContext\} active=\{headerActive\} \/>/,
-	'AgentHeader 调用不得继续传 width={contentWidth}'
+	/<AgentHeader agentContext=\{moduleAgentContext\} contexts=\{visibleHeaderContexts\} active=\{headerActive\} \/>/,
+	'AgentHeader 调用必须使用当前模块的 Header 投影，不得继续传 width={contentWidth}'
 );
 assert.doesNotMatch(
 	appSource,
@@ -50,10 +51,15 @@ assert.equal(
 	3,
 	'侧边栏、content 卡片、AgentHeader 三个 layout active 边框都应使用 activeBorderChars'
 );
+assert.match(
+	viewHeaderSource,
+	/subtitle === undefined \? null : [\s\S]{0,120}<text fg=\{colors\.muted\}[^>]*selectionBg=\{colors\.selectionBg\}[^>]*selectionFg=\{colors\.selectionFg\}/,
+	'所有页面标题副文案必须使用主题化文本选中背景/前景'
+);
 
-// split 横向等分：推荐列/编辑列用 flexGrow={1} + flexBasis={0} + minWidth={0}；
+// Config split 横向等分：推荐列/编辑列用 flexGrow={1} + flexBasis={0} + minWidth={0}；
 // 纵向溢出：推荐列内边框与 scrollbox 用 minHeight={0}，避免内容撑大父容器、挤掉标题 marginBottom。
-for (const [name, source] of [['ConfigView', documentFormSource], ['PromptsView', documentFormSource]]) {
+for (const [name, source] of [['ConfigView', documentFormSource]]) {
 	assert.match(
 		source,
 		/<box(?=[^>]*key="recommend-panel")(?=[^>]*flexGrow=\{1\})(?=[^>]*flexBasis=\{0\})(?=[^>]*minWidth=\{0\})[^>]*>/,

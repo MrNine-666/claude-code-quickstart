@@ -8,7 +8,7 @@ import {join} from 'node:path';
 // - Config 快捷键语义复用（预览 / e / Ctrl+T / Ctrl+O）
 // - Claude Config 读写 ~/.claude/settings.json；Codex Config 读写 ~/.codex/config.toml
 // - Codex Config 推荐 fill-missing 不管理 provider/MCP/hooks/Skills/AGENTS.md
-// - Claude Rules 读写 CLAUDE.md；Codex Rules 只读写 AGENTS.md，推荐内容复用 cc
+// - Claude/Codex Rules 只读写各自的全局规则文件，不提供规则推荐导入
 
 // ── Config 快捷键复用：两种上下文共用同一组交互键 ──
 const CONFIG_SHORTCUTS = ['preview', 'e', 'ctrl+t', 'ctrl+o'];
@@ -99,7 +99,7 @@ try {
 	assert.equal(readCurrentRules('cc'), 'claude rules', 'Claude rules 从 CLAUDE.md 读取');
 	assert.equal(readCurrentRules('cx'), 'codex agents', 'Codex rules 从 AGENTS.md 读取');
 	assert.equal(readFileSync(join(claudeDir(), 'CLAUDE.md'), 'utf8'), 'claude rules', 'Codex 保存不覆盖 CLAUDE.md');
-	console.log('[PASS] 6.7/6.8/6.9 Rules 路径隔离：CLAUDE.md ↔ AGENTS.md，推荐内容共用 cc');
+	console.log('[PASS] 6.7/6.8/6.9 Rules 路径隔离：CLAUDE.md ↔ AGENTS.md，无规则推荐导入');
 } finally {
 	delete process.env.CCQ_HOME;
 	delete process.env.CODEX_HOME;

@@ -20,6 +20,10 @@ export type ProviderFormAdapter<TInput, TValues, TModel extends ProviderFormMode
 	readonly recordToValues: (record: Record<string, string>, fallback: TValues) => TValues;
 	readonly buildText: (values: TValues) => string;
 	readonly parseText: (baseValues: TValues, raw: string) => ProviderFormTextResult<TValues>;
+	/** Whether the shared form should expose the raw JSON/TOML editor. */
+	readonly showTextEditor?: boolean;
+	/** Keep dynamic field projections (for example checkbox options) in sync with values. */
+	readonly syncFields?: (values: TValues, fields: readonly FormField[]) => readonly FormField[];
 	readonly makeProviderTypeInput: (providerType: string) => TInput;
 	readonly makeSubmitInput: (model: TModel, record: Record<string, string>) => TInput;
 	readonly isTextReadOnly?: (values: TValues) => boolean;

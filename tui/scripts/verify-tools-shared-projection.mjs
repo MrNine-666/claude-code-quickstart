@@ -19,9 +19,11 @@ const {codeGraphInstallCommands, codeGraphUninstallCommands} = await import('../
 const EXPECTED_IDS = [
 	'ClaudeCode',
 	'CodexCli',
+	'PiCli',
 	'AntigravityCli',
 	'DeepSeekHarness',
 	'Ccline',
+	'PiWeb',
 	'OpenSpec',
 	'Trellis',
 	'CcgWorkflow',
@@ -41,7 +43,7 @@ const detected = COMPONENT_DEFINITIONS.map(def => ({
 // ── 列表 agentContext 不变性：投影不接受 context 参数，结果对 cc/cx 都相同 ──────
 const projected = projectSharedToolComponents(detected);
 const ids = projected.map(c => c.id);
-assert.deepEqual(ids, EXPECTED_IDS, '共享投影返回全 10 组件并按分组顺序排列（含 DeepSeekHarness / Ccline / Trellis / GitNexus）');
+assert.deepEqual(ids, EXPECTED_IDS, '共享投影返回全 12 组件并按分组顺序排列（含 Pi CLI / Pi Web）');
 assert.ok(ids.includes('Ccline'), 'Ccline 常显');
 // 投影为纯函数，输入不含 context —— 两次调用结果结构一致即证明与上下文无关。
 const projectedAgain = projectSharedToolComponents(detected);
@@ -69,7 +71,7 @@ assert.equal(codegraph.injectByAgent.cx.integrated, false, 'Codex 侧未注入�
 console.log('[PASS] 6.1 双态独立：CodeGraph 仅注入 Claude Code 时 cc=已注入/cx=未注入');
 
 // ── 非 inject 类无 injectByAgent ──────────────────────────────────────────────
-for (const id of ['OpenSpec', 'Trellis', 'AntigravityCli', 'DeepSeekHarness', 'ClaudeCode', 'CodexCli', 'Ccline', 'GitNexus']) {
+for (const id of ['OpenSpec', 'Trellis', 'AntigravityCli', 'DeepSeekHarness', 'ClaudeCode', 'CodexCli', 'PiCli', 'PiWeb', 'Ccline', 'GitNexus']) {
 	const component = dualProjected.find(c => c.id === id);
 	assert.ok(component, `${id} 在投影中存在`);
 	assert.equal(component.injectByAgent, undefined, `${id}（非 inject 类）不得含 injectByAgent`);
@@ -129,6 +131,13 @@ assert.equal(resolveToolsPrimaryAction({...openSpec, installed: false, hasUpdate
 assert.equal(resolveToolsPrimaryAction({...openSpec, installed: true, hasUpdate: true}), 'update', '普通可更新工具 Enter 执行更新');
 assert.equal(resolveToolsPrimaryAction({...openSpec, installed: true, hasUpdate: false}), 'latest', '普通最新工具 Enter 只提示已是最新');
 assert.equal(resolveToolsPrimaryAction({...codegraph, hasUpdate: true}), 'manage', '管理型工具即使有更新，Enter 仍优先打开 Modal');
+const piWebCard = dualProjected.find(c => c.id === 'PiWeb');
+assert.ok(piWebCard, 'PiWeb 在共享投影中存在');
+assert.deepEqual(
+	toolStatusDot({...piWebCard, installed: true, currentVersion: '', latestVersion: '0.9.0', hasUpdate: true}, 'idle'),
+	{kind: 'latest', label: '已安装'},
+	'Pi Web 卡片右上角保持正常已安装文案'
+);
 console.log('[PASS] Tools Enter 主操作优先级：manage > install/update/latest');
 
 // ── DeepSeek Harness：损坏/版本不一致可修复，外部与 PATH 冲突只读 ─────────────
@@ -226,21 +235,21 @@ const gridState = {
 	cursor: dualProjected.findIndex(c => c.id === 'CodeGraph')
 };
 const draft = initialInjectDraft(dualProjected.find(c => c.id === 'CodeGraph'));
-assert.deepEqual(draft, {cc: true, cx: false}, '草稿用组件实际 inject 态初始化（cc 开 / cx 关）');
+assert.deepEqual(draft, {cc: true, cx: false, pi: false}, '草稿用组件实际 inject 态初始化（cc 开 / cx 关，Pi 不可注入）');
 
 let modal = reduceToolsViewState(gridState, {type: 'open-inject-target', draft});
 assert.equal(modal.mode, 'select-inject-target', 'Enter 打开开关 Modal');
-assert.deepEqual(modal.injectDraft, {cc: true, cx: false}, 'Modal 初始草稿=实际态');
+assert.deepEqual(modal.injectDraft, {cc: true, cx: false, pi: false}, 'Modal 初始草稿=实际态');
 const modalCursor = modal.cursor;
 
 // 空格切换当前焦点侧（injectTargetIndex=0 → cc）：cc 由开→关。
 modal = reduceToolsViewState(modal, {type: 'inject-target-toggle'});
-assert.deepEqual(modal.injectDraft, {cc: false, cx: false}, '空格切换 cc 草稿 true→false');
+assert.deepEqual(modal.injectDraft, {cc: false, cx: false, pi: false}, '空格切换 cc 草稿 true→false');
 // 下移到 cx 再切换：cx 由关→开。
 modal = reduceToolsViewState(modal, {type: 'inject-target-nav', delta: 1});
 assert.equal(modal.cursor, modalCursor, 'Tools Modal 上下键不得移动背景网格光标');
 modal = reduceToolsViewState(modal, {type: 'inject-target-toggle'});
-assert.deepEqual(modal.injectDraft, {cc: false, cx: true}, '空格切换 cx 草稿 false→true');
+assert.deepEqual(modal.injectDraft, {cc: false, cx: true, pi: false}, '空格切换 cx 草稿 false→true');
 
 // 草稿切换期间组件实际 injectByAgent 未被改写（Enter 前不落盘）。
 const codegraphDuringDraft = modal.components.find(c => c.id === 'CodeGraph');

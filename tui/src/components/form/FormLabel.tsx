@@ -14,12 +14,24 @@ export function FormLabel({ label, focused }: FormLabelProps) {
 	return (
 		<>
 			<box width={FORM_LABEL_WIDTH} flexShrink={0} overflow="hidden">
-				<text fg={focused ? colors.primary : colors.muted} attributes={focused ? TextAttributes.BOLD : 0}>
+				<text
+					fg={focused ? colors.primary : colors.muted}
+					attributes={focused ? TextAttributes.BOLD : 0}
+					selectionBg={colors.selectionBg}
+					selectionFg={colors.selectionFg}
+				>
 					{focused ? '› ' : '  '}
 					{label}
 				</text>
 			</box>
-			<text fg={focused ? colors.primary : colors.muted} attributes={focused ? TextAttributes.BOLD : 0}>│ </text>
+			<text
+				fg={focused ? colors.primary : colors.muted}
+				attributes={focused ? TextAttributes.BOLD : 0}
+				selectionBg={colors.selectionBg}
+				selectionFg={colors.selectionFg}
+			>
+				│{' '}
+			</text>
 		</>
 	);
 }

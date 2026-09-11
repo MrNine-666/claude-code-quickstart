@@ -60,7 +60,10 @@ export function openCurrentDocsAction(view: ToolsViewState): void {
 	}
 	void openUrl(component.docsUrl).then(result => {
 		if (result.ok) toast.success(`已打开 ${component.name} 文档`);
-		else toast.error(result.error);
+		else {
+			console.error(`[tools] ${component.name} 文档打开失败`, result.error);
+			toast.error(`${component.name} 文档打开失败，请查看控制台`);
+		}
 	});
 }
 
@@ -69,7 +72,8 @@ export function runPrimaryAction(
 	services: ToolsViewServices,
 	dispatch: ToolsViewDispatch,
 	cache: DetectionCache<ManagedComponent[]>,
-	taskCancellation: TaskCancellation
+	taskCancellation: TaskCancellation,
+	agentContext: AgentContext
 ): void {
 	const component = cursorComponent(view);
 	if (!component || itemStatusOf(view, component.id) !== 'idle') return;
@@ -79,16 +83,17 @@ export function runPrimaryAction(
 			dispatch({type: 'open-inject-target', draft: initialInjectDraft(component as SharedManagedComponent)});
 			return;
 		case 'install':
-			installOne(component, services, dispatch, cache, taskCancellation);
+			installOne(component, services, dispatch, cache, taskCancellation, agentContext);
 			return;
 		case 'update':
-			updateOne(component, services, dispatch, cache, taskCancellation);
+			updateOne(component, services, dispatch, cache, taskCancellation, agentContext);
 			return;
 		case 'repair':
-			updateOne(component, services, dispatch, cache, taskCancellation);
+			updateOne(component, services, dispatch, cache, taskCancellation, agentContext);
 			return;
 		case 'blocked':
-			toast.error(component.lifecycle?.diagnostic ?? `${component.name} 当前不可操作`);
+			if (component.lifecycle?.diagnostic) console.error(`[tools] ${component.name} 当前不可操作`, component.lifecycle.diagnostic);
+			toast.error(`${component.name} 当前不可操作，请查看控制台`);
 			return;
 		case 'latest':
 			toast.success(`${component.name} 已是最新`);
@@ -100,11 +105,12 @@ export function updateInjectableCurrent(
 	services: ToolsViewServices,
 	dispatch: ToolsViewDispatch,
 	cache: DetectionCache<ManagedComponent[]>,
-	taskCancellation: TaskCancellation
+	taskCancellation: TaskCancellation,
+	agentContext: AgentContext
 ): void {
 	const component = cursorComponent(view);
 	if (!component || !isInjectableComponent(component.id)) return;
-	updateCurrent(view, services, dispatch, cache, taskCancellation);
+	updateCurrent(view, services, dispatch, cache, taskCancellation, agentContext);
 }
 
 function updateCurrent(
@@ -112,12 +118,13 @@ function updateCurrent(
 	services: ToolsViewServices,
 	dispatch: ToolsViewDispatch,
 	cache: DetectionCache<ManagedComponent[]>,
-	taskCancellation: TaskCancellation
+	taskCancellation: TaskCancellation,
+	agentContext: AgentContext
 ): void {
 	const component = cursorComponent(view);
 	if (!component || itemStatusOf(view, component.id) !== 'idle') return;
 	if (component.hasUpdate === true) {
-		updateOne(component, services, dispatch, cache, taskCancellation);
+		updateOne(component, services, dispatch, cache, taskCancellation, agentContext);
 		return;
 	}
 	if (!component.installed) toast.info(`${component.name} 未安装`);
@@ -142,7 +149,7 @@ export function applyInjectDraft(
 		ctx,
 		desired: draft[ctx],
 		actual: Boolean(component.injectByAgent?.[ctx]?.integrated)
-	})).filter(item => item.desired !== item.actual);
+	})).filter(item => !component.injectByAgent?.[item.ctx]?.statusHint && item.desired !== item.actual);
 	if (changes.length === 0) {
 		toast.info('未改变任何开关');
 		dispatch({type: 'cancel'});
@@ -157,8 +164,9 @@ export function applyInjectDraft(
 			if (signal.aborted) return;
 			dispatch({type: 'item-patched', id: component.id, patch: result.patch});
 			if (result.error) {
+				console.error(`[tools] ${component.name} 设置部分失败`, result.error);
 				dispatch({type: 'item-failed', id: component.id, error: result.error});
-				toast.warning(`${component.name} 操作部分完成，请检查详情`);
+				toast.warning(`${component.name} 设置部分完成，请查看控制台`);
 			} else {
 				toast.success(`${component.name} 设置已更新`);
 			}
@@ -166,7 +174,10 @@ export function applyInjectDraft(
 		})
 		.catch((error: unknown) => {
 			if (signal.aborted) return;
-			dispatch({type: 'item-failed', id: component.id, error: errorMessage(error)});
+			const detail = errorMessage(error);
+			console.error(`[tools] ${component.name} 设置失败`, detail);
+			toast.error(`${component.name} 设置失败，请查看控制台`);
+			dispatch({type: 'item-failed', id: component.id, error: detail});
 			cache.refresh();
 		})
 		.finally(() => {
@@ -245,13 +256,14 @@ function installOne(
 	services: ToolsViewServices,
 	dispatch: ToolsViewDispatch,
 	cache: DetectionCache<ManagedComponent[]>,
-	taskCancellation: TaskCancellation
+	taskCancellation: TaskCancellation,
+	agentContext: AgentContext
 ): void {
 	const signal = taskCancellation.start();
 	if (!signal) return;
 	dispatch({type: 'item-start', id: component.id, action: 'install'});
 	void services
-		.installComponent(component.id, progressSink(dispatch, component.id), undefined, signal)
+		.installComponent(component.id, progressSink(dispatch, component.id), agentContext, signal)
 		.then(outcome => {
 			if (signal.aborted) return;
 			if (outcome.success) {
@@ -262,10 +274,13 @@ function installOne(
 					patch: successfulInstallPatch(component, outcome.version, outcome.lifecycle)
 				});
 			} else {
+				const detail = outcome.error ?? `${component.name} 安装失败`;
+				console.error(`[tools] ${component.name} 安装失败`, detail);
+				toast.error(`${component.name} 安装失败，请查看控制台`);
 				dispatch({
 					type: 'item-failed',
 					id: component.id,
-					error: outcome.error ?? `${component.name} 安装失败`,
+					error: detail,
 					...(outcome.lifecycle ? {patch: dshLifecyclePatch(component, outcome.lifecycle)} : {})
 				});
 			}
@@ -273,7 +288,10 @@ function installOne(
 		})
 		.catch((error: unknown) => {
 			if (signal.aborted) return;
-			dispatch({type: 'item-failed', id: component.id, error: errorMessage(error)});
+			const detail = errorMessage(error);
+			console.error(`[tools] ${component.name} 安装失败`, detail);
+			toast.error(`${component.name} 安装失败，请查看控制台`);
+			dispatch({type: 'item-failed', id: component.id, error: detail});
 			cache.refresh();
 		})
 		.finally(() => {
@@ -304,21 +322,25 @@ function updateOne(
 	services: ToolsViewServices,
 	dispatch: ToolsViewDispatch,
 	cache: DetectionCache<ManagedComponent[]>,
-	taskCancellation: TaskCancellation
+	taskCancellation: TaskCancellation,
+	agentContext: AgentContext
 ): void {
 	const signal = taskCancellation.start();
 	if (!signal) return;
 	dispatch({type: 'item-start', id: component.id, action: 'update'});
 	void services
-		.updateComponents([component], progressSink(dispatch, component.id), undefined, signal)
+		.updateComponents([component], progressSink(dispatch, component.id), agentContext, signal)
 		.then(result => {
 			if (signal.aborted) return;
 			const failed = result.updatedItems.some(item => item.startsWith(`failed::${component.id}`));
 			if (failed) {
+				const detail = updateFailureMessage(result.updatedItems, component.id, '未返回失败详情');
+				console.error(`[tools] ${component.name} 更新失败`, detail);
+				toast.error(`${component.name} 更新失败，请查看控制台`);
 				dispatch({
 					type: 'item-failed',
 					id: component.id,
-					error: `${component.name} 更新失败: ${updateFailureMessage(result.updatedItems, component.id, '未返回失败详情')}`,
+					error: `${component.name} 更新失败: ${detail}`,
 					...(result.dshLifecycle ? {patch: dshLifecyclePatch(component, result.dshLifecycle)} : {})
 				});
 			} else {
@@ -329,7 +351,10 @@ function updateOne(
 		})
 		.catch((error: unknown) => {
 			if (signal.aborted) return;
-			dispatch({type: 'item-failed', id: component.id, error: errorMessage(error)});
+			const detail = errorMessage(error);
+			console.error(`[tools] ${component.name} 更新失败`, detail);
+			toast.error(`${component.name} 更新失败，请查看控制台`);
+			dispatch({type: 'item-failed', id: component.id, error: detail});
 			cache.refresh();
 		})
 		.finally(() => {
@@ -418,7 +443,8 @@ export function updateAll(
 	services: ToolsViewServices,
 	dispatch: ToolsViewDispatch,
 	cache: DetectionCache<ManagedComponent[]>,
-	taskCancellation: TaskCancellation
+	taskCancellation: TaskCancellation,
+	agentContext: AgentContext
 ): void {
 	const targets = updatableComponents(view);
 	if (targets.length === 0) {
@@ -429,7 +455,7 @@ export function updateAll(
 	if (!signal) return;
 	dispatch({type: 'batch-start', action: 'update', ids: targets.map(item => item.id)});
 	void services
-		.updateComponents(targets, progressSink(dispatch, targets[0]?.id ?? 'batch-update'), undefined, signal)
+		.updateComponents(targets, progressSink(dispatch, targets[0]?.id ?? 'batch-update'), agentContext, signal)
 		.then(result => {
 			if (signal.aborted) return;
 			const failedItems = result.updatedItems.filter(item => item.startsWith('failed::'));
@@ -437,21 +463,26 @@ export function updateAll(
 			const components = settleBatchUpdateComponents(view.components, targets, failedIds, result.dshLifecycle);
 			const updatedCount = targets.length - failedIds.size;
 			const failureDetails = [...failedIds].map(id => `${id}: ${updateFailureMessage(failedItems, id, '未返回失败详情')}`);
+			for (const detail of failureDetails) console.error('[tools] 批量更新失败', detail);
 			const summary =
 				failedIds.size === 0
 					? `已更新 ${targets.length} 个组件`
-					: `${updatedCount}/${targets.length} 成功，失败: ${failureDetails.join('；')}`;
+					: `${updatedCount}/${targets.length} 成功，部分更新失败，请查看控制台`;
 			if (failedIds.size === 0) {
 				toast.success(summary);
 				dispatch({type: 'batch-done', components});
 			} else {
+				toast.error(summary);
 				dispatch({type: 'batch-failed', error: summary, components});
 			}
 			cache.refresh();
 		})
 		.catch((error: unknown) => {
 			if (signal.aborted) return;
-			dispatch({type: 'batch-failed', error: errorMessage(error)});
+			const detail = errorMessage(error);
+			console.error('[tools] 批量更新失败', detail);
+			toast.error('批量更新失败，请查看控制台');
+			dispatch({type: 'batch-failed', error: detail});
 			cache.refresh();
 		})
 		.finally(() => {
@@ -466,13 +497,14 @@ export function runUninstall(
 	dispatch: ToolsViewDispatch,
 	cache: DetectionCache<ManagedComponent[]>,
 	fullUninstall: boolean,
-	taskCancellation: TaskCancellation
+	taskCancellation: TaskCancellation,
+	agentContext: AgentContext
 ): void {
 	const signal = taskCancellation.start();
 	if (!signal) return;
 	dispatch({type: 'confirm-uninstall'});
 	void services
-		.uninstallComponent(component.id, progressSink(dispatch, component.id), {fullUninstall, signal})
+		.uninstallComponent(component.id, progressSink(dispatch, component.id), {agentContext, fullUninstall, signal})
 		.then(outcome => {
 			if (signal.aborted) return;
 			if (outcome.success) {
@@ -484,13 +516,15 @@ export function runUninstall(
 					patch: uninstallSuccessPatch(component, fullUninstall, outcome.lifecycle, outcome.warning)
 				});
 			} else {
-				const message = outcome.manualHint
+				const detail = outcome.manualHint
 					? `${outcome.error ?? '卸载失败'}\n${outcome.manualHint}`
 					: (outcome.error ?? `${component.name} 卸载失败`);
+				console.error(`[tools] ${component.name} 卸载失败`, detail);
+				toast.error(`${component.name} 卸载失败，请查看控制台`);
 				dispatch({
 					type: 'item-failed',
 					id: component.id,
-					error: message,
+					error: detail,
 					...(outcome.lifecycle ? {patch: dshLifecyclePatch(component, outcome.lifecycle)} : {})
 				});
 			}
@@ -498,7 +532,10 @@ export function runUninstall(
 		})
 		.catch((error: unknown) => {
 			if (signal.aborted) return;
-			dispatch({type: 'item-failed', id: component.id, error: errorMessage(error)});
+			const detail = errorMessage(error);
+			console.error(`[tools] ${component.name} 卸载失败`, detail);
+			toast.error(`${component.name} 卸载失败，请查看控制台`);
+			dispatch({type: 'item-failed', id: component.id, error: detail});
 			cache.refresh();
 		})
 		.finally(() => {
@@ -529,7 +566,8 @@ export function uninstallSuccessPatch(
 		...patch,
 		injectByAgent: {
 			cc: {context: 'cc', integrated: false},
-			cx: {context: 'cx', integrated: false}
+			cx: {context: 'cx', integrated: false},
+			pi: {context: 'pi', integrated: false, statusHint: 'Pi 不支持该 Agent 注入'}
 		}
 	};
 }
@@ -561,6 +599,7 @@ export function toolStatusDot(component: SharedManagedComponent, status: Compone
 	if (component.id === 'DeepSeekHarness' && component.lifecycle) return dshStatusDot(component);
 	if (component.sharingKind === 'shared-cli-per-agent-inject') return injectSharedDot(component);
 	if (!component.installed) return {kind: 'notInstalled', label: '未安装'};
+	if (component.reportsVersion === false) return {kind: 'latest', label: '已安装'};
 	if (component.hasUpdate === true) {
 		return {kind: 'updatable', label: `${component.currentVersion || '-'} → ${component.latestVersion || '-'}`};
 	}

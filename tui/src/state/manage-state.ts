@@ -1,9 +1,9 @@
 export type FocusMode = 'nav' | 'header' | 'view' | 'form' | 'modal';
 
-export type ManageModuleId = 'provider' | 'mcp' | 'skills' | 'prompts' | 'config' | 'tools' | 'update';
+export type ManageModuleId = 'provider' | 'mcp' | 'skills' | 'prompts' | 'config' | 'tools' | 'extensions' | 'update';
 
-// 当前 Agent 上下文：内部键用短名（cc/cx），界面 Header 只展示全称（AGENT_CONTEXT_LABELS）。
-export type AgentContext = 'cc' | 'cx';
+// 当前 Agent 上下文：内部键用短名，界面 Header 只展示全称（AGENT_CONTEXT_LABELS）。
+export type AgentContext = 'cc' | 'cx' | 'pi';
 
 export type ManageKeyName =
 	| 'up'
@@ -26,19 +26,20 @@ export type ManageMenuItem = {
 export type ManageState = {
 	readonly focus: FocusMode;
 	readonly selectedIndex: number;
-	// 当前 Agent 上下文（cc=Claude Code / cx=Codex）：Header 切换，左侧 6 菜单顺序与选中不受影响。
+	// 当前 Agent 上下文（cc=Claude Code / cx=Codex / pi=Pi）：Header 切换，左侧菜单顺序与选中不受影响。
 	readonly agentContext: AgentContext;
 	readonly eventLog: readonly string[];
 	readonly shouldExit: boolean;
 };
 
 export const menuItems: readonly ManageMenuItem[] = [
-	{id: 'tools', label: '工具管理', description: '管理 Claude Code 与 Ccline / CcgWorkflow / OpenSpec / CodexCli / AntigravityCli（安装 / 更新 / 卸载）'},
+	{id: 'tools', label: '工具管理', description: '管理 Claude Code、Codex 与 Pi 运行时及全局伴随工具（安装 / 更新 / 卸载）'},
 	{id: 'provider', label: '供应商', description: '管理 API 供应商、密钥与模型环境变量'},
 	{id: 'config', label: '配置文件', description: '查看推荐 settings.json 配置、按缺失项补全或外部编辑器编辑'},
-	{id: 'prompts', label: '全局规则', description: '查看、导入、复制推荐 CLAUDE.md 或外部编辑器编辑'},
+	{id: 'prompts', label: '全局规则', description: '查看和编辑全局规则文件'},
 	{id: 'mcp', label: 'MCP', description: '查看、启用、禁用和维护 MCP Server'},
-	{id: 'skills', label: 'Skills', description: '搜索、安装、更新和卸载 Claude Code Skills'}
+	{id: 'skills', label: 'Skills', description: '搜索、安装、更新和卸载 Claude Code、Codex 与 Pi Skills'},
+	{id: 'extensions', label: '扩展管理', description: '搜索和管理 Pi package 扩展及 pi-mcp-adapter'}
 ];
 
 // 侧边栏底部固定的「检查更新」按钮（不在 menuItems 列表内，占第 menuItems.length 个导航位）。
@@ -56,19 +57,20 @@ const maxMenuIndex = navCount - 1;
 // Header 可见标签（全称，禁止展示 cc/cx 缩写）。单一数据源，供 App Header 与 verify 共用。
 export const AGENT_CONTEXT_LABELS: Readonly<Record<AgentContext, string>> = {
 	cc: 'Claude Code',
-	cx: 'Codex'
+	cx: 'Codex',
+	pi: 'Pi'
 };
 
 // Header 切换顺序（左→右），toggle 在其间循环。
-export const AGENT_CONTEXT_ORDER: readonly AgentContext[] = ['cc', 'cx'];
+export const AGENT_CONTEXT_ORDER: readonly AgentContext[] = ['cc', 'cx', 'pi'];
 
-/** 切换到上一个 Agent 上下文（cc ↔ cx 循环）。 */
+	/** 切换到上一个 Agent 上下文（cc ↔ cx ↔ pi 循环）。 */
 export function previousAgentContext(current: AgentContext): AgentContext {
 	const index = AGENT_CONTEXT_ORDER.indexOf(current);
 	return AGENT_CONTEXT_ORDER[(index - 1 + AGENT_CONTEXT_ORDER.length) % AGENT_CONTEXT_ORDER.length]!;
 }
 
-/** 切换到下一个 Agent 上下文（cc ↔ cx 循环）。 */
+	/** 切换到下一个 Agent 上下文（cc ↔ cx ↔ pi 循环）。 */
 export function nextAgentContext(current: AgentContext): AgentContext {
 	const index = AGENT_CONTEXT_ORDER.indexOf(current);
 	return AGENT_CONTEXT_ORDER[(index + 1) % AGENT_CONTEXT_ORDER.length]!;

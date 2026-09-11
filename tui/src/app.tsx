@@ -56,13 +56,14 @@ import {
 	type SelfUpdateRetry,
 	type SelfUpdateScreen
 } from './state/self-update-state.js';
-// 导入 6 个视图组件
+// 导入 7 个视图组件
 import {ProviderView} from './views/provider/ProviderView.js';
 import McpView from './views/mcp/McpView.js';
 import {SkillsView} from './views/skills/SkillsView.js';
 import {PromptsView} from './views/prompts/PromptsView.js';
 import {ConfigView} from './views/config/ConfigView.js';
 import {ToolsView} from './views/tools/ToolsView.js';
+import {ExtensionsView} from './views/extensions/ExtensionsView.js';
 
 // 导入视图 services
 import {createSkillsViewServices} from './views/skills/skills-view-services.js';
@@ -350,6 +351,9 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 
 	// 共享双侧模块（Tools / MCP）隐藏 Header：残留 header 焦点强制回 view，Header 不渲染。
 	const hideAgentHeader = AGENT_HEADER_HIDDEN_MODULES.has(displayMenuId);
+	const piOnlyModule = displayMenuId === 'extensions';
+	const moduleAgentContext: AgentContext = piOnlyModule ? 'pi' : state.agentContext;
+	const visibleHeaderContexts: readonly AgentContext[] = piOnlyModule ? ['pi'] : AGENT_CONTEXT_ORDER;
 	const effectiveFocus = hideAgentHeader && state.focus === 'header' ? 'view' : state.focus;
 	const navActive = effectiveFocus === 'nav';
 	const headerActive = effectiveFocus === 'header' && !hideAgentHeader;
@@ -419,7 +423,7 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 
 				{/* 右侧区域：Header 独立固定行，content 卡片占满剩余空间 */}
 				<box flexDirection="column" flexGrow={1} minWidth={0}>
-					{hideAgentHeader ? null : <AgentHeader agentContext={state.agentContext} active={headerActive} />}
+					{hideAgentHeader ? null : <AgentHeader agentContext={moduleAgentContext} contexts={visibleHeaderContexts} active={headerActive} />}
 
 					<box
 						flexDirection="column"
@@ -435,7 +439,7 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 						<box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={1} overflow="hidden">
 							<ModuleContent
 								moduleId={displayMenuId}
-								agentContext={state.agentContext}
+								agentContext={moduleAgentContext}
 								contentWidth={contentWidth}
 								active={effectiveFocus === 'view' && busyOverlay === null && !updateDialogOpen}
 								skillsViewServices={skillsViewServices}
@@ -496,11 +500,11 @@ function Divider({width}: {readonly width: number}) {
 	);
 }
 
-// Agent 上下文 Header：右侧 content 顶部，全称标签 Claude Code / Codex 切换。
-// spec manage-tui-shell：可见标签必须为全称，禁止 cc/cx 缩写；切换不改左侧 6 菜单顺序/选中。
+// Agent 上下文 Header：右侧 content 顶部，全称标签 Claude Code / Codex / Pi 切换。
+// spec manage-tui-shell：可见标签必须为全称，禁止内部缩写；切换不改左侧菜单顺序/选中。
 // Header 获焦后用 ←/→ 切换 Agent，并用主题色边框提示焦点。
 // 宽度使用百分比铺满父容器，而不是用 contentWidth 估算值写死，避免 Header 比 content 卡片短一截。
-function AgentHeader({agentContext, active}: {readonly agentContext: AgentContext; readonly active: boolean}) {
+function AgentHeader({agentContext, contexts, active}: {readonly agentContext: AgentContext; readonly contexts: readonly AgentContext[]; readonly active: boolean}) {
 	return (
 		<box
 			flexDirection="row"
@@ -511,7 +515,7 @@ function AgentHeader({agentContext, active}: {readonly agentContext: AgentContex
 			customBorderChars={active ? activeBorderChars : undefined}
 			paddingX={1}
 		>
-			{AGENT_CONTEXT_ORDER.map(ctx => {
+			{contexts.map(ctx => {
 				const selected = ctx === agentContext;
 				const label = AGENT_CONTEXT_LABELS[ctx];
 				return (
@@ -893,7 +897,7 @@ function footerShortcuts(
 	return viewShortcuts(displayMenuId, viewSubMode);
 }
 
-// 右侧内容区路由：六个模块视图
+// 右侧内容区路由：七个模块视图
 function ModuleContent({
 	moduleId,
 	agentContext,
@@ -977,6 +981,18 @@ function ModuleContent({
 				<ToolsView
 					services={toolsViewServices}
 					cache={toolsCache}
+					agentContext={agentContext}
+					active={active}
+					contentWidth={contentWidth}
+					onSubModeChange={onSubModeChange}
+					onBusyStateChange={onBusyStateChange}
+					onExitToNav={onExitToNav}
+				/>
+			);
+		case 'extensions':
+			return (
+				<ExtensionsView
+					agentContext={agentContext}
 					active={active}
 					contentWidth={contentWidth}
 					onSubModeChange={onSubModeChange}

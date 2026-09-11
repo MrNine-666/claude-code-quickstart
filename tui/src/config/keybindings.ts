@@ -72,7 +72,11 @@ export const PROVIDER_COMMANDS = {
 	FORM_UP: 'provider:form-up',
 	FORM_DOWN: 'provider:form-down',
 	FORM_SAVE: 'provider:form-save',
-	FORM_CANCEL: 'provider:form-cancel'
+	FORM_CANCEL: 'provider:form-cancel',
+	FORM_DISCOVER: 'provider:form-discover',
+	FORM_OPTION_PREV: 'provider:form-option-prev',
+	FORM_OPTION_NEXT: 'provider:form-option-next',
+	FORM_MULTI_SELECT_TOGGLE: 'provider:form-multi-select-toggle'
 } as const;
 
 export const providerBindings: Binding[] = commandBindings({
@@ -85,8 +89,12 @@ export const providerBindings: Binding[] = commandBindings({
 	// form 子模式（与 list 模式复用按键，靠 layer active 控制生效时机）
 	[PROVIDER_COMMANDS.FORM_UP]: 'up',
 	[PROVIDER_COMMANDS.FORM_DOWN]: 'down',
-	[PROVIDER_COMMANDS.FORM_SAVE]: 'enter',
-	[PROVIDER_COMMANDS.FORM_CANCEL]: 'escape'
+	[PROVIDER_COMMANDS.FORM_SAVE]: editingShortcutKey('s'),
+	[PROVIDER_COMMANDS.FORM_CANCEL]: 'escape',
+	[PROVIDER_COMMANDS.FORM_DISCOVER]: appShortcutKey('d'),
+	[PROVIDER_COMMANDS.FORM_OPTION_PREV]: 'left',
+	[PROVIDER_COMMANDS.FORM_OPTION_NEXT]: 'right',
+	[PROVIDER_COMMANDS.FORM_MULTI_SELECT_TOGGLE]: 'space'
 });
 
 // ------------------------------------------------------------
@@ -141,6 +149,7 @@ export const SKILLS_COMMANDS = {
 	// enter：列表行 → 管理安装 Modal（切 Claude Code symlink）；安装页 → 安装目标 Modal
 	MANAGE_INSTALL: 'skills:manage-install',
 	SELECT_TARGET: 'skills:select-target',
+	SUBMIT_SEARCH: 'skills:submit-search',
 	TOGGLE_RESULT: 'skills:toggle-result',
 	TOGGLE_INSTALLED: 'skills:toggle-installed',
 	SELECT_ALL: 'skills:select-all',
@@ -164,6 +173,7 @@ export const skillsBindings: Binding[] = commandBindings({
 	[SKILLS_COMMANDS.INSTALL]: 'i',
 	[SKILLS_COMMANDS.MANAGE_INSTALL]: 'enter',
 	[SKILLS_COMMANDS.SELECT_TARGET]: 'enter',
+	[SKILLS_COMMANDS.SUBMIT_SEARCH]: 'enter',
 	[SKILLS_COMMANDS.TOGGLE_RESULT]: 'space',
 	[SKILLS_COMMANDS.TOGGLE_INSTALLED]: 'space',
 	[SKILLS_COMMANDS.SELECT_ALL]: 'a',
@@ -180,20 +190,17 @@ export const skillsBindings: Binding[] = commandBindings({
 });
 
 // ------------------------------------------------------------
-// 全局规则视图 commands（view-first：只读展示 ↔ a/e 编辑 ↔ 源码推荐边栏）
+// 全局规则视图 commands（view-first：只读展示 ↔ a/e 编辑）
 // ------------------------------------------------------------
 export const PROMPTS_COMMANDS = {
 	// view 态入口（只读展示 / 空状态）
 	ADD: 'prompts:add', // a 新建（空白编辑器）
 	EDIT_ENTRY: 'prompts:edit-entry', // e 编辑现有（载入磁盘内容）
+	OPEN_FILE: 'prompts:open-file', // o 使用系统默认关联应用打开规则文件
 	// edit 态主操作
-	TOGGLE_PANEL: 'prompts:toggle-panel', // Ctrl+T 开/关推荐边栏（TUI 应用功能）
-	IMPORT: 'prompts:import', // Ctrl+O 推荐灌入缓冲（TUI 应用功能）
 	EDITOR_SAVE: 'prompts:editor-save', // macOS Cmd+S / 其他平台 Ctrl+S 保存（编辑语义）
 	EDITOR_CANCEL: 'prompts:editor-cancel', // escape 取消编辑回 view
-	// 双栏焦点切换
-	FOCUS_CYCLE: 'prompts:focus-cycle', // tab 编辑器↔推荐边栏
-	// 滚动（view 展示 / 边栏）
+	// 滚动（view 展示）
 	PREVIEW_UP: 'prompts:preview-up', // up 滚动
 	PREVIEW_DOWN: 'prompts:preview-down' // down 滚动
 } as const;
@@ -201,22 +208,21 @@ export const PROMPTS_COMMANDS = {
 export const promptsBindings: Binding[] = commandBindings({
 	[PROMPTS_COMMANDS.ADD]: 'a',
 	[PROMPTS_COMMANDS.EDIT_ENTRY]: 'e',
-	[PROMPTS_COMMANDS.TOGGLE_PANEL]: appShortcutKey('t'),
-	[PROMPTS_COMMANDS.IMPORT]: appShortcutKey('o'),
+	[PROMPTS_COMMANDS.OPEN_FILE]: 'o',
 	[PROMPTS_COMMANDS.EDITOR_SAVE]: editingShortcutKey('s'),
 	[PROMPTS_COMMANDS.EDITOR_CANCEL]: 'escape',
-	[PROMPTS_COMMANDS.FOCUS_CYCLE]: 'tab',
 	[PROMPTS_COMMANDS.PREVIEW_UP]: 'up',
 	[PROMPTS_COMMANDS.PREVIEW_DOWN]: 'down'
 });
 
 // ------------------------------------------------------------
-// 配置文件视图 commands（view-first：只读展示 ↔ a/e 编辑 ↔ 推荐边栏，对齐 PROMPTS_COMMANDS）
+// 配置文件视图 commands（view-first：只读展示 ↔ a/e 编辑 ↔ 推荐边栏）
 // ------------------------------------------------------------
 export const CONFIG_COMMANDS = {
 	// view 态入口（只读展示 / 空状态）
 	ADD: 'config:add', // a 新建（空白 {} 编辑器）
 	EDIT_ENTRY: 'config:edit-entry', // e 编辑现有（载入磁盘内容）
+	OPEN_FILE: 'config:open-file', // o 使用系统默认关联应用打开配置文件
 	// edit 态主操作
 	TOGGLE_PANEL: 'config:toggle-panel', // Ctrl+T 开/关推荐边栏（TUI 应用功能）
 	IMPORT: 'config:import', // Ctrl+O fill-missing 灌入缓冲（TUI 应用功能，仅补缺失）
@@ -232,6 +238,7 @@ export const CONFIG_COMMANDS = {
 export const configBindings: Binding[] = commandBindings({
 	[CONFIG_COMMANDS.ADD]: 'a',
 	[CONFIG_COMMANDS.EDIT_ENTRY]: 'e',
+	[CONFIG_COMMANDS.OPEN_FILE]: 'o',
 	[CONFIG_COMMANDS.TOGGLE_PANEL]: appShortcutKey('t'),
 	[CONFIG_COMMANDS.IMPORT]: appShortcutKey('o'),
 	[CONFIG_COMMANDS.EDITOR_SAVE]: editingShortcutKey('s'),
@@ -282,6 +289,37 @@ export const toolsBindings: Binding[] = commandBindings({
 });
 
 // ------------------------------------------------------------
+// Pi 扩展管理视图 commands
+// ------------------------------------------------------------
+export const EXTENSIONS_COMMANDS = {
+	UP: 'extensions:up',
+	DOWN: 'extensions:down',
+	LEFT: 'extensions:left',
+	RIGHT: 'extensions:right',
+	FOCUS_CYCLE: 'extensions:focus-cycle',
+	PRIMARY_ACTION: 'extensions:primary-action',
+	OPEN_DETAILS: 'extensions:open-details',
+	UPDATE_ALL: 'extensions:update-all',
+	UNINSTALL: 'extensions:uninstall',
+	PAGE_PREVIOUS: 'extensions:page-previous',
+	PAGE_NEXT: 'extensions:page-next'
+} as const;
+
+export const extensionsBindings: Binding[] = commandBindings({
+	[EXTENSIONS_COMMANDS.UP]: 'up',
+	[EXTENSIONS_COMMANDS.DOWN]: 'down',
+	[EXTENSIONS_COMMANDS.LEFT]: 'left',
+	[EXTENSIONS_COMMANDS.RIGHT]: 'right',
+	[EXTENSIONS_COMMANDS.FOCUS_CYCLE]: 'tab',
+	[EXTENSIONS_COMMANDS.PRIMARY_ACTION]: 'enter',
+	[EXTENSIONS_COMMANDS.OPEN_DETAILS]: 'o',
+	[EXTENSIONS_COMMANDS.UPDATE_ALL]: 'a',
+	[EXTENSIONS_COMMANDS.UNINSTALL]: 'd',
+	[EXTENSIONS_COMMANDS.PAGE_PREVIOUS]: 'pageup',
+	[EXTENSIONS_COMMANDS.PAGE_NEXT]: 'pagedown'
+});
+
+// ------------------------------------------------------------
 // 全局 bindings 合集（供 App.tsx 注册）
 // ------------------------------------------------------------
 export const allBindings: Binding[] = [
@@ -293,5 +331,6 @@ export const allBindings: Binding[] = [
 	...skillsBindings,
 	...promptsBindings,
 	...configBindings,
-	...toolsBindings
+	...toolsBindings,
+	...extensionsBindings
 ];

@@ -47,7 +47,7 @@ export type ToolsViewState = {
 	readonly itemError: Readonly<Record<string, string>>;
 	readonly busyAction?: ComponentAction;
 	readonly uninstallTarget?: ComponentId;
-	/** select-inject-target：0=Claude Code, 1=Codex */
+	/** select-inject-target：按 AGENT_CONTEXT_ORDER 选择目标。 */
 	readonly injectTargetIndex: number;
 	/** Modal 内草稿开关状态：进入 Modal 时复制 injectByAgent 的 integrated 快照，空格切换、Enter 应用前不落盘。 */
 	readonly injectDraft?: Readonly<Record<AgentContext, boolean>>;
@@ -165,15 +165,14 @@ export function itemStatusOf(state: ToolsViewState, id: string): ComponentItemSt
 }
 
 export function injectTargetContext(state: ToolsViewState): AgentContext {
-	return state.injectTargetIndex === 1 ? 'cx' : 'cc';
+	return AGENT_CONTEXT_ORDER[state.injectTargetIndex] ?? 'cc';
 }
 
 /** 从组件双侧 inject 快照构造 Modal 初始草稿（integrated → 开）。 */
 export function initialInjectDraft(component: SharedManagedComponent): Record<AgentContext, boolean> {
-	return {
-		cc: Boolean(component.injectByAgent?.cc?.integrated),
-		cx: Boolean(component.injectByAgent?.cx?.integrated)
-	};
+	return Object.fromEntries(
+		AGENT_CONTEXT_ORDER.map(context => [context, Boolean(component.injectByAgent?.[context]?.integrated)])
+	) as Record<AgentContext, boolean>;
 }
 
 export function latestActiveProgressTask(
@@ -258,10 +257,9 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 				...state,
 				mode: 'select-inject-target',
 				injectTargetIndex: 0,
-				injectDraft: {
-					cc: Boolean(inject?.cc?.integrated),
-					cx: Boolean(inject?.cx?.integrated)
-				},
+				injectDraft: Object.fromEntries(
+					AGENT_CONTEXT_ORDER.map(context => [context, Boolean(inject?.[context]?.integrated)])
+				) as Record<AgentContext, boolean>,
 				errorText: undefined
 			};
 		}
@@ -282,7 +280,11 @@ export function reduceToolsViewState(state: ToolsViewState, action: ToolsViewAct
 			if (state.mode !== 'select-inject-target' || !state.injectDraft) {
 				return state;
 			}
-			const target = state.injectTargetIndex === 1 ? 'cx' : 'cc';
+			const target = AGENT_CONTEXT_ORDER[state.injectTargetIndex] ?? 'cc';
+			const current = cursorComponent(state) as SharedManagedComponent | undefined;
+			if (current?.injectByAgent?.[target]?.statusHint) {
+				return state;
+			}
 			return {
 				...state,
 				injectDraft: {...state.injectDraft, [target]: !state.injectDraft[target]}

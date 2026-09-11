@@ -22,7 +22,7 @@ type JsonToken = {readonly type: JsonTokenType; readonly text: string};
 export function CodePreview({content, filetype, showLineNumbers = true}: CodePreviewProps) {
 	// 先归一化换行：Windows 读盘内容（如 ~/.claude/CLAUDE.md、settings.json）为 CRLF，
 	// 若只按 '\n' 拆行会让每行尾残留 '\r'，OpenTUI 把 '\r' 当额外换行渲染 → 行高翻倍。
-	// 用 /\r\n?|\n/ 一次吃掉 CRLF / CR / LF 三种风格（对齐推荐模板 readTemplateFile 的归一化）。
+	// 用 /\r\n?|\n/ 一次吃掉 CRLF / CR / LF 三种风格，保持文本预览行数稳定。
 	// 末尾单个换行是文件标准结尾（POSIX），不应渲染成可见空行：split 会在尾部产出空串
 	// （如 "a\n" → ["a", ""]），去掉这个由 trailing newline 产生的伪空行。
 	const rawLines = content.split(/\r\n?|\n/);
@@ -33,14 +33,16 @@ export function CodePreview({content, filetype, showLineNumbers = true}: CodePre
 	return (
 		<box flexDirection="column">
 			{lines.map((line, index) => (
-				<box key={index} flexDirection="row">
+				<box key={index} flexDirection="row" alignItems="flex-start">
 					{showLineNumbers ? <LineNumber index={index} width={lineNumberWidth} /> : null}
-					<box flexDirection="row">
-						{tokensForLine(line, filetype, markdownLines?.[index]).map((token, tokenIndex) => (
-							<text key={tokenIndex} fg={token.fg} attributes={token.attributes} selectable selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-								{token.text.length > 0 ? token.text : ' '}
-							</text>
-						))}
+					<box flexDirection="row" flexGrow={1} flexShrink={1} minWidth={0}>
+						<text selectable selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+							{tokensForLine(line, filetype, markdownLines?.[index]).map((token, tokenIndex) => (
+								<span key={tokenIndex} fg={token.fg} attributes={token.attributes}>
+									{token.text.length > 0 ? token.text : ' '}
+								</span>
+							))}
+						</text>
 					</box>
 				</box>
 			))}
@@ -50,7 +52,7 @@ export function CodePreview({content, filetype, showLineNumbers = true}: CodePre
 
 function LineNumber({index, width}: {readonly index: number; readonly width: number}) {
 	return (
-		<text fg={colors.lineNumberForeground} bg={colors.lineNumberBackground} selectable selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+		<text flexShrink={0} fg={colors.lineNumberForeground} bg={colors.lineNumberBackground} selectable selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 			{`${String(index + 1).padStart(width, ' ')} │ `}
 		</text>
 	);

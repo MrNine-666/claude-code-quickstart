@@ -1,18 +1,18 @@
 import {claudeMdPath, readInstalledClaudeMd} from '../core/prompts.js';
 import {atomicWrite} from '../core/fs-utils.js';
-import {isClipboardSupported} from '../core/clipboard.js';
-import {codexAgentsPath} from '../core/paths.js';
+import {codexAgentsPath, piAgentsPath} from '../core/paths.js';
+import {openExternalFile, type OpenExternalFileResult} from '../core/open-file.js';
 import type {AgentContext} from '../state/manage-state.js';
 import {existsSync, readFileSync} from 'node:fs';
 
 // Prompts service：TUI 视图唯一入口，按 agentContext 切换全局规则目标文件。
 // Claude Code → ~/.claude/CLAUDE.md；Codex → ~/.codex/AGENTS.md。
-// 推荐内容仍复用 core/prompts 的 CLAUDE.md 推荐模板，只切落盘目标。
+// Pi → ~/.pi/agent/AGENTS.md；本服务只负责现有规则文件。
 
 export type PromptsTarget = AgentContext;
 
 function targetPath(target: PromptsTarget): string {
-	return target === 'cx' ? codexAgentsPath() : claudeMdPath();
+	return target === 'cx' ? codexAgentsPath() : target === 'pi' ? piAgentsPath() : claudeMdPath();
 }
 
 /** 读取当前已安装的全局规则（不存在返回 null）。 */
@@ -21,7 +21,7 @@ export function readCurrentRules(target: PromptsTarget = 'cc'): string | null {
 		return readInstalledClaudeMd();
 	}
 
-	const path = codexAgentsPath();
+	const path = target === 'pi' ? piAgentsPath() : codexAgentsPath();
 	if (!existsSync(path)) {
 		return null;
 	}
@@ -38,14 +38,14 @@ export function readCurrentClaudeMd(): string | null {
 	return readCurrentRules('cc');
 }
 
-/** 检测剪贴板是否可用（仅 Windows / macOS）。 */
-export function checkClipboardSupport(): boolean {
-	return isClipboardSupported();
-}
-
 /** 获取全局规则文件路径（供视图展示）。 */
 export function getRulesPath(target: PromptsTarget = 'cc'): string {
 	return targetPath(target);
+}
+
+/** 通过系统默认关联应用打开全局规则文件。 */
+export function openRulesFile(target: PromptsTarget = 'cc'): Promise<OpenExternalFileResult> {
+	return openExternalFile(getRulesPath(target));
 }
 
 /** 兼容旧调用：获取 CLAUDE.md 文件路径。 */

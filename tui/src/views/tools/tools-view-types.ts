@@ -82,6 +82,7 @@ export type ToolsViewServices = {
 export type ToolsViewProps = {
 	readonly services: ToolsViewServices;
 	readonly cache: DetectionCache<ManagedComponent[]>;
+	readonly agentContext: AgentContext;
 	readonly active?: boolean;
 	readonly contentWidth?: number;
 	readonly onSubModeChange?: (subMode: string) => void;

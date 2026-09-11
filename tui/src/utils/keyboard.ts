@@ -3,10 +3,12 @@ import type {KeyEvent} from '@opentui/core';
 export type ShortcutPlatform = 'darwin' | 'default';
 
 type KeyEventLike = Pick<KeyEvent, 'name'> & {
+	readonly sequence?: string;
 	readonly ctrl?: boolean;
 	readonly meta?: boolean;
 	readonly option?: boolean;
 	readonly super?: boolean;
+	readonly shift?: boolean;
 };
 
 export function shortcutPlatform(): ShortcutPlatform {
@@ -27,6 +29,30 @@ export function isEditingModifier(keyEvent: KeyEventLike, platform: ShortcutPlat
 
 export function isAppModifier(keyEvent: KeyEventLike): boolean {
 	return keyEvent.ctrl === true;
+}
+
+/** Match a physical key event against a binding from config/keybindings.ts. */
+export function matchesKeyBinding(keyEvent: KeyEventLike, binding: string): boolean {
+	const parts = binding.toLowerCase().split('+').map(part => part.trim()).filter(Boolean);
+	const key = parts.pop();
+	if (!key) return false;
+
+	const eventName = keyEvent.name.toLowerCase();
+	const normalizedEventName = eventName === 'return' ? 'enter' : eventName;
+	const eventKey = key === 'space' && keyEvent.sequence === ' ' ? 'space' : normalizedEventName;
+	if (eventKey !== key && !(key === 'return' && normalizedEventName === 'enter')) return false;
+
+	const modifiers = new Set(parts);
+	const hasCtrl = keyEvent.ctrl === true;
+	const hasMeta = keyEvent.meta === true || keyEvent.option === true;
+	const hasSuper = keyEvent.super === true;
+	const hasShift = keyEvent.shift === true;
+	return (
+		modifiers.has('ctrl') === hasCtrl &&
+		(modifiers.has('meta') || modifiers.has('alt') || modifiers.has('option')) === hasMeta &&
+		modifiers.has('super') === hasSuper &&
+		modifiers.has('shift') === hasShift
+	);
 }
 
 export function hasShortcutModifier(keyEvent: KeyEventLike): boolean {

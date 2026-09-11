@@ -56,13 +56,13 @@ export async function runCli(intent: CliIntent): Promise<number> {
 			// 未知动词或缺参数的已知动词
 			if (intent.verb === 'ls') {
 				console.error('ls 参数无效。');
-				console.error('用法: ccq ls [--tool claude|codex]');
+				console.error('用法: ccq ls [--tool claude|codex|pi]');
 				return 1;
 			}
 
 			if (intent.verb === 'use') {
 				console.error('use 缺少供应商名称，或 --tool 参数无效。');
-				console.error('用法: ccq use <name> [--tool claude|codex]');
+				console.error('用法: ccq use <name> [--tool claude|codex|pi]');
 				return 1;
 			}
 

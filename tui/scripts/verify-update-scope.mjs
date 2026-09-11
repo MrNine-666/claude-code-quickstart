@@ -25,7 +25,11 @@ mkdirSync(cacheDir, {recursive: true});
 writeFileSync(join(cacheDir, 'npm-outdated.json'), JSON.stringify({}), 'utf8');
 // 预写旧单包 npm view 缓存：验证 npm 全局包缺少 outdated 记录时仍用 npm-view 缓存判断更新，
 // 且缺包缓存会走 mock npm 补齐，不回退到真实网络。
-writeFileSync(join(cacheDir, 'npm-view.json'), JSON.stringify({'@anthropic-ai/claude-code': '9.9.9'}), 'utf8');
+writeFileSync(
+	join(cacheDir, 'npm-view.json'),
+	JSON.stringify({'@anthropic-ai/claude-code': '9.9.9', '@cometix/ccline': '', '@earendil-works/pi-coding-agent': '', '@agegr/pi-web': '', 'ccg-workflow': ''}),
+	'utf8'
+);
 
 // 预置 mock 命令，验证检测逻辑可在 outdated 为空时通过 npm view latest 识别更新，
 // 同时隔离缺包缓存补查时的 npm view 调用，避免真实网络。

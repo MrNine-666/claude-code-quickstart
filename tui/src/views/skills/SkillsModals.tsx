@@ -1,22 +1,24 @@
 import React from 'react';
 import {TextAttributes} from '@opentui/core';
 import {Modal, ThemedScrollbox} from '../../components/index.js';
-import {AGENT_CONTEXT_LABELS, AGENT_CONTEXT_ORDER, type AgentContext} from '../../state/manage-state.js';
-import {otherAgentsOf, storageRootsOf, type InstalledSkillItem} from '../../core/skills-installed.js';
+import {AGENT_CONTEXT_LABELS} from '../../state/manage-state.js';
+import {storageRootsOf, type InstalledSkillItem} from '../../core/skills-installed.js';
 import {
-	currentTopologyOfItem,
-	needsManagedMigration,
+	agentTargetsOfDraft,
+	managedAgentTargetsOfItem,
 	pendingInstallResults,
 	pendingInstance,
 	pendingSourceReplacements,
 	selectedInstalled,
+	SKILLS_INSTALL_TARGET_ORDER,
+	SKILLS_MANAGE_TARGET_ORDER,
 	uninstallTargets,
 	type SkillsViewMode,
 	type SkillsViewState
 } from '../../state/skills-view-state.js';
 import {viewShortcuts} from '../../state/shortcuts.js';
 import {colors} from '../../theme/index.js';
-import {provenanceLabel, storageRootLabel, targetTopologyOfInstallDraft, topologyLabel} from './skills-view-actions.js';
+import {agentTargetsLabel, provenanceLabel, storageRootLabel} from './skills-view-actions.js';
 
 const SKILLS_MODAL_WIDTH = 56;
 
@@ -79,36 +81,42 @@ export function SkillsUninstallConfirm({view}: {readonly view: SkillsViewState})
 export function SkillsTopologyConfirmModal({view}: {readonly view: SkillsViewState}) {
 	// 确认态读取快照实例，不按 cursor 重查，避免刷新后打到同名另一来源（R2）。
 	const current = pendingInstance(view) ?? selectedInstalled(view);
-	const currentTopology = current ? currentTopologyOfItem(current) : undefined;
-	const target = targetTopologyOfInstallDraft(view.installDraft);
-	const otherAgents = current ? otherAgentsOf(current) : [];
-	const migrating = current ? needsManagedMigration(current, target === 'empty' ? 'shared' : target) : false;
+	const currentTargets = current ? managedAgentTargetsOfItem(current) : {cc: false, cx: false, pi: false};
+	const target = agentTargetsOfDraft(view.installDraft);
+	const addedTargets = {
+		cc: target.cc && !currentTargets.cc,
+		cx: target.cx && !currentTargets.cx,
+		pi: target.pi && !currentTargets.pi
+	};
+	const removedTargets = {
+		cc: currentTargets.cc && !target.cc,
+		cx: currentTargets.cx && !target.cx,
+		pi: currentTargets.pi && !target.pi
+	};
+	const migrating = Boolean(current && storageRootsOf(current).includes('codex') && (target.cc || target.cx));
 	return (
 		<Modal
 			active
-			title={`确认切换安装拓扑：${current?.name ?? ''}`}
+			title={`确认更新安装范围：${current?.name ?? ''}`}
 			hint={skillsModalHint('confirm-topology-change')}
 			tone="warning"
 			width={SKILLS_MODAL_WIDTH}
 		>
 			<box flexDirection="column">
-				<text
-					fg={colors.text}
-				>{`${topologyLabel(currentTopology)} → ${target === 'empty' ? '无目标' : topologyLabel(target)}`}</text>
-				<text fg={colors.muted}>{`来源：${provenanceLabel(current)}`}</text>
-				{current?.projections.map(projection => (
-					<text key={projection.path} fg={colors.muted}>{`${storageRootLabel(projection.root)}：${projection.path}`}</text>
-				))}
+				<text fg={colors.text}>{`当前安装到：${agentTargetsLabel(currentTargets)}`}</text>
+				<text fg={colors.primary}>{`变更为：${agentTargetsLabel(target)}`}</text>
+				{agentTargetsLabel(addedTargets) !== '无目标' ? (
+					<text fg={colors.success}>{`本次新增：${agentTargetsLabel(addedTargets)}`}</text>
+				) : null}
+				{agentTargetsLabel(removedTargets) !== '无目标' ? (
+					<text fg={colors.warning}>{`本次移除：${agentTargetsLabel(removedTargets)}`}</text>
+				) : null}
 				<text fg={colors.warning}>
-					内容会先快照；先建立并验证目标，成功后才删除原实例，最后以完整 CLI 检测确认最终状态。
+					已有内容会先安全备份；新目标验证成功后才替换，失败时会保留或恢复原安装。
 				</text>
 				{migrating ? (
-					<text fg={colors.warning}>当前实例位于 .codex/skills，将被收编到受管拓扑；即使目标侧不变也不是空操作。</text>
+					<text fg={colors.warning}>检测到旧版安装，应用后会迁移到当前支持的位置。</text>
 				) : null}
-				{target === 'claude-only' ? (
-					<text fg={colors.warning}>Codex 及直接读取 .agents/skills 的消费者将失去此 Skill。</text>
-				) : null}
-				{otherAgents.length > 0 ? <text fg={colors.danger}>{`其它 Agent：${otherAgents.join('、')}`}</text> : null}
 			</box>
 		</Modal>
 	);
@@ -116,8 +124,8 @@ export function SkillsTopologyConfirmModal({view}: {readonly view: SkillsViewSta
 
 export function SkillsSourceReplacementConfirmModal({view}: {readonly view: SkillsViewState}) {
 	const replacements = pendingSourceReplacements(view);
-	const targets = AGENT_CONTEXT_ORDER.filter(ctx => view.installDraft[ctx])
-		.map(ctx => AGENT_CONTEXT_LABELS[ctx])
+	const targets = SKILLS_INSTALL_TARGET_ORDER.filter(target => view.installDraft[target])
+		.map(target => skillsInstallTargetLabel(target))
 		.join('、');
 	const height = Math.max(3, Math.min(12, replacements.length * 4));
 	return (
@@ -159,14 +167,15 @@ export function SkillsInstallTargetModal({view}: {readonly view: SkillsViewState
 	const managed = pendingInstance(view) ?? selectedInstalled(view);
 	const name = managed?.name ?? '';
 	const title = isManage ? `管理安装：${name}` : `选择安装目标：${pendingInstallResults(view).length} 个 Skill`;
-	const selected = AGENT_CONTEXT_ORDER[view.targetIndex] ?? 'cc';
+	const targetOrder = isManage ? SKILLS_MANAGE_TARGET_ORDER : SKILLS_INSTALL_TARGET_ORDER;
+	const selected = targetOrder[view.targetIndex] ?? targetOrder[0] ?? 'cc';
 	return (
 		<Modal active title={title} hint={skillsModalHint(view.mode)} width={SKILLS_MODAL_WIDTH}>
 			<box flexDirection="column">
-				{AGENT_CONTEXT_ORDER.map(ctx => {
-					const checked = Boolean(view.installDraft[ctx]);
-					const focused = ctx === selected;
-					const readonly = isManage ? managedTargetReadonly(managed) : ctx === 'cx';
+				{targetOrder.map(target => {
+					const checked = Boolean(view.installDraft[target]);
+					const focused = target === selected;
+					const readonly = isManage ? managedTargetReadonly(managed) : target === 'cx';
 					const stateLabel = isManage
 						? managedTargetLabel(checked)
 						: readonly
@@ -175,7 +184,7 @@ export function SkillsInstallTargetModal({view}: {readonly view: SkillsViewState
 								? '● 安装'
 								: '○ 不安装';
 					return (
-						<box key={ctx} flexDirection="row">
+						<box key={target} flexDirection="row">
 							<text
 								fg={focused ? colors.primary : colors.muted}
 								attributes={focused ? TextAttributes.BOLD : 0}
@@ -183,7 +192,7 @@ export function SkillsInstallTargetModal({view}: {readonly view: SkillsViewState
 								selectionFg={colors.selectionFg}
 								flexGrow={1}
 							>
-								{`${focused ? '›' : ' '} ${AGENT_CONTEXT_LABELS[ctx]}${readonly ? '（只读）' : ''} `}
+								{`${focused ? '›' : ' '} ${skillsInstallTargetLabel(target)}${readonly ? '（只读）' : ''} `}
 							</text>
 							<text
 								fg={checked ? colors.success : colors.muted}
@@ -197,7 +206,7 @@ export function SkillsInstallTargetModal({view}: {readonly view: SkillsViewState
 					);
 				})}
 				{isManage && managed && storageRootsOf(managed).includes('codex') ? (
-					<text fg={colors.warning}>当前实例位于 .codex/skills；应用后将迁移到受管的 .agents/.claude 拓扑。</text>
+					<text fg={colors.warning}>当前实例位于旧的 .codex/skills；应用后将按选定 Agent 重建受管目标。</text>
 				) : null}
 			</box>
 		</Modal>
@@ -212,4 +221,9 @@ function managedTargetReadonly(item: InstalledSkillItem | undefined): boolean {
 
 function managedTargetLabel(checked: boolean): string {
 	return checked ? '● 目标安装' : '○ 目标不安装';
+}
+
+function skillsInstallTargetLabel(target: (typeof SKILLS_INSTALL_TARGET_ORDER)[number]): string {
+	if (target === 'cc') return AGENT_CONTEXT_LABELS.cc;
+	return AGENT_CONTEXT_LABELS[target];
 }

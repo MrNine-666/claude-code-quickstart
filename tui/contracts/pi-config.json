@@ -1,0 +1,20 @@
+{
+  "Defaults": {
+    "theme": "dark",
+    "quietStartup": false,
+    "collapseChangelog": false,
+    "enableMouse": true,
+    "terminalTitle": true
+  },
+  "ProtectedKeys": [
+    "defaultProvider",
+    "defaultModel",
+    "defaultThinkingLevel",
+    "auth",
+    "models",
+    "mcp",
+    "skills",
+    "packages",
+    "extensions"
+  ]
+}

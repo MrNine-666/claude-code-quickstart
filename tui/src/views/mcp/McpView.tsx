@@ -5,9 +5,11 @@ import {McpFormView} from './McpFormView.js';
 import {McpHomeView} from './McpHomeView.js';
 import {
 	applyMcpToggleAction,
+	applyMcpToggleActionAsync,
 	createMcpAddFormModel,
 	createMcpEditFormModel,
 	loadMcpRowsAction,
+	loadMcpRowsActionAsync,
 	moveMcpGridCursor,
 	removeMcpServerAction,
 	submitMcpFormAction,
@@ -33,7 +35,7 @@ export default function McpView({active, onSubModeChange, onExitToNav}: McpViewP
 	const [rows, setRows] = useState(loadMcpRowsAction);
 	const [selected, setSelected] = useState(0);
 	const [screen, setScreen] = useState<McpScreen>({kind: 'list'});
-	const [toggleDraft, setToggleDraft] = useState<McpToggleDraft>({cc: false, cx: false});
+	const [toggleDraft, setToggleDraft] = useState<McpToggleDraft>({cc: false, cx: false, pi: false});
 	const [toggleIndex, setToggleIndex] = useState(0);
 	const safeSelected = rows.length === 0 ? 0 : Math.min(selected, rows.length - 1);
 	const current = rows[safeSelected] ?? null;
@@ -47,6 +49,23 @@ export default function McpView({active, onSubModeChange, onExitToNav}: McpViewP
 				: screen.kind;
 		onSubModeChange?.(subMode);
 	}, [active, onSubModeChange, rows.length, screen.kind]);
+
+	useEffect(() => {
+		if (!active) return;
+		let cancelled = false;
+		void loadMcpRowsActionAsync()
+			.then(next => {
+				if (cancelled) return;
+				setRows(next);
+				setSelected(previous => Math.min(previous, Math.max(0, next.length - 1)));
+			})
+			.catch(() => {
+				// 同步保守投影已经可用；Pi adapter 检测失败由 unsupported 状态承载。
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [active]);
 
 	function refresh(): void {
 		const next = loadMcpRowsAction();
@@ -93,7 +112,11 @@ export default function McpView({active, onSubModeChange, onExitToNav}: McpViewP
 			onMoveHorizontal={direction => setSelected(previous => moveMcpGridCursor(previous, rows.length, direction))}
 			onOpenToggle={() => {
 				if (!current) return;
-				setToggleDraft({cc: current.injectByAgent.cc.active, cx: current.injectByAgent.cx.active});
+					setToggleDraft({
+						cc: current.injectByAgent.cc.active,
+						cx: current.injectByAgent.cx.active,
+						pi: current.injectByAgent.pi.active
+					});
 				setToggleIndex(0);
 				setScreen({kind: 'select-toggle-target', serverId: current.Id});
 			}}
@@ -106,13 +129,23 @@ export default function McpView({active, onSubModeChange, onExitToNav}: McpViewP
 			}}
 			onExit={onExitToNav}
 			onMoveToggle={delta => setToggleIndex(previous => (previous + delta + AGENT_CONTEXT_ORDER.length) % AGENT_CONTEXT_ORDER.length)}
-			onToggleDraft={() => {
-				const context: AgentContext = AGENT_CONTEXT_ORDER[toggleIndex] ?? 'cc';
-				setToggleDraft(previous => ({...previous, [context]: !previous[context]}));
-			}}
-			onApplyToggle={() => {
-				if (screen.kind !== 'select-toggle-target') return;
-				const result = applyMcpToggleAction(screen.serverId, toggleDraft);
+				onToggleDraft={() => {
+					const context: AgentContext = AGENT_CONTEXT_ORDER[toggleIndex] ?? 'cc';
+					if (current && !current.injectByAgent[context].supported) return;
+					setToggleDraft(previous => ({...previous, [context]: !previous[context]}));
+				}}
+				onApplyToggle={() => {
+					if (screen.kind !== 'select-toggle-target') return;
+					const piChanged = current ? toggleDraft.pi !== current.injectByAgent.pi.active : false;
+					if (piChanged) {
+						void applyMcpToggleActionAsync(screen.serverId, toggleDraft).then(result => {
+							refresh();
+							returnToList();
+							settleAction(result);
+						});
+						return;
+					}
+					const result = applyMcpToggleAction(screen.serverId, toggleDraft);
 				refresh();
 				returnToList();
 				settleAction(result);

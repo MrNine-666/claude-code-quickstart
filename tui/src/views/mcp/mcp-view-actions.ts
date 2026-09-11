@@ -4,9 +4,11 @@ import type {AgentContext} from '../../state/manage-state.js';
 import {
 	addSharedMcpServer,
 	applyMcpToggleTargets,
+	applyMcpToggleTargetsAsync,
 	getDefinition,
 	loadMcpDetail,
 	loadSharedMcpStatus,
+	loadSharedMcpStatusAsync,
 	removeSharedMcpServer,
 	saveEditedMcpServer
 } from '../../services/mcp-service.js';
@@ -75,6 +77,10 @@ export function loadMcpRowsAction(): readonly McpViewRow[] {
 	return loadSharedMcpStatus();
 }
 
+export function loadMcpRowsActionAsync(): Promise<readonly McpViewRow[]> {
+	return loadSharedMcpStatusAsync();
+}
+
 export function createMcpAddFormModel(): McpFormModel {
 	return {
 		mode: 'add',
@@ -117,6 +123,11 @@ export function submitMcpFormAction(input: McpFormSubmitInput): McpViewActionRes
 
 export function applyMcpToggleAction(serverId: string, targets: McpToggleDraft): McpViewActionResult {
 	const result = applyMcpToggleTargets(serverId, targets);
+	return result.ok ? {ok: true, message: `已更新 ${serverId} 开关`} : {ok: false, error: result.error};
+}
+
+export async function applyMcpToggleActionAsync(serverId: string, targets: McpToggleDraft): Promise<McpViewActionResult> {
+	const result = await applyMcpToggleTargetsAsync(serverId, targets);
 	return result.ok ? {ok: true, message: `已更新 ${serverId} 开关`} : {ok: false, error: result.error};
 }
 

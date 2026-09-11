@@ -2,7 +2,6 @@ import React from 'react';
 import {TextAttributes, type ScrollBoxRenderable} from '@opentui/core';
 import {
 	Card,
-	ErrorPanel,
 	ListEmptyState,
 	ListLoadingState,
 	StatusDot,
@@ -30,7 +29,6 @@ export function ToolsHomeView({view, detectionStatus, scrollRef, active}: ToolsH
 			<ViewHeader title="工具管理" subtitle="管理常用 CLI 工具的安装、更新与卸载" />
 			{renderDetectionNotice(detectionStatus)}
 			{detectionStatus !== 'loading' && detectionStatus !== 'idle' ? renderGrid(view, scrollRef, active) : null}
-			{view.errorText ? <ErrorPanel message={view.errorText} /> : null}
 		</box>
 	);
 }

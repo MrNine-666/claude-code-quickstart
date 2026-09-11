@@ -13,19 +13,23 @@ import {
 import {targetTopologyOfDraft} from '../../core/skills-storage.js';
 import type {DetectionCache} from '../../hooks/use-detection-cache.js';
 import type {TaskCancellation} from '../../hooks/use-task-cancellation.js';
-import {AGENT_CONTEXT_ORDER, type AgentContext} from '../../state/manage-state.js';
 import {
-	currentTopologyOfItem,
+	agentTargetsOfDraft,
+	managedAgentTargetsOfItem,
 	pendingBatchInstances,
 	pendingInstallResults,
 	pendingInstance,
 	selectedOrCurrentInstalled,
 	selectedInstalled,
+	SKILLS_INSTALL_TARGET_ORDER,
+	type SkillsInstallTarget,
 	uninstallTargets,
 	type InstallDraft,
 	type SkillsViewMode,
 	type SkillsViewState
 } from '../../state/skills-view-state.js';
+import {AGENT_CONTEXT_LABELS} from '../../state/manage-state.js';
+import type {SkillAgentTargets} from '../../core/skills-storage.js';
 import type {
 	InstalledSkillItem,
 	SkillsDetection,
@@ -91,7 +95,7 @@ export function runInstallToTargetsAction(
 		toast.info('没有可安装的 Skill');
 		return;
 	}
-	const targets = AGENT_CONTEXT_ORDER.filter(ctx => view.installDraft[ctx]);
+	const targets = SKILLS_INSTALL_TARGET_ORDER.filter(target => view.installDraft[target]);
 	const signal = taskCancellation.start();
 	if (!signal) return;
 	dispatch({type: 'confirm'});
@@ -156,7 +160,7 @@ function confirmedInstallKeys(
 	previous: readonly InstalledSkillItem[],
 	installed: readonly InstalledSkillItem[],
 	execution: SkillsBatchExecution,
-	targets: readonly AgentContext[]
+	targets: readonly SkillsInstallTarget[]
 ): readonly string[] {
 	const replacementByKey = new Map(execution.replacements.map(item => [item.key, item]));
 	const findBySource = (items: readonly InstalledSkillItem[], name: string, source: string): InstalledSkillItem | undefined =>
@@ -174,7 +178,11 @@ function confirmedInstallKeys(
 		if (!current) return [];
 
 		// 目标 Agent 侧必须全部出现在刷新后的 agents 并集里。
-		const targetReady = targets.every(target => itemAvailableOn(current, target));
+		const targetReady = targets.every(target =>
+			target === 'pi'
+				? itemAvailableOn(current, 'pi') && current.projections.some(projection => projection.root === 'pi-global')
+				: itemAvailableOn(current, target)
+		);
 		if (!targetReady) return [];
 
 		// 覆盖安装（同名异源）额外要求 replacement 事务成功。
@@ -198,9 +206,10 @@ export function runTopologyTransitionAction(
 ): void {
 	// 确认后只认已快照的逻辑实例，避免刷新排序把迁移打到同名另一来源（R2/R6）。
 	const current = pendingInstance(view) ?? selectedInstalled(view);
-	const target = targetTopologyOfDraft(view.installDraft);
-	if (!current || target === 'empty') {
-		dispatch({type: 'action-failed', error: '当前 Skill 或目标拓扑无效'});
+	const target = agentTargetsOfDraft(view.installDraft);
+	const targetCx = targetTopologyOfDraft({cc: target.cc, cx: target.cx});
+	if (!current || (!target.cc && !target.cx && !target.pi)) {
+		dispatch({type: 'action-failed', error: '当前 Skill 或目标 Agent 集合无效'});
 		return;
 	}
 	if (!current.capabilities.migrate) {
@@ -212,7 +221,13 @@ export function runTopologyTransitionAction(
 	dispatch({type: 'confirm'});
 	void (async () => {
 		try {
-			const result = await services.transitionTopology(current, target, progressSink(dispatch), signal);
+			const result = services.transitionAgents
+				? await services.transitionAgents(current, target, progressSink(dispatch), signal)
+				: targetCx === 'empty'
+					? (() => {
+							throw new Error('当前测试服务不支持 Pi-only 目标');
+						  })()
+					: await services.transitionTopology(current, targetCx, progressSink(dispatch), signal);
 			throwIfAborted(signal);
 			await finishTopologyLifecycle(result, cache, dispatch, current, target, signal);
 		} catch (error) {
@@ -229,7 +244,7 @@ async function finishTopologyLifecycle(
 	cache: DetectionCache<SkillsDetection>,
 	dispatch: SkillsViewDispatch,
 	item: InstalledSkillItem,
-	target: SkillTopology,
+	target: SkillAgentTargets,
 	signal: AbortSignal
 ): Promise<void> {
 	const name = item.name;
@@ -245,9 +260,9 @@ async function finishTopologyLifecycle(
 		{
 			message:
 				result.outcome === 'complete'
-					? `${name} 已切换为${topologyLabel(target)}`
-					: result.outcome === 'partial'
-						? `${name} 内容可用，但共享投影尚未完成`
+						? `${name} 已切换为${agentTargetsLabel(target)}`
+						: result.outcome === 'partial'
+							? `${name} 内容可用，但目标投影尚未完全完成`
 						: result.outcome === 'restored'
 							? `${name} 切换失败，已恢复原拓扑`
 							: undefined,
@@ -266,7 +281,7 @@ async function reconcileManagedLifecycle(
 		readonly message?: string;
 		readonly warning?: boolean;
 		readonly error?: string;
-		readonly expected?: {readonly instanceId: string; readonly target: SkillTopology};
+		readonly expected?: {readonly instanceId: string; readonly target: SkillAgentTargets};
 	},
 	signal: AbortSignal
 ): Promise<void> {
@@ -281,8 +296,10 @@ async function reconcileManagedLifecycle(
 	if (feedback.expected) {
 		// 复检按操作前快照的实例 id 定位，避免同名另一来源被当作本次迁移结果（R6）。
 		const current = installed.find((item: InstalledSkillItem) => item.id === feedback.expected!.instanceId);
-		if (!current || currentTopologyOfItem(current) !== feedback.expected.target) {
-			dispatch({type: 'action-failed', error: '最终检测未确认目标拓扑'});
+		const actual = current ? managedAgentTargetsOfItem(current) : undefined;
+		const expected = feedback.expected.target;
+		if (!actual || actual.cc !== expected.cc || actual.cx !== expected.cx || actual.pi !== expected.pi) {
+			dispatch({type: 'action-failed', error: '最终检测未确认目标 Agent 集合'});
 			return;
 		}
 	}
@@ -416,6 +433,13 @@ export function topologyLabel(topology: SkillTopology | undefined): string {
 				: '部分完成';
 }
 
+export function agentTargetsLabel(target: SkillAgentTargets): string {
+	const labels = (['cc', 'cx', 'pi'] as const)
+		.filter(agent => target[agent])
+		.map(agent => AGENT_CONTEXT_LABELS[agent]);
+	return labels.length > 0 ? labels.join('、') : '无目标';
+}
+
 /** 存储根展示名。只用于展示 JSON `path` 的归类结果，不参与身份或能力判定。 */
 export function storageRootLabel(root: SkillsStorageRoot): string {
 	switch (root) {
@@ -425,6 +449,11 @@ export function storageRootLabel(root: SkillsStorageRoot): string {
 			return '.agents/skills';
 		case 'codex':
 			return '.codex/skills';
+		case 'pi-global':
+			return '.pi/agent/skills';
+		case 'pi-project':
+			// 当前项目 Pi Skills 不属于 Skills TUI；即使低层快照带入，也不暴露目录名。
+			return '其它位置';
 		default:
 			return '其它位置';
 	}

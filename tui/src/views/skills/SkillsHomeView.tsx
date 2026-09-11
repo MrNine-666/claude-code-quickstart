@@ -33,9 +33,7 @@ export function SkillsHomeView({view, active, dispatch}: SkillsHomeViewProps) {
 	const summary = (
 		<box flexDirection="row" flexShrink={0} justifyContent="space-between" paddingRight={2} marginBottom={0}>
 			<RadioField label="布局：" value={view.homeLayout} options={HOME_LAYOUT_OPTIONS} focused={false} compact />
-			<text fg={view.pickedInstalledIds.length > 0 ? colors.primary : colors.muted}>
-				{`已选 ${view.pickedInstalledIds.length}`}
-			</text>
+			<text fg={view.pickedInstalledIds.length > 0 ? colors.primary : colors.muted}>{`已选 ${view.pickedInstalledIds.length}`}</text>
 		</box>
 	);
 
@@ -47,6 +45,7 @@ export function SkillsHomeView({view, active, dispatch}: SkillsHomeViewProps) {
 				focused={active && view.filterFocused}
 				placeholder="输入关键词模糊筛选已装 skill"
 				onChange={value => dispatch({type: 'filter-input', value})}
+				onFocus={() => dispatch({type: 'filter-focus'})}
 			/>
 			{summary}
 			{filtered.length === 0 ? (
@@ -56,20 +55,14 @@ export function SkillsHomeView({view, active, dispatch}: SkillsHomeViewProps) {
 				/>
 			) : (
 				<box flexGrow={1} minHeight={0} flexDirection="column">
-					<ScrollList items={items} cursor={view.installedIndex} active={active} focusIndicator="leading" />
+					<ScrollList items={items} cursor={view.installedIndex} active={active} focusIndicator="card" />
 				</box>
 			)}
 		</box>
 	);
 }
 
-function homeListItem(
-	row: SkillsHomeRow,
-	index: number,
-	view: SkillsViewState,
-	picked: ReadonlySet<string>,
-	active: boolean
-) {
+function homeListItem(row: SkillsHomeRow, index: number, view: SkillsViewState, picked: ReadonlySet<string>, active: boolean) {
 	const focused = active && index === view.installedIndex;
 	if (row.kind === 'group') {
 		const collapsed = view.collapsedSourceKeys.includes(row.group.key);
@@ -79,13 +72,13 @@ function homeListItem(
 			title: row.group.label,
 			titleColor: focused ? colors.primary : colors.text,
 			titleAttrs: TextAttributes.BOLD,
-				titleRight: (
+			titleRight: (
 				<text fg={selectedCount > 0 ? colors.primary : colors.muted}>
 					{selectedCount > 0 ? `${selectedCount}/${row.group.items.length} 已选` : `${row.group.items.length} 项`}
 				</text>
-				),
-				leading: <text fg={focused ? colors.primary : colors.muted}>{collapsed ? '▸' : '▾'}</text>,
-				bordered: false
+			),
+			leading: <text fg={focused ? colors.primary : colors.muted}>{collapsed ? '▸' : '▾'}</text>,
+			bordered: false
 		};
 	}
 
@@ -109,6 +102,8 @@ function InstalledSkillBody({skill}: {readonly skill: InstalledSkillItem}) {
 				<StateBadge label={AGENT_CONTEXT_LABELS.cc} installed={itemAvailableOn(skill, 'cc')} />
 				<text fg={colors.muted}>{'  '}</text>
 				<StateBadge label={AGENT_CONTEXT_LABELS.cx} installed={itemAvailableOn(skill, 'cx')} />
+				<text fg={colors.muted}>{'  '}</text>
+				<StateBadge label={AGENT_CONTEXT_LABELS.pi} installed={itemAvailableOn(skill, 'pi')} />
 			</box>
 		</box>
 	);
@@ -126,7 +121,7 @@ function SourceUrlRow({skill}: {readonly skill: InstalledSkillItem}) {
 
 	return (
 		<text selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-				<a href={url} fg={colors.muted} attributes={TextAttributes.DIM | TextAttributes.UNDERLINE}>
+			<a href={url} fg={colors.muted} attributes={TextAttributes.DIM | TextAttributes.UNDERLINE}>
 				{url}
 			</a>
 		</text>

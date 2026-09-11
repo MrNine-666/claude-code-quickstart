@@ -17,10 +17,15 @@ export type ViewHeaderProps = {
 export function ViewHeader({ title, subtitle, right }: ViewHeaderProps) {
 	return (
 		<box flexDirection="row" flexShrink={0}>
-			<text fg={colors.primary} attributes={TextAttributes.BOLD}>
+			<text fg={colors.primary} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 				{title}
 			</text>
-			{subtitle === undefined ? null : <text fg={colors.muted}>  {subtitle}</text>}
+			{subtitle === undefined ? null : (
+				<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+					{'  '}
+					{subtitle}
+				</text>
+			)}
 			{right === undefined ? null : <text>{' '}</text>}
 			{right ?? null}
 		</box>

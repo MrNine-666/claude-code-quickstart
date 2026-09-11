@@ -1,4 +1,16 @@
-import {chmodSync, existsSync, mkdirSync, writeFileSync, readFileSync, renameSync, unlinkSync, statSync, openSync, writeSync, closeSync} from 'node:fs';
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	writeFileSync,
+	readFileSync,
+	renameSync,
+	unlinkSync,
+	statSync,
+	openSync,
+	writeSync,
+	closeSync
+} from 'node:fs';
 import {dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -6,6 +18,9 @@ import {join} from 'node:path';
 const PROFILE_LOCK_FILE = join(tmpdir(), '.ccq-profile.lock');
 const PROFILE_LOCK_TIMEOUT_MS = 30000;
 const PROFILE_LOCK_EXPIRE_MS = 300000;
+const WINDOWS_RENAME_RETRY_ATTEMPTS = 12;
+const WINDOWS_RENAME_RETRY_DELAY_MS = 50;
+const WINDOWS_RENAME_WAIT = new Int32Array(new SharedArrayBuffer(4));
 
 export const SECRET_FILE_MODE = 0o600;
 
@@ -18,10 +33,33 @@ export type JsonFileReadResult<T> =
 	| {readonly status: 'valid'; readonly value: T}
 	| {readonly status: 'invalid'; readonly error: string};
 
+function isRetryableWindowsRenameError(error: unknown): boolean {
+	if (!error || typeof error !== 'object') return false;
+	const code = (error as NodeJS.ErrnoException).code;
+	return code === 'EPERM' || code === 'EACCES' || code === 'EBUSY';
+}
+
+function renameWithWindowsRetry(tempPath: string, filePath: string): void {
+	for (let attempt = 0; ; attempt++) {
+		try {
+			renameSync(tempPath, filePath);
+			return;
+		} catch (error) {
+			if (process.platform !== 'win32' || attempt >= WINDOWS_RENAME_RETRY_ATTEMPTS || !isRetryableWindowsRenameError(error)) {
+				throw error;
+			}
+
+			// Windows Defender、同步客户端等可能短暂持有目标文件；保留临时文件并重试替换。
+			Atomics.wait(WINDOWS_RENAME_WAIT, 0, 0, WINDOWS_RENAME_RETRY_DELAY_MS);
+		}
+	}
+}
+
 /**
  * 原子写入文件（临时文件 + rename）。
  * 用 writeFileSync 写临时文件——它会同步关闭文件句柄，避免 Windows 下
- * 未关闭句柄导致 renameSync 报 EPERM（对齐旧 manage.js atomicWrite 行为）。
+ * 未关闭句柄导致 renameSync 报 EPERM（对齐旧 manage.js atomicWrite 行为）；
+ * 目标文件被 Windows 外部进程短暂占用时，renameWithWindowsRetry 会重试替换。
  */
 export function atomicWrite(filePath: string, content: string, options: AtomicWriteOptions = {}): void {
 	const dir = dirname(filePath);
@@ -40,7 +78,7 @@ export function atomicWrite(filePath: string, content: string, options: AtomicWr
 	const tempPath = `${filePath}.tmp.${Date.now()}.${process.pid}`;
 	try {
 		writeFileSync(tempPath, content, {encoding: 'utf8', mode: effectiveMode});
-		renameSync(tempPath, filePath);
+		renameWithWindowsRetry(tempPath, filePath);
 		if (effectiveMode !== undefined && process.platform !== 'win32') {
 			chmodSync(filePath, effectiveMode);
 		}

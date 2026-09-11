@@ -3,6 +3,7 @@ import type {Shortcut} from '../components/index.js';
 import {editingShortcutKey, formatShortcutKey} from '../utils/keyboard.js';
 import {
 	CONFIG_COMMANDS,
+	EXTENSIONS_COMMANDS,
 	HEADER_COMMANDS,
 	MCP_COMMANDS,
 	NAV_COMMANDS,
@@ -12,6 +13,7 @@ import {
 	TOOLS_COMMANDS,
 	VIEW_COMMON_COMMANDS,
 	configBindings,
+	extensionsBindings,
 	headerBindings,
 	mcpBindings,
 	navBindings,
@@ -45,7 +47,8 @@ for (const binding of [
 	...skillsBindings,
 	...promptsBindings,
 	...configBindings,
-	...toolsBindings
+	...toolsBindings,
+	...extensionsBindings
 ]) {
 	if (typeof binding.cmd !== 'string') continue;
 	const bindings = bindingLookup.get(binding.cmd) ?? [];
@@ -105,9 +108,54 @@ export function viewShortcuts(menuId: ManageModuleId, subMode: ViewSubMode): rea
 			return configShortcuts(subMode);
 		case 'tools':
 			return toolsShortcuts(subMode);
+		case 'extensions':
+			return extensionsShortcuts(subMode);
 		default:
 			return [];
 	}
+}
+
+function extensionsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
+	if (subMode === 'empty') {
+		return buildShortcuts([{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}]);
+	}
+	if (subMode === 'confirm') {
+		return manualShortcuts([
+			{key: 'Enter', label: '确认执行'},
+			{key: 'Esc', label: '取消'}
+		]);
+	}
+	if (subMode === 'search') {
+		return buildShortcuts([
+			{command: EXTENSIONS_COMMANDS.FOCUS_CYCLE, label: '切换焦点'},
+			{command: EXTENSIONS_COMMANDS.PRIMARY_ACTION, label: '搜索'}
+		]);
+	}
+	if (subMode === 'searching') {
+		return manualShortcuts([{key: '请稍候', label: '搜索中'}]);
+	}
+	const pageShortcuts: readonly ShortcutSpec[] =
+		subMode === 'installed-grid'
+			? []
+			: [
+					{command: EXTENSIONS_COMMANDS.PAGE_PREVIOUS, label: '翻页'},
+					{command: EXTENSIONS_COMMANDS.PAGE_NEXT, label: '翻页'}
+				];
+	const uninstallShortcut: readonly ShortcutSpec[] =
+		subMode === 'grid-uninstalled' ? [] : [{command: EXTENSIONS_COMMANDS.UNINSTALL, label: '卸载'}];
+	return buildShortcuts([
+		{command: EXTENSIONS_COMMANDS.UP, label: '选择'},
+		{command: EXTENSIONS_COMMANDS.DOWN, label: '选择'},
+		{command: EXTENSIONS_COMMANDS.LEFT, label: '选择/返回菜单'},
+		{command: EXTENSIONS_COMMANDS.RIGHT, label: '选择'},
+		{command: EXTENSIONS_COMMANDS.FOCUS_CYCLE, label: '切换焦点'},
+		{command: EXTENSIONS_COMMANDS.PRIMARY_ACTION, label: '安装/更新'},
+		{command: EXTENSIONS_COMMANDS.UPDATE_ALL, label: '全部更新'},
+		{command: EXTENSIONS_COMMANDS.OPEN_DETAILS, label: '查看详情'},
+		...pageShortcuts,
+		...uninstallShortcut,
+		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'}
+	]);
 }
 
 function providerShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
@@ -118,12 +166,27 @@ function providerShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		]);
 	}
 
+	if (subMode === 'form-pi') {
+		return buildShortcuts([
+			{command: PROVIDER_COMMANDS.FORM_UP, label: '字段'},
+			{command: PROVIDER_COMMANDS.FORM_DOWN, label: '字段'},
+			{command: PROVIDER_COMMANDS.FORM_OPTION_PREV, label: '选项'},
+			{command: PROVIDER_COMMANDS.FORM_OPTION_NEXT, label: '选项'},
+			{command: PROVIDER_COMMANDS.FORM_MULTI_SELECT_TOGGLE, label: '切换选择'},
+			{command: PROVIDER_COMMANDS.FORM_DISCOVER, label: '获取上游模型'},
+			{command: PROVIDER_COMMANDS.FORM_SAVE, label: '保存'},
+			{command: PROVIDER_COMMANDS.FORM_CANCEL, label: '取消'}
+		]);
+	}
+
 	if (subMode === 'form') {
-		return manualShortcuts([
-			{key: '↑/↓', label: '字段'},
-			{key: '←/→', label: '选项'},
-			{key: formatShortcutKey(editingShortcutKey('s')), label: '保存'},
-			{key: 'Esc', label: '取消'}
+		return buildShortcuts([
+			{command: PROVIDER_COMMANDS.FORM_UP, label: '字段'},
+			{command: PROVIDER_COMMANDS.FORM_DOWN, label: '字段'},
+			{command: PROVIDER_COMMANDS.FORM_OPTION_PREV, label: '选项'},
+			{command: PROVIDER_COMMANDS.FORM_OPTION_NEXT, label: '选项'},
+			{command: PROVIDER_COMMANDS.FORM_SAVE, label: '保存'},
+			{command: PROVIDER_COMMANDS.FORM_CANCEL, label: '取消'}
 		]);
 	}
 
@@ -226,27 +289,41 @@ function skillsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		return manualShortcuts([{key: '请稍候', label: '执行中'}]);
 	}
 
-	// 安装页：搜索框 + 扁平 skill 列表；选中 skill Enter 弹安装目标 Modal
-	// 键位全部从 keybinding registry 派生（Tab/↑↓ 复用 TOGGLE_FOCUS/LIST_*，Enter=SELECT_TARGET，Esc=返回菜单），
-	// 不硬编码字面量（skills-tui R6：footer SHALL advertise the install-target action sourced from the keybinding registry）。
-	if (subMode === 'install') {
+	// 安装页搜索框：Enter 由原生 input 提交搜索，Tab 切到结果列表。
+	if (subMode === 'install-search') {
 		return buildShortcuts([
-			{command: SKILLS_COMMANDS.TOGGLE_FOCUS, label: '搜索框/列表'},
+			{command: SKILLS_COMMANDS.TOGGLE_FOCUS, label: '切换焦点'},
+			{command: SKILLS_COMMANDS.SUBMIT_SEARCH, label: '搜索'}
+		]);
+	}
+
+	// 安装页结果列表：选中 skill Enter 弹安装目标 Modal。
+	// 键位全部从 keybinding registry 派生（Tab/↑↓ 复用 TOGGLE_FOCUS/LIST_*，Enter=SELECT_TARGET，Esc=返回列表页），
+	// 不硬编码字面量（skills-tui R6：footer SHALL advertise the install-target action sourced from the keybinding registry）。
+	if (subMode === 'install' || subMode === 'install-list') {
+		return buildShortcuts([
+			{command: SKILLS_COMMANDS.TOGGLE_FOCUS, label: '切换焦点'},
 			{command: SKILLS_COMMANDS.LIST_UP, label: '选择 skill'},
 			{command: SKILLS_COMMANDS.LIST_DOWN, label: '选择 skill'},
 			{command: SKILLS_COMMANDS.TOGGLE_RESULT, label: '选择/取消'},
 			{command: SKILLS_COMMANDS.SELECT_ALL, label: '全选'},
 			{command: SKILLS_COMMANDS.SELECT_TARGET, label: '选择安装目标'},
 			{command: SKILLS_COMMANDS.REFRESH, label: '刷新状态'},
-			{command: SKILLS_COMMANDS.TARGET_CANCEL, label: '返回列表页'}
+			{command: SKILLS_COMMANDS.TARGET_CANCEL, label: '返回列表页'},
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
 		]);
+	}
+
+	// 已安装页过滤框：输入框拥有文本编辑焦点，只有 Tab 回到列表。
+	if (subMode === 'list-filter') {
+		return buildShortcuts([{command: SKILLS_COMMANDS.TOGGLE_FOCUS, label: '切换焦点'}]);
 	}
 
 	// 列表页（默认）：单列 flat/grouped + 多选批量维护。
 	const groupToggleShortcut: readonly ShortcutSpec[] =
 		subMode === 'list-grouped' ? [{command: SKILLS_COMMANDS.TOGGLE_ALL_GROUPS, label: '全部展开/收起'}] : [];
 	return buildShortcuts([
-		{command: SKILLS_COMMANDS.TOGGLE_FOCUS, label: '过滤框/列表'},
+		{command: SKILLS_COMMANDS.TOGGLE_FOCUS, label: '切换焦点'},
 		{command: SKILLS_COMMANDS.LIST_UP, label: '选择'},
 		{command: SKILLS_COMMANDS.LIST_DOWN, label: '选择'},
 		{command: SKILLS_COMMANDS.TOGGLE_INSTALLED, label: '选择/展开'},
@@ -269,6 +346,7 @@ function promptsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	if (subMode === 'view-render') {
 		return buildShortcuts([
 			{command: PROMPTS_COMMANDS.EDIT_ENTRY, label: '编辑'},
+			{command: PROMPTS_COMMANDS.OPEN_FILE, label: '打开文件'},
 			{command: PROMPTS_COMMANDS.PREVIEW_UP, label: '滚动'},
 			{command: PROMPTS_COMMANDS.PREVIEW_DOWN, label: '滚动'},
 			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
@@ -288,42 +366,12 @@ function promptsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	// edit 态：纯编辑器（默认）
 	if (subMode === 'edit') {
 		return buildShortcuts([
-			{command: PROMPTS_COMMANDS.TOGGLE_PANEL, label: '推荐边栏'},
 			{command: PROMPTS_COMMANDS.EDITOR_SAVE, label: '保存'},
-			{command: PROMPTS_COMMANDS.IMPORT, label: '导入推荐'},
 			{command: PROMPTS_COMMANDS.EDITOR_CANCEL, label: '取消'}
 		]);
 	}
 
-	// edit 态：双栏 · 焦点在编辑器
-	if (subMode === 'edit-split-editor') {
-		return buildShortcuts([
-			{command: PROMPTS_COMMANDS.FOCUS_CYCLE, label: '切边栏'},
-			{command: PROMPTS_COMMANDS.TOGGLE_PANEL, label: '收边栏'},
-			{command: PROMPTS_COMMANDS.EDITOR_SAVE, label: '保存'},
-			{command: PROMPTS_COMMANDS.IMPORT, label: '导入推荐'},
-			{command: PROMPTS_COMMANDS.EDITOR_CANCEL, label: '取消'}
-		]);
-	}
-
-	// edit 态：双栏 · 焦点在推荐边栏（↑/↓ 滚动）
-	if (subMode === 'edit-split-recommend') {
-		return buildShortcuts([
-			{command: PROMPTS_COMMANDS.PREVIEW_UP, label: '滚动'},
-			{command: PROMPTS_COMMANDS.PREVIEW_DOWN, label: '滚动'},
-			{command: PROMPTS_COMMANDS.FOCUS_CYCLE, label: '切编辑器'},
-			{command: PROMPTS_COMMANDS.TOGGLE_PANEL, label: '收边栏'},
-			{command: PROMPTS_COMMANDS.EDITOR_SAVE, label: '保存'},
-			{command: PROMPTS_COMMANDS.IMPORT, label: '导入推荐'},
-			{command: PROMPTS_COMMANDS.EDITOR_CANCEL, label: '取消'}
-		]);
-	}
-
-	// 确认浮层（import）
-	return manualShortcuts([
-		{key: 'Enter', label: '确认'},
-		{key: 'Esc', label: '取消'}
-	]);
+	return [];
 }
 
 function configShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
@@ -331,6 +379,7 @@ function configShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	if (subMode === 'view-render') {
 		return buildShortcuts([
 			{command: CONFIG_COMMANDS.EDIT_ENTRY, label: '编辑'},
+			{command: CONFIG_COMMANDS.OPEN_FILE, label: '打开文件'},
 			{command: CONFIG_COMMANDS.PREVIEW_UP, label: '滚动'},
 			{command: CONFIG_COMMANDS.PREVIEW_DOWN, label: '滚动'},
 			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},

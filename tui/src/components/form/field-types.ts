@@ -13,7 +13,7 @@ export type KeyValueEntry = {
 	readonly value: string;
 };
 
-/** 表单字段（判别联合：5 种类型） */
+/** 表单字段（判别联合：6 种通用类型；业务专属内容通过 FormPanel.custom 注入） */
 export type FormField =
 	| {
 			readonly id: string;

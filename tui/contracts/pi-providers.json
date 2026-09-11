@@ -1,0 +1,48 @@
+{
+  "SchemaVersion": 1,
+  "Source": "Pi built-in provider registry snapshot",
+  "Providers": {
+    "anthropic": {
+      "Name": "Anthropic",
+      "Api": "anthropic-messages",
+      "Models": [
+        {"id": "claude-sonnet-4-5"},
+        {"id": "claude-opus-4-1"}
+      ]
+    },
+    "openai": {
+      "Name": "OpenAI",
+      "Api": "openai-completions",
+      "Models": [
+        {"id": "gpt-5"},
+        {"id": "gpt-4o"}
+      ]
+    },
+    "google": {
+      "Name": "Google Gemini",
+      "Api": "google-generative-ai",
+      "Models": [
+        {"id": "gemini-2.5-pro"},
+        {"id": "gemini-2.5-flash"}
+      ]
+    },
+    "openai-codex": {
+      "Name": "ChatGPT Plus/Pro",
+      "Api": "openai-responses",
+      "OAuth": true,
+      "Models": []
+    },
+    "xai": {
+      "Name": "xAI (Grok/X subscription)",
+      "Api": "openai-responses",
+      "OAuth": true,
+      "Models": []
+    },
+    "github-copilot": {
+      "Name": "GitHub Copilot",
+      "Api": "openai-completions",
+      "OAuth": true,
+      "Models": []
+    }
+  }
+}

@@ -18,6 +18,10 @@ export type LifecycleCommand = {
 
 /** agentContext 内部短名 → CodeGraph/官方 `--target` 全称。 */
 export function agentTarget(context: AgentContext): 'claude' | 'codex' {
+	if (context === 'pi') {
+		throw new Error('Pi Agent 不支持 CodeGraph target');
+	}
+
 	return context === 'cx' ? 'codex' : 'claude';
 }
 
@@ -25,6 +29,8 @@ export function agentTarget(context: AgentContext): 'claude' | 'codex' {
 
 /** CodeGraph 接入当前 Agent（CLI 就绪后执行；npm 安装单独在 tools-manage 完成）。 */
 export function codeGraphInstallCommands(context: AgentContext): readonly LifecycleCommand[] {
+	if (context === 'pi') return [];
+
 	return [{cmd: 'codegraph', args: ['install', `--target=${agentTarget(context)}`, '--location=global', '--yes']}];
 }
 
@@ -33,6 +39,8 @@ export function codeGraphInstallCommands(context: AgentContext): readonly Lifecy
  * 不 npm uninstall、不删 .codegraph/ 项目索引（那些是独立的高级动作）。
  */
 export function codeGraphUninstallCommands(context: AgentContext): readonly LifecycleCommand[] {
+	if (context === 'pi') return [];
+
 	return [{cmd: 'codegraph', args: ['uninstall', `--target=${agentTarget(context)}`, '--yes']}];
 }
 
@@ -49,6 +57,10 @@ export function ccgWorkflowInstallCommands(context: AgentContext, claudeInstallD
 		return [{cmd: 'npx', args: ['--yes', 'ccg-workflow', 'codex-mode', 'install']}];
 	}
 
+	if (context === 'pi') {
+		return [];
+	}
+
 	return [
 		{
 			cmd: 'npx',
@@ -61,6 +73,10 @@ export function ccgWorkflowInstallCommands(context: AgentContext, claudeInstallD
 export function ccgWorkflowUninstallCommands(context: AgentContext): readonly LifecycleCommand[] {
 	if (context === 'cx') {
 		return [{cmd: 'npx', args: ['--yes', 'ccg-workflow', 'codex-mode', 'uninstall']}];
+	}
+
+	if (context === 'pi') {
+		return [];
 	}
 
 	return [{cmd: 'npx', args: ['--yes', 'ccg-workflow', 'uninstall']}];

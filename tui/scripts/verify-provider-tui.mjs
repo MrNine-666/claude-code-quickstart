@@ -42,15 +42,73 @@ const {
 
 const providerViewSource = readFileSync(new URL('../src/views/provider/ProviderView.tsx', import.meta.url), 'utf8');
 const providerAdapterSource = readFileSync(new URL('../src/views/provider/provider-view-adapter.ts', import.meta.url), 'utf8');
+const providerHomeSource = readFileSync(new URL('../src/views/provider/ProviderHomeView.tsx', import.meta.url), 'utf8');
+const formLabelSource = readFileSync(new URL('../src/components/form/FormLabel.tsx', import.meta.url), 'utf8');
+const textFieldSource = readFileSync(new URL('../src/components/form/TextField.tsx', import.meta.url), 'utf8');
+const radioFieldSource = readFileSync(new URL('../src/components/form/RadioField.tsx', import.meta.url), 'utf8');
+const selectFieldSource = readFileSync(new URL('../src/components/form/SelectField.tsx', import.meta.url), 'utf8');
+const keyValueFieldSource = readFileSync(new URL('../src/components/form/KeyValueField.tsx', import.meta.url), 'utf8');
 assert.match(providerViewSource, /agentContext:\s*AgentContext/, 'ProviderView props 必须接收 agentContext');
 assert.match(providerViewSource, /createProviderViewAdapter\(agentContext\)/, 'ProviderView 必须由 agentContext 构造领域 adapter');
 assert.match(providerAdapterSource, /const isCodex = agentContext === 'cx'/, 'Provider adapter 必须由 agentContext 切换 Codex 模式');
-assert.match(providerAdapterSource, /loadDisplay: isCodex \? loadCodexProviderDisplay : loadProviderDisplay/, 'Provider adapter 列表必须按 agentContext 切换数据源');
-assert.match(providerViewSource, /setScreen\(\{kind: 'list'\}\);\r?\n\t\}, \[adapter\]\);/, '切换 agentContext 时必须重置列表屏，避免表单脏状态写入错误目标');
+assert.match(
+	providerAdapterSource,
+	/loadDisplay: isPi \? loadPiProviderDisplayData : isCodex \? loadCodexProviderDisplay : loadProviderDisplay/,
+	'Provider adapter 列表必须按 agentContext 切换数据源'
+);
+assert.match(
+	providerViewSource,
+	/setScreen\(\{kind: 'list'\}\);\r?\n\t\}, \[adapter\]\);/,
+	'切换 agentContext 时必须重置列表屏，避免表单脏状态写入错误目标'
+);
 assert.match(providerViewSource, /adapter=\{codexProviderFormAdapter\}/, 'Codex Provider 表单必须保留真实 TOML textarea adapter');
-assert.match(providerViewSource, /save=\{saveCodexProviderForm\}/, 'Codex Provider 新增必须走 Codex service/core，不得复用 Claude provider');
-assert.match(providerAdapterSource, /switchActive: isCodex \? switchActiveCodexProvider : switchActiveProvider/, '设置默认必须按 agentContext 路由');
-assert.match(providerAdapterSource, /remove: isCodex \? removeCodexProvider : removeProvider/, '删除必须按 agentContext 路由');
+assert.match(
+	providerViewSource,
+	/save=\{saveCodexProviderForm\}/,
+	'Codex Provider 新增必须走 Codex service/core，不得复用 Claude provider'
+);
+assert.match(
+	providerAdapterSource,
+	/switchActive: isPi \? switchActivePiProvider : isCodex \? switchActiveCodexProvider : switchActiveProvider/,
+	'设置默认必须按 agentContext 路由'
+);
+assert.match(
+	providerAdapterSource,
+	/remove: isPi \? removePiProvider : isCodex \? removeCodexProvider : removeProvider/,
+	'删除必须按 agentContext 路由'
+);
+assert.match(
+	formLabelSource,
+	/fg=\{focused \? colors\.primary : colors\.muted\}[\s\S]{0,120}selectionBg=\{colors\.selectionBg\}[\s\S]{0,80}selectionFg=\{colors\.selectionFg\}/,
+	'供应商表单 label 必须使用主题化文本选中背景/前景'
+);
+for (const [name, source] of [
+	['TextField', textFieldSource],
+	['RadioField', radioFieldSource],
+	['SelectField', selectFieldSource],
+	['KeyValueField', keyValueFieldSource]
+]) {
+	assert.match(
+		source,
+		/<text fg=\{colors\.muted\} attributes=\{TextAttributes\.DIM\}[^>]*selectionBg=\{colors\.selectionBg\}[^>]*selectionFg=\{colors\.selectionFg\}/,
+		`${name} help 文案必须使用主题化文本选中背景/前景`
+	);
+}
+assert.match(
+	radioFieldSource,
+	/fg=\{selected \? colors\.navSelectedForeground : focused \? colors\.primary : colors\.text\}[\s\S]{0,120}selectionBg=\{colors\.selectionBg\}[\s\S]{0,80}selectionFg=\{colors\.selectionFg\}/,
+	'供应商表单 radio 选项必须使用主题化文本选中背景/前景'
+);
+assert.match(
+	textFieldSource,
+	/fg=\{value \? colors\.text : colors\.muted\}[\s\S]{0,120}selectionBg=\{colors\.selectionBg\}[\s\S]{0,80}selectionFg=\{colors\.selectionFg\}/,
+	'供应商表单 input 失焦值必须使用主题化文本选中背景/前景'
+);
+assert.match(
+	providerHomeSource,
+	/body: <text fg=\{colors\.muted\} selectionBg=\{colors\.selectionBg\} selectionFg=\{colors\.selectionFg\}>\{row\.summary\}/,
+	'供应商列表卡片描述必须使用主题化文本选中背景/前景'
+);
 console.log('[PASS] 6.10 ProviderView agentContext 切换 + Codex profile 表单源码不变量');
 
 function readSettings() {
@@ -158,7 +216,11 @@ let codexDisplay = loadCodexProviderDisplay();
 // official login 虚拟条目恒定存在（不落盘）；初始无真实 profile → 仅这一个虚拟条目，且不读 Claude provider。
 assert.equal(codexDisplay.profiles.length, 1, 'Codex 初始仅含 official login 虚拟条目');
 assert.equal(codexDisplay.profiles[0].key, 'official', 'Codex 初始条目为 official 虚拟条目');
-assert.equal(codexDisplay.profiles.some(p => p.authToken === 'sk-keep-claude'), false, 'Codex 不读取 Claude provider token');
+assert.equal(
+	codexDisplay.profiles.some(p => p.authToken === 'sk-keep-claude'),
+	false,
+	'Codex 不读取 Claude provider token'
+);
 
 const codexModel = buildCodexForm({mode: 'add', providerType: 'custom'});
 const codexValues = {
@@ -179,7 +241,11 @@ const preservedValues = codexProviderFormAdapter.recordToValues(
 	{...codexProviderFormAdapter.valuesToRecord({...codexValues, toml}), model: 'deepseek-reasoner', apiKey: ''},
 	{...codexValues, toml: `${toml}\napproval_policy = "on-request"\n`}
 );
-assert.match(preservedValues.toml, /experimental_bearer_token\s*=\s*"sk-codex-secret-never-log"/, '字段变化且 API Key 留空时必须保留 textarea 既有 token');
+assert.match(
+	preservedValues.toml,
+	/experimental_bearer_token\s*=\s*"sk-codex-secret-never-log"/,
+	'字段变化且 API Key 留空时必须保留 textarea 既有 token'
+);
 assert.match(preservedValues.toml, /approval_policy\s*=\s*"on-request"/, '字段变化必须保留 textarea 未知字段');
 assert.match(preservedValues.toml, /model\s*=\s*"deepseek-reasoner"/, '字段变化应定点更新 model');
 
@@ -202,22 +268,36 @@ codexDisplay = loadCodexProviderDisplay();
 assert.equal(codexDisplay.profiles.length, 2, 'Codex display 列出真实 profile + official 虚拟条目');
 assert.equal(codexDisplay.profiles[0].key, 'deepseek', 'Codex display 使用 key 作为身份');
 assert.equal(codexDisplay.profiles[0].isActive, true, 'activateAfterSave 设置默认 Codex profile');
-assert.equal(codexDisplay.profiles.some(p => p.key === 'official'), true, 'official 虚拟条目恒定在列');
-assert.equal(JSON.parse(readFileSync(codexSettingsPath, 'utf8')).env.ANTHROPIC_AUTH_TOKEN, 'sk-keep-claude', 'Codex service 不改 Claude settings');
+assert.equal(
+	codexDisplay.profiles.some(p => p.key === 'official'),
+	true,
+	'official 虚拟条目恒定在列'
+);
+assert.equal(
+	JSON.parse(readFileSync(codexSettingsPath, 'utf8')).env.ANTHROPIC_AUTH_TOKEN,
+	'sk-keep-claude',
+	'Codex service 不改 Claude settings'
+);
 
 // official login 是虚拟条目：保存不落盘，activateAfterSave=false 时纯 no-op（仅返回虚拟形态）。
-const official = saveCodexProviderForm({mode: 'add', providerType: 'officialLogin'}, {
-	...buildCodexForm({mode: 'add', providerType: 'officialLogin'}).values,
-	activateAfterSave: false
-});
+const official = saveCodexProviderForm(
+	{mode: 'add', providerType: 'officialLogin'},
+	{
+		...buildCodexForm({mode: 'add', providerType: 'officialLogin'}).values,
+		activateAfterSave: false
+	}
+);
 assert.equal(official.ok, true, 'official login 保存成功（虚拟条目，不落盘）');
 assert.equal(official.ok ? official.data.key : '', 'official', 'official login 返回 sentinel key');
 assert.equal(existsSync(join(process.env.CODEX_HOME, 'official.config.toml')), false, 'official login 保存不落盘 profile 文件');
 // 结构性单例：无需重复守卫，再次保存幂等成功（不再产生 official2 之类真实文件）。
-const officialAgain = saveCodexProviderForm({mode: 'add', providerType: 'officialLogin'}, {
-	...buildCodexForm({mode: 'add', providerType: 'officialLogin'}).values,
-	activateAfterSave: false
-});
+const officialAgain = saveCodexProviderForm(
+	{mode: 'add', providerType: 'officialLogin'},
+	{
+		...buildCodexForm({mode: 'add', providerType: 'officialLogin'}).values,
+		activateAfterSave: false
+	}
+);
 assert.equal(officialAgain.ok, true, 'official login 再次保存幂等成功（结构性单例，无重复守卫）');
 writeFileSync(join(process.env.CODEX_HOME, 'auth.json'), '{"access_token":"secret"}', 'utf8');
 const switched = switchActiveCodexProvider('official');
@@ -233,15 +313,18 @@ console.log('[PASS] 6.1/6.2/6.3 Codex Provider service 路径隔离 + TOML adapt
 
 // ── 编辑活跃 profile 必须同步 config.toml（否则子文件已改、config.toml 停留旧值）──
 const syncBase = buildCodexForm({mode: 'add', providerType: 'custom'});
-const syncAdd = saveCodexProviderForm({mode: 'add', providerType: 'custom'}, {
-	...syncBase.values,
-	profileKey: 'synctest',
-	providerType: 'custom',
-	baseUrl: 'https://api.sync.example.com',
-	model: 'model-old',
-	apiKey: 'sk-sync-token',
-	activateAfterSave: true
-});
+const syncAdd = saveCodexProviderForm(
+	{mode: 'add', providerType: 'custom'},
+	{
+		...syncBase.values,
+		profileKey: 'synctest',
+		providerType: 'custom',
+		baseUrl: 'https://api.sync.example.com',
+		model: 'model-old',
+		apiKey: 'sk-sync-token',
+		activateAfterSave: true
+	}
+);
 assert.equal(syncAdd.ok, true, 'synctest profile 新增并激活应成功');
 const configPath = join(process.env.CODEX_HOME, 'config.toml');
 assert.match(readFileSync(configPath, 'utf8'), /model\s*=\s*"model-old"/, '激活后 config.toml 写入初始 model');
@@ -249,7 +332,12 @@ assert.match(readFileSync(configPath, 'utf8'), /model\s*=\s*"model-old"/, '激�
 // 编辑活跃 profile 的 model → 子文件与 config.toml 都应更新为新值。
 // rawToml 必传（含 bearer token），与视图层 readCodexProfileToml 调用方式一致。
 const syncRawToml = readFileSync(join(process.env.CODEX_HOME, 'synctest.config.toml'), 'utf8');
-const syncEditModel = buildCodexForm({mode: 'edit', profileKey: 'synctest', profile: loadCodexProviderProfile(join(process.env.CODEX_HOME, 'synctest.config.toml')), rawToml: syncRawToml});
+const syncEditModel = buildCodexForm({
+	mode: 'edit',
+	profileKey: 'synctest',
+	profile: loadCodexProviderProfile(join(process.env.CODEX_HOME, 'synctest.config.toml')),
+	rawToml: syncRawToml
+});
 const editedToml = syncEditModel.values.toml.replace(/model-old/g, 'model-new');
 const syncEdit = saveCodexProviderForm(
 	{mode: 'edit', profileKey: 'synctest', providerType: 'custom'},
@@ -261,21 +349,33 @@ assert.match(readFileSync(configPath, 'utf8'), /model\s*=\s*"model-new"/, '编�
 assert.equal(/model-old/.test(readFileSync(configPath, 'utf8')), false, 'config.toml 不得残留旧 model 值');
 
 // 编辑非活跃 profile 不应触碰 config.toml（仍指向活跃 provider）。
-const inactiveAdd = saveCodexProviderForm({mode: 'add', providerType: 'custom'}, {
-	...syncBase.values,
-	profileKey: 'inactive',
-	providerType: 'custom',
-	baseUrl: 'https://api.inactive.example.com',
-	model: 'inactive-model',
-	apiKey: 'sk-inactive-token',
-	activateAfterSave: false
-});
+const inactiveAdd = saveCodexProviderForm(
+	{mode: 'add', providerType: 'custom'},
+	{
+		...syncBase.values,
+		profileKey: 'inactive',
+		providerType: 'custom',
+		baseUrl: 'https://api.inactive.example.com',
+		model: 'inactive-model',
+		apiKey: 'sk-inactive-token',
+		activateAfterSave: false
+	}
+);
 assert.equal(inactiveAdd.ok, true, 'inactive profile 新增（不激活）应成功');
 const inactiveRawToml = readFileSync(join(process.env.CODEX_HOME, 'inactive.config.toml'), 'utf8');
-const inactiveEditModel = buildCodexForm({mode: 'edit', profileKey: 'inactive', profile: loadCodexProviderProfile(join(process.env.CODEX_HOME, 'inactive.config.toml')), rawToml: inactiveRawToml});
+const inactiveEditModel = buildCodexForm({
+	mode: 'edit',
+	profileKey: 'inactive',
+	profile: loadCodexProviderProfile(join(process.env.CODEX_HOME, 'inactive.config.toml')),
+	rawToml: inactiveRawToml
+});
 saveCodexProviderForm(
 	{mode: 'edit', profileKey: 'inactive', providerType: 'custom'},
-	{...inactiveEditModel.values, model: 'inactive-changed', toml: inactiveEditModel.values.toml.replace(/inactive-model/g, 'inactive-changed')}
+	{
+		...inactiveEditModel.values,
+		model: 'inactive-changed',
+		toml: inactiveEditModel.values.toml.replace(/inactive-model/g, 'inactive-changed')
+	}
 );
 assert.match(readFileSync(configPath, 'utf8'), /model\s*=\s*"model-new"/, '编辑非活跃 profile 不改 config.toml（仍指向活跃 synctest）');
 assert.equal(/inactive-changed/.test(readFileSync(configPath, 'utf8')), false, 'config.toml 不得被非活跃 profile 编辑污染');

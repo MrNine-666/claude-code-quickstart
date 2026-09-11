@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {mkdtempSync, readFileSync, rmSync} from 'node:fs';
+import {mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
@@ -13,12 +13,13 @@ process.env.CODEX_HOME = join(tempHome, '.codex');
 try {
 	const {parseCli} = await import('../src/cli/argv.ts');
 	const {runCli} = await import('../src/cli/index.ts');
-	const {helpFor, HELP_GENERAL, HELP_TOOLS} = await import('../src/cli/help.ts');
+	const {helpFor, HELP_GENERAL, HELP_LS, HELP_TOOLS, HELP_USE} = await import('../src/cli/help.ts');
 	const {TOOL_DEFINITIONS} = await import('../src/core/tools-install.ts');
 	const {resolveToolId, availableToolIds, runToolsUpdate} = await import('../src/cli/commands/tools.ts');
-	const {listProvidersForDisplay, listCodexProfilesForDisplay} = await import('../src/cli/commands/ls.ts');
+	const {listProvidersForDisplay, listCodexProfilesForDisplay, runLs} = await import('../src/cli/commands/ls.ts');
 	const {runUse} = await import('../src/cli/commands/use.ts');
 	const {saveCodexProfile} = await import('../src/core/codex.ts');
+	const {piAuthJsonPath, piModelsJsonPath, piSettingsPath} = await import('../src/core/paths.ts');
 
 	// ── argv 解析 ───────────────────────────────────────────────────────────────
 	assert.deepEqual(parseCli([]), {kind: 'tui'});
@@ -31,10 +32,12 @@ try {
 	assert.deepEqual(parseCli(['ls']), {kind: 'ls', tool: 'claude'});
 	assert.deepEqual(parseCli(['ls', '--tool', 'claude']), {kind: 'ls', tool: 'claude'});
 	assert.deepEqual(parseCli(['ls', '--tool', 'codex']), {kind: 'ls', tool: 'codex'});
+	assert.deepEqual(parseCli(['ls', '--tool', 'pi']), {kind: 'ls', tool: 'pi'});
 	assert.deepEqual(parseCli(['ls', '--tool', 'bad']), {kind: 'unknown', verb: 'ls', args: ['--tool', 'bad']});
 	assert.deepEqual(parseCli(['use', 'glm']), {kind: 'use', name: 'glm', tool: 'claude'});
 	assert.deepEqual(parseCli(['use', 'glm', '--tool', 'claude']), {kind: 'use', name: 'glm', tool: 'claude'});
 	assert.deepEqual(parseCli(['use', 'dev', '--tool', 'codex']), {kind: 'use', name: 'dev', tool: 'codex'});
+	assert.deepEqual(parseCli(['use', 'openai', '--tool', 'pi']), {kind: 'use', name: 'openai', tool: 'pi'});
 	assert.deepEqual(parseCli(['use', 'dev', '--tool', 'bad']), {kind: 'unknown', verb: 'use', args: ['dev', '--tool', 'bad']});
 	assert.deepEqual(parseCli(['update']), {kind: 'update', checkOnly: false});
 	assert.deepEqual(parseCli(['update', '--check']), {kind: 'update', checkOnly: true});
@@ -76,6 +79,11 @@ try {
 	assert.equal(helpFor('cc'), null, 'cc 不得再有专用帮助');
 	assert.equal(helpFor('cx'), null, 'cx 不得再有专用帮助');
 	assert.doesNotMatch(HELP_GENERAL, /^\s+(?:cc|cx)\b/m, '通用帮助不得列出 cc/cx');
+	assert.match(HELP_GENERAL, /tool=claude\|codex\|pi/, '通用帮助必须列出 Pi tool target');
+	assert.match(HELP_LS, /ccq ls --tool pi/, 'ls 帮助必须列出 Pi');
+	assert.match(HELP_USE, /ccq use <provider> --tool pi/, 'use 帮助必须使用 provider-level Pi identity');
+	assert.match(HELP_USE, /仅更新 .*defaultProvider.*不维护 defaultModel/s, 'use 帮助必须明确 defaultProvider-only');
+	assert.doesNotMatch(HELP_USE, /<provider\/model>|defaultProvider\/defaultModel/, 'use 帮助不得宣称 provider/model 或 defaultModel 写入');
 
 	const capturedErrors = [];
 	const originalConsoleError = console.error;
@@ -133,6 +141,9 @@ try {
 	assert.equal(resolveToolId('git-nexus'), 'GitNexus', 'GitNexus 连字符别名可解析');
 	assert.equal(resolveToolId('dsh'), 'DeepSeekHarness', 'DeepSeek Harness 短别名可解析');
 	assert.equal(resolveToolId('deepseek-harness'), 'DeepSeekHarness', 'DeepSeek Harness 长别名可解析');
+	assert.equal(resolveToolId('pi'), 'PiCli', 'Pi CLI 别名可解析');
+	assert.equal(resolveToolId('pi-agent'), 'PiCli', 'Pi Agent 别名可解析');
+	assert.equal(resolveToolId('pi-web'), 'PiWeb', 'Pi Web 别名可解析');
 
 	let forceRefreshSeen = null;
 	const updateExitCode = await runToolsUpdate(undefined, {
@@ -240,6 +251,28 @@ try {
 	const officialConfig = readFileSync(join(process.env.CODEX_HOME, 'config.toml'), 'utf8');
 	assert.equal(/model_provider\s*=/.test(officialConfig), false, 'official 激活清空 model_provider');
 	console.log('[PASS] use --tool codex 默认切换 + official 虚拟条目激活');
+
+	// ── use/ls --tool pi：provider identity + defaultProvider-only 切换 ───────────
+	mkdirSync(join(tempHome, '.pi', 'agent'), {recursive: true});
+	writeFileSync(piModelsJsonPath(), JSON.stringify({providers: {openai: {models: ['gpt-4o']}}}, null, 2), 'utf8');
+	writeFileSync(piAuthJsonPath(), JSON.stringify({openai: 'sk-pi-secret'}, null, 2), 'utf8');
+	writeFileSync(piSettingsPath(), JSON.stringify({defaultProvider: 'anthropic', defaultModel: 'claude-sonnet'}, null, 2), 'utf8');
+	const piOutput = [];
+	const originalLog = console.log;
+	console.log = (...args) => piOutput.push(args.join(' '));
+	try {
+		assert.equal(runLs('pi'), 0, 'ls --tool pi 应成功');
+		assert.equal(runUse('openai', 'pi'), 0, 'use --tool pi 应成功');
+	} finally {
+		console.log = originalLog;
+	}
+	assert.equal(piOutput.some(line => line.includes('openai') && line.includes('models')), true, 'ls --tool pi 应按 provider 展示模型数量');
+	const piSettingsAfterUse = JSON.parse(readFileSync(piSettingsPath(), 'utf8'));
+	assert.equal(piSettingsAfterUse.defaultProvider, 'openai');
+	assert.equal(piSettingsAfterUse.defaultModel, 'claude-sonnet', 'use --tool pi 不得维护 defaultModel');
+	assert.equal(runUse('openai/gpt-4o', 'pi'), 1, 'use --tool pi 不得接受 provider/model identity');
+	assert.equal(runUse('missing', 'pi'), 1, 'use --tool pi 缺少 provider 时失败');
+	console.log('[PASS] use/ls --tool pi provider-level 默认切换 + defaultModel 保留 + pi-web 非 Agent target');
 } finally {
 	rmSync(tempHome, {recursive: true, force: true});
 	delete process.env.CCQ_HOME;

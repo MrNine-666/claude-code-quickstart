@@ -12,9 +12,11 @@ import {
 	readCodexConfigText,
 	saveCodexConfigToml
 } from '../core/codex-config.js';
+import {applyPiConfigFillMissing, piConfigFileExists, piConfigRecommendation, readPiConfigText, savePiConfigText} from '../core/pi-config.js';
+import {openExternalFile, type OpenExternalFileResult} from '../core/open-file.js';
 import {existsSync} from 'node:fs';
 import {atomicWrite} from '../core/fs-utils.js';
-import {codexConfigPath} from '../core/paths.js';
+import {codexConfigPath, piSettingsPath} from '../core/paths.js';
 import type {AgentContext} from '../state/manage-state.js';
 
 // Config service：配置文件视图唯一入口，按 agentContext 切换目标文件。
@@ -27,6 +29,9 @@ export type ConfigTarget = AgentContext;
 export function readCurrentConfigText(target: ConfigTarget = 'cc'): string {
 	if (target === 'cx') {
 		return readCodexConfigText() ?? '';
+	}
+	if (target === 'pi') {
+		return readPiConfigText();
 	}
 
 	const raw = readInstalledSettingsText();
@@ -44,24 +49,29 @@ export function readCurrentSettingsTextStripped(): string {
 
 /** 组装带注释的推荐配置文本。 */
 export function loadRecommendationAnnotated(target: ConfigTarget = 'cc'): string | null {
-	return target === 'cx' ? assembleCodexRecommendationAnnotated() : assembleRecommendationAnnotated();
+	return target === 'cx' ? assembleCodexRecommendationAnnotated() : target === 'pi' ? piConfigRecommendation() : assembleRecommendationAnnotated();
 }
 
 /** 对编辑缓冲执行 fill-missing 合并。 */
 export function fillMissingIntoText(jsonText: string, target: ConfigTarget = 'cc'):
 	| {readonly ok: true; readonly text: string; readonly changed: number}
 	| {readonly ok: false; readonly error: string} {
-	return target === 'cx' ? applyCodexFillMissingToText(jsonText) : applyFillMissingToText(jsonText);
+	return target === 'cx' ? applyCodexFillMissingToText(jsonText) : target === 'pi' ? applyPiConfigFillMissing(jsonText) : applyFillMissingToText(jsonText);
 }
 
 /** 获取配置目标路径（供视图展示）。 */
 export function getConfigPath(target: ConfigTarget = 'cc'): string {
-	return target === 'cx' ? codexConfigPath() : settingsFilePath();
+	return target === 'cx' ? codexConfigPath() : target === 'pi' ? piSettingsPath() : settingsFilePath();
+}
+
+/** 通过系统默认关联应用打开配置文件。 */
+export function openConfigFile(target: ConfigTarget = 'cc'): Promise<OpenExternalFileResult> {
+	return openExternalFile(getConfigPath(target));
 }
 
 /** 判断配置目标文件是否存在；用于区分“文件不存在”和“过滤后暂无本页管辖项”。 */
 export function configFileExists(target: ConfigTarget = 'cc'): boolean {
-	return existsSync(getConfigPath(target));
+	return target === 'pi' ? piConfigFileExists() : existsSync(getConfigPath(target));
 }
 
 /** 兼容旧调用：获取 settings.json 文件路径。 */
@@ -73,6 +83,9 @@ export function getSettingsPath(): string {
 export function saveConfigText(content: string, target: ConfigTarget = 'cc'): {ok: boolean; error?: string; warning?: string} {
 	if (target === 'cx') {
 		return saveCodexConfigToml(content);
+	}
+	if (target === 'pi') {
+		return savePiConfigText(content);
 	}
 
 	try {

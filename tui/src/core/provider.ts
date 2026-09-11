@@ -31,6 +31,18 @@ export type ProviderDisplayProfile = {
 	readonly profilePath: string;
 	readonly isActive: boolean;
 	readonly maskedApiKey: string;
+	/** Provider-native display metadata. Claude/Codex leave these fields unset. */
+	readonly providerId?: string;
+	readonly displayName?: string;
+	readonly authKind?: 'api_key' | 'oauth' | 'none' | 'unknown';
+	readonly authStatus?: 'configured' | 'missing' | 'invalid' | 'unknown';
+	readonly source?: 'builtin' | 'custom' | 'builtin-override' | 'unknown';
+	readonly modelCount?: number;
+	readonly modelIds?: readonly string[];
+	readonly canEdit?: boolean;
+	readonly canDelete?: boolean;
+	readonly canSwitch?: boolean;
+	readonly isMissing?: boolean;
 };
 
 export type ProviderLoadFailure = {

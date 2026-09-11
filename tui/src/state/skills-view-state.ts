@@ -10,8 +10,8 @@ import {
 	type SkillProjection,
 	type SkillsStorageRoot
 } from '../core/skills-installed.js';
-import {AGENT_CONTEXT_ORDER, type AgentContext} from './manage-state.js';
-import {targetTopologyOfDraft, type SkillTopology} from '../core/skills-storage.js';
+import type {AgentContext} from './manage-state.js';
+import {targetTopologyOfDraft, type SkillAgentTargets} from '../core/skills-storage.js';
 
 // Skills 视图纯状态机（design D11/D13；spec skills-tui / skills-multitool / skills-tui 共享投影）。
 // 逻辑实例架构（task 07-28）：列表页数据源为 InstalledSkillItem，身份是 (name, sourceIdentity)。
@@ -22,15 +22,26 @@ import {targetTopologyOfDraft, type SkillTopology} from '../core/skills-storage.
 export type SkillsViewMode =
 	| 'list' // 列表页：本地过滤 + flat/grouped 单列多选维护
 	| 'install' // 安装页：远程搜索框 + 扁平 skill 列表（默认 TOP 20）
-	| 'select-install-target' // 新安装目标 Modal：Claude Code 可切 / Codex 必选
-	| 'manage-inject' // 存量管理 Modal：编辑 C/X/B 目标草稿
-	| 'confirm-topology-change' // C/X/B 任意非 no-op 切换的统一强确认
+	| 'select-install-target' // 新安装目标 Modal：Claude Code/Pi 可切 / Codex canonical 必选
+	| 'manage-inject' // 存量管理 Modal：独立编辑 Claude Code / Codex / Pi
+	| 'confirm-topology-change' // 三 Agent 目标集合任意非 no-op 切换的统一强确认
 	| 'confirm-source-replacement' // 同名不同源覆盖 canonical/lock 的强确认
 	| 'confirm-uninstall' // 实例感知的批量卸载确认（全部 Agent + 可证明投影）
 	| 'busy'; // 安装/更新/卸载进行中（远程搜索走 inline，不进 busy）
 
-// 安装/管理草稿：新安装 Codex 恒 true；存量管理允许三种非空组合映射 C/X/B。
-export type InstallDraft = Readonly<Record<AgentContext, boolean>>;
+// 安装草稿：cc/cx/pi 是三个可见的全局 Agent 目标。`.agents/skills` 是 canonical，
+// Claude Code 与 Pi 在选择时通过软链接接入；当前页面完全忽略项目目录 Skills。
+export type InstallDraft = Readonly<{
+	readonly cc: boolean;
+	readonly cx: boolean;
+	readonly pi: boolean;
+}>;
+
+/** Skills 页的可见目标顺序；项目目录 Skills 不属于当前页面的目标集合。 */
+export type SkillsInstallTarget = AgentContext;
+export const SKILLS_INSTALL_TARGET_ORDER: readonly AgentContext[] = ['cc', 'cx', 'pi'];
+/** 存量管理按官方 agents 目标独立维护 Claude Code、Codex 与 Pi。 */
+export const SKILLS_MANAGE_TARGET_ORDER: readonly AgentContext[] = ['cc', 'cx', 'pi'];
 
 export type SearchInstallStatus =
 	| 'available'
@@ -59,7 +70,7 @@ export type SourceReplacementItem = {
 };
 
 // 安装页默认草稿：两侧都装（cc symlink + cx 本体）。
-const DEFAULT_INSTALL_DRAFT: InstallDraft = {cc: true, cx: true};
+const DEFAULT_INSTALL_DRAFT: InstallDraft = {cc: true, cx: true, pi: false};
 
 export type SkillsHomeLayout = 'flat' | 'grouped';
 
@@ -133,7 +144,7 @@ export type SkillsViewAction =
 	| {readonly type: 'request-topology-change'} // 管理草稿提交 → 统一拓扑确认/no-op/零目标阻断
 	| {readonly type: 'request-source-replacement'} // 安装目标提交且含 replacement → 强确认
 	| {readonly type: 'install-target-nav'; readonly delta: number} // Modal ↑/↓ 选侧（loop）
-	| {readonly type: 'install-target-toggle'} // Modal 空格切草稿（仅 cc 可切，cx no-op）
+	| {readonly type: 'install-target-toggle'} // Modal 空格切草稿（新装 cx 保持必选，管理三侧可切）
 	| {readonly type: 'request-update'} // 列表页 U → 更新显式多选；无多选时更新当前 Item
 	| {readonly type: 'request-uninstall'}
 	| {readonly type: 'confirm'}
@@ -277,6 +288,24 @@ export function pendingInstance(state: SkillsViewState): InstalledSkillItem | un
 		: state.installed.find(item => item.id === state.pendingInstanceId);
 }
 
+export function agentTargetsOfDraft(draft: InstallDraft): SkillAgentTargets {
+	return {cc: draft.cc, cx: draft.cx, pi: draft.pi};
+}
+
+function cxTopologyOfAgentTargets(target: SkillAgentTargets): ReturnType<typeof targetTopologyOfDraft> {
+	if (target.pi) return target.cc ? 'shared' : 'codex-only';
+	return targetTopologyOfDraft({cc: target.cc, cx: target.cx});
+}
+
+/** 管理页 Agent 目标与列表卡片保持同一事实来源：只读 skills list 的 agents。 */
+export function managedAgentTargetsOfItem(item: InstalledSkillItem): SkillAgentTargets {
+	return {
+		cc: itemAvailableOn(item, 'cc'),
+		cx: itemAvailableOn(item, 'cx'),
+		pi: itemAvailableOn(item, 'pi')
+	};
+}
+
 // currentTopologyOfItem / needsManagedMigration 已下沉到 core（skills-installed.ts），
 // 供 service 迁移事务与本视图层共用同一拓扑派生；此处转出口保持现有 import 路径稳定。
 export {currentTopologyOfItem, needsManagedMigration};
@@ -407,12 +436,17 @@ function sourceMatchKey(name: string, sourceIdentity: string): string {
 /** 安装草稿映射到受管存储根；新安装绝不以 `.codex` 为目标（R4）。 */
 export function targetRootsOfDraft(draft: InstallDraft): readonly SkillsStorageRoot[] {
 	const roots: SkillsStorageRoot[] = [];
-	if (draft.cx) {
+	if (draft.cx || draft.pi) {
 		roots.push('agents');
 	}
 
 	if (draft.cc) {
 		roots.push('claude');
+	}
+
+	// Codex 写入 `.agents/skills`；Pi 与 Claude Code 一样通过软链接接入 canonical。
+	if (draft.pi) {
+		roots.push('pi-global');
 	}
 
 	return roots;
@@ -542,7 +576,7 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				return {...state, errorText: '没有可选的 skill'};
 			}
 
-			// 安装页 Enter → 安装目标 Modal，草稿预置两侧勾选（cx 恒 true 只读）。
+			// 安装页 Enter → 安装目标 Modal，草稿预置 C/X shared；Pi 可额外选择。
 			return {
 				...state,
 				mode: 'select-install-target',
@@ -558,7 +592,7 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				return state;
 			}
 
-			// 列表行 Enter → 管理安装 Modal。草稿只由 CLI `agents` 派生（R6）。
+				// 列表行 Enter → 管理安装 Modal。草稿只由 CLI `agents` 数组派生（R6）。
 			const current = selectedInstalled(state);
 			if (!current) {
 				return {...state, errorText: '当前没有可管理的 Skill'};
@@ -575,7 +609,8 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				pendingInstanceId: current.id,
 				installDraft: {
 					cc: itemAvailableOn(current, 'cc'),
-					cx: itemAvailableOn(current, 'cx')
+					cx: itemAvailableOn(current, 'cx'),
+					pi: managedAgentTargetsOfItem(current).pi
 				},
 				targetIndex: 0,
 				errorText: undefined
@@ -592,13 +627,25 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				return {...state, errorText: '未知来源的 Skill 不能迁移或切换 Agent'};
 			}
 
-			const target = targetTopologyOfDraft(state.installDraft);
-			if (target === 'empty') {
+			const target = agentTargetsOfDraft(state.installDraft);
+			if (!target.cc && !target.cx && !target.pi) {
 				return {...state, errorText: '至少保留一个安装目标；如需全部删除请取消后按 d 卸载'};
 			}
 
-			// `.codex` 实例即使目标同侧也必须迁移到 `.agents`，不是 no-op（R6）。
-			if (currentTopologyOfItem(current) === target && !needsManagedMigration(current, target)) {
+			const targetCx = cxTopologyOfAgentTargets(target);
+			const currentTargets = managedAgentTargetsOfItem(current);
+			const currentCx = currentTopologyOfItem(current);
+			const currentForCx = target.pi
+				? {
+						...current,
+						agents: current.agents.filter(agent => agent !== 'Pi'),
+						projections: current.projections.filter(projection => projection.root !== 'pi-global')
+				  }
+				: current;
+			const cxReady = targetCx === 'empty'
+				? !currentTargets.cc && !currentTargets.cx
+				: currentCx === targetCx && !needsManagedMigration(currentForCx, targetCx);
+			if (cxReady && currentTargets.pi === target.pi) {
 				return {...state, mode: 'list', pendingInstanceId: undefined, errorText: undefined};
 			}
 
@@ -615,8 +662,8 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				return state;
 			}
 
-			// ↑/↓ 选侧首尾相接（loop）。
-			const count = AGENT_CONTEXT_ORDER.length;
+			// ↑/↓ 选侧首尾相接（loop）；安装与管理都展示三种 Agent。
+			const count = (state.mode === 'manage-inject' ? SKILLS_MANAGE_TARGET_ORDER : SKILLS_INSTALL_TARGET_ORDER).length;
 			return {...state, targetIndex: (state.targetIndex + action.delta + count) % count};
 		}
 
@@ -625,10 +672,16 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				return state;
 			}
 
-			// 新装仍固定物化 Codex；管理模式的两个 checkbox 只表达 C/X/B 目标可用侧。
-			const target = AGENT_CONTEXT_ORDER[state.targetIndex] ?? 'cc';
+			// 新装默认物化 C/X shared；Pi 以及管理页三侧均可独立切换。
+			const targetOrder = state.mode === 'manage-inject' ? SKILLS_MANAGE_TARGET_ORDER : SKILLS_INSTALL_TARGET_ORDER;
+			const target = targetOrder[state.targetIndex];
+			if (!target) {
+				return state;
+			}
 			const current = pendingInstance(state) ?? selectedInstalled(state);
-			const canToggle = state.mode === 'select-install-target' ? target === 'cc' : Boolean(current?.capabilities.manageAgents);
+			const canToggle = state.mode === 'select-install-target'
+				? target !== 'cx'
+				: Boolean(current?.capabilities.manageAgents);
 			if (!canToggle) {
 				return state;
 			}

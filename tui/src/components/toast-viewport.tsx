@@ -8,7 +8,7 @@ import React, {useSyncExternalStore} from 'react';
 import {colors} from '../theme/index.js';
 import {getToastSnapshot, subscribeToasts, type ToastEntry, type ToastType} from './toast-store.js';
 
-const MAX_PANEL_WIDTH = 56;
+const MAX_PANEL_WIDTH = 72;
 const TOP_OFFSET = 1;
 
 const ICONS: Readonly<Record<ToastType, string>> = {

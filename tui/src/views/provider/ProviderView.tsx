@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import {useEffect, useMemo, useState} from 'react';
 import {toast} from '../../components/index.js';
 import {clampMove} from '../../core/list-utils.js';
 import {buildForm, loadProviderProfile, saveProviderForm} from '../../services/provider-service.js';
@@ -10,6 +10,15 @@ import {
 	saveCodexProviderForm,
 	type CodexProviderFormInput
 } from '../../services/codex-service.js';
+import {
+	buildPiForm,
+	discoverPiProviderModels,
+	loadPiProviderProfileByRef,
+	replacePiProviderModels,
+	piProviderFormAdapter,
+	savePiProviderForm
+} from '../../services/pi-provider-service.js';
+import {validatePiProviderForm} from '../../core/pi-provider.js';
 import {validateProviderForm} from '../../core/provider-form.js';
 import {validateCodexProviderForm, type CodexProviderFormModel, type CodexProviderFormValues} from '../../core/codex-provider-form.js';
 import type {ProviderDisplayData} from '../../core/provider.js';
@@ -53,7 +62,7 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 		if (!active) return;
 		const subMode =
 			screen.kind === 'add' || screen.kind === 'edit'
-				? 'form'
+				? (adapter.isPi ? 'form-pi' : 'form')
 				: screen.kind === 'list' && profiles.length === 0
 					? 'empty'
 					: screen.kind;
@@ -77,12 +86,32 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 	}
 
 	if (screen.kind === 'add') {
+		if (adapter.isPi) {
+			const model = buildPiForm({mode: 'add'});
+			return (
+				<ProviderFormView
+					model={model}
+					active={active}
+					onSubModeChange={onSubModeChange}
+					buildForm={buildPiForm}
+					save={savePiProviderForm}
+					validate={values => validatePiProviderForm(model.mode, values)}
+					adapter={piProviderFormAdapter}
+					onDiscover={discoverPiProviderModels}
+					onApplyDiscovered={replacePiProviderModels}
+					onCancel={() => setScreen({kind: 'list'})}
+					onSaved={handleSaved}
+				/>
+			);
+		}
+
 		if (adapter.isCodex) {
 			const model = buildCodexForm({mode: 'add'});
 			return (
 				<ProviderFormView<CodexProviderFormInput, CodexProviderFormValues, CodexProviderFormModel>
 					model={model}
 					active={active}
+					onSubModeChange={onSubModeChange}
 					buildForm={buildCodexForm}
 					save={saveCodexProviderForm}
 					validate={values => validateCodexProviderForm(model.mode, values)}
@@ -98,6 +127,7 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 			<ProviderFormView
 				model={model}
 				active={active}
+				onSubModeChange={onSubModeChange}
 				buildForm={buildForm}
 				save={saveProviderForm}
 				validate={values => validateProviderForm(model.mode, values)}
@@ -109,6 +139,26 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 	}
 
 	if (screen.kind === 'edit' && current) {
+		if (adapter.isPi) {
+			const profile = loadPiProviderProfileByRef(current.profilePath);
+			const model = buildPiForm({mode: 'edit', profileKey: current.key, profile});
+			return (
+				<ProviderFormView
+					model={model}
+					active={active}
+					onSubModeChange={onSubModeChange}
+					buildForm={buildPiForm}
+					save={(input, values) => savePiProviderForm({...input, profileKey: current.key, profile}, values)}
+					validate={values => validatePiProviderForm('edit', values)}
+					adapter={piProviderFormAdapter}
+					onDiscover={discoverPiProviderModels}
+				onApplyDiscovered={replacePiProviderModels}
+					onCancel={() => setScreen({kind: 'list'})}
+					onSaved={handleSaved}
+				/>
+			);
+		}
+
 		if (adapter.isCodex) {
 			const profile = loadCodexProviderProfile(currentIsOfficial ? current.key : current.profilePath);
 			const rawToml = currentIsOfficial ? '' : readCodexProfileToml(current.profilePath);
@@ -117,6 +167,7 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 				<ProviderFormView<CodexProviderFormInput, CodexProviderFormValues, CodexProviderFormModel>
 					model={model}
 					active={active}
+					onSubModeChange={onSubModeChange}
 					buildForm={buildCodexForm}
 					save={(input, values) => saveCodexProviderForm({...input, profileKey: current.key, profile, rawToml}, values)}
 					validate={values => validateCodexProviderForm('edit', values)}
@@ -133,6 +184,7 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 			<ProviderFormView
 				model={model}
 				active={active}
+				onSubModeChange={onSubModeChange}
 				buildForm={buildForm}
 				save={(input, values) => saveProviderForm({...input, profileKey: current.key, profile}, values)}
 				validate={values => validateProviderForm('edit', values)}
@@ -149,15 +201,20 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 			selectedIndex={safeSelected}
 			active={active}
 			isCodex={adapter.isCodex}
+			isPi={adapter.isPi}
 			migrationFailures={adapter.migrationFailures}
 			loadFailures={display.loadFailures ?? []}
 			currentKey={current?.key}
 			currentIsActive={current?.isActive ?? false}
-			currentIsOfficial={currentIsOfficial}
+				currentIsOfficial={currentIsOfficial}
 			confirmingDelete={screen.kind === 'confirm-delete'}
 			onMove={delta => setSelected(previous => clampMove(previous, delta, profiles.length))}
-			onSwitch={() => {
-				if (!current) return;
+				onSwitch={() => {
+					if (!current) return;
+					if (adapter.isPi && current.canSwitch === false) {
+						toast.error(`Pi Provider ${current.key} 当前不可切换。`);
+						return;
+					}
 				if (currentIsOfficial && !adapter.isOfficialLoggedIn())
 					toast.warning('official login 未登录，请先运行 codex login 完成官方账号登录');
 				const result = adapter.switchActive(current.key);
@@ -167,10 +224,19 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 				} else toast.error(result.error);
 			}}
 			onAdd={() => setScreen({kind: 'add'})}
-			onEdit={() => {
+				onEdit={() => {
+					if (adapter.isPi && current?.canEdit === false) {
+						toast.info('OAuth/订阅供应商由 Pi 原生管理，请打开 pi 输入 /login 或 /logout。');
+						return;
+					}
 				if (current) setScreen({kind: 'edit', key: current.key});
 			}}
-			onDelete={() => {
+				onDelete={() => {
+					if (adapter.isPi && current?.canDelete === false) {
+						if (current.isActive) toast.error(`无法删除当前激活供应商 ${current.key}，请先切换到其他供应商。`);
+						else toast.info('OAuth/订阅供应商由 Pi 原生管理，请打开 pi 输入 /logout。');
+						return;
+					}
 				if (current) setScreen({kind: 'confirm-delete', key: current.key});
 			}}
 			onExit={onExitToNav}
@@ -181,7 +247,7 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 					setScreen({kind: 'list'});
 					return;
 				}
-				if (!currentIsOfficial && current.isActive) {
+					if (!currentIsOfficial && current.isActive) {
 					toast.error(`无法删除当前活跃供应商 ${current.key}，请先切换到其他供应商。`);
 					setScreen({kind: 'list'});
 					return;

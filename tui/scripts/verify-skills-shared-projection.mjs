@@ -16,7 +16,8 @@ import {createSkillsDetectionRunner, runSkillsDetection} from '../src/services/v
 //   1) 检测事实只来自一次 `skills list -g --json`；
 //   2) 不读 `.agents/.skill-lock.json`，不扫 `.claude`/`.agents`/`.codex` 目录；
 //   3) Agent 可用侧只由 `agents` 派生，存储位置只由 `path` 派生；
-//   4) 非 Claude Code / Codex 的 displayName 保留为 otherAgents，不影响双侧判定。
+//   4) 非 Claude Code / Codex / Pi 的 displayName 保留为 otherAgents，不影响三侧判定；
+//   5) Skills 视图投影完全排除当前项目 `.pi/skills`，不把 project scope 泄漏到 UI。
 
 const listRecord = (over = {}) => ({
 	name: 'pdf',
@@ -116,19 +117,27 @@ const listRecord = (over = {}) => ({
 		await mkdir(join(homeDir, '.claude', 'skills', 'pdf'), {recursive: true});
 
 		let state;
-		let calls = 0;
+		const listCalls = [];
 		const runner = createSkillsDetectionRunner(next => {
 			state = next;
 		});
-		await runSkillsDetection(runner, async () => {
-			calls += 1;
-			return {code: 0, stdout: JSON.stringify([listRecord({agents: ['Codex']})]), stderr: ''};
+		await runSkillsDetection(runner, async (command, args) => {
+			listCalls.push({command, args});
+			return {
+				code: 0,
+				stdout: JSON.stringify([
+					listRecord({agents: ['Codex']}),
+					listRecord({name: 'project-only', path: '/workspace/project/.pi/skills/project-only', agents: ['Pi'], source: 'owner/project'})
+				]),
+				stderr: ''
+			};
 		});
 
-		assert.equal(calls, 1, '检测不得为文件系统分类追加第二次命令');
+		assert.equal(listCalls.length, 1, '检测不得为文件系统分类追加第二次命令');
+		assert.deepEqual(listCalls[0], {command: 'npx', args: ['--yes', 'skills', 'list', '-g', '--json']}, '视图检测只请求全局 Skills 列表');
 		assert.equal(state?.status, 'success');
 		const items = state?.result ?? [];
-		assert.equal(items.length, 1, '磁盘上的 ghost 目录不得出现在列表里');
+		assert.equal(items.length, 1, '项目 `.pi/skills` Skill 不得出现在列表里');
 		assert.equal(items[0].name, 'pdf');
 		assert.equal(
 			items[0].provenance.source,

@@ -4,6 +4,7 @@ import type {ProgressCallback} from '../../core/exec.js';
 import type {SearchSkillResult} from '../../core/skills.js';
 import type {InstalledSkillItem} from '../../core/skills-installed.js';
 import type {SkillTopology} from '../../core/skills-storage.js';
+import type {SkillAgentTargets} from '../../core/skills-storage.js';
 import type {DetectionCache} from '../../hooks/use-detection-cache.js';
 import type {DetectionRunner, DetectionStateSink} from '../../services/detection-runner.js';
 import type {SkillsAdoptionResult} from '../../services/skills-adoption.js';
@@ -14,7 +15,7 @@ import type {
 	SkillsReplacementExecution
 } from '../../services/skills-service.js';
 import type {AgentContext} from '../../state/manage-state.js';
-import type {SkillsViewAction} from '../../state/skills-view-state.js';
+import type {SkillsInstallTarget, SkillsViewAction} from '../../state/skills-view-state.js';
 
 export type {
 	InstalledSkillItem,
@@ -38,7 +39,7 @@ export type SkillsViewServices = {
 	) => Promise<{ok: true; results: readonly SearchSkillResult[]} | {ok: false; error: string; rawSummary?: string}>;
 	readonly installBatchToTargets: (
 		results: readonly SearchSkillResult[],
-		targets: readonly AgentContext[],
+		targets: readonly SkillsInstallTarget[],
 		onProgress?: ProgressCallback,
 		installed?: readonly InstalledSkillItem[],
 		signal?: AbortSignal
@@ -51,6 +52,12 @@ export type SkillsViewServices = {
 	readonly transitionTopology: (
 		item: InstalledSkillItem,
 		target: SkillTopology,
+		onProgress?: ProgressCallback,
+		signal?: AbortSignal
+	) => Promise<SkillsAdoptionResult>;
+	readonly transitionAgents: (
+		item: InstalledSkillItem,
+		target: SkillAgentTargets,
 		onProgress?: ProgressCallback,
 		signal?: AbortSignal
 	) => Promise<SkillsAdoptionResult>;

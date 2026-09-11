@@ -10,11 +10,8 @@ import providersJson from "../../contracts/providers.json" with { type: "text" }
 import mcpServersJson from "../../contracts/mcp-servers.json" with { type: "text" };
 import claudeConfigJson from "../../contracts/claude-config.json" with { type: "text" };
 import codexConfigToml from "../../contracts/codex-config.toml" with { type: "text" };
-
-// Markdown 模板
-import claudeMdBase from "../../contracts/templates/claude-md.base.md" with { type: "text" };
-import claudeMdWindows from "../../contracts/templates/claude-md.platform-windows.md" with { type: "text" };
-import codexMd from "../../contracts/templates/codex-md.md" with { type: "text" };
+import piConfigJson from "../../contracts/pi-config.json" with { type: "text" };
+import piProvidersJson from "../../contracts/pi-providers.json" with { type: "text" };
 
 function fileAsset(value: unknown): string {
 	return value as string;
@@ -28,9 +25,8 @@ export const EMBEDDED_CONTRACTS = new Map<string, string>([
 	["mcp-servers.json", fileAsset(mcpServersJson)],
 	["claude-config.json", fileAsset(claudeConfigJson)],
 	["codex-config.toml", fileAsset(codexConfigToml)],
-	["templates/claude-md.base.md", fileAsset(claudeMdBase)],
-	["templates/claude-md.platform-windows.md", fileAsset(claudeMdWindows)],
-	["templates/codex-md.md", fileAsset(codexMd)],
+		["pi-config.json", fileAsset(piConfigJson)],
+		["pi-providers.json", fileAsset(piProvidersJson)],
 ]);
 
 /**

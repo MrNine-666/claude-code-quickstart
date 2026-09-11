@@ -22,6 +22,8 @@ export function RadioField({ label, value, options, helpText, focused, compact =
 				key={option.value}
 				fg={selected ? colors.navSelectedForeground : focused ? colors.primary : colors.text}
 				bg={selected ? colors.primary : undefined}
+				selectionBg={colors.selectionBg}
+				selectionFg={colors.selectionFg}
 				attributes={selected ? TextAttributes.BOLD : 0}
 			>
 				{` ${option.label} `}
@@ -31,8 +33,14 @@ export function RadioField({ label, value, options, helpText, focused, compact =
 
 	return (
 		<box flexDirection="column">
-			<box flexDirection="row" alignItems="center">
-				{compact ? <text fg={focused ? colors.primary : colors.muted}>{label}</text> : <FormLabel label={label} focused={focused} />}
+			<box flexDirection="row" alignItems="flex-start">
+				{compact ? (
+					<text fg={focused ? colors.primary : colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+						{label}
+					</text>
+				) : (
+					<FormLabel label={label} focused={focused} />
+				)}
 				{compact ? (
 					<box flexDirection="row" flexWrap="wrap" minWidth={0}>{optionNodes}</box>
 				) : (
@@ -43,7 +51,7 @@ export function RadioField({ label, value, options, helpText, focused, compact =
 			</box>
 			{helpText ? (
 				<box marginLeft={FORM_VALUE_MARGIN_LEFT}>
-					<text fg={colors.muted} attributes={TextAttributes.DIM}>
+					<text fg={colors.muted} attributes={TextAttributes.DIM} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 						{helpText}
 					</text>
 				</box>

@@ -11,9 +11,11 @@ export type SkillsInstallViewProps = {
 	readonly detection: DetectionState<SkillsDetection>;
 	readonly active: boolean;
 	readonly dispatch: SkillsViewDispatch;
+	readonly onFocusSearch: () => void;
+	readonly onSubmitSearch: (value: string) => void;
 };
 
-export function SkillsInstallView({view, detection, active, dispatch}: SkillsInstallViewProps) {
+export function SkillsInstallView({view, detection, active, dispatch, onFocusSearch, onSubmitSearch}: SkillsInstallViewProps) {
 	const detectionReady = detection.status === 'success';
 	const projected = searchInstallItems(view);
 	const items = projected.map((item, index) => {
@@ -94,12 +96,14 @@ export function SkillsInstallView({view, detection, active, dispatch}: SkillsIns
 				focused={active && view.queryFocused}
 				placeholder="输入关键词搜索 skills.sh"
 				onChange={value => dispatch({type: 'query-input', value})}
+				onFocus={onFocusSearch}
+				onSubmit={onSubmitSearch}
 			/>
 			{view.searching ? (
 				<ListLoadingState message="正在搜索..." />
 			) : items.length > 0 ? (
 				<box marginTop={1} flexGrow={1} flexDirection="column">
-					<ScrollList items={items} cursor={view.resultIndex} header={header} active={active} focusIndicator="leading" />
+					<ScrollList items={items} cursor={view.resultIndex} header={header} active={active} focusIndicator="card" />
 				</box>
 			) : (
 				<ListEmptyState message="输入关键词开始搜索" />

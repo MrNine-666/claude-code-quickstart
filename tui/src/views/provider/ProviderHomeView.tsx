@@ -1,4 +1,3 @@
-import React from 'react';
 import {useKeyboard} from '@opentui/react';
 import {ErrorPanel, ListEmptyState, Modal, ScrollList, StatusDot, ViewHeader, type ScrollListItem} from '../../components/index.js';
 import {colors} from '../../theme/index.js';
@@ -11,6 +10,7 @@ export type ProviderHomeViewProps = {
 	readonly selectedIndex: number;
 	readonly active: boolean;
 	readonly isCodex: boolean;
+	readonly isPi: boolean;
 	readonly migrationFailures: readonly {readonly key: string; readonly reason?: string}[];
 	readonly loadFailures: readonly {readonly key: string; readonly reason: string}[];
 	readonly currentKey?: string;
@@ -33,6 +33,7 @@ export function ProviderHomeView({
 	selectedIndex,
 	active,
 	isCodex,
+	isPi,
 	migrationFailures,
 	loadFailures,
 	currentKey,
@@ -51,9 +52,9 @@ export function ProviderHomeView({
 }: ProviderHomeViewProps) {
 	const items: ScrollListItem[] = rows.map(row => ({
 		key: row.key,
-		title: row.key,
+		title: row.title ?? row.key,
 		leading: row.isActive ? <StatusDot kind="latest" /> : <text fg={colors.muted}>●</text>,
-		body: <text fg={colors.muted}>{row.summary}</text>
+		body: <text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{row.summary}</text>
 	}));
 
 	return (
@@ -77,9 +78,11 @@ export function ProviderHomeView({
 				<ListEmptyState
 					message="暂无供应商配置"
 					hint={{
-						label: isCodex
-							? '添加第一个供应商（可在表单内选择类型，支持 official login / 自定义）'
-							: '添加第一个供应商（可在表单内选择类型，含自定义）',
+						label: isPi
+							? '添加第一个自定义供应商；订阅供应商请在 Pi 中使用 /login'
+							: isCodex
+								? '添加第一个供应商（可在表单内选择类型，支持 official login / 自定义）'
+								: '添加第一个供应商（可在表单内选择类型，含自定义）',
 						enabled: true
 					}}
 				/>

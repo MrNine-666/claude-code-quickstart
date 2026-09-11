@@ -10,7 +10,7 @@ import {
 	type SkillsViewState
 } from '../../state/skills-view-state.js';
 import {handleSkillsKey} from './skills-view-input.js';
-import {createSkillsBusyOverlayState, skillsPageOf} from './skills-view-actions.js';
+import {createSkillsBusyOverlayState, runSearchAction, skillsPageOf} from './skills-view-actions.js';
 import {SkillsHomeView} from './SkillsHomeView.js';
 import {SkillsInstallView} from './SkillsInstallView.js';
 import {
@@ -25,9 +25,13 @@ import type {SkillsDetection, SkillsViewProps} from './skills-view-types.js';
 export type {SkillsViewProps} from './skills-view-types.js';
 export type {SkillsViewServices} from './skills-view-types.js';
 
-export function skillsSubModeOf(view: Pick<SkillsViewState, 'mode' | 'homeLayout' | 'busyAction'>): string {
+export function skillsSubModeOf(
+	view: Pick<SkillsViewState, 'mode' | 'homeLayout' | 'busyAction' | 'filterFocused' | 'queryFocused'>
+): string {
 	if (view.busyAction) return 'busy';
-	return view.mode === 'list' ? `list-${view.homeLayout}` : view.mode;
+	if (view.mode === 'install') return view.queryFocused ? 'install-search' : 'install-list';
+	if (view.mode === 'list') return view.filterFocused ? 'list-filter' : `list-${view.homeLayout}`;
+	return view.mode;
 }
 
 export function SkillsView({services, cache, active = true, onSubModeChange, onBusyStateChange, onExitToNav}: SkillsViewProps) {
@@ -45,6 +49,17 @@ export function SkillsView({services, cache, active = true, onSubModeChange, onB
 		refreshCache();
 	}, [refreshCache, taskCancellation]);
 	const busyOverlayState = useMemo(() => createSkillsBusyOverlayState(view, cancelBusyTask), [cancelBusyTask, view]);
+	const submitInstallSearch = useCallback(
+		(value: string): void => {
+			dispatch({type: 'query-input', value});
+			dispatch({type: 'submit-search'});
+			if (value.trim()) runSearchAction(value, services, dispatch);
+		},
+		[services]
+	);
+	const focusInstallSearch = useCallback((): void => {
+		dispatch({type: 'query-focus'});
+	}, []);
 
 	useEffect(() => {
 		if (detection.status === 'success') dispatch({type: 'installed-loaded', installed: detection.result ?? []});
@@ -68,9 +83,9 @@ export function SkillsView({services, cache, active = true, onSubModeChange, onB
 	const pageActive = active && !skillsModalOpen(view.mode);
 	return (
 		<box flexDirection="column" flexGrow={1} minHeight={0}>
-			<ViewHeader title="Skills 技能管理" subtitle="共享维护 Claude Code 与 Codex 两侧的 Skills（搜索、安装、更新、卸载）" />
+			<ViewHeader title="Skills 技能管理" subtitle="维护 Claude Code、Codex、Pi Skills（搜索、安装、更新、卸载）" />
 			{renderDetectionNotice(detection)}
-			{renderPage(view, detection, pageActive, dispatch)}
+			{renderPage(view, detection, pageActive, dispatch, focusInstallSearch, submitInstallSearch)}
 			{view.errorText ? (
 				<box marginTop={1}>
 					<ErrorPanel message={view.errorText} />
@@ -99,10 +114,21 @@ function renderPage(
 	view: SkillsViewState,
 	detection: DetectionState<SkillsDetection>,
 	active: boolean,
-	dispatch: React.Dispatch<SkillsViewAction>
+	dispatch: React.Dispatch<SkillsViewAction>,
+	onFocusSearch: () => void,
+	onSubmitSearch: (value: string) => void
 ): React.ReactNode {
 	if (skillsPageOf(view.mode, view.busyReturnMode) === 'install')
-		return <SkillsInstallView view={view} detection={detection} active={active} dispatch={dispatch} />;
+		return (
+			<SkillsInstallView
+				view={view}
+				detection={detection}
+				active={active}
+				dispatch={dispatch}
+				onFocusSearch={onFocusSearch}
+				onSubmitSearch={onSubmitSearch}
+			/>
+		);
 	if (detection.status === 'success') return <SkillsHomeView view={view} active={active} dispatch={dispatch} />;
 	return null;
 }

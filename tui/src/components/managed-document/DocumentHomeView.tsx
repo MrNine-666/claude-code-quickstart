@@ -9,7 +9,6 @@ import {ViewHeader} from '../view-header.js';
 export type DocumentHomeViewProps = {
 	readonly title: string;
 	readonly subtitle: string;
-	readonly headerRight?: React.ReactNode;
 	readonly hasContent: boolean;
 	readonly previewContent: string;
 	readonly previewFiletype: CodePreviewFiletype;
@@ -21,7 +20,6 @@ export type DocumentHomeViewProps = {
 export function DocumentHomeView({
 	title,
 	subtitle,
-	headerRight,
 	hasContent,
 	previewContent,
 	previewFiletype,
@@ -31,7 +29,7 @@ export function DocumentHomeView({
 }: DocumentHomeViewProps) {
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title={title} subtitle={subtitle} right={headerRight} />
+			<ViewHeader title={title} subtitle={subtitle} />
 			{hasContent ? (
 				<box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={borderColors.active}>
 					<ThemedScrollbox ref={scrollRef} style={{flexGrow: 1}}>

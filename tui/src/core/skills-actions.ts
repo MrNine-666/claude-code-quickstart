@@ -1,6 +1,6 @@
 import type {AgentContext} from '../state/manage-state.js';
 import {join} from 'node:path';
-import {skillsAgentOf, type SkillsCliAgent} from './skills.js';
+import {skillsAgentOf, type SkillsCliAgent, type SkillsScope} from './skills.js';
 import {
 	execCommand,
 	formatCommandInstruction,
@@ -38,6 +38,7 @@ export type SkillsAddCommandInput = {
 	readonly skillNames: readonly string[];
 	readonly agents: readonly AgentContext[];
 	readonly copy?: boolean;
+	readonly scope?: SkillsScope;
 	readonly env?: NodeJS.ProcessEnv;
 	readonly displayName?: string;
 };
@@ -45,6 +46,7 @@ export type SkillsAddCommandInput = {
 export type SkillsRemoveCommandInput = {
 	readonly skillNames: readonly string[];
 	readonly agents: readonly AgentContext[];
+	readonly scope?: SkillsScope;
 	readonly env?: NodeJS.ProcessEnv;
 };
 
@@ -53,6 +55,7 @@ export type InstallSkillInput = {
 	readonly displayName?: string;
 	readonly skillName?: string;
 	readonly copy?: boolean;
+	readonly scope?: SkillsScope;
 	readonly env?: NodeJS.ProcessEnv;
 };
 
@@ -80,9 +83,9 @@ export function getFriendlyError(exitCode: number, errorText: string, actionName
 /**
  * 归一 agent 目标（单值或数组）+ exec 缝。
  *
- * install 路径按「谁用归谁」传 `[cc, cx]` 双 agent 触发 symlink（skills CLI 单一 skillsDir 会强制 copy，
- * 双 agent 令 uniqueDirs.size==2 且不传 --copy → installMode 保持默认 symlink：本体落 `~/.agents/skills`，
- * `~/.claude/skills` 建软链指向本体）。单值向后兼容。
+ * install 路径按「谁用归谁」把 Claude Code/Pi 与 canonical Codex 一起传入，触发 symlink
+ *（skills CLI 单一 skillsDir 会强制 copy；多个 target dirs 且不传 --copy 才保持默认 symlink）：
+ * 本体落 `~/.agents/skills`，各 Agent 目录建软链指向本体。单值向后兼容。
  */
 function normalizeAgentAndExec(
 	agentOrExec: AgentContext | readonly AgentContext[] | SkillsExecFn | undefined,
@@ -106,6 +109,10 @@ function execOptions(timeout: number, env?: NodeJS.ProcessEnv): ExecOptions {
 	return {timeout, ...(env ? {env} : {})};
 }
 
+function scopeArgs(scope: SkillsScope = 'global'): string[] {
+	return scope === 'global' ? ['-g'] : [];
+}
+
 export function createSkillsChildEnv(homeDir = resolveHome(), includeCodex = false): NodeJS.ProcessEnv {
 	return {
 		...process.env,
@@ -126,7 +133,7 @@ export async function runSkillsAdd(
 		return {success: false, spawned: false, code: -1, stdout: '', stderr: '', error: 'Skills add 缺少 Agent 目标'};
 	}
 
-	const args = ['--yes', SKILLS_CLI_PACKAGE, 'add', input.source, '--yes', ...agentArgs(input.agents), '-g'];
+	const args = ['--yes', SKILLS_CLI_PACKAGE, 'add', input.source, '--yes', ...agentArgs(input.agents), ...scopeArgs(input.scope)];
 	if (input.copy) {
 		args.push('--copy');
 	}
@@ -169,7 +176,15 @@ export async function runSkillsRemove(
 		return {success: false, spawned: false, code: -1, stdout: '', stderr: '', error: 'Skills remove 缺少 Skill 或 Agent 目标'};
 	}
 
-	const args = ['--yes', SKILLS_CLI_PACKAGE, 'remove', ...input.skillNames, '-g', ...agentArgs(input.agents), '--yes'];
+	const args = [
+		'--yes',
+		SKILLS_CLI_PACKAGE,
+		'remove',
+		...input.skillNames,
+		...scopeArgs(input.scope),
+		...agentArgs(input.agents),
+		'--yes'
+	];
 	emit(onProgress, {
 		level: 'info',
 		message: `正在卸载: ${input.skillNames.join(', ')}`,
@@ -230,6 +245,7 @@ export async function installSkill(
 			skillNames: input.skillName ? [input.skillName] : [],
 			agents,
 			copy: input.copy,
+			scope: input.scope,
 			env: input.env,
 			displayName: label
 		},
@@ -243,10 +259,11 @@ export async function installSkill(
 export async function updateSkills(
 	skillNames: readonly string[] = [],
 	onProgress?: ProgressCallback,
-	exec: SkillsExecFn = execCommand
+	exec: SkillsExecFn = execCommand,
+	scope: SkillsScope = 'global'
 ): Promise<SkillsActionResult> {
 	// 上游 update 只接受 scope/yes/skill names；它会按 lock 重装全部注入侧，不支持 --agent。
-	const args = ['--yes', SKILLS_CLI_PACKAGE, 'update', ...skillNames, '-g', '-y'];
+	const args = ['--yes', SKILLS_CLI_PACKAGE, 'update', ...skillNames, ...scopeArgs(scope), '-y'];
 	emit(onProgress, {
 		level: 'info',
 		message: '正在更新 Skills（最长等待 10 分钟）...',
@@ -294,7 +311,8 @@ export async function uninstallSkills(
 	skillNames: readonly string[],
 	onProgress?: ProgressCallback,
 	agentOrExec?: AgentContext | '*' | SkillsExecFn,
-	execArg?: SkillsExecFn
+	execArg?: SkillsExecFn,
+	scope: SkillsScope = 'global'
 ): Promise<SkillsActionResult> {
 	if (skillNames.length === 0) {
 		return {success: false, error: '未选择要卸载的 Skill'};
@@ -302,7 +320,7 @@ export async function uninstallSkills(
 
 	const {agentTargets, exec} = normalizeRemoveTarget(agentOrExec, execArg);
 	// agentTarget 为 undefined（全量删）时省略 --agent，CLI 默认覆盖全部 agent 并在无人再用时清 canonical 本体。
-	const args = ['--yes', SKILLS_CLI_PACKAGE, 'remove', ...skillNames, '-g'];
+	const args = ['--yes', SKILLS_CLI_PACKAGE, 'remove', ...skillNames, ...scopeArgs(scope)];
 	if (agentTargets) {
 		for (const agentTarget of agentTargets) {
 			args.push('--agent', agentTarget);
@@ -343,6 +361,7 @@ export async function installMultipleSkills(
 		readonly skillNames: readonly string[];
 		readonly displayName?: string;
 		readonly copy?: boolean;
+		readonly scope?: SkillsScope;
 		readonly env?: NodeJS.ProcessEnv;
 	},
 	onProgress?: ProgressCallback,
@@ -361,6 +380,7 @@ export async function installMultipleSkills(
 			skillNames: input.skillNames,
 			agents,
 			copy: input.copy,
+			scope: input.scope,
 			env: input.env,
 			displayName: label
 		},

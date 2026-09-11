@@ -1,12 +1,13 @@
 import {lstat, realpath} from 'node:fs/promises';
 import {isAbsolute, join, normalize, resolve, sep} from 'node:path';
 import {execCommand, removeAnsiSequences, type ExecResult} from './exec.js';
+import type {SkillsScope} from './skills.js';
 import type {AgentContext} from '../state/manage-state.js';
 import type {SkillTopology} from './skills-storage.js';
 
 // 已安装 Skills 领域边界（task 07-28-skills-multi-source-topology design Section 3-6）。
 // 唯一事实源是一次成功的 `npx skills list -g --json`：本模块只解释 CLI 已返回的数据，
-// 不枚举 .claude/.agents/.codex 目录、不读取 .skill-lock.json、不比较 Skill 内容。
+// 不枚举 .claude/.agents/.codex/.pi 目录、不读取 .skill-lock.json、不比较 Skill 内容。
 // path 只用于识别存储根以及执行经用户确认的迁移/删除，不参与来源身份或 Agent 可用侧。
 
 export type ExecFn = (command: string, args: readonly string[], options?: {timeout?: number}) => Promise<ExecResult>;
@@ -14,7 +15,7 @@ export type ExecFn = (command: string, args: readonly string[], options?: {timeo
 const LIST_TIMEOUT_MS = 120000;
 
 /** 受支持的存储根。`other` 表示 CLI 报告了受管拓扑之外的位置。 */
-export type SkillsStorageRoot = 'claude' | 'agents' | 'codex' | 'other';
+export type SkillsStorageRoot = 'claude' | 'agents' | 'codex' | 'pi-global' | 'pi-project' | 'other';
 
 /** `skills list -g --json` 的单条记录，严格解析后的协议投影。 */
 export type SkillsCliListRecord = {
@@ -136,6 +137,8 @@ export function skillSourcesEquivalent(left: string, right: string): boolean {
 // ── 存储根分类（design Section 3；只看 path，不触碰文件系统） ────────────────
 
 const STORAGE_ROOT_SEGMENTS: readonly (readonly [SkillsStorageRoot, readonly string[]])[] = [
+	['pi-global', ['.pi', 'agent', 'skills']],
+	['pi-project', ['.pi', 'skills']],
 	['claude', ['.claude', 'skills']],
 	['agents', ['.agents', 'skills']],
 	['codex', ['.codex', 'skills']]
@@ -366,6 +369,42 @@ export function groupInstalledSkillItems(records: readonly SkillsCliListRecord[]
 		}));
 }
 
+/** 合并不同 scope 的 list 结果；同名同 source 仍是一个逻辑实例，物理 projection 分开保留。 */
+export function mergeInstalledSkillItems(...collections: readonly (readonly InstalledSkillItem[])[]): readonly InstalledSkillItem[] {
+	type Draft = {
+		readonly item: InstalledSkillItem;
+		readonly agents: string[];
+		readonly projections: SkillProjection[];
+		readonly pathKeys: Set<string>;
+	};
+
+	const drafts = new Map<string, Draft>();
+	for (const collection of collections) {
+		for (const item of collection) {
+			const existing = drafts.get(item.id);
+			const draft = existing ?? {
+				item,
+				agents: [],
+				projections: [],
+				pathKeys: new Set<string>()
+			};
+			for (const agent of item.agents) draft.agents.push(agent);
+			for (const projection of item.projections) {
+				const pathKey = normalizePathKey(projection.path);
+				if (!draft.pathKeys.has(pathKey)) {
+					draft.pathKeys.add(pathKey);
+					draft.projections.push(projection);
+				}
+			}
+			if (!existing) drafts.set(item.id, draft);
+		}
+	}
+
+	return [...drafts.values()]
+		.map(({item, agents, projections}) => ({...item, agents: dedupeStable(agents), projections}))
+		.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+}
+
 /**
  * `(root, name)` 所有权索引。CLI 若让不同 Item 声明同一物理目标，
  * 该目标标记为歧义，任何覆盖/迁移/定向删除必须在预检阶段拒绝（design Section 5.3）。
@@ -398,7 +437,7 @@ export function buildSkillsOwnershipIndex(items: readonly InstalledSkillItem[]):
  * Claude Code 只对应 `.claude`；Codex 的物理根必须由当前 JSON path 已明确为
  * `.agents` 或 `.codex` 后才能推导，绝不只凭 badge 猜测二者之一。
  */
-export function skillDeletionCandidatePaths(item: InstalledSkillItem, homeDir: string): readonly string[] {
+export function skillDeletionCandidatePaths(item: InstalledSkillItem, homeDir: string, projectDir = process.cwd()): readonly string[] {
 	const roots = storageRootsOf(item);
 	const candidates = item.projections.map(projection => projection.path);
 	if (itemAvailableOn(item, 'cc')) {
@@ -407,6 +446,10 @@ export function skillDeletionCandidatePaths(item: InstalledSkillItem, homeDir: s
 	if (itemAvailableOn(item, 'cx')) {
 		if (roots.includes('agents')) candidates.push(join(homeDir, '.agents', 'skills', item.name));
 		if (roots.includes('codex')) candidates.push(join(homeDir, '.codex', 'skills', item.name));
+	}
+	if (itemAvailableOn(item, 'pi')) {
+		if (roots.includes('pi-global')) candidates.push(join(homeDir, '.pi', 'agent', 'skills', item.name));
+		if (roots.includes('pi-project')) candidates.push(join(projectDir, '.pi', 'skills', item.name));
 	}
 
 	const seen = new Set<string>();
@@ -422,10 +465,14 @@ export function skillDeletionCandidatePaths(item: InstalledSkillItem, homeDir: s
  * 删除预检使用的所有权索引必须包含可证明的标准 Agent 投影；否则一个 Item 的
  * `.claude` badge 与另一来源声明的 `.claude` path 不会形成歧义，可能误删后者。
  */
-export function buildSkillsDeletionOwnershipIndex(items: readonly InstalledSkillItem[], homeDir: string): SkillsOwnershipIndex {
+export function buildSkillsDeletionOwnershipIndex(
+	items: readonly InstalledSkillItem[],
+	homeDir: string,
+	projectDir = process.cwd()
+): SkillsOwnershipIndex {
 	const expanded = items.map(item => ({
 		...item,
-		projections: skillDeletionCandidatePaths(item, homeDir).map(path => ({
+		projections: skillDeletionCandidatePaths(item, homeDir, projectDir).map(path => ({
 			path,
 			root: classifySkillsStorageRoot(path),
 			scope: 'global',
@@ -439,7 +486,8 @@ export function buildSkillsDeletionOwnershipIndex(items: readonly InstalledSkill
 
 export const SKILL_AGENT_DISPLAY_TO_CONTEXT: Readonly<Record<string, AgentContext>> = {
 	'Claude Code': 'cc',
-	Codex: 'cx'
+	Codex: 'cx',
+	Pi: 'pi'
 };
 
 /** 某逻辑实例是否在给定 Agent 上可用。只读 `agents`，不看 path、不查磁盘。 */
@@ -447,7 +495,7 @@ export function itemAvailableOn(item: InstalledSkillItem, agentContext: AgentCon
 	return item.agents.some(display => SKILL_AGENT_DISPLAY_TO_CONTEXT[display] === agentContext);
 }
 
-/** 非 Claude Code / Codex 的其它 universal agent displayName。 */
+/** 非 Claude Code / Codex / Pi 的其它 universal agent displayName。 */
 export function otherAgentsOf(item: InstalledSkillItem): readonly string[] {
 	return item.agents.filter(agent => SKILL_AGENT_DISPLAY_TO_CONTEXT[agent] === undefined);
 }
@@ -472,12 +520,13 @@ export function currentTopologyOfItem(item: InstalledSkillItem): SkillTopology |
 }
 
 /**
- * `.codex` 实例即使目标侧与当前一致也必须迁移到受管拓扑，不是 no-op（design §8.4 / R6）。
- * `.codex` 不是受管 canonical（`.agents` 才是），故任一受管目标都需要把本体收编。
- * 仅依据 JSON path 分类，不扫描用户目录。
+ * 旧的 Codex `.codex` 与 Pi 全局 native `~/.pi/agent/skills` 实例，即使目标侧与当前一致，
+ * 也必须迁移到受管拓扑，不是 no-op。二者都不是 `.agents` canonical，故任一受管目标都需要
+ * 把本体收编；仅依据 JSON path 分类，不扫描用户目录。
  */
 export function needsManagedMigration(item: InstalledSkillItem, target: SkillTopology): boolean {
-	if (!storageRootsOf(item).includes('codex')) return false;
+	const roots = storageRootsOf(item);
+	if (!roots.includes('codex') && !roots.includes('pi-global')) return false;
 	return target === 'claude-only' || target === 'codex-only' || target === 'shared';
 }
 
@@ -487,8 +536,20 @@ export function needsManagedMigration(item: InstalledSkillItem, target: SkillTop
  * 一次完整的已安装检测：执行一次不带 `--agent` 的 `skills list -g --json`，
  * 严格解析后分组为逻辑实例。失败一律抛错，不回退文件系统扫描。
  */
-export async function detectInstalledSkillItems(exec: ExecFn = execCommand): Promise<readonly InstalledSkillItem[]> {
-	const {code, stdout, stderr} = await exec('npx', ['--yes', 'skills', 'list', '-g', '--json'], {
+export async function detectInstalledSkillItems(
+	exec: ExecFn = execCommand,
+	scope: SkillsScope = 'global',
+	agent?: AgentContext
+): Promise<readonly InstalledSkillItem[]> {
+	const args = ['--yes', 'skills', 'list'];
+	if (scope === 'global') {
+		args.push('-g');
+	}
+	if (agent) {
+		args.push('--agent', agent === 'cc' ? 'claude-code' : agent === 'cx' ? 'codex' : 'pi');
+	}
+	args.push('--json');
+	const {code, stdout, stderr} = await exec('npx', args, {
 		timeout: LIST_TIMEOUT_MS
 	});
 
@@ -668,8 +729,14 @@ export async function verifySkillDeletionTarget(
 }
 
 /** 受管与兼容存储根的绝对路径，供删除/迁移预检使用。 */
-export function supportedSkillsRoots(homeDir: string): readonly string[] {
-	return [join(homeDir, '.claude', 'skills'), join(homeDir, '.agents', 'skills'), join(homeDir, '.codex', 'skills')];
+export function supportedSkillsRoots(homeDir: string, projectDir = process.cwd()): readonly string[] {
+	return [
+		join(homeDir, '.claude', 'skills'),
+		join(homeDir, '.agents', 'skills'),
+		join(homeDir, '.codex', 'skills'),
+		join(homeDir, '.pi', 'agent', 'skills'),
+		join(projectDir, '.pi', 'skills')
+	];
 }
 
 /**

@@ -37,7 +37,16 @@ export {
 
 type Dispatch = React.Dispatch<ToolsViewAction>;
 
-export function ToolsView({services, cache, active = true, contentWidth, onSubModeChange, onBusyStateChange, onExitToNav}: ToolsViewProps) {
+export function ToolsView({
+	services,
+	cache,
+	agentContext,
+	active = true,
+	contentWidth,
+	onSubModeChange,
+	onBusyStateChange,
+	onExitToNav
+}: ToolsViewProps) {
 	const [view, dispatch] = useReducer(reduceToolsViewState, undefined, createInitialToolsViewState);
 	const detection = cache.state;
 	const taskCancellation = useTaskCancellation();
@@ -129,13 +138,13 @@ export function ToolsView({services, cache, active = true, contentWidth, onSubMo
 				dispatch({type: 'nav', delta: intent.delta});
 				break;
 			case 'primary':
-				runPrimaryAction(view, services, dispatch, cache, taskCancellation);
+				runPrimaryAction(view, services, dispatch, cache, taskCancellation, agentContext);
 				break;
 			case 'update-one':
-				updateInjectableCurrent(view, services, dispatch, cache, taskCancellation);
+				updateInjectableCurrent(view, services, dispatch, cache, taskCancellation, agentContext);
 				break;
 			case 'update-all':
-				updateAll(view, services, dispatch, cache, taskCancellation);
+				updateAll(view, services, dispatch, cache, taskCancellation, agentContext);
 				break;
 			case 'request-uninstall':
 				dispatch({type: 'request-uninstall'});
@@ -163,7 +172,7 @@ export function ToolsView({services, cache, active = true, contentWidth, onSubMo
 					active={active}
 					onCancel={() => dispatch({type: 'cancel'})}
 					onConfirm={(component, fullUninstall) =>
-						runUninstall(component, services, dispatch, cache, fullUninstall, taskCancellation)
+						runUninstall(component, services, dispatch, cache, fullUninstall, taskCancellation, agentContext)
 					}
 				/>
 			) : null}

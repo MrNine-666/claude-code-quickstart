@@ -1,13 +1,18 @@
-import React, {useEffect, useRef, useState} from 'react';
+import {useEffect, useRef, useState} from 'react';
 import {TextAttributes, type KeyEvent, type ScrollBoxRenderable, type TextareaRenderable} from '@opentui/core';
 import {useKeyboard, useRenderer} from '@opentui/react';
 import {toast} from '../../components/toast.js';
+import {Checkbox, ListLoadingState, ScrollList, type ScrollListItem} from '../../components/index.js';
 import {FormPanel, firstEditableIndex, nextEditableIndex} from '../../components/form/FormPanel.js';
+import {FormControlFrame} from '../../components/form/FormControlFrame.js';
+import {FormLabel} from '../../components/form/FormLabel.js';
 import {ThemedScrollbox} from '../../components/themed-scrollbox.js';
 import {handleTextareaEditKeys, handleTextareaIndentKey} from '../../components/editor/textarea-edit-keys.js';
 import type {FormField} from '../../components/form/field-types.js';
 import {borderColors, colors} from '../../theme/index.js';
 import type {ProviderFormAdapter, ProviderFormModelBase, ProviderFormSubmitResult} from '../../types/provider-form-adapter.js';
+import {PROVIDER_COMMANDS, providerBindings} from '../../config/keybindings.js';
+import {isEditingModifier, matchesKeyBinding} from '../../utils/keyboard.js';
 
 /** 从字段列表派生初始实时值。 */
 function deriveValues(fields: readonly FormField[]): Record<string, string> {
@@ -31,16 +36,72 @@ const JSON_FIELD_ID = 'provider-form-textarea';
 // scrollbox 内一起滚动。窄终端下若过高吃字段可视空间可微调此值。
 const TEXTAREA_HEIGHT = 12;
 
+function providerBinding(command: string): string | undefined {
+	const binding = providerBindings.find(item => item.cmd === command);
+	return binding && typeof binding.key === 'string' ? binding.key : undefined;
+}
+
+function matchesProviderCommand(keyEvent: KeyEvent, command: string): boolean {
+	const binding = providerBinding(command);
+	return binding ? matchesKeyBinding(keyEvent, binding) : false;
+}
+
 export type ProviderFormProps<TInput, TValues, TModel extends ProviderFormModelBase<TValues> = ProviderFormModelBase<TValues>> = {
 	readonly model: TModel;
 	readonly active: boolean;
 	readonly onCancel: () => void;
 	readonly onSaved: (message: string, warning?: string) => void;
+	readonly onSubModeChange?: (subMode: string) => void;
 	readonly buildForm: (input: TInput) => TModel;
 	readonly save: (input: TInput, values: TValues) => ProviderFormSubmitResult;
 	readonly validate: (values: TValues) => string[];
 	readonly adapter: ProviderFormAdapter<TInput, TValues, TModel>;
+	/** Optional async upstream model discovery. The form owns candidate selection and submits the draft with the form. */
+	readonly onDiscover?: (values: TValues) => Promise<readonly string[]>;
+	readonly onApplyDiscovered?: (values: TValues, modelIds: readonly string[]) => TValues;
 };
+
+type ModelSelectionState = {
+	readonly candidates: readonly string[];
+	readonly selected: ReadonlySet<string>;
+	readonly cursor: number;
+	readonly manualValue: string;
+};
+
+type ModelDiscoveryState = ModelSelectionState & {
+	readonly status: 'idle' | 'loading' | 'selecting' | 'manual';
+};
+
+type ModelFocus = 'list' | 'manual' | null;
+
+function normalizeModelIds(value: unknown): readonly string[] {
+	if (typeof value !== 'string') return [];
+	return [
+		...new Set(
+			value
+				.split(/[\n,]/u)
+				.map(model => model.trim())
+				.filter(Boolean)
+		)
+	];
+}
+
+function filterModelCandidates(candidates: readonly string[], query: string): readonly string[] {
+	const normalizedQuery = query.trim().toLowerCase();
+	if (!normalizedQuery) return candidates;
+	return candidates.filter(candidate => candidate.toLowerCase().includes(normalizedQuery));
+}
+
+function initialModelDiscoveryState(value: unknown): ModelDiscoveryState {
+	const candidates = normalizeModelIds(value);
+	return {
+		status: candidates.length > 0 ? 'selecting' : 'idle',
+		candidates,
+		selected: new Set(candidates),
+		cursor: 0,
+		manualValue: ''
+	};
+}
 
 /**
  * ProviderForm：供应商表单屏（add/edit 统一复用）
@@ -53,10 +114,13 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 	active,
 	onCancel,
 	onSaved,
+	onSubModeChange,
 	buildForm,
 	save,
 	validate,
-	adapter
+	adapter,
+	onDiscover,
+	onApplyDiscovered
 }: ProviderFormProps<TInput, TValues, TModel>) {
 	const formAdapter = adapter;
 	const [fields, setFields] = useState(model.fields);
@@ -71,10 +135,32 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 	const lastProviderType = useRef<string | undefined>((model.values as {providerType?: string}).providerType);
 	// 记录程序化 setText 的目标文本，避免 onContentChange 回声反向同步。
 	const pendingTextareaSync = useRef<string | null>(null);
+	const modelDiscoveryRequest = useRef(0);
+	const discoveryInFlight = useRef(false);
+	const [discovery, setDiscovery] = useState<ModelDiscoveryState>(() =>
+		initialModelDiscoveryState((model.values as {readonly models?: unknown}).models)
+	);
+	const [modelFocus, setModelFocus] = useState<ModelFocus>(null);
+	const hasTextEditor = formAdapter.showTextEditor !== false;
+	const filteredCandidates = filterModelCandidates(discovery.candidates, discovery.manualValue);
+	const selectedModel = discovery.candidates[discovery.cursor];
+	const filteredCursor = selectedModel ? Math.max(0, filteredCandidates.indexOf(selectedModel)) : 0;
 
-	const textFocused = focusedIndex === fields.length;
-	const fieldFocused = !textFocused;
-	const focusedFieldId = textFocused ? JSON_FIELD_ID : `form-field-${focusedIndex}-${fields[focusedIndex]?.id ?? 'unknown'}`;
+	useEffect(() => {
+		if (!active || !onSubModeChange) return;
+		onSubModeChange(onDiscover ? 'form-pi' : 'form');
+	}, [active, onDiscover, onSubModeChange]);
+
+	const textFocused = hasTextEditor && focusedIndex === fields.length;
+	const fieldFocused = modelFocus === null && !textFocused;
+	const focusedFieldId =
+		modelFocus === 'list'
+			? 'provider-model-list'
+			: modelFocus === 'manual'
+				? 'provider-model-input'
+				: textFocused
+					? JSON_FIELD_ID
+					: `form-field-${focusedIndex}-${fields[focusedIndex]?.id ?? 'unknown'}`;
 
 	useEffect(() => {
 		if (!scrollRef.current) {
@@ -112,7 +198,6 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 		}
 
 		lastProviderType.current = providerTypeValue;
-
 		const nextModel = buildForm(formAdapter.makeProviderTypeInput(providerTypeValue));
 		const nextRecord = deriveValues(nextModel.fields);
 		nextRecord.providerType = providerTypeValue;
@@ -122,6 +207,7 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 		}
 
 		const nextBase = formAdapter.recordToValues(nextRecord, nextModel.values);
+		nextRecord.apiKey = formAdapter.valuesToRecord(nextBase).apiKey ?? '';
 		setFields(nextModel.fields);
 		setValues(nextRecord);
 		setBaseValues(nextBase);
@@ -131,18 +217,66 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 	}, [values.providerType, model.mode, buildForm, formAdapter]);
 
 	const handleMoveFocus = (direction: 1 | -1) => {
+		if (onDiscover) {
+			const lastFieldIndex = nextEditableIndex(fields, fields.length, -1);
+			if (modelFocus === 'list') {
+				if (direction > 0) {
+					const nextModel = filteredCandidates[filteredCursor + 1];
+					if (nextModel) {
+						setDiscovery(current => ({...current, cursor: current.candidates.indexOf(nextModel)}));
+					} else {
+						setModelFocus(null);
+						setFocusedIndex(firstEditableIndex(fields));
+					}
+				} else {
+					const previousModel = filteredCandidates[filteredCursor - 1];
+					if (!previousModel) {
+						setModelFocus('manual');
+						return;
+					}
+					setDiscovery(current => ({...current, cursor: current.candidates.indexOf(previousModel)}));
+				}
+				return;
+			}
+
+			if (modelFocus === 'manual') {
+				if (direction < 0) {
+					setModelFocus(null);
+					setFocusedIndex(lastFieldIndex);
+				} else {
+					// 即使当前列表为空，也要允许手工输入和模型列表之间切换，
+					// 这样用户可以按 Enter 添加第一个自定义模型。
+					setModelFocus('list');
+				}
+				return;
+			}
+
+			const next = nextEditableIndex(fields, focusedIndex, direction);
+			if (direction > 0 && next <= focusedIndex) {
+				setModelFocus('manual');
+				return;
+			}
+			if (direction < 0 && next >= focusedIndex) {
+				if (discovery.candidates.length > 0 || discovery.status === 'loading') setModelFocus('list');
+				else setModelFocus('manual');
+				return;
+			}
+			setFocusedIndex(next);
+			return;
+		}
+
 		setFocusedIndex(current => {
-			if (current === fields.length) {
+			if (hasTextEditor && current === fields.length) {
 				// textarea（虚拟 fields.length）按 ↑ 应切到紧邻的上一真实字段（末位可编辑）。
 				return direction > 0 ? firstEditableIndex(fields) : nextEditableIndex(fields, fields.length, -1);
 			}
 
 			const next = nextEditableIndex(fields, current, direction);
-			if (direction > 0 && next <= current) {
+			if (hasTextEditor && direction > 0 && next <= current) {
 				return fields.length;
 			}
 
-			if (direction < 0 && next >= current) {
+			if (hasTextEditor && direction < 0 && next >= current) {
 				return fields.length;
 			}
 
@@ -173,8 +307,16 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 		setValues(nextRecord);
 		const nextFormValues = formAdapter.recordToValues(nextRecord, baseValues);
 		setBaseValues(nextFormValues);
+		if (formAdapter.syncFields) {
+			setFields(currentFields => [...formAdapter.syncFields!(nextFormValues, currentFields)]);
+		}
 		setText(formAdapter.buildText(nextFormValues));
 		setErrors([]);
+	};
+
+	const readCurrentValues = (): {readonly ok: true; readonly values: TValues} | {readonly ok: false; readonly error: string} => {
+		if (!hasTextEditor) return {ok: true, values: baseValues};
+		return formAdapter.parseText(baseValues, text);
 	};
 
 	const handleTextChange = (content: string) => {
@@ -198,7 +340,23 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 
 		setErrors([]);
 		setBaseValues(parsed.values);
+		if (formAdapter.syncFields) {
+			setFields(currentFields => [...formAdapter.syncFields!(parsed.values, currentFields)]);
+		}
 		setValues(prev => ({...prev, ...formAdapter.valuesToRecord(parsed.values)}));
+	};
+
+	const handleManualModelChange = (value: string) => {
+		setDiscovery(current => {
+			const nextCandidates = filterModelCandidates(current.candidates, value);
+			const currentModel = current.candidates[current.cursor];
+			const nextModel = currentModel && nextCandidates.includes(currentModel) ? currentModel : nextCandidates[0];
+			return {
+				...current,
+				manualValue: value,
+				cursor: nextModel ? current.candidates.indexOf(nextModel) : 0
+			};
+		});
 	};
 
 	// textarea 键位（onKeyDown，handleKeyPress 之前）：Tab 缩进 + 边界 ↑/↓ 切字段。
@@ -227,15 +385,177 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 		}
 	};
 
-	useKeyboard(keyEvent => {
-		if (!active || !textFocused) {
+	const modelIdsForSubmit = (): readonly string[] => {
+		const selected = discovery.candidates.filter(model => discovery.selected.has(model));
+		const manual = discovery.manualValue.trim();
+		return [...new Set(manual ? [...selected, manual] : selected)];
+	};
+
+	const handleDiscover = async () => {
+		if (!onDiscover || discoveryInFlight.current || discovery.status === 'loading') return;
+		const parsed = readCurrentValues();
+		if (!parsed.ok) {
+			toast.error(parsed.error);
 			return;
 		}
-
-		if (formAdapter.isTextReadOnly?.(baseValues)) {
-			if (keyEvent.name.toLowerCase() === 'escape') {
-				onCancel();
+		const baseUrl = (parsed.values as {readonly baseUrl?: unknown}).baseUrl;
+		if (typeof baseUrl !== 'string' || baseUrl.trim() === '') {
+			toast.warning('请先填写 Base URL，再获取上游模型');
+			const baseUrlIndex = fields.findIndex(field => field.id === 'baseUrl');
+			if (baseUrlIndex >= 0) {
+				setModelFocus(null);
+				setFocusedIndex(baseUrlIndex);
 			}
+			return;
+		}
+		const previous: ModelSelectionState = {
+			candidates: discovery.candidates,
+			selected: new Set(discovery.selected),
+			cursor: discovery.cursor,
+			manualValue: discovery.manualValue
+		};
+		const requestId = ++modelDiscoveryRequest.current;
+		discoveryInFlight.current = true;
+		setErrors([]);
+		setDiscovery({status: 'loading', ...previous});
+		setModelFocus('list');
+		try {
+			const candidates = [...new Set((await onDiscover(parsed.values)).map(model => model.trim()).filter(Boolean))];
+			if (requestId !== modelDiscoveryRequest.current) {
+				discoveryInFlight.current = false;
+				return;
+			}
+			if (candidates.length === 0) {
+				discoveryInFlight.current = false;
+				setDiscovery({status: 'manual', ...previous, manualValue: ''});
+				setModelFocus('manual');
+				toast.warning('上游未返回可用模型，请手工添加模型');
+				return;
+			}
+			const mergedCandidates = [...new Set([...previous.candidates, ...candidates])];
+			discoveryInFlight.current = false;
+			setDiscovery({
+				status: 'selecting',
+				candidates: mergedCandidates,
+				selected: new Set(previous.selected),
+				cursor: Math.min(previous.cursor, Math.max(0, mergedCandidates.length - 1)),
+				manualValue: previous.manualValue
+			});
+			setModelFocus('list');
+		} catch (error) {
+			if (requestId !== modelDiscoveryRequest.current) {
+				discoveryInFlight.current = false;
+				return;
+			}
+			discoveryInFlight.current = false;
+			const reason = error instanceof Error ? error.message : String(error);
+			setDiscovery({status: 'manual', ...previous, manualValue: ''});
+			setModelFocus('manual');
+			toast.error(`获取上游模型失败：${reason}`);
+		}
+	};
+
+	const addManualModel = (rawValue?: string) => {
+		if (discovery.status === 'loading') return;
+		const model = (rawValue ?? discovery.manualValue).trim();
+		if (!model) {
+			toast.warning('模型不能为空');
+			return;
+		}
+		setErrors([]);
+		setDiscovery(current => {
+			const candidates = [...new Set([...current.candidates, model])];
+			const selected = new Set(current.selected);
+			selected.add(model);
+			return {status: 'selecting', candidates, selected, cursor: candidates.indexOf(model), manualValue: ''};
+		});
+		setModelFocus('list');
+		toast.success(`已添加模型：${model}`);
+	};
+
+	const handleManualModelSubmit = (value: unknown) => {
+		addManualModel(typeof value === 'string' ? value : undefined);
+	};
+
+	const handleModelFocusKey = (keyEvent: KeyEvent): boolean => {
+		if (modelFocus === null) return false;
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_CANCEL)) {
+			keyEvent.preventDefault();
+			if (discovery.status === 'loading') modelDiscoveryRequest.current += 1;
+			onCancel();
+			return true;
+		}
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_DISCOVER)) {
+			keyEvent.preventDefault();
+			void handleDiscover();
+			return true;
+		}
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_UP)) {
+			keyEvent.preventDefault();
+			handleMoveFocus(-1);
+			return true;
+		}
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_DOWN)) {
+			keyEvent.preventDefault();
+			handleMoveFocus(1);
+			return true;
+		}
+		if (discovery.status === 'loading') return true;
+		if (modelFocus === 'manual') {
+			// 字符输入与 Enter 提交由 OpenTUI input 自己处理，避免页面监听与 input submit 双触发。
+			return false;
+		}
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_MULTI_SELECT_TOGGLE)) {
+			keyEvent.preventDefault();
+			const id = filteredCandidates[filteredCursor];
+			if (id) {
+				setDiscovery(current => {
+					const selected = new Set(current.selected);
+					if (selected.has(id)) selected.delete(id);
+					else selected.add(id);
+					return {...current, selected};
+				});
+			}
+			return true;
+		}
+		// Enter on the list does not apply a separate draft; Ctrl+S submits the list with the form.
+		return true;
+	};
+
+	const handleFormKey = (keyEvent: KeyEvent): boolean => {
+		if (!onDiscover || modelFocus !== null) return false;
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_DISCOVER)) {
+			keyEvent.preventDefault();
+			void handleDiscover();
+			return true;
+		}
+		return false;
+	};
+
+	useKeyboard(keyEvent => {
+		if (!active) return;
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_SAVE)) {
+			handleSubmit();
+			return;
+		}
+		if (modelFocus !== null) {
+			handleModelFocusKey(keyEvent);
+			return;
+		}
+		if (onDiscover && matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_DISCOVER)) {
+			keyEvent.preventDefault();
+			void handleDiscover();
+			return;
+		}
+		if (!textFocused) return;
+
+		const name = keyEvent.name.toLowerCase();
+		if (formAdapter.isTextReadOnly?.(baseValues)) {
+			if (name === 's' && isEditingModifier(keyEvent)) {
+				handleSubmit();
+				return;
+			}
+			if (name === 'escape') onCancel();
 			return;
 		}
 
@@ -249,20 +569,23 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 			return;
 		}
 
-		// textarea 的 Tab/方向键已由上方 onKeyDown 直接处置；这里只兜底 Esc 取消整个表单。
-		if (keyEvent.name.toLowerCase() === 'escape') {
-			onCancel();
-		}
+		if (name === 'escape') onCancel();
 	});
 
 	const handleSubmit = () => {
-		const parsed = formAdapter.parseText(baseValues, text);
+		if (discovery.status === 'loading') {
+			toast.warning('正在获取上游模型，请稍候');
+			return;
+		}
+
+		const parsed = readCurrentValues();
 		if (!parsed.ok) {
 			setErrors([parsed.error]);
 			return;
 		}
 
-		const formValues = parsed.values;
+		const modelIds = onApplyDiscovered ? modelIdsForSubmit() : [];
+		const formValues = onApplyDiscovered ? onApplyDiscovered(parsed.values, modelIds) : parsed.values;
 		const validationErrors = validate(formValues);
 		if (validationErrors.length > 0) {
 			setErrors(validationErrors);
@@ -303,45 +626,153 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 					onFieldChange={handleFieldChange}
 					onSubmit={handleSubmit}
 					onCancel={onCancel}
+					onKeyEvent={handleFormKey}
+					custom={
+						onDiscover ? (
+							<ProviderModelDiscoveryPanel
+								discovery={discovery}
+								modelFocus={modelFocus}
+								focused={modelFocus !== null}
+								active={active}
+								candidates={filteredCandidates}
+								cursor={filteredCursor}
+								onManualModelChange={handleManualModelChange}
+								onManualModelSubmit={handleManualModelSubmit}
+								onManualModelFocus={() => setModelFocus('manual')}
+							/>
+						) : null
+					}
 				/>
 
-				<box id={JSON_FIELD_ID} marginTop={1} flexDirection="column" flexShrink={0}>
-					<text fg={textFocused ? colors.primary : colors.text} attributes={textFocused ? TextAttributes.BOLD : 0}>
-						{textFocused ? '› ' : '  '}
-						{textLabel}
-					</text>
-					{/* 刻意例外：本页字段区 + textarea 同在一个 scrollbox 内一起滚动（用户约束②），
-					    且供应商字段多、textarea 若参与 flex 分配会被挤没（用户约束①），故 textarea
-					    用静态常量高度 TEXTAREA_HEIGHT（非动态算高，不违反「禁止 height 算式」核心诉求）；
-					    滚动内容内 textarea 必须有确定高度，否则会塌成 0 高。 */}
-					<box
-						height={TEXTAREA_HEIGHT}
-						borderStyle="rounded"
-						borderColor={textFocused ? borderColors.active : borderColors.inactive}
-					>
-						<textarea
-							ref={textareaRef}
-							initialValue={text}
-							focused={active && textFocused}
-							wrapMode="word"
-							style={{flexGrow: 1}}
-							textColor={colors.inputText}
-							focusedTextColor={colors.inputFocusedText}
-							cursorColor={colors.inputCursor}
+				{hasTextEditor ? (
+					<box id={JSON_FIELD_ID} marginTop={1} flexDirection="column" flexShrink={0}>
+						<text
+							fg={textFocused ? colors.primary : colors.text}
+							attributes={textFocused ? TextAttributes.BOLD : 0}
 							selectionBg={colors.selectionBg}
 							selectionFg={colors.selectionFg}
-							onKeyDown={handleTextareaKey}
-							onContentChange={() => handleTextChange(textareaRef.current?.plainText ?? text)}
-						/>
+						>
+							{textFocused ? '› ' : '  '}
+							{textLabel}
+						</text>
+						{/* 刻意例外：本页字段区 + textarea 同在一个 scrollbox 内一起滚动（用户约束②），
+						    且供应商字段多、textarea 若参与 flex 分配会被挤没（用户约束①），故 textarea
+						    用静态常量高度 TEXTAREA_HEIGHT（非动态算高，不违反「禁止 height 算式」核心诉求）；
+						    滚动内容内 textarea 必须有确定高度，否则会塌成 0 高。 */}
+						<box
+							height={TEXTAREA_HEIGHT}
+							borderStyle="rounded"
+							borderColor={textFocused ? borderColors.active : borderColors.inactive}
+						>
+							<textarea
+								ref={textareaRef}
+								initialValue={text}
+								focused={active && textFocused}
+								wrapMode="word"
+								style={{flexGrow: 1}}
+								textColor={colors.inputText}
+								focusedTextColor={colors.inputFocusedText}
+								cursorColor={colors.inputCursor}
+								selectionBg={colors.selectionBg}
+								selectionFg={colors.selectionFg}
+								onKeyDown={handleTextareaKey}
+								onContentChange={() => handleTextChange(textareaRef.current?.plainText ?? text)}
+							/>
+						</box>
 					</box>
-				</box>
+				) : null}
 			</ThemedScrollbox>
 
 			{errors.length > 0 ? (
 				<box marginTop={1} flexShrink={0}>
-					<text fg={colors.danger}>{errors.join('；')}</text>
+					<text fg={colors.danger} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+						{errors.join('；')}
+					</text>
 				</box>
 			) : null}
+		</box>
+	);
+}
+
+const MODEL_DISCOVERY_LIST_HEIGHT = 10;
+
+function ProviderModelDiscoveryPanel({
+	discovery,
+	modelFocus,
+	candidates,
+	cursor,
+	focused,
+	active,
+	onManualModelChange,
+	onManualModelSubmit,
+	onManualModelFocus
+}: {
+	readonly discovery: ModelDiscoveryState;
+	readonly modelFocus: ModelFocus;
+	readonly candidates: readonly string[];
+	readonly cursor: number;
+	readonly focused: boolean;
+	readonly active: boolean;
+	readonly onManualModelChange: (value: string) => void;
+	readonly onManualModelSubmit: (value: unknown) => void;
+	readonly onManualModelFocus: () => void;
+}) {
+	const listFocused = active && modelFocus === 'list';
+	const inputFocused = active && modelFocus === 'manual';
+	const items: ScrollListItem[] = candidates.map(model => ({
+		key: model,
+		title: model,
+		bordered: false,
+		leading: <Checkbox checked={discovery.selected.has(model)} focused={listFocused && candidates[cursor] === model} />
+	}));
+	return (
+		<box id="provider-model-selection" marginBottom={1} flexDirection="row" alignItems="flex-start" flexShrink={0}>
+			<FormLabel label="模型列表" focused={focused} />
+			<box flexDirection="column" flexGrow={1} minWidth={0} paddingX={1} borderStyle="rounded" borderColor={borderColors.active}>
+				<box id="provider-model-input" flexDirection="row" alignItems="center" flexShrink={0}>
+					<text
+						fg={inputFocused ? colors.primary : colors.muted}
+						attributes={inputFocused ? TextAttributes.BOLD : 0}
+						selectionBg={colors.selectionBg}
+						selectionFg={colors.selectionFg}
+					>
+						添加自定义模型
+					</text>
+					<FormControlFrame>
+						{inputFocused ? (
+							<input
+								value={discovery.manualValue}
+								placeholder="输入模型名称筛选，按Enter添加"
+								onInput={onManualModelChange}
+								onSubmit={onManualModelSubmit}
+								onMouseDown={onManualModelFocus}
+								focused
+								textColor={colors.inputFocusedText}
+								cursorColor={colors.inputCursor}
+								selectionBg={colors.selectionBg}
+								selectionFg={colors.selectionFg}
+							/>
+						) : (
+							<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+								{discovery.manualValue}
+							</text>
+						)}
+					</FormControlFrame>
+				</box>
+				<box id="provider-model-list" marginTop={1} height={MODEL_DISCOVERY_LIST_HEIGHT} minHeight={0} flexShrink={0}>
+					{discovery.status === 'loading' ? (
+						<ListLoadingState message="正在获取上游模型" />
+					) : (
+						<ScrollList
+							items={items}
+							cursor={cursor}
+							active={listFocused}
+							focusIndicator="card"
+							emptyText={discovery.manualValue.trim() ? '没有匹配的模型' : '暂无模型，请获取上游模型或输入模型名称'}
+						/>
+					)}
+				</box>
+			</box>
 		</box>
 	);
 }

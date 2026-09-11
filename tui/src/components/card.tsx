@@ -47,8 +47,13 @@ export function Card({
 	multiLine = false,
 	bordered = true
 }: CardProps) {
+	const focusedBackground = focused ? colors.focusedBackground : undefined;
 	const body = children === undefined || children === null ? null : (
-		<box height={multiLine ? undefined : 1} overflow={multiLine ? 'visible' : 'hidden'}>
+		<box
+			height={multiLine ? undefined : 1}
+			overflow={multiLine ? 'visible' : 'hidden'}
+			backgroundColor={focusedBackground}
+		>
 			{children}
 		</box>
 	);
@@ -62,22 +67,38 @@ export function Card({
 				flexDirection="row"
 				borderStyle={bordered ? 'rounded' : undefined}
 				borderColor={bordered ? (focused ? borderColors.active : borderColors.inactive) : undefined}
-				backgroundColor={focused ? colors.focusedBackground : undefined}
+				backgroundColor={focusedBackground}
 				paddingX={1}
 				width={width}
 				minHeight={minHeight}
 				flexShrink={0}
 			>
-				<box flexDirection="row" flexShrink={0} width={3} height={1} justifyContent="center" marginRight={1}>{leading}</box>
-				<box flexDirection="column" flexGrow={1} minWidth={0} overflow="hidden">
+				<box
+					flexDirection="row"
+					flexShrink={0}
+					width={3}
+					height={1}
+					justifyContent="center"
+					marginRight={1}
+					backgroundColor={focusedBackground}
+				>
+					{leading}
+				</box>
+				<box flexDirection="column" flexGrow={1} minWidth={0} overflow="hidden" backgroundColor={focusedBackground}>
 					{title === undefined ? null : (
-						<box flexDirection="row" height={1} overflow="hidden">
-							<box flexDirection="row" flexShrink={1} flexGrow={1} overflow="hidden">
-								<text fg={finalTitleColor} attributes={titleAttrs} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+						<box flexDirection="row" height={1} overflow="hidden" backgroundColor={focusedBackground}>
+							<box flexDirection="row" flexShrink={1} flexGrow={1} overflow="hidden" backgroundColor={focusedBackground}>
+								<text
+									fg={finalTitleColor}
+									bg={focusedBackground}
+									attributes={titleAttrs}
+									selectionBg={colors.selectionBg}
+									selectionFg={colors.selectionFg}
+								>
 									{title}
 								</text>
 							</box>
-							{titleRight === undefined ? null : <box flexShrink={0}>{titleRight}</box>}
+							{titleRight === undefined ? null : <box flexShrink={0} backgroundColor={focusedBackground}>{titleRight}</box>}
 						</box>
 					)}
 					{body}
@@ -92,23 +113,36 @@ export function Card({
 			flexDirection="column"
 			borderStyle={bordered ? 'rounded' : undefined}
 			borderColor={bordered ? (focused ? borderColors.active : borderColors.inactive) : undefined}
-			backgroundColor={focused ? colors.focusedBackground : undefined}
+			backgroundColor={focusedBackground}
 			paddingX={1}
 			width={width}
 			minHeight={minHeight}
 			flexShrink={0}
 		>
 			{title === undefined ? null : (
-				<box flexDirection="row" height={1} overflow="hidden">
-					<box flexDirection="row" flexShrink={1} flexGrow={1} overflow="hidden">
+				<box flexDirection="row" height={1} overflow="hidden" backgroundColor={focusedBackground}>
+					<box flexDirection="row" flexShrink={1} flexGrow={1} overflow="hidden" backgroundColor={focusedBackground}>
 						{selected === undefined ? null : (
-							<text fg={selected ? colors.primary : colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{selected ? '✅ ' : '⬜ '}</text>
+							<text
+								fg={selected ? colors.primary : colors.muted}
+								bg={focusedBackground}
+								selectionBg={colors.selectionBg}
+								selectionFg={colors.selectionFg}
+							>
+								{selected ? '✅ ' : '⬜ '}
+							</text>
 						)}
-						<text fg={finalTitleColor} attributes={titleAttrs} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+						<text
+							fg={finalTitleColor}
+							bg={focusedBackground}
+							attributes={titleAttrs}
+							selectionBg={colors.selectionBg}
+							selectionFg={colors.selectionFg}
+						>
 							{title}
 						</text>
 					</box>
-					{titleRight === undefined ? null : <box flexShrink={0}>{titleRight}</box>}
+					{titleRight === undefined ? null : <box flexShrink={0} backgroundColor={focusedBackground}>{titleRight}</box>}
 				</box>
 			)}
 			{body}

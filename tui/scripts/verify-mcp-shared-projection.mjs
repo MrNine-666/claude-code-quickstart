@@ -3,11 +3,11 @@ import {mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:
 import {tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
 
-// shared-resource-injection-ui Section 13.1：MCP 双侧聚合投影门禁（core/mcp.ts computeSharedStatus）。
+// shared-resource-injection-ui Section 13.1：MCP 三侧聚合投影门禁（core/mcp.ts computeSharedStatus）。
 // 断言（对齐 specs/mcp-multitool/spec.md「MCP status SHALL be projected as an aggregated dual-Agent view」）：
-//   1) 双侧聚合：一 Server ID 一行，injectByAgent.{cc,cx} 独立不塌缩；
-//   2) 列表全集 = vault 定义 ∪ ~/.claude.json mcpServers ∪ ~/.codex config.toml [mcp_servers]，按 Id 去重；
-//   3) vault 定义 ≠ 激活态（definition-only server 两侧均 not-active，但仍列出且 hasDefinition=true）；
+//   1) 三侧聚合：一 Server ID 一行，injectByAgent.{cc,cx,pi} 独立不塌缩；
+//   2) 列表全集 = vault 定义 ∪ ~/.claude.json mcpServers ∪ ~/.codex config.toml [mcp_servers] ∪ Pi mcp.json，按 Id 去重；
+//   3) vault 定义 ≠ 激活态（definition-only server 三侧均 not-active，但仍列出且 hasDefinition=true）；
 //   4) 开关态实时从 runtime 文件派生：外部编辑 ~/.claude.json 后重投影立即反映；
 //   5) Codex enabled=false 第三态在投影中归为 not-active，且投影不改写/删除该禁用块（纯读不物化）。
 
@@ -22,6 +22,7 @@ resetMcpContractCache();
 
 const claudeJsonPath = join(home, '.claude.json');
 const codexConfigPath = join(codexHome, 'config.toml');
+const piMcpConfigPath = join(home, '.pi', 'agent', 'mcp.json');
 const vaultPath = join(home, '.ccq', 'mcp-meta.json');
 
 function writeJson(path, value) {
@@ -52,6 +53,7 @@ writeText(
 		''
 	].join('\n')
 );
+writeJson(piMcpConfigPath, {mcpServers: {epsilon: {command: 'epsilon-cli', env: {PI_KEY: 'pi-secret'}}}});
 writeJson(vaultPath, {
 	schemaVersion: 1,
 	createdAt: '2026-07-12T00:00:00.000Z',
@@ -59,14 +61,16 @@ writeJson(vaultPath, {
 	servers: {delta: {config: {command: 'delta-cli', args: ['serve']}}}
 });
 
-// ── 1) 双侧聚合 + 一行一 Id ─────────────────────────────────────────────
+// ── 1) 三侧聚合 + 一行一 Id ─────────────────────────────────────────────
 const rows = computeSharedStatus();
 const ids = rows.map(r => r.Id);
 assert.equal(new Set(ids).size, ids.length, '每个 Server ID 只出现一次（按 Id 去重）');
 for (const r of rows) {
 	assert.ok(r.injectByAgent && r.injectByAgent.cc && r.injectByAgent.cx, `${r.Id} 行携带 cc/cx 双侧开关态`);
+	assert.ok(r.injectByAgent.pi, `${r.Id} 行携带 Pi 开关态`);
 	assert.equal(typeof r.injectByAgent.cc.active, 'boolean', `${r.Id}.cc.active 为布尔`);
 	assert.equal(typeof r.injectByAgent.cx.active, 'boolean', `${r.Id}.cx.active 为布尔`);
+	assert.equal(typeof r.injectByAgent.pi.active, 'boolean', `${r.Id}.pi.active 为布尔`);
 }
 
 // alpha：cc 激活 / cx 未激活（两侧独立不塌缩）。
@@ -74,17 +78,19 @@ const alpha = row(rows, 'alpha');
 assert.ok(alpha, 'alpha 在共享列表中');
 assert.equal(alpha.injectByAgent.cc.active, true, 'alpha cc 激活（.claude.json 存在）');
 assert.equal(alpha.injectByAgent.cx.active, false, 'alpha cx 未激活（config.toml 无此块）');
-console.log('[PASS] 13.1 双侧聚合：一行一 Id + cc/cx 独立不塌缩');
+console.log('[PASS] 13.1 三侧聚合：一行一 Id + cc/cx/pi 独立不塌缩');
 
-// ── 2) 列表全集 = 三源并集 ──────────────────────────────────────────────
-for (const id of ['alpha', 'beta', 'gamma', 'delta']) {
-	assert.ok(ids.includes(id), `列表全集含 ${id}（vault ∪ .claude.json ∪ config.toml 并集）`);
+// ── 2) 列表全集 = 四源并集 + 三侧 runtime 回灌 vault ─────────────────────
+for (const id of ['alpha', 'beta', 'gamma', 'delta', 'epsilon']) {
+	assert.ok(ids.includes(id), `列表全集含 ${id}（vault ∪ .claude.json ∪ config.toml ∪ Pi mcp.json 并集）`);
 }
+assert.equal(row(rows, 'epsilon').hasDefinition, true, 'Pi native runtime 条目必须回灌为 vault definition');
+assert.equal(JSON.parse(readFileSync(vaultPath, 'utf8')).servers.epsilon.config.command, 'epsilon-cli', 'Pi runtime config 必须同步到 vault');
 // beta：cx 激活 / cc 未激活。
 const beta = row(rows, 'beta');
 assert.equal(beta.injectByAgent.cx.active, true, 'beta cx 激活（config.toml 块存在且未禁用）');
 assert.equal(beta.injectByAgent.cc.active, false, 'beta cc 未激活（.claude.json 无此块）');
-console.log('[PASS] 13.1 列表全集 = vault 定义 ∪ 两侧 runtime 并集');
+console.log('[PASS] 13.1 列表全集 = vault 定义 ∪ 三侧 runtime 并集，且 Pi runtime 回灌 vault');
 
 // ── 3) vault 定义 ≠ 激活态 ──────────────────────────────────────────────
 const delta = row(rows, 'delta');
@@ -92,7 +98,7 @@ assert.ok(delta, 'vault-only 定义 delta 仍列出');
 assert.equal(delta.injectByAgent.cc.active, false, 'delta cc 未激活（仅 vault 定义不算激活）');
 assert.equal(delta.injectByAgent.cx.active, false, 'delta cx 未激活（仅 vault 定义不算激活）');
 assert.equal(delta.hasDefinition, true, 'delta hasDefinition=true（共享定义体供开启复用）');
-console.log('[PASS] 13.1 vault 定义 ≠ 激活态（definition-only 两侧 not-active 但仍列出）');
+console.log('[PASS] 13.1 vault 定义 ≠ 激活态（definition-only 三侧 not-active 但仍列出）');
 
 // ── 4) 开关态实时从 runtime 文件派生：外部删除 .claude.json 的 alpha ──────
 writeJson(claudeJsonPath, {mcpServers: {}});
@@ -122,6 +128,10 @@ assert.equal(moveMcpGridCursor(0, 4, 'right'), 1, 'MCP 网格右移到同行第�
 assert.equal(moveMcpGridCursor(1, 4, 'down'), 3, 'MCP 网格下移保持列位置');
 assert.equal(moveMcpGridCursor(3, 4, 'down'), 1, 'MCP 网格末行下移循环到首行同列');
 const mcpHomeSource = readFileSync(new URL('../src/views/mcp/McpHomeView.tsx', import.meta.url), 'utf8');
+const badgeSource = mcpHomeSource.match(/function StateBadge[\s\S]*?function ToggleTargetModal/)?.[0] ?? '';
+assert.match(badgeSource, /\{`⊘ \$\{label\}`\}/, 'MCP 卡片的 unsupported badge 只展示 Agent 名称');
+assert.doesNotMatch(badgeSource, /state\.reason/, 'MCP 卡片不得把 Pi 扩展原因挤进卡片内容');
+assert.match(mcpHomeSource, /需先安装 \$\{PI_MCP_ADAPTER_ID\} 扩展/, 'MCP Enter 弹窗必须提示先安装 Pi adapter 扩展');
 assert.match(
 	mcpHomeSource,
 	/<McpListInput[\s\S]{0,160}active=\{active && mode === 'list'\}/,
@@ -177,4 +187,4 @@ try {
 
 delete process.env.CCQ_HOME;
 rmSync(home, {recursive: true, force: true});
-console.log('[PASS] MCP 双侧聚合投影门禁全部通过');
+console.log('[PASS] MCP 三侧聚合投影门禁全部通过');

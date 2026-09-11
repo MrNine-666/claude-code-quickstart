@@ -19,27 +19,28 @@ let state = createInitialManageState();
 assert.equal(state.focus, 'view', '启动即聚焦右侧视图（首个菜单工具管理），无需先按 enter');
 assert.equal(state.selectedIndex, 0);
 assert.equal(selectedMenuItem(state).label, '工具管理');
-assert.equal(menuItems.length, 6, '工具管理/供应商/配置文件/全局规则/MCP/Skills 共 6 项菜单（检查更新为底部按钮不计入）');
+assert.equal(menuItems.length, 7, '工具管理/供应商/配置文件/全局规则/MCP/Skills/扩展管理共 7 项菜单（检查更新为底部按钮不计入）');
 
 // ── Phase 2：agentContext Header 不变量（tasks 2.1/2.2/2.3/2.5/2.6）──────────────
-// 2.1/2.2 默认 Claude Code + agentContext=cc + 6 菜单顺序恒定
+// 2.1/2.2 默认 Claude Code + agentContext=cc + 7 菜单顺序恒定
 assert.equal(state.agentContext, 'cc', '默认 agentContext 为 cc（Claude Code）');
 const initialMenuIds = menuItems.map(item => item.id);
 assert.deepEqual(
 	initialMenuIds,
-	['tools', 'provider', 'config', 'prompts', 'mcp', 'skills'],
-	'6 菜单顺序固定：工具管理/供应商/配置文件/全局规则/MCP/Skills'
+	['tools', 'provider', 'config', 'prompts', 'mcp', 'skills', 'extensions'],
+	'7 菜单顺序固定：工具管理/供应商/配置文件/全局规则/MCP/Skills/扩展管理'
 );
-console.log('[PASS] 2.1/2.2 默认 Claude Code + agentContext=cc + 6 菜单顺序恒定');
+console.log('[PASS] 2.1/2.2 默认 Claude Code + agentContext=cc + 7 菜单顺序恒定');
 
-// 2.3 Header 全称标签：Claude Code / Codex，禁止 cc/cx 缩写作为可见标签
-assert.deepEqual(AGENT_CONTEXT_ORDER, ['cc', 'cx'], 'Agent 上下文顺序：cc → cx');
+// 2.3 Header 全称标签：Claude Code / Codex / Pi，禁止内部缩写作为可见标签
+assert.deepEqual(AGENT_CONTEXT_ORDER, ['cc', 'cx', 'pi'], 'Agent 上下文顺序：cc → cx → pi');
 assert.equal(AGENT_CONTEXT_LABELS.cc, 'Claude Code', 'cc 可见标签为全称 Claude Code');
 assert.equal(AGENT_CONTEXT_LABELS.cx, 'Codex', 'cx 可见标签为全称 Codex');
+assert.equal(AGENT_CONTEXT_LABELS.pi, 'Pi', 'pi 可见标签为 Pi');
 for (const ctx of AGENT_CONTEXT_ORDER) {
 	const label = AGENT_CONTEXT_LABELS[ctx];
-	assert.ok(label && label.length > 2, `${ctx} 标签非空且非缩写`);
-	assert.equal(/^(cc|cx)$/i.test(label), false, `Header 可见标签不得为 cc/cx 缩写: ${label}`);
+	assert.ok(label && label.length > 0, `${ctx} 标签非空`);
+	if (ctx !== 'pi') assert.equal(/^(cc|cx)$/i.test(label), false, `Header 可见标签不得为内部缩写: ${label}`);
 }
 console.log('[PASS] 2.3 Header 全称标签（Claude Code / Codex，无 cc/cx 缩写）');
 
@@ -51,17 +52,18 @@ assert.equal(s.focus, 'header', 'view 上键应进入 Agent Header');
 s = reduceManageState(s, 'right');
 assert.equal(s.agentContext, 'cx', 'Header 右键从 cc 切换到 cx');
 assert.equal(s.selectedIndex, beforeSel, '切换后左侧菜单选中项不变');
-assert.deepEqual(menuItems.map(item => item.id), initialMenuIds, '切换后 6 菜单顺序不变');
-s = reduceManageState(s, 'left');
-assert.equal(s.agentContext, 'cc', 'Header 左键从 cx 循环回 cc');
+	assert.deepEqual(menuItems.map(item => item.id), initialMenuIds, '切换后 7 菜单顺序不变');
+	s = reduceManageState(s, 'left');
+	assert.equal(s.agentContext, 'cc', 'Header 左键从 cx 循环回 cc');
 s = reduceManageState(s, 'down');
 assert.equal(s.focus, 'view', 'Header 下键应返回右侧视图');
 s = reduceManageState(reduceManageState(s, 'up'), 'escape');
 assert.equal(s.focus, 'view', 'Header Esc 应返回右侧视图');
 assert.equal(nextAgentContext('cc'), 'cx', 'nextAgentContext: cc → cx');
-assert.equal(nextAgentContext('cx'), 'cc', 'nextAgentContext: cx → cc');
-assert.equal(previousAgentContext('cc'), 'cx', 'previousAgentContext: cc → cx');
-assert.equal(previousAgentContext('cx'), 'cc', 'previousAgentContext: cx → cc');
+assert.equal(nextAgentContext('cx'), 'pi', 'nextAgentContext: cx → pi');
+assert.equal(nextAgentContext('pi'), 'cc', 'nextAgentContext: pi → cc');
+assert.equal(previousAgentContext('cc'), 'pi', 'previousAgentContext: cc → pi');
+assert.equal(previousAgentContext('pi'), 'cx', 'previousAgentContext: pi → cx');
 console.log('[PASS] 2.5 Header 焦点切换：上键进入 + 左右循环 + 菜单顺序/选中不变');
 
 // 2.6 footer 不展示 Agent 切换项；Agent 快捷键仅由 Header 提示，避免 footer 溢出。

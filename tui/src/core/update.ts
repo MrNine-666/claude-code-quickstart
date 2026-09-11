@@ -7,7 +7,7 @@ import {claudeDir, claudeJsonPath, ccqDir, resolveHome, settingsPath, skillsDir}
 import {execCommand, formatCommandInstruction, type ProgressCallback} from './exec.js';
 import {refreshNpmGlobalBinPath} from './npm-path.js';
 import {hasUpdate} from './semver.js';
-import {installTool, TOOL_DEFINITIONS} from './tools-install.js';
+import {detectTool, ensureNodeVersion, installTool, parseToolVersion, TOOL_DEFINITIONS} from './tools-install.js';
 import {
 	DSH_PACKAGE_NAME,
 	DSH_TOOL_ID,
@@ -69,8 +69,11 @@ const NPM_COMPONENT_MAP: Record<string, string> = Object.fromEntries(
 const CCG_NPM_PACKAGE = NPM_COMPONENT_MAP['CcgWorkflow'] ?? 'ccg-workflow';
 
 // id → 检测命令映射，派生自 registry：全 registry 组件均含 command/versionArgs。
-const COMMAND_COMPONENTS: Record<string, {command: string; versionArgs: string[]}> = Object.fromEntries(
-	TOOL_DEFINITIONS.map(def => [def.id, {command: def.command, versionArgs: [...def.versionArgs]}])
+const COMMAND_COMPONENTS: Record<string, {command: string; versionArgs: string[]; reportsVersion: boolean}> = Object.fromEntries(
+	TOOL_DEFINITIONS.map(def => [
+		def.id,
+		{command: def.command, versionArgs: [...def.versionArgs], reportsVersion: def.reportsVersion !== false}
+	])
 );
 
 function ensureDir(dirPath: string): void {
@@ -142,29 +145,33 @@ function isTimeoutError(error: unknown): boolean {
 
 async function execVersionCommand(
 	command: string,
-	args: readonly string[]
+	args: readonly string[],
+	exec: typeof execCommand = execCommand
 ): Promise<{readonly code: number; readonly stdout: string; readonly stderr: string}> {
 	try {
-		return await execCommand(command, args, {timeout: 5000});
+		return await exec(command, args, {timeout: 5000});
 	} catch (error) {
 		if (isTimeoutError(error)) {
-			return execCommand(command, args, {timeout: 5000});
+			return exec(command, args, {timeout: 5000});
 		}
 
 		throw error;
 	}
 }
 
-async function getCommandVersion(command: string, args: string[]): Promise<{installed: boolean; version: string}> {
+async function getCommandVersion(
+	command: string,
+	args: string[],
+	exec: typeof execCommand = execCommand,
+	reportsVersion = true
+): Promise<{installed: boolean; version: string}> {
 	try {
-		const result = await execVersionCommand(command, args);
+		const result = await execVersionCommand(command, args, exec);
 		if (result.code !== 0) {
 			return {installed: false, version: ''};
 		}
 
-		const text = (result.stdout || result.stderr || '').trim();
-		const version = (text.match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?/) || [text])[0] || '';
-		return {installed: true, version};
+		return {installed: true, version: reportsVersion ? parseToolVersion(result.stdout || result.stderr || '') : ''};
 	} catch {
 		return {installed: false, version: ''};
 	}
@@ -301,7 +308,8 @@ async function buildNpmComponentStatus(
 	packageName: string,
 	outdated: NpmOutdated,
 	latestByPackage: NpmViewCache,
-	dshLifecycle?: DshLifecycleProjection
+	dshLifecycle?: DshLifecycleProjection,
+	exec: typeof execCommand = execCommand
 ): Promise<UpdateComponent> {
 	if (id === DSH_TOOL_ID) {
 		return buildDshComponentStatus(packageName, outdated, latestByPackage, dshLifecycle);
@@ -309,10 +317,11 @@ async function buildNpmComponentStatus(
 
 	const commandInfo = COMMAND_COMPONENTS[id];
 	const versionInfo = commandInfo
-		? await getCommandVersion(commandInfo.command, commandInfo.versionArgs)
+		? await getCommandVersion(commandInfo.command, commandInfo.versionArgs, exec, commandInfo.reportsVersion)
 		: {installed: false, version: ''};
 	const remote = outdated[packageName];
 	const latestVersion = remote?.latest || latestByPackage[packageName] || versionInfo.version;
+	const versionComparisonUnavailable = commandInfo?.reportsVersion === false;
 
 	return {
 		id,
@@ -322,7 +331,13 @@ async function buildNpmComponentStatus(
 		installed: versionInfo.installed,
 		currentVersion: versionInfo.version,
 		latestVersion,
-		hasUpdate: versionInfo.installed ? (latestVersion ? hasUpdate(versionInfo.version, latestVersion) : false) : null
+		hasUpdate: versionInfo.installed
+			? versionComparisonUnavailable
+				? true
+				: latestVersion
+					? hasUpdate(versionInfo.version, latestVersion)
+					: false
+			: null
 	};
 }
 
@@ -361,8 +376,8 @@ async function buildDshComponentStatus(
 	};
 }
 
-async function buildAntigravityStatus(): Promise<UpdateComponent> {
-	const versionInfo = await getCommandVersion('agy', ['--version']);
+async function buildAntigravityStatus(exec: typeof execCommand = execCommand): Promise<UpdateComponent> {
+	const versionInfo = await getCommandVersion('agy', ['--version'], exec);
 	return {
 		id: 'AntigravityCli',
 		name: 'AntigravityCli',
@@ -375,14 +390,24 @@ async function buildAntigravityStatus(): Promise<UpdateComponent> {
 	};
 }
 
-// export 供 tools-manage.ts 的 detectComponents 复用：返回 10 个 CLI 组件
-// （ClaudeCode/Ccline/CcgWorkflow/OpenSpec/Trellis/CodeGraph/GitNexus/CodexCli + AntigravityCli + DeepSeekHarness），不含 Skills/MCP。
-export async function checkCliToolUpdates(outdated: NpmOutdated, forceRefresh = false): Promise<UpdateComponent[]> {
+export type CliToolDetectionDeps = {
+	readonly exec?: typeof execCommand;
+	readonly latestByPackage?: NpmViewCache;
+};
+
+// export 供 tools-manage.ts 的 detectComponents 复用：返回受管 npm/CLI 组件
+// （含 ClaudeCode/Ccline/PiCli/PiWeb/CcgWorkflow/OpenSpec/Trellis/CodeGraph/GitNexus/CodexCli + AntigravityCli + DeepSeekHarness），不含 Skills/MCP。
+export async function checkCliToolUpdates(
+	outdated: NpmOutdated,
+	forceRefresh = false,
+	deps: CliToolDetectionDeps = {}
+): Promise<UpdateComponent[]> {
+	const exec = deps.exec ?? execCommand;
 	// 保留调用方进入检测时的 PATH：refreshNpmGlobalBinPath 会前置 npm bin，
 	// 但 DSH 必须按用户原始 PATH 判断外部命令遮蔽，不能被检测准备动作掩盖。
-	const dshLifecycle = await detectDshLifecycle({env: {...process.env}});
-	await refreshNpmGlobalBinPath();
-	const latestByPackage = await resolveNpmViewLatest(Object.values(NPM_COMPONENT_MAP), forceRefresh);
+	const dshLifecycle = await detectDshLifecycle({env: {...process.env}, exec});
+	await refreshNpmGlobalBinPath(undefined, undefined, exec);
+	const latestByPackage = deps.latestByPackage ?? (await resolveNpmViewLatest(Object.values(NPM_COMPONENT_MAP), forceRefresh));
 	const components: UpdateComponent[] = [];
 	for (const [id, packageName] of Object.entries(NPM_COMPONENT_MAP)) {
 		if (id === 'CcgWorkflow') {
@@ -390,12 +415,19 @@ export async function checkCliToolUpdates(outdated: NpmOutdated, forceRefresh = 
 			components.push(await buildCcgWorkflowStatus(latestByPackage));
 		} else {
 			components.push(
-				await buildNpmComponentStatus(id, packageName, outdated, latestByPackage, id === DSH_TOOL_ID ? dshLifecycle : undefined)
+				await buildNpmComponentStatus(
+					id,
+					packageName,
+					outdated,
+					latestByPackage,
+					id === DSH_TOOL_ID ? dshLifecycle : undefined,
+					exec
+				)
 			);
 		}
 	}
 
-	components.push(await buildAntigravityStatus());
+	components.push(await buildAntigravityStatus(exec));
 	return components;
 }
 
@@ -748,7 +780,12 @@ export async function applyUpdates(
 					component.latestVersion && component.latestVersion !== component.currentVersion
 						? `${component.package}@${component.latestVersion}`
 						: component.package!;
-				const args = ['install', '-g', packageSpec];
+				const definition = TOOL_DEFINITIONS.find(item => item.id === component.id);
+				const isPiTool = definition?.id === 'PiCli' || definition?.id === 'PiWeb';
+				if (isPiTool && definition) {
+					await ensureNodeVersion(definition, exec, onProgress);
+				}
+				const args = ['install', '-g', ...(definition?.id === 'PiCli' ? ['--ignore-scripts'] : []), packageSpec];
 				onProgress?.({
 					level: 'info',
 					message: formatCommandInstruction('npm', args),
@@ -771,6 +808,12 @@ export async function applyUpdates(
 
 				if (component.id === 'GitNexus') {
 					await reapplyGitNexusSetup(exec, onProgress);
+				}
+
+				if (isPiTool && definition) {
+					await refreshNpmGlobalBinPath(onProgress, component.id, exec);
+					const status = await detectTool(definition, exec);
+					if (!status.installed) throw new Error(`${definition.name} 更新后命令不可用`);
 				}
 
 				onProgress?.({level: 'success', message: `${component.name} 已更新`, componentId: component.id});

@@ -2,6 +2,7 @@ import React, {useEffect, useRef} from 'react';
 import {TextAttributes, type ScrollBoxRenderable} from '@opentui/core';
 import {useKeyboard} from '@opentui/react';
 import {Card, ListEmptyState, Modal, ThemedScrollbox, ViewHeader} from '../../components/index.js';
+import {PI_MCP_ADAPTER_ID} from '../../core/pi-mcp-adapter.js';
 import {AGENT_CONTEXT_LABELS, AGENT_CONTEXT_ORDER, type AgentContext} from '../../state/manage-state.js';
 import {colors} from '../../theme/index.js';
 import {MCP_GRID_COLUMNS, type McpGridDirection, type McpToggleDraft, type McpViewRow} from './mcp-view-actions.js';
@@ -55,14 +56,14 @@ export function McpHomeView({
 }: McpHomeViewProps) {
 	return (
 		<box flexDirection="column" flexGrow={1} minHeight={0}>
-			<ViewHeader title="MCP Server 管理" subtitle="共享维护 Claude Code 与 Codex 两侧的 MCP Server 连接" />
+			<ViewHeader title="MCP Server 管理" subtitle="维护各 agent 的 MCP Server 连接" />
 			{rows.length === 0 ? (
 				<ListEmptyState message="暂无 MCP Server" />
 			) : (
 				<McpGrid rows={rows} cursor={selectedIndex} active={active && mode === 'list'} />
 			)}
 			{mode === 'select-toggle-target' && current ? (
-				<ToggleTargetModal name={current.Id} draft={toggleDraft} focusedIndex={toggleIndex} />
+				<ToggleTargetModal name={current.Id} row={current} draft={toggleDraft} focusedIndex={toggleIndex} />
 			) : null}
 			{mode === 'confirm-remove' && current ? (
 				<Modal active title="全量删除 MCP Server" hint="Enter 确认  Esc 取消" tone="danger" width={TOGGLE_MODAL_WIDTH}>
@@ -70,7 +71,7 @@ export function McpHomeView({
 						fg={colors.text}
 						selectionBg={colors.selectionBg}
 						selectionFg={colors.selectionFg}
-					>{`即将删除 ${current.Id}：移除 Claude Code 与 Codex 两侧配置及共享定义，此操作不可撤销。`}</text>
+						>{`即将删除 ${current.Id}：移除 CCQ 管理的 agent 配置；未由 CCQ 接管的 Pi 原生配置会保留。`}</text>
 				</Modal>
 			) : null}
 			<McpListInput
@@ -97,15 +98,7 @@ export function McpHomeView({
 	);
 }
 
-function McpGrid({
-	rows,
-	cursor,
-	active
-}: {
-	readonly rows: readonly McpViewRow[];
-	readonly cursor: number;
-	readonly active: boolean;
-}) {
+function McpGrid({rows, cursor, active}: {readonly rows: readonly McpViewRow[]; readonly cursor: number; readonly active: boolean}) {
 	const scrollRef = useRef<ScrollBoxRenderable>(null);
 	const safeCursor = rows.length === 0 ? 0 : Math.min(Math.max(cursor, 0), rows.length - 1);
 	const activeCardId = rows[safeCursor] ? mcpCardId(safeCursor) : null;
@@ -134,7 +127,11 @@ function McpGrid({
 									marginRight={index % MCP_GRID_COLUMNS === 0 ? 1 : 0}
 								>
 									<Card title={server.Id} focused={active && index === safeCursor} minHeight={3} multiLine>
-										<DualStateBadges cc={server.injectByAgent.cc} cx={server.injectByAgent.cx} />
+										<DualStateBadges
+											cc={server.injectByAgent.cc}
+											cx={server.injectByAgent.cx}
+											pi={server.injectByAgent.pi}
+										/>
 									</Card>
 								</box>
 							))}
@@ -157,30 +154,50 @@ function mcpCardId(index: number): string {
 	return `mcp-grid-item-${index}`;
 }
 
-function DualStateBadges({cc, cx}: {readonly cc: McpViewRow['injectByAgent']['cc']; readonly cx: McpViewRow['injectByAgent']['cx']}) {
+function DualStateBadges({
+	cc,
+	cx,
+	pi
+}: {
+	readonly cc: McpViewRow['injectByAgent']['cc'];
+	readonly cx: McpViewRow['injectByAgent']['cx'];
+	readonly pi: McpViewRow['injectByAgent']['pi'];
+}) {
 	return (
 		<box flexDirection="row" height={1} overflow="hidden">
-			<StateBadge label={AGENT_CONTEXT_LABELS.cc} active={cc.active} />
+			<StateBadge label={AGENT_CONTEXT_LABELS.cc} state={cc} />
 			<text fg={colors.muted}>{'  '}</text>
-			<StateBadge label={AGENT_CONTEXT_LABELS.cx} active={cx.active} />
+			<StateBadge label={AGENT_CONTEXT_LABELS.cx} state={cx} />
+			<text fg={colors.muted}>{'  '}</text>
+			<StateBadge label={AGENT_CONTEXT_LABELS.pi} state={pi} />
 		</box>
 	);
 }
 
-function StateBadge({label, active}: {readonly label: string; readonly active: boolean}) {
+function StateBadge({label, state}: {readonly label: string; readonly state: McpViewRow['injectByAgent'][AgentContext]}) {
+	if (!state.supported) {
+		return (
+			<text fg={colors.warning} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+				{`⊘ ${label}`}
+			</text>
+		);
+	}
+
 	return (
-		<text fg={active ? colors.success : colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-			{`${active ? '●' : '○'} ${label}`}
+		<text fg={state.active ? colors.success : colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+			{`${state.active ? '●' : '○'} ${label}`}
 		</text>
 	);
 }
 
 function ToggleTargetModal({
 	name,
+	row,
 	draft,
 	focusedIndex
 }: {
 	readonly name: string;
+	readonly row: McpViewRow;
 	readonly draft: McpToggleDraft;
 	readonly focusedIndex: number;
 }) {
@@ -189,6 +206,7 @@ function ToggleTargetModal({
 		<Modal active title={`管理开关：${name}`} hint="↑/↓ 选择  空格 切换开/关  Enter 应用  Esc 取消" width={TOGGLE_MODAL_WIDTH}>
 			<box flexDirection="column">
 				{AGENT_CONTEXT_ORDER.map(ctx => {
+					const state = row.injectByAgent[ctx];
 					const enabled = Boolean(draft[ctx]);
 					const focused = ctx === selected;
 					return (
@@ -203,12 +221,12 @@ function ToggleTargetModal({
 								{`${focused ? '›' : ' '} ${AGENT_CONTEXT_LABELS[ctx]} `}
 							</text>
 							<text
-								fg={enabled ? colors.success : colors.muted}
+								fg={!state.supported ? colors.warning : enabled ? colors.success : colors.muted}
 								selectionBg={colors.selectionBg}
 								selectionFg={colors.selectionFg}
 								flexShrink={0}
 							>
-								{enabled ? '● 已开启' : '○ 已禁用'}
+								{state.supported ? (enabled ? '● 已开启' : '○ 已禁用') : `⊘ ${mcpUnsupportedHint(state.reason)}`}
 							</text>
 						</box>
 					);
@@ -216,6 +234,17 @@ function ToggleTargetModal({
 			</box>
 		</Modal>
 	);
+}
+
+function mcpUnsupportedHint(reason?: string): string {
+	if (!reason) return '不支持';
+	if (reason === 'adapter-not-installed' || /pi-mcp-adapter.*未安装/i.test(reason)) {
+		return `需先安装 ${PI_MCP_ADAPTER_ID} 扩展`;
+	}
+	if (reason === 'pi-not-installed' || /Pi Agent CLI.*未安装/i.test(reason)) {
+		return '需先安装 Pi Agent CLI';
+	}
+	return reason;
 }
 
 function McpListInput({

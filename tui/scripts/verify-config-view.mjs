@@ -118,6 +118,8 @@ const configViewSource = [
 assert.match(configViewSource, /createConfigDocumentAdapter\(props\.agentContext\)/, 'ConfigView 必须从 agentContext 派生 adapter');
 assert.match(configViewSource, /loadRecommendationAnnotated\(target\)/, '推荐配置必须按 target 加载');
 assert.match(configViewSource, /getConfigPath\(target\)/, '目标路径必须按 target 切换');
+assert.match(configViewSource, /openConfigFile\(target\)/, '配置文件页必须把打开文件动作路由到 Config service');
+assert.match(configViewSource, /openExternal:/, '配置文件 adapter 必须提供外部打开动作');
 assert.match(configViewSource, /readCurrentConfigText\(target\)/, '读取配置必须按 target 切换');
 assert.match(configViewSource, /configFileExists\(target\)/, '空状态必须区分目标文件存在与过滤后内容为空');
 assert.match(configViewSource, /hasContent: fileExists \|\| content\.trim\(\)\.length > 0/, '存在 config.toml 时即使过滤后为空也必须展示预览态');
@@ -128,7 +130,8 @@ assert.match(configViewSource, /editorFiletype: isCodex \? 'text' : 'json'/, 'Co
 assert.match(configViewSource, /previewFiletype: isCodex \? 'toml' : 'json'/, 'Codex 当前配置预览必须使用 TOML 样式');
 assert.match(configViewSource, /recommendationFiletype: isCodex \? 'toml' : 'jsonc'/, 'Codex 推荐配置预览必须使用 TOML 样式');
 assert.match(configViewSource, /title: '配置文件管理'/, 'Header 标题统一为「配置文件管理」');
-assert.match(configViewSource, /subtitle: isCodex \? '查看、补全与编辑 ~\/\.codex\/config\.toml' : '查看、补全与编辑 ~\/\.claude\/settings\.json'/, 'Header 必须随 agentContext 切换副标题');
+assert.match(configViewSource, /subtitle: `\$\{configPath\}`\s*\+\s*'\s*'\s*\+/, 'Header 副标题必须包含当前配置路径');
+assert.match(configViewSource, /isCodex \? '已排除供应商\/MCP配置' : isPi \? '已排除供应商\/Extensions配置' : '已排除供应商配置'/, 'Header 说明必须随 agentContext 切换');
 assert.match(configViewSource, /if \(dirty\) \{[\s\S]{0,80}toast\.info\('已放弃未保存的编辑'\)/, '取消编辑必须识别 dirty 状态');
 assert.match(configViewSource, /useEffect\(\(\) => \{[\s\S]{0,120}reset\(adapter\.load\(\)\);[\s\S]{0,40}\}, \[adapter\]\);/, 'agentContext adapter 切换时必须重载视图状态，避免旧配置页内容残留');
 assert.match(configViewSource, /setDirty\(false\);/, '保存/取消/切换后必须清理 dirty 状态，避免跨上下文误写');
@@ -147,6 +150,7 @@ process.env.CODEX_HOME = join(codexHome, '.codex');
 try {
 	mkdirSync(process.env.CODEX_HOME, {recursive: true});
 	const {configFileExists, getConfigPath, loadRecommendationAnnotated, readCurrentConfigText, fillMissingIntoText, saveConfigText} = await import('../src/services/config-service.ts');
+	const {createConfigDocumentAdapter} = await import('../src/views/config/config-document-adapter.ts');
 	const annotatedRecommendation = loadRecommendationAnnotated('cx');
 	assert.match(annotatedRecommendation ?? '', /model_reasoning_effort\s*=\s*"xhigh"/, 'Codex 推荐配置应使用 xhigh 推理等级');
 	assert.match(annotatedRecommendation ?? '', /#\s*\[sandbox_workspace_write\]/, '推荐配置应展示联网增强项');
@@ -162,6 +166,9 @@ try {
 		assert.doesNotMatch(recommendedFill.text, /\[features\]/, 'fill-missing 不得自动开启 memories');
 	}
 	const codexPath = getConfigPath('cx');
+	const codexAdapter = createConfigDocumentAdapter('cx');
+	assert.equal(typeof codexAdapter.openExternal, 'function', 'Codex Config adapter 必须提供外部打开动作');
+	assert.ok(codexAdapter.openSuccessMessage?.includes(codexPath), 'Codex Config 外部打开提示必须指向 config.toml');
 	writeFileSync(codexPath, [
 		'model = "custom-model"',
 		'',

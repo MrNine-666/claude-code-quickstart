@@ -1,20 +1,28 @@
 import {existsSync, readFileSync} from 'node:fs';
 import type {AgentContext} from '../state/manage-state.js';
+import {execCommand} from './exec.js';
 import {readJsonFile, writeJsonAtomic} from './fs-utils.js';
 import {claudeJsonPath, codexConfigPath, settingsPath} from './paths.js';
 import {atomicWrite as writeTomlAtomic, deletePath, getPath, parse as parseToml, setPath, type TomlDocument} from './toml-edit.js';
-import {loadMcpContract, type McpServerDefinition} from './mcp-contract.js';
+import {loadMcpContract, resolveEffectiveDefinition, type McpServerDefinition} from './mcp-contract.js';
 import {toCodexMcpConfig} from './mcp-codex-schema.js';
 import {
-	definitionHash,
-	loadVault,
-	saveVault,
-	withVaultLock,
-	type McpVault,
-	type McpVaultServerEntry
-} from './mcp-vault.js';
+	currentPiMcpAdapterFact,
+	detectPiMcpAdapter,
+	piMcpDisplayReason,
+	piMcpOverrideEnabled,
+	piMcpUnsupportedReason,
+	readPiMcpConfig,
+	removePiMcpOverride,
+	removePiMcpOverrideRecord,
+	syncPiMcpConfig,
+	writePiMcpOverride,
+	type PiMcpAdapterFact,
+	type PiMcpServerProjection
+} from './pi-mcp-adapter.js';
+import {definitionHash, loadVault, saveVault, withVaultLock, type McpVault, type McpVaultServerEntry} from './mcp-vault.js';
 
-export type McpServerStatus = 'Custom' | 'Active' | 'Disabled' | 'Missing' | 'Unknown';
+export type McpServerStatus = 'Custom' | 'Active' | 'Disabled' | 'Missing' | 'Unknown' | 'Unsupported';
 
 export type McpStatusRow = {
 	readonly Id: string;
@@ -23,17 +31,23 @@ export type McpStatusRow = {
 	readonly McpType: string;
 	readonly Category: string;
 	readonly HasCredentials: boolean;
+	readonly UnsupportedReason?: string;
 };
 
 export type McpActionResult = {Success: boolean; ServerId: string; Status: string};
 
 // ── 双侧聚合投影（shared-resource-injection-ui Section 8） ─────────────────────
 
-/** 单侧开关态：active=开启（运行时激活）；disabled=物理禁用块（Codex enabled=false）或 Claude 侧关闭。 */
-export type McpAgentInjectState = {readonly active: boolean; readonly disabled: boolean};
+/** 单侧开关态：active=开启（运行时激活）；disabled=物理禁用块或该 Agent 侧关闭。 */
+export type McpAgentInjectState = {
+	readonly active: boolean;
+	readonly disabled: boolean;
+	readonly supported: boolean;
+	readonly reason?: string;
+};
 
 /**
- * 共享聚合行：一 Server ID 一行，双侧开关态独立不塌缩。
+ * 共享聚合行：一 Server ID 一行，各 Agent 开关态独立不塌缩。
  * hasDefinition = vault 是否有共享定义体（config），供跨侧开启时复用；vault 定义 ≠ 激活态。
  */
 export type McpSharedRow = {
@@ -50,7 +64,8 @@ const STATUS_PRIORITY: Record<McpServerStatus, number> = {
 	Active: 1,
 	Disabled: 2,
 	Missing: 3,
-	Unknown: 4
+	Unknown: 4,
+	Unsupported: 5
 };
 
 export type ClaudeJson = {
@@ -77,9 +92,7 @@ function readCodexConfigToml(): TomlDocument {
 
 function readCodexMcpServers(): Record<string, Record<string, unknown>> {
 	const servers = getPath(readCodexConfigToml(), ['mcp_servers']);
-	return servers && typeof servers === 'object' && !Array.isArray(servers)
-		? (servers as Record<string, Record<string, unknown>>)
-		: {};
+	return servers && typeof servers === 'object' && !Array.isArray(servers) ? (servers as Record<string, Record<string, unknown>>) : {};
 }
 
 function writeCodexMcpServer(serverId: string, config: Record<string, unknown>): void {
@@ -96,8 +109,15 @@ function isCodexServerDisabled(config: Record<string, unknown> | undefined): boo
 }
 
 function credentialsFromConfig(config: Record<string, unknown>): Record<string, string> {
-	const env = config.env;
-	return env && typeof env === 'object' && !Array.isArray(env) ? {...(env as Record<string, string>)} : {};
+	const result: Record<string, string> = {};
+	for (const key of ['env', 'headers', 'http_headers']) {
+		const values = config[key];
+		if (!values || typeof values !== 'object' || Array.isArray(values)) continue;
+		for (const [name, value] of Object.entries(values)) {
+			if (value !== undefined && value !== null) result[name] = String(value);
+		}
+	}
+	return result;
 }
 
 function definitionHashFor(serverId: string, contractServers: Record<string, McpServerDefinition>): string {
@@ -112,12 +132,16 @@ function backupRuntimeMcpToVault(
 	contractServers: Record<string, McpServerDefinition>,
 	permissions: string[] = []
 ): void {
-	backupMcpToVault(meta, serverId, config, credentialsFromConfig(config), permissions, definitionHashFor(serverId, contractServers));
+	const {enabled: _enabled, disabled: _disabled, ...pureConfig} = config;
+	void _enabled;
+	void _disabled;
+	backupMcpToVault(meta, serverId, pureConfig, credentialsFromConfig(pureConfig), permissions, definitionHashFor(serverId, contractServers));
 }
 
 function syncRuntimeMcpToVault(agentContext: AgentContext): void {
 	withVaultLock(() => {
-		const runtimeServers = agentContext === 'cx' ? readCodexMcpServers() : (readClaudeJson().mcpServers ?? {});
+		const runtimeServers =
+			agentContext === 'cx' ? readCodexMcpServers() : agentContext === 'pi' ? readPiRuntimeServers() : (readClaudeJson().mcpServers ?? {});
 		const contractServers = loadMcpContract().servers;
 		const meta = loadVault();
 		let vaultChanged = false;
@@ -165,8 +189,74 @@ function normalizeCredentials(entry: McpVaultServerEntry | undefined): Record<st
 	return {};
 }
 
+function readPiRuntimeServers(): Record<string, Record<string, unknown>> {
+	const result = readPiMcpConfig();
+	return result.ok ? {...result.document.mcpServers} : {};
+}
+
+function isPiServerDisabled(config: Record<string, unknown> | undefined): boolean {
+	return config?.disabled === true;
+}
+
+function mcpTypeFromConfig(config: Record<string, unknown> | undefined): string {
+	if (!config) return '';
+	if (typeof config.type === 'string' && config.type.trim()) return config.type;
+	if (typeof config.url === 'string' || typeof config.httpUrl === 'string') return 'http';
+	if (typeof config.command === 'string') return 'stdio';
+	return '';
+}
+
+function hasRuntimeCredentials(config: Record<string, unknown> | undefined): boolean {
+	if (!config) return false;
+	return ['env', 'headers', 'http_headers'].some(key => {
+		const values = config[key];
+		return Boolean(values && typeof values === 'object' && !Array.isArray(values) && Object.keys(values).length > 0);
+	});
+}
+
+function buildPiMcpProjections(): readonly PiMcpServerProjection[] {
+	const contractServers = loadMcpContract().servers;
+	const vault = loadVault();
+	const piRuntimeServers = readPiRuntimeServers();
+	const projections: PiMcpServerProjection[] = [];
+
+	for (const [serverId, entry] of Object.entries(vault.servers ?? {})) {
+		const config = entry?.config;
+		if (!config || typeof config !== 'object' || Array.isArray(config)) continue;
+
+		const baseDefinition = contractServers[serverId];
+		const definition = baseDefinition ? resolveEffectiveDefinition(baseDefinition, 'pi') : null;
+		const expressible = Boolean(
+			definition?.Command || definition?.Url || definition?.UrlTemplate || config.command || config.url || config.httpUrl
+		);
+		if (!expressible) continue;
+
+		const nativeConfig = piRuntimeServers[serverId];
+		const override = piMcpOverrideEnabled(serverId);
+		projections.push({
+			serverId,
+			definition,
+			config,
+			credentials: normalizeCredentials(entry),
+			enabled: nativeConfig ? !isPiServerDisabled(nativeConfig) : override === true
+		});
+	}
+
+	return projections;
+}
+
+function syncPiMcpConfigFromVault(): void {
+	if (!currentPiMcpAdapterFact().supported) return;
+	const result = syncPiMcpConfig(buildPiMcpProjections());
+	if (!result.Success) throw new Error(`Pi MCP 标准配置同步失败: ${result.Status}`);
+}
+
 /** 计算所有 MCP Server 状态（Custom/Active/Disabled/Missing/Unknown，按优先级排序）。 */
 export function computeStatus(agentContext: AgentContext = 'cc'): McpStatusRow[] {
+	if (agentContext === 'pi') {
+		return computePiStatus();
+	}
+
 	syncRuntimeMcpToVault(agentContext);
 	const runtimeServers = agentContext === 'cx' ? readCodexMcpServers() : (readClaudeJson().mcpServers ?? {});
 	const vault = loadVault();
@@ -174,10 +264,7 @@ export function computeStatus(agentContext: AgentContext = 'cc'): McpStatusRow[]
 	const contract = loadMcpContract();
 	const contractServers = contract.servers;
 
-	const allIds = new Set<string>([
-		...Object.keys(runtimeServers),
-		...Object.keys(metaServers)
-	]);
+	const allIds = new Set<string>([...Object.keys(runtimeServers), ...Object.keys(metaServers)]);
 
 	const results: McpStatusRow[] = [];
 	for (const id of allIds) {
@@ -228,23 +315,41 @@ export function computeStatus(agentContext: AgentContext = 'cc'): McpStatusRow[]
 	return results;
 }
 
+function computePiStatus(): McpStatusRow[] {
+	return computeSharedStatus().map(row => {
+		const pi = row.injectByAgent.pi;
+		const status: McpServerStatus = !pi.supported ? 'Unsupported' : pi.active ? 'Active' : 'Disabled';
+		return {
+			Id: row.Id,
+			Name: row.Name,
+			Status: status,
+			McpType: row.McpType,
+			Category: '',
+			HasCredentials: row.HasCredentials,
+			...(pi.reason ? {UnsupportedReason: pi.reason} : {})
+		};
+	});
+}
+
 /**
  * 双侧聚合投影（Section 8）：一 Server ID 一行，cc/cx 开关态各自实时从 runtime 文件派生，互不塌缩。
  *
  * 与 computeStatus 的关键区别：**纯读投影，绝不物化 vault → runtime**（computeStatus 会把 vault-only
  * 的 Codex 条目补写进 config.toml，违反「add 只写 vault、投影不改写 runtime」约束）。
- * 这里仅把两侧现有 runtime 配置**备份**进 vault 作共享定义体（供跨侧开启复用），不反向物化。
+ * 这里仅把三侧现有 runtime 配置**备份**进 vault 作共享定义体（供跨侧开启复用），不反向物化；
+ * 激活/禁用标记不进入 vault 定义。
  *
- * 列表全集 = vault 定义 ∪ ~/.claude.json mcpServers ∪ ~/.codex config.toml [mcp_servers]，按 Id 去重。
+ * 列表全集 = vault 定义 ∪ Claude runtime ∪ Codex runtime ∪ Pi native runtime，按 Id 去重。
  * 激活态只从 runtime 派生（对齐 HC-3 / mcp-multitool）：vault 有定义 ≠ 开启。
  */
 export function computeSharedStatus(): readonly McpSharedRow[] {
 	const claudeServers = readClaudeJson().mcpServers ?? {};
 	const codexServers = readCodexMcpServers();
+	const piServers = readPiRuntimeServers();
 	const contractServers = loadMcpContract().servers;
 
-	// 两侧现有 runtime 配置备份进 vault（共享定义源），不反向物化 vault → runtime。
-	backupRuntimeToVault(claudeServers, codexServers, contractServers);
+	// 三侧现有 runtime 配置备份进 vault（共享定义源），不反向物化 vault → runtime。
+	backupRuntimeToVault(claudeServers, codexServers, piServers, contractServers);
 
 	const vault = loadVault();
 	const metaServers = vault.servers ?? {};
@@ -252,6 +357,7 @@ export function computeSharedStatus(): readonly McpSharedRow[] {
 	const allIds = new Set<string>([
 		...Object.keys(claudeServers),
 		...Object.keys(codexServers),
+		...Object.keys(piServers),
 		...Object.keys(metaServers)
 	]);
 
@@ -262,22 +368,44 @@ export function computeSharedStatus(): readonly McpSharedRow[] {
 		const inClaude = Object.prototype.hasOwnProperty.call(claudeServers, id);
 		const inCodex = Object.prototype.hasOwnProperty.call(codexServers, id);
 		const metaEntry = metaServers[id];
+		const piConfig = piServers[id];
 
 		// cc：存在于 .claude.json 即开启；否则关闭（vault 有备份也不算开启）。
-		const cc: McpAgentInjectState = {active: inClaude, disabled: !inClaude};
+		const cc: McpAgentInjectState = {active: inClaude, disabled: !inClaude, supported: true};
 		// cx：存在且 enabled!==false 为开启；enabled===false 为物理禁用块（保留，归禁用）。
 		const cxDisabledBlock = inCodex && isCodexServerDisabled(codexConfig);
-		const cx: McpAgentInjectState = {active: inCodex && !cxDisabledBlock, disabled: !inCodex || cxDisabledBlock};
+		const cx: McpAgentInjectState = {active: inCodex && !cxDisabledBlock, disabled: !inCodex || cxDisabledBlock, supported: true};
 
 		const def = contractServers[id];
 		const name = def?.Name || id;
-		const mcpType = def?.McpType || (typeof (claudeConfig ?? codexConfig)?.type === 'string' ? String((claudeConfig ?? codexConfig)!.type) : '');
+		const mcpType = def?.McpType || mcpTypeFromConfig(claudeConfig) || mcpTypeFromConfig(codexConfig) || mcpTypeFromConfig(piConfig);
 		const hasCredentials = def
 			? Boolean(def.CredentialType && def.CredentialType !== 'none')
-			: Boolean(metaEntry?.credentials);
+			: Boolean(metaEntry?.credentials) || hasRuntimeCredentials(piConfig);
 		const hasDefinition = Boolean(metaEntry?.config);
+		const piDefinition = def ? resolveEffectiveDefinition(def, 'pi') : null;
+		const piFact = currentPiMcpAdapterFact();
+		const piReason = piMcpUnsupportedReason(piFact, piDefinition, piConfig ?? metaEntry?.config ?? null);
+		const pi: McpAgentInjectState = piReason
+			? {active: false, disabled: false, supported: false, reason: piMcpDisplayReason(piReason)}
+			: {
+					active: Boolean(piConfig) && !isPiServerDisabled(piConfig),
+					disabled: !piConfig || isPiServerDisabled(piConfig),
+					supported: true
+				};
 
-		rows.push({Id: id, Name: name, McpType: mcpType, HasCredentials: hasCredentials, hasDefinition, injectByAgent: {cc, cx}});
+		rows.push({
+			Id: id,
+			Name: name,
+			McpType: mcpType,
+			HasCredentials: hasCredentials,
+			hasDefinition,
+			injectByAgent: {
+				cc: {...cc, supported: true},
+				cx,
+				pi
+			}
+		});
 	}
 
 	rows.sort((a, b) => a.Name.localeCompare(b.Name));
@@ -285,30 +413,29 @@ export function computeSharedStatus(): readonly McpSharedRow[] {
 }
 
 /**
- * 把两侧现有 runtime 配置备份进 vault 作共享定义源（纯备份，不反向物化）。
- * - 存前剥离 `enabled`：vault 存纯定义体，开关态由 runtime 派生（与 persistSharedDefinition 对齐；
- *   否则 Codex 的 `enabled:false` 会随 enableClaudeServer 原样泄漏进 .claude.json）。
- * - 同 ID 双侧都存在时 **Claude 优先**：cc 方言更规范（保留 type/headers，可经 toCodexMcpConfig 降级到
+ * 把 Claude/Codex/Pi 现有 runtime 配置备份进 vault 作共享定义源（纯备份，不反向物化）。
+ * - 存前剥离 `enabled`/`disabled`：vault 存纯定义体，开关态由 runtime 派生（与 persistSharedDefinition 对齐；
+ *   否则 Codex 的 `enabled:false` 或 Pi 的 `disabled:true` 会随跨侧恢复原样泄漏）。
+ * - 同 ID 多侧都存在时 **Claude 优先，其次 Codex，最后 Pi**：cc 方言更规范（保留 type/headers，可经 toCodexMcpConfig 降级到
  *   Codex；反向无法从 Codex 形状恢复 type/headers），故用 cc 定义体作共享源。
  */
 function backupRuntimeToVault(
 	claudeServers: Record<string, Record<string, unknown>>,
 	codexServers: Record<string, Record<string, unknown>>,
+	piServers: Record<string, Record<string, unknown>>,
 	contractServers: Record<string, McpServerDefinition>
 ): void {
 	withVaultLock(() => {
 		const meta = loadVault();
 		let changed = false;
 
-		// Claude 优先：先展开 codex，再用 claude 覆盖（后展开胜出）。
-		for (const [id, config] of Object.entries({...codexServers, ...claudeServers})) {
+		// Claude 优先，其次 Codex，最后 Pi：先展开 Pi，再 Codex，最后 Claude（后展开胜出）。
+		for (const [id, config] of Object.entries({...piServers, ...codexServers, ...claudeServers})) {
 			if (!config || typeof config !== 'object' || Array.isArray(config)) {
 				continue;
 			}
 
-			const {enabled: _enabled, ...pureConfig} = config;
-			void _enabled;
-			backupRuntimeMcpToVault(meta, id, pureConfig, contractServers);
+			backupRuntimeMcpToVault(meta, id, config, contractServers);
 			changed = true;
 		}
 
@@ -334,11 +461,15 @@ export type McpServerDetail = {
 export function getServerDetail(serverId: string, agentContext: AgentContext = 'cc'): McpServerDetail {
 	const contract = loadMcpContract();
 	const definition = contract.servers[serverId] ?? null;
-	const runtimeServers = agentContext === 'cx' ? readCodexMcpServers() : (readClaudeJson().mcpServers ?? {});
+	const runtimeServers = agentContext === 'cx' ? readCodexMcpServers() : agentContext === 'cc' ? (readClaudeJson().mcpServers ?? {}) : {};
 	const vault = loadVault();
 	const vaultEntry = vault.servers?.[serverId] ?? null;
+	const piRuntimeServers = readPiRuntimeServers();
 	// config 优先取当前 Agent 运行时配置；若已禁用/删除且 vault 有备份，则用于编辑回显。
-	const config = runtimeServers[serverId] ?? vaultEntry?.config ?? null;
+	const config =
+		agentContext === 'pi'
+			? piRuntimeServers[serverId] ?? vaultEntry?.config ?? null
+			: runtimeServers[serverId] ?? vaultEntry?.config ?? piRuntimeServers[serverId] ?? null;
 
 	const settings = readSettings();
 	const allow = agentContext === 'cc' ? ((settings.permissions as {allow?: string[]} | undefined)?.allow ?? []) : [];
@@ -439,7 +570,14 @@ export function syncCredentials(): SyncCredentialsResult {
 
 // ── 变更层（disable / enable / remove） ─────────────────────────────────────
 
-function backupMcpToVault(meta: McpVault, serverId: string, config: Record<string, unknown>, credentials: Record<string, string>, permissions: string[], definitionHashValue: string): void {
+function backupMcpToVault(
+	meta: McpVault,
+	serverId: string,
+	config: Record<string, unknown>,
+	credentials: Record<string, string>,
+	permissions: string[],
+	definitionHashValue: string
+): void {
 	meta.servers[serverId] = {
 		credentials: Object.keys(credentials).length > 0 ? {values: credentials} : undefined,
 		config,
@@ -465,6 +603,11 @@ function readSettingsForWrite(): {settings: Record<string, unknown>; allow: stri
 
 /** 禁用 MCP Server（Claude：备份到 vault → 移除 .claude.json + permission；Codex：写 enabled=false）。 */
 export function disableServer(serverId: string, agentContext: AgentContext = 'cc'): McpActionResult {
+	if (agentContext === 'pi') {
+		syncRuntimeMcpToVault(agentContext);
+		return writePiServerOverride(serverId, false);
+	}
+
 	syncRuntimeMcpToVault(agentContext);
 	return agentContext === 'cx' ? disableCodexServer(serverId) : disableClaudeServer(serverId);
 }
@@ -532,6 +675,11 @@ function disableClaudeServer(serverId: string): McpActionResult {
 
 /** 启用 MCP Server（Claude：从 vault 恢复 config + permission；Codex：写/恢复 [mcp_servers.<id>]）。 */
 export function enableServer(serverId: string, agentContext: AgentContext = 'cc'): McpActionResult {
+	if (agentContext === 'pi') {
+		syncRuntimeMcpToVault(agentContext);
+		return writePiServerOverride(serverId, true);
+	}
+
 	syncRuntimeMcpToVault(agentContext);
 	return agentContext === 'cx' ? enableCodexServer(serverId) : enableClaudeServer(serverId);
 }
@@ -646,8 +794,79 @@ export function removeServer(serverId: string, confirmed = false, agentContext: 
 		return {Success: false, ServerId: serverId, Status: 'NeedConfirmation'};
 	}
 
+	if (agentContext === 'pi') {
+		syncRuntimeMcpToVault(agentContext);
+		return removePiServerOverride(serverId);
+	}
+
 	syncRuntimeMcpToVault(agentContext);
 	return agentContext === 'cx' ? removeCodexServer(serverId) : removeClaudeServer(serverId);
+}
+
+function piServerInputs(serverId: string): {
+	definition: McpServerDefinition | null;
+	config: Record<string, unknown> | null;
+	credentials: Readonly<Record<string, string>>;
+} {
+	const base = loadMcpContract().servers[serverId];
+	const definition = base ? resolveEffectiveDefinition(base, 'pi') : null;
+	const entry = loadVault().servers[serverId];
+	const config = entry?.config ?? readPiRuntimeServers()[serverId] ?? null;
+	return {definition, config, credentials: normalizeCredentials(entry)};
+}
+
+function writePiServerOverride(serverId: string, enabled: boolean): McpActionResult {
+	const {definition, config, credentials} = piServerInputs(serverId);
+	return writePiMcpOverride(serverId, enabled, definition, config, credentials);
+}
+
+function removePiServerOverride(serverId: string): McpActionResult {
+	const {definition, config, credentials} = piServerInputs(serverId);
+	return removePiMcpOverride(serverId, definition, config, credentials);
+}
+
+export async function detectPiMcpStatus(exec: typeof execCommand = execCommand): Promise<PiMcpAdapterFact> {
+	return detectPiMcpAdapter(exec);
+}
+
+export async function computeSharedStatusAsync(exec: typeof execCommand = execCommand): Promise<readonly McpSharedRow[]> {
+	await detectPiMcpAdapter(exec);
+	// 先读取/备份其它 Agent 的 runtime，再投影 Pi，最后重新读取 native 状态作为最终事实。
+	computeSharedStatus();
+	syncPiMcpConfigFromVault();
+	return computeSharedStatus();
+}
+
+export async function enableServerAsync(
+	serverId: string,
+	agentContext: AgentContext = 'cc',
+	exec: typeof execCommand = execCommand
+): Promise<McpActionResult> {
+	if (agentContext !== 'pi') return enableServer(serverId, agentContext);
+	await detectPiMcpAdapter(exec);
+	return enableServer(serverId, agentContext);
+}
+
+export async function disableServerAsync(
+	serverId: string,
+	agentContext: AgentContext = 'cc',
+	exec: typeof execCommand = execCommand
+): Promise<McpActionResult> {
+	if (agentContext !== 'pi') return disableServer(serverId, agentContext);
+	await detectPiMcpAdapter(exec);
+	return disableServer(serverId, agentContext);
+}
+
+export async function removeServerAsync(
+	serverId: string,
+	confirmed = false,
+	agentContext: AgentContext = 'cc',
+	exec: typeof execCommand = execCommand
+): Promise<McpActionResult> {
+	if (agentContext !== 'pi') return removeServer(serverId, confirmed, agentContext);
+	if (!confirmed) return removeServer(serverId, false, agentContext);
+	await detectPiMcpAdapter(exec);
+	return removeServer(serverId, true, agentContext);
 }
 
 function removeCodexServer(serverId: string): McpActionResult {
@@ -788,6 +1007,7 @@ export function persistSharedDefinition(
  * 编辑保存（Section 9.3）：写 vault 共享定义 + 同步到所有**当前已开启**侧。
  * - cc 已开启（.claude.json 存在）→ 覆盖写 .claude.json；未开启不碰。
  * - cx 已开启（config.toml 存在且非 enabled=false）→ 覆盖写 config.toml；禁用/不存在不碰。
+ * - pi 已开启（Pi native mcp.json 存在且 disabled!==true）→ 同步 Pi 标准配置；未开启不碰。
  * - 均未开启：只写 vault。
  * 未开启侧一律不开启（对齐 spec「edit SHALL NOT enable a side that was not previously 开启」）。
  */
@@ -797,6 +1017,17 @@ export function syncSharedDefinition(
 	credentials: Record<string, string>,
 	definitionHashValue: string
 ): McpActionResult {
+	const piConfig = readPiRuntimeServers()[serverId];
+	const piActive = Boolean(piConfig) && !isPiServerDisabled(piConfig);
+	if (piActive) {
+		const baseDefinition = loadMcpContract().servers[serverId];
+		const piDefinition = baseDefinition ? resolveEffectiveDefinition(baseDefinition, 'pi') : null;
+		const piReason = piMcpUnsupportedReason(currentPiMcpAdapterFact(), piDefinition, config);
+		if (piReason) {
+			return {Success: false, ServerId: serverId, Status: `Unsupported: ${piMcpDisplayReason(piReason)}`};
+		}
+	}
+
 	persistSharedDefinition(serverId, config, credentials, definitionHashValue);
 
 	const claudeActive = Boolean(readClaudeJson().mcpServers?.[serverId]);
@@ -811,11 +1042,16 @@ export function syncSharedDefinition(
 		persistCodexMcpServer(serverId, config, credentials, definitionHashValue);
 	}
 
+	if (piActive) {
+		const piResult = writePiServerOverride(serverId, true);
+		if (!piResult.Success) return piResult;
+	}
+
 	return {Success: true, ServerId: serverId, Status: 'Saved'};
 }
 
 /**
- * 全量删除（Section 9.4 / d 键）：两侧 runtime 移除 + 删 vault 定义 + 清 settings permission。
+ * 全量删除（Section 9.4 / d 键）：移除 CCQ 管理的各侧 runtime + 删 vault 定义 + 清 settings permission。
  * 对齐 spec「d SHALL perform a full destructive delete across both sides and the vault definition」。
  */
 export function removeSharedServer(serverId: string, confirmed = false): McpActionResult {
@@ -824,6 +1060,10 @@ export function removeSharedServer(serverId: string, confirmed = false): McpActi
 	}
 
 	return withVaultLock(() => {
+		// Pi：先清理 adapter-owned override 记录；文件损坏时停止，避免其他侧已删而 Pi 残留。
+		const piCleanup = removePiMcpOverrideRecord(serverId);
+		if (!piCleanup.Success) return piCleanup;
+
 		// Claude：移除 .claude.json + settings permission。
 		const claudeJson = readClaudeJson();
 		if (claudeJson.mcpServers?.[serverId]) {
@@ -856,4 +1096,3 @@ export function removeSharedServer(serverId: string, confirmed = false): McpActi
 		return {Success: true, ServerId: serverId, Status: 'Removed'};
 	});
 }
-

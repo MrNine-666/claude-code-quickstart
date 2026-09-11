@@ -1,15 +1,15 @@
-import React from 'react';
-import { TextAttributes } from '@opentui/core';
-import { useKeyboard } from '@opentui/react';
-import { colors } from '../../theme/index.js';
-import { isEditingModifier } from '../../utils/keyboard.js';
-import { ErrorPanel } from '../error-panel.js';
-import { TextField } from './TextField.js';
-import { SelectField } from './SelectField.js';
-import { RadioField } from './RadioField.js';
-import { KeyValueField, serializeEntries } from './KeyValueField.js';
-import { FormLabel, FORM_VALUE_MARGIN_LEFT } from './FormLabel.js';
-import type { FormField } from './field-types.js';
+import type {ReactNode} from 'react';
+import {TextAttributes, type KeyEvent} from '@opentui/core';
+import {useKeyboard} from '@opentui/react';
+import {colors} from '../../theme/index.js';
+import {isEditingModifier} from '../../utils/keyboard.js';
+import {ErrorPanel} from '../error-panel.js';
+import {TextField} from './TextField.js';
+import {SelectField} from './SelectField.js';
+import {RadioField} from './RadioField.js';
+import {KeyValueField, serializeEntries} from './KeyValueField.js';
+import {FormLabel, FORM_VALUE_MARGIN_LEFT} from './FormLabel.js';
+import type {FormField} from './field-types.js';
 
 // 通用表单容器（Provider / MCP 复用）：
 // - ↑/↓ 切换可编辑字段（跳过 readonly/disabled，循环）
@@ -31,6 +31,10 @@ export type FormPanelProps = {
 	readonly onFieldChange: (id: string, value: string) => void;
 	readonly onSubmit: () => void;
 	readonly onCancel: () => void;
+	/** Page-owned app shortcut hook; runs before generic form modifier handling. */
+	readonly onKeyEvent?: (keyEvent: KeyEvent) => boolean;
+	/** Optional page-owned custom content rendered in the same vertical field flow. */
+	readonly custom?: ReactNode;
 };
 
 /** 字段是否可编辑（readonly / disabled 不可聚焦）。 */
@@ -39,12 +43,11 @@ export function isEditableField(field: FormField): boolean {
 }
 
 /** 下一个可编辑字段索引（↑/↓ 跳过 readonly，循环移动）。 */
-export function nextEditableIndex(
-	fields: readonly FormField[],
-	from: number,
-	direction: 1 | -1
-): number {
-	const editableIndexes = fields.map((field, index) => ({field, index})).filter(({field}) => isEditableField(field)).map(({index}) => index);
+export function nextEditableIndex(fields: readonly FormField[], from: number, direction: 1 | -1): number {
+	const editableIndexes = fields
+		.map((field, index) => ({field, index}))
+		.filter(({field}) => isEditableField(field))
+		.map(({index}) => index);
 	if (editableIndexes.length === 0) {
 		return 0;
 	}
@@ -79,14 +82,19 @@ export function FormPanel({
 	onSelectChange,
 	onFieldChange,
 	onSubmit,
-	onCancel
+	onCancel,
+	onKeyEvent,
+	custom
 }: FormPanelProps) {
-	useKeyboard((keyEvent) => {
+	useKeyboard(keyEvent => {
 		if (!active) {
 			return;
 		}
 
 		const name = keyEvent.name.toLowerCase();
+		if (onKeyEvent?.(keyEvent)) {
+			return;
+		}
 
 		// 保存按编辑语义处理：macOS Cmd+S，其他平台 Ctrl+S。
 		if (name === 's' && isEditingModifier(keyEvent)) {
@@ -105,6 +113,8 @@ export function FormPanel({
 			return;
 		}
 
+		const field = fields[focusedIndex];
+
 		// 字段间切换：↑/↓（跳过 readonly/disabled，循环移动）。
 		if (name === 'up' || name === 'arrowup') {
 			onMoveFocus(-1);
@@ -117,7 +127,6 @@ export function FormPanel({
 		}
 
 		// radio/select 选项切换：←/→ 与 Tab/Shift+Tab（上下键已让给字段切换）。
-		const field = fields[focusedIndex];
 		if (field?.type === 'select' || field?.type === 'radio') {
 			const prev = name === 'left' || name === 'arrowleft' || name === 'shift-tab' || (name === 'tab' && keyEvent.shift);
 			const next = name === 'right' || name === 'arrowright' || (name === 'tab' && !keyEvent.shift);
@@ -138,18 +147,22 @@ export function FormPanel({
 	const fieldNodes = fields.map((field, index) => {
 		const focused = index === focusedIndex;
 		const live = values[field.id] ?? '';
-		let node: React.ReactNode;
+		let node: ReactNode;
 
 		if (field.type === 'readonly') {
 			node = (
 				<box flexDirection="column">
-					<box flexDirection="row" alignItems="center">
+					<box flexDirection="row" alignItems="flex-start">
 						<FormLabel label={field.label} focused={focused} />
-						<text fg={colors.muted}>{live || field.value}</text>
+						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+							{live || field.value || '（空）'}
+						</text>
 					</box>
 					{field.helpText ? (
 						<box marginLeft={FORM_VALUE_MARGIN_LEFT}>
-							<text fg={colors.muted} attributes={TextAttributes.DIM}>{field.helpText}</text>
+							<text fg={colors.muted} attributes={TextAttributes.DIM} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+								{field.helpText}
+							</text>
 						</box>
 					) : null}
 				</box>
@@ -172,7 +185,7 @@ export function FormPanel({
 					options={field.options}
 					helpText={field.helpText}
 					focused={focused}
-					onChange={(value) => onFieldChange(field.id, value)}
+					onChange={value => onFieldChange(field.id, value)}
 				/>
 			);
 		} else if (field.type === 'key-value') {
@@ -184,7 +197,7 @@ export function FormPanel({
 					helpText={field.helpText}
 					focused={focused}
 					active={active}
-					onChange={(text) => onFieldChange(field.id, text)}
+					onChange={text => onFieldChange(field.id, text)}
 				/>
 			);
 		} else {
@@ -196,7 +209,14 @@ export function FormPanel({
 					helpText={field.helpText}
 					focused={focused}
 					active={active}
-					onChange={(value) => onFieldChange(field.id, value)}
+					onChange={value => onFieldChange(field.id, value)}
+					onKeyDown={
+						onKeyEvent
+							? keyEvent => {
+									if (onKeyEvent(keyEvent)) keyEvent.preventDefault();
+								}
+							: undefined
+					}
 				/>
 			);
 		}
@@ -211,13 +231,14 @@ export function FormPanel({
 	return (
 		<box flexDirection="column">
 			<box marginBottom={1}>
-				<text fg={colors.primary} attributes={TextAttributes.BOLD}>
+				<text fg={colors.primary} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 					{title}
 				</text>
 			</box>
 
 			<box flexDirection="column">
 				{fieldNodes}
+				{custom}
 			</box>
 
 			{errors && errors.length > 0 ? (

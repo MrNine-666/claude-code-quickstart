@@ -23,8 +23,14 @@ import {removeSkillTarget} from '../src/core/skills-storage.ts';
 // 合法 canonical 投影删除不会被误判逃逸（task 07-28-skills-multi-source-topology C6 修复）。
 // 这里 home 仍对齐到 realpath 长名保持与历史 fixture 一致；短名 home 现已同样可正确验证。
 const home = await realpath(await mkdtemp(join(tmpdir(), 'ccq-del-')));
-const roots = supportedSkillsRoots(home);
-for (const dir of [join(home, '.claude', 'skills'), join(home, '.agents', 'skills'), join(home, '.codex', 'skills')]) {
+const roots = supportedSkillsRoots(home, home);
+for (const dir of [
+	join(home, '.claude', 'skills'),
+	join(home, '.agents', 'skills'),
+	join(home, '.codex', 'skills'),
+	join(home, '.pi', 'agent', 'skills'),
+	join(home, '.pi', 'skills')
+]) {
 	await mkdir(dir, {recursive: true});
 }
 
@@ -118,6 +124,21 @@ try {
 		const verdict = await verifySkillDeletionTarget(solo, 'solo', roots, index);
 		assert.equal(verdict.ok, true);
 		console.log('[PASS] C-7 所有权无歧义：放行');
+	}
+
+	// ── C-7b Pi 原生根：全局与项目路径都必须被精确分类 ────────────────────────
+	{
+		const globalPi = join(home, '.pi', 'agent', 'skills', 'native-global');
+		const projectPi = join(home, '.pi', 'skills', 'native-project');
+		await mkdir(globalPi);
+		await mkdir(projectPi);
+		const globalVerdict = await verifySkillDeletionTarget(globalPi, 'native-global', roots);
+		const projectVerdict = await verifySkillDeletionTarget(projectPi, 'native-project', roots);
+		assert.equal(globalVerdict.ok, true);
+		assert.equal(globalVerdict.target.root, 'pi-global');
+		assert.equal(projectVerdict.ok, true);
+		assert.equal(projectVerdict.target.root, 'pi-project');
+		console.log('[PASS] C-7b Pi 原生全局/项目根：路径分类与删除门禁');
 	}
 
 	// ── C-8 shared symlink：symlink 判定 + 目标解析（平台支持时） ─────────────

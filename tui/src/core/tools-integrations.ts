@@ -237,6 +237,10 @@ export function removeClaudeCodeGraphSettings(): void {
 
 /** 单侧解除 CodeGraph 集成（直改配置 + 清理指令块，绝不触碰共享 CLI）。 */
 export function removeCodeGraphIntegration(context: AgentContext): void {
+	if (context === 'pi') {
+		return;
+	}
+
 	if (context === 'cx') {
 		removeCodexCodeGraphIntegration();
 		removeCodeGraphInstructionBlock(join(codexDir(), 'AGENTS.md'));

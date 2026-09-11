@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
-import {access, cp, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile} from 'node:fs/promises';
+import {access, cp, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {inspectSkillStorage} from '../src/core/skills-storage.ts';
 import {runSkillsAdd, runSkillsRemove} from '../src/core/skills-actions.ts';
 import {groupInstalledSkillItems} from '../src/core/skills-installed.ts';
-import {targetTopologyOfDraft, topologyOfInspection, transitionSkillTopology} from '../src/services/skills-adoption.ts';
+import {targetTopologyOfDraft, topologyOfInspection, transitionSkillAgents, transitionSkillTopology} from '../src/services/skills-adoption.ts';
 import {cleanupConfirmedReplacementSnapshots, installSearchResultsToTargets} from '../src/services/skills-service.ts';
 
 // 迁移事务门禁（task 07-28-skills-multi-source-topology / design §8.4 / Checkpoint C5）。
 // 输入模型已从旧 SkillSharedRow 迁到 InstalledSkillItem：拓扑身份由 Item `agents` 派生，
-// `.codex` 收编经 official add 物化受管根 + 定向删除旧源，物化判定只看存储 kind 不比较内容。
+// `.codex` 与 Pi 全局 native 收编经 official add 物化受管根 + 定向删除旧源，
+// 物化判定只看存储 kind 不比较内容。
 
 const roots = [];
 
@@ -57,9 +58,14 @@ function codexRecord(homeDir, name, source, extra = []) {
 	return {name, path: join(homeDir, '.codex', 'skills', name), scope: 'global', agents: ['Codex', ...extra], source};
 }
 
+function piGlobalRecord(homeDir, name, source, extra = []) {
+	return {name, path: join(homeDir, '.pi', 'agent', 'skills', name), scope: 'global', agents: ['Pi', ...extra], source};
+}
+
 /**
  * 按拓扑构造单逻辑实例 Item。`location: 'codex'` 表示 codex-only 实体落在非受管 `.codex`
- * （需迁移收编）；默认 codex-only 落在受管 `.agents` canonical。`extraAgents` 注入第三方
+ * （需迁移收编）；`pi-only` 表示全局 Pi native 旧源；默认 codex-only 落在受管 `.agents` canonical。
+ * `extraAgents` 注入第三方
  * universal agent（如 Cursor）以验证 Claude-only 占用阻断。
  */
 function itemFor(homeDir, name, topology, {source = 'o/repo', extraAgents = [], location = 'agents'} = {}) {
@@ -68,6 +74,8 @@ function itemFor(homeDir, name, topology, {source = 'o/repo', extraAgents = [], 
 		records = [claudeRecord(homeDir, name, source, extraAgents)];
 	} else if (topology === 'codex-only') {
 		records = location === 'codex' ? [codexRecord(homeDir, name, source, extraAgents)] : [canonicalRecord(homeDir, name, source, extraAgents)];
+	} else if (topology === 'pi-only') {
+		records = [piGlobalRecord(homeDir, name, source, extraAgents)];
 	} else {
 		records = [canonicalRecord(homeDir, name, source, extraAgents), claudeRecord(homeDir, name, source)];
 	}
@@ -88,6 +96,7 @@ function topologyExecEmulator(homeDir, calls, {sharedMode = 'link', fail = () =>
 		const source = verb === 'add' ? args[args.indexOf('add') + 1] : undefined;
 		const canonical = join(homeDir, '.agents', 'skills', name);
 		const claude = join(homeDir, '.claude', 'skills', name);
+		const pi = join(homeDir, '.pi', 'agent', 'skills', name);
 		calls.push({command, args: [...args], options, verb, agents, before: (await inspectSkillStorage(name, {homeDir})).kind});
 
 		if (verb === 'remove') {
@@ -97,6 +106,10 @@ function topologyExecEmulator(homeDir, calls, {sharedMode = 'link', fail = () =>
 
 			if (agents.length === 0 || agents.includes('codex')) {
 				await rm(canonical, {recursive: true, force: true});
+			}
+
+			if (agents.length === 0 || agents.includes('pi')) {
+				await rm(pi, {recursive: true, force: true});
 			}
 		} else if (verb === 'add') {
 			const staged = join(source, name);
@@ -115,6 +128,16 @@ function topologyExecEmulator(homeDir, calls, {sharedMode = 'link', fail = () =>
 				} else {
 					await symlink(canonical, claude, process.platform === 'win32' ? 'junction' : 'dir');
 				}
+			} else if (agents.join(',') === 'codex,pi') {
+				await rm(canonical, {recursive: true, force: true});
+				await rm(pi, {recursive: true, force: true});
+				await cp(staged, canonical, {recursive: true});
+				await mkdir(join(homeDir, '.pi', 'agent', 'skills'), {recursive: true});
+				await symlink(canonical, pi, process.platform === 'win32' ? 'junction' : 'dir');
+			} else if (agents.length === 1 && agents[0] === 'pi') {
+				await rm(pi, {recursive: true, force: true});
+				await mkdir(join(homeDir, '.pi', 'agent', 'skills'), {recursive: true});
+				await cp(staged, pi, {recursive: true});
 			}
 		}
 
@@ -470,7 +493,7 @@ async function verifyPartialAndRepair() {
 	console.log('[PASS] Windows copy partial 与 Codex-only → shared 补齐 Claude 投影（Item 输入）');
 }
 
-// `.codex` 收编（design §8.4）：非受管 `.codex` 实体即使目标侧不变也必须迁移到受管 `.agents`。
+// 旧 Codex/Pi native 收编（design §8.4）：非受管旧实体即使目标侧不变也必须迁移到受管 `.agents`。
 async function verifyCodexMigration() {
 	const {homeDir, tempDir} = await createHome();
 	await mkdir(join(homeDir, '.codex', 'skills'), {recursive: true});
@@ -501,6 +524,116 @@ async function verifyCodexMigration() {
 	assert.equal(managedCalls.length, 0);
 
 	console.log('[PASS] .codex 收编：official add 物化 .agents + 定向删除旧源；受管 codex-only 保持 no-op');
+}
+
+async function verifyPiGlobalMigration() {
+	const {homeDir, tempDir} = await createHome();
+	const piRoot = join(homeDir, '.pi', 'agent', 'skills');
+	await writeSkill(piRoot, 'pi-legacy', 'preserved');
+	const calls = [];
+	const item = itemFor(homeDir, 'pi-legacy', 'pi-only', {source: 'o/pi-legacy'});
+	const result = await transitionSkillTopology(item, 'codex-only', undefined, topologyExecEmulator(homeDir, calls), {homeDir, tempDir});
+	assert.equal(result.outcome, 'complete', `Pi global → Codex/Pi shared 收编应完成：${result.error ?? ''}`);
+	assert.equal(result.success, true);
+	assert.equal(result.mutated, true);
+	assert.deepEqual(agentsFromArgs(calls[0].args), ['codex'], 'Pi global 收编应通过 Codex target 物化 .agents');
+	assert.equal((await inspectSkillStorage('pi-legacy', {homeDir})).kind, 'canonical-only', '收编后受管根必须是 canonical-only');
+	assert.equal(await readFile(join(homeDir, '.agents', 'skills', 'pi-legacy', 'scripts', 'run.txt'), 'utf8'), 'preserved', '内容必须从 Pi global 源保留');
+	await assert.rejects(() => access(join(piRoot, 'pi-legacy')), undefined, 'Pi global 旧源必须被定向删除');
+
+	console.log('[PASS] Pi global 收编：official add 物化 .agents + 定向删除 ~/.pi/agent/skills 旧源');
+}
+
+async function verifyIndependentPiTarget() {
+	const addHome = await createHome();
+	await seedTopology(addHome.homeDir, 'keep-pi', 'shared', 'pi-content');
+	const addCalls = [];
+	const addResult = await transitionSkillAgents(
+		itemFor(addHome.homeDir, 'keep-pi', 'shared'),
+		{cc: true, cx: true, pi: true},
+		undefined,
+		topologyExecEmulator(addHome.homeDir, addCalls),
+		{homeDir: addHome.homeDir, tempDir: addHome.tempDir}
+	);
+	assert.equal(addResult.success, true, `Claude Code → Claude Code + Pi 应完成：${addResult.error ?? ''}`);
+	assert.equal(addResult.mutated, true);
+	assert.equal(addCalls.length, 1, '已有共享 C/X 时只新增 Pi，不得重复执行 C/X 安装');
+	assert.deepEqual(agentsFromArgs(addCalls[0].args), ['codex', 'pi'], 'Pi 必须与 Codex canonical 一起安装');
+	assert.equal(addCalls[0].args.includes('--copy'), false, 'Pi 必须使用 symlink 模式');
+	assert.equal(addCalls[0].args.includes('-g'), true, 'Pi global target 必须带 -g');
+	assert.equal((await lstat(join(addHome.homeDir, '.pi', 'agent', 'skills', 'keep-pi'))).isSymbolicLink(), true, 'Pi 目标必须是 canonical 软链接');
+	assert.equal((await inspectSkillStorage('keep-pi', {homeDir: addHome.homeDir})).kind, 'shared-symlink');
+
+	const removeHome = await createHome();
+	await writeSkill(join(removeHome.homeDir, '.claude', 'skills'), 'remove-pi', 'content');
+	await writeSkill(join(removeHome.homeDir, '.pi', 'agent', 'skills'), 'remove-pi', 'content');
+	const removeItem = groupInstalledSkillItems([
+		claudeRecord(removeHome.homeDir, 'remove-pi', 'o/remove-pi'),
+		piGlobalRecord(removeHome.homeDir, 'remove-pi', 'o/remove-pi')
+	])[0];
+	const removeCalls = [];
+	const removeResult = await transitionSkillAgents(
+		removeItem,
+		{cc: true, cx: false, pi: false},
+		undefined,
+		topologyExecEmulator(removeHome.homeDir, removeCalls),
+		{homeDir: removeHome.homeDir, tempDir: removeHome.tempDir}
+	);
+	assert.equal(removeResult.success, true, `Pi global 删除应完成：${removeResult.error ?? ''}`);
+	assert.deepEqual(agentsFromArgs(removeCalls[0].args), ['pi'], 'Pi 删除必须独立使用 --agent pi');
+	assert.equal(removeCalls[0].args.includes('-g'), true, 'Pi global 删除必须带 -g');
+	assert.match(removeCalls[0].options.env.CODEX_HOME, /\.agents$/, 'Pi 删除必须保留 canonical CODEX_HOME');
+	await assert.rejects(() => access(join(removeHome.homeDir, '.pi', 'agent', 'skills', 'remove-pi')));
+
+	const failedRemoveHome = await createHome();
+	await writeSkill(join(failedRemoveHome.homeDir, '.claude', 'skills'), 'failed-remove-pi', 'content');
+	await writeSkill(join(failedRemoveHome.homeDir, '.pi', 'agent', 'skills'), 'failed-remove-pi', 'content');
+	const failedRemoveItem = groupInstalledSkillItems([
+		claudeRecord(failedRemoveHome.homeDir, 'failed-remove-pi', 'o/failed-remove-pi'),
+		piGlobalRecord(failedRemoveHome.homeDir, 'failed-remove-pi', 'o/failed-remove-pi')
+	])[0];
+	const failedRemove = await transitionSkillAgents(
+		failedRemoveItem,
+		{cc: true, cx: false, pi: false},
+		undefined,
+		async () => ({code: 1, stdout: '', stderr: 'simulated remove failure'}),
+		{homeDir: failedRemoveHome.homeDir, tempDir: failedRemoveHome.tempDir}
+	);
+	assert.equal(failedRemove.success, false, 'Pi 删除命令失败且目标仍在时不得伪报成功');
+	assert.equal(failedRemove.outcome, 'partial');
+	assert.equal(await access(join(failedRemoveHome.homeDir, '.pi', 'agent', 'skills', 'failed-remove-pi')).then(() => true), true);
+
+	const keepHome = await createHome();
+	await writeSkill(join(keepHome.homeDir, '.pi', 'agent', 'skills'), 'pi-only', 'native');
+	const keepCalls = [];
+	const keepResult = await transitionSkillAgents(
+		itemFor(keepHome.homeDir, 'pi-only', 'pi-only'),
+		{cc: false, cx: false, pi: true},
+		undefined,
+		topologyExecEmulator(keepHome.homeDir, keepCalls),
+		{homeDir: keepHome.homeDir, tempDir: keepHome.tempDir}
+	);
+	assert.equal(keepResult.success, true, `Pi global native 应迁移为 canonical 软链接：${keepResult.error ?? ''}`);
+	assert.equal(keepResult.mutated, true);
+	assert.deepEqual(keepCalls.map(call => call.agents), [['codex'], ['codex', 'pi']]);
+	assert.equal((await lstat(join(keepHome.homeDir, '.pi', 'agent', 'skills', 'pi-only'))).isSymbolicLink(), true);
+	assert.equal((await inspectSkillStorage('pi-only', {homeDir: keepHome.homeDir})).kind, 'canonical-only');
+
+	const migrateHome = await createHome();
+	await writeSkill(join(migrateHome.homeDir, '.pi', 'agent', 'skills'), 'pi-to-cc', 'native');
+	const migrateCalls = [];
+	const migrateResult = await transitionSkillAgents(
+		itemFor(migrateHome.homeDir, 'pi-to-cc', 'pi-only'),
+		{cc: true, cx: false, pi: true},
+		undefined,
+		topologyExecEmulator(migrateHome.homeDir, migrateCalls),
+		{homeDir: migrateHome.homeDir, tempDir: migrateHome.tempDir}
+	);
+	assert.equal(migrateResult.success, true, `Pi → Claude Code + Pi 应完成共享软链接：${migrateResult.error ?? ''}`);
+	assert.equal((await inspectSkillStorage('pi-to-cc', {homeDir: migrateHome.homeDir})).kind, 'shared-symlink');
+	assert.equal((await lstat(join(migrateHome.homeDir, '.pi', 'agent', 'skills', 'pi-to-cc'))).isSymbolicLink(), true);
+
+	console.log('[PASS] Skills 三目标管理：Pi 与 canonical 共享软链接，旧 Pi native 可迁移');
 }
 
 function installEmulator(homeDir, mode, calls) {
@@ -686,6 +819,8 @@ try {
 	await verifyAdoption();
 	await verifyPartialAndRepair();
 	await verifyCodexMigration();
+	await verifyPiGlobalMigration();
+	await verifyIndependentPiTarget();
 	await verifyTopologyTransitions();
 	await verifyTopologyPartialAndBlocking();
 	await verifyTopologyRecoveryAndExitFacts();

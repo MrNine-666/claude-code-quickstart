@@ -39,15 +39,17 @@ export function KeyValueField({ label, entries, text, helpText, focused, active,
 						selectionFg={colors.selectionFg}
 					/>
 					) : entries.length === 0 ? (
-						<text fg={colors.muted}>（无）</text>
+						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>（无）</text>
 					) : (
-						<text fg={colors.muted}>{entries.slice(0, 3).map((entry) => `${entry.key}=${entry.value}`).join(', ')}</text>
+						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+							{entries.slice(0, 3).map((entry) => `${entry.key}=${entry.value}`).join(', ')}
+						</text>
 					)}
 				</FormControlFrame>
 			</box>
 			{helpText ? (
 				<box marginLeft={FORM_VALUE_MARGIN_LEFT}>
-					<text fg={colors.muted} attributes={TextAttributes.DIM}>
+					<text fg={colors.muted} attributes={TextAttributes.DIM} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 						{helpText}
 					</text>
 				</box>

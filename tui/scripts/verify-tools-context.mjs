@@ -21,6 +21,8 @@ assert.equal(COMPONENT_META.CodexCli.group, 'agent', 'CodexCli 属 agent 组');
 assert.equal(COMPONENT_META.AntigravityCli.group, 'agent', 'AntigravityCli 属 agent 组');
 assert.equal(COMPONENT_META.DeepSeekHarness.group, 'agent', 'DeepSeekHarness 属 agent 组');
 assert.equal(COMPONENT_META.Ccline.group, 'companion', 'Ccline 属 companion 组');
+assert.equal(COMPONENT_META.PiCli.group, 'agent', 'PiCli 属 agent 组');
+assert.equal(COMPONENT_META.PiWeb.group, 'companion', 'PiWeb 属 companion 组');
 assert.equal(COMPONENT_META.OpenSpec.group, 'workflow', 'OpenSpec 属 workflow 组');
 assert.equal(COMPONENT_META.CcgWorkflow.group, 'workflow', 'CcgWorkflow 属 workflow 组');
 assert.equal(COMPONENT_META.CodeGraph.group, 'knowledge-graph', 'CodeGraph 属 knowledge-graph 组');
@@ -40,6 +42,13 @@ for (const id of ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'DeepSeekHarness']
 assert.equal(isComponentVisible('Ccline', 'cc'), true, 'Ccline 在 Claude Code 上下文显示');
 assert.equal(isComponentVisible('Ccline', 'cx'), false, 'Ccline 不在 Codex 上下文显示');
 
+// Pi 上下文只显示 Pi 原生 Agent 与其全局伴随 Pi Web；共享 C/X Agent 不伪装成 Pi 原生工具。
+assert.equal(isComponentVisible('PiCli', 'pi'), true, 'PiCli 在 Pi 上下文显示');
+assert.equal(isComponentVisible('PiWeb', 'pi'), true, 'PiWeb 在 Pi 上下文显示');
+assert.equal(isComponentVisible('ClaudeCode', 'pi'), false, 'ClaudeCode 不在 Pi 上下文显示');
+assert.equal(isComponentVisible('CodexCli', 'pi'), false, 'CodexCli 不在 Pi 上下文显示');
+assert.deepEqual(visibleComponentDefinitions('pi').map(d => d.id), ['PiCli', 'PiWeb'], 'Pi 上下文只显示 PiCli/PiWeb');
+
 // CodeGraph/CcgWorkflow/OpenSpec/GitNexus 两上下文都显示（生命周期按上下文分支，可见性不受限）
 for (const id of ['OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus']) {
 	assert.equal(isComponentVisible(id, 'cc'), true, `${id} 在 Claude Code 上下文可见`);
@@ -50,21 +59,25 @@ for (const id of ['OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus']
 const ccVisible = visibleComponentDefinitions('cc').map(d => d.id);
 const cxVisible = visibleComponentDefinitions('cx').map(d => d.id);
 
-// Claude Code：10 项（含 Ccline）
-assert.equal(ccVisible.length, 10, 'Claude Code 上下文可见 10 项');
+// Claude Code：12 项（含 Ccline / Pi CLI / Pi Web）
+assert.equal(ccVisible.length, 12, 'Claude Code 上下文可见 12 项');
 assert.ok(ccVisible.includes('Ccline'), 'Claude Code 上下文含 Ccline');
-// Codex：9 项（不含 Ccline）
-assert.equal(cxVisible.length, 9, 'Codex 上下文可见 9 项');
+assert.ok(ccVisible.includes('PiCli'), 'Claude Code 上下文含 PiCli');
+assert.ok(ccVisible.includes('PiWeb'), 'Claude Code 上下文含 PiWeb');
+// Codex：11 项（不含 Ccline，保留全局 PiWeb）
+assert.equal(cxVisible.length, 11, 'Codex 上下文可见 11 项');
 assert.equal(cxVisible.includes('Ccline'), false, 'Codex 上下文不含 Ccline');
-// 两种上下文都含 ClaudeCode/CodexCli/AntigravityCli/DeepSeekHarness/OpenSpec/Trellis/CcgWorkflow/CodeGraph/GitNexus
-for (const id of ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'DeepSeekHarness', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus']) {
+assert.ok(cxVisible.includes('PiCli'), 'Codex 上下文含 PiCli');
+assert.ok(cxVisible.includes('PiWeb'), 'Codex 上下文含 PiWeb');
+// 两种上下文都含 ClaudeCode/CodexCli/PiCli/AntigravityCli/DeepSeekHarness/OpenSpec/Trellis/CcgWorkflow/CodeGraph/GitNexus
+for (const id of ['ClaudeCode', 'CodexCli', 'PiCli', 'AntigravityCli', 'DeepSeekHarness', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus']) {
 	assert.ok(ccVisible.includes(id), `Claude Code 含 ${id}`);
 	assert.ok(cxVisible.includes(id), `Codex 含 ${id}`);
 }
-// 可见列表按工具管理分组展示顺序排序（Agent → statusLine → 工作流 → 代码知识图谱）
-assert.deepEqual(ccVisible, ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'DeepSeekHarness', 'Ccline', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus'], 'Claude Code 可见列表按分组展示顺序排序');
-assert.deepEqual(cxVisible, ['ClaudeCode', 'CodexCli', 'AntigravityCli', 'DeepSeekHarness', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus'], 'Codex 可见列表隐藏 Ccline 并保持分组展示顺序');
-assert.deepEqual(COMPONENT_DEFINITIONS.map(d => d.id), ['ClaudeCode', 'Ccline', 'CcgWorkflow', 'OpenSpec', 'Trellis', 'CodeGraph', 'GitNexus', 'CodexCli', 'AntigravityCli', 'DeepSeekHarness'], '静态定义仍保留安装定义原始顺序');
+// 可见列表按工具管理分组展示顺序排序（Agent → 全局伴随工具 → 工作流 → 代码知识图谱）
+assert.deepEqual(ccVisible, ['ClaudeCode', 'CodexCli', 'PiCli', 'AntigravityCli', 'DeepSeekHarness', 'Ccline', 'PiWeb', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus'], 'Claude Code 可见列表按分组展示顺序排序');
+assert.deepEqual(cxVisible, ['ClaudeCode', 'CodexCli', 'PiCli', 'AntigravityCli', 'DeepSeekHarness', 'PiWeb', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus'], 'Codex 可见列表隐藏 Ccline 并保持分组展示顺序');
+assert.deepEqual(COMPONENT_DEFINITIONS.map(d => d.id), ['ClaudeCode', 'Ccline', 'PiCli', 'PiWeb', 'CcgWorkflow', 'OpenSpec', 'Trellis', 'CodeGraph', 'GitNexus', 'CodexCli', 'AntigravityCli', 'DeepSeekHarness'], '静态定义仍保留安装定义原始顺序');
 
 // ── filterVisibleComponents（运行时组件过滤，供 ToolsView 消费）──────────────
 const stub = (id, installed) => ({id, installed, currentVersion: '', latestVersion: '', hasUpdate: null});

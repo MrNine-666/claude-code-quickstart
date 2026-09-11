@@ -1,7 +1,6 @@
-import React, {useEffect, useRef, useState} from 'react';
-import {TextAttributes, type ScrollBoxRenderable, type SyntaxStyle} from '@opentui/core';
+import {type ScrollBoxRenderable, type SyntaxStyle} from '@opentui/core';
 import {useKeyboard} from '@opentui/react';
-import {colors} from '../../theme/index.js';
+import React, {useEffect, useRef, useState} from 'react';
 import {isAppModifier, isEditingModifier} from '../../utils/keyboard.js';
 import type {TextEditorHandle} from '../editor/TextareaEditor.js';
 import {toast} from '../toast.js';
@@ -40,7 +39,8 @@ export function ManagedDocumentView({
 	const viewScrollRef = useRef<ScrollBoxRenderable>(null);
 	const recommendationScrollRef = useRef<ScrollBoxRenderable>(null);
 
-	const recommendationAvailable = adapter.recommendationContent !== '';
+	const recommendationAvailable = Boolean(adapter.recommendationContent);
+	const recommendationConfigured = adapter.recommendationContent !== undefined || adapter.importInto !== undefined;
 	const subMode =
 		mode === 'view'
 			? snapshot.hasContent
@@ -86,7 +86,7 @@ export function ManagedDocumentView({
 	function togglePanel(): void {
 		if (panel === 'editor') {
 			if (!recommendationAvailable) {
-				toast.error(adapter.recommendationUnavailableMessage);
+				toast.error(adapter.recommendationUnavailableMessage ?? '推荐内容不可用');
 				return;
 			}
 
@@ -104,12 +104,13 @@ export function ManagedDocumentView({
 	}
 
 	function importRecommendation(): void {
-		if (!recommendationAvailable) {
-			toast.error(adapter.recommendationUnavailableMessage);
+		const importInto = adapter.importInto;
+		if (!recommendationAvailable || !importInto) {
+			toast.error(adapter.recommendationUnavailableMessage ?? '推荐内容不可用');
 			return;
 		}
 
-		const result = adapter.importInto(editorRef.current?.getText() ?? '');
+		const result = importInto(editorRef.current?.getText() ?? '');
 		if (!result.ok) {
 			toast.error(result.error);
 			return;
@@ -149,6 +150,21 @@ export function ManagedDocumentView({
 		setDirty(false);
 	}
 
+	function openExternalFile(): void {
+		const openExternal = adapter.openExternal;
+		if (!openExternal) return;
+
+		void openExternal()
+			.then(result => {
+				if (result.ok) {
+					toast.success(adapter.openSuccessMessage ?? '已在外部应用中打开文件');
+					return;
+				}
+				toast.error(result.error);
+			})
+			.catch(error => toast.error(error instanceof Error ? error.message : String(error)));
+	}
+
 	useKeyboard(keyEvent => {
 		if (!active) {
 			return;
@@ -160,6 +176,10 @@ export function ManagedDocumentView({
 		if (mode === 'view') {
 			if (name === 'escape' || name === 'left' || name === 'arrowleft') {
 				onExitToNav();
+				return;
+			}
+			if (name === 'o' && snapshot.hasContent && adapter.openExternal) {
+				openExternalFile();
 				return;
 			}
 			if ((name === 'e' && snapshot.hasContent) || (name === 'a' && !snapshot.hasContent)) {
@@ -189,11 +209,11 @@ export function ManagedDocumentView({
 			handleSave(editorRef.current?.getText() ?? '');
 			return;
 		}
-		if (appMod && name === 't') {
+		if (appMod && name === 't' && recommendationConfigured) {
 			togglePanel();
 			return;
 		}
-		if (appMod && name === 'o') {
+		if (appMod && name === 'o' && recommendationConfigured) {
 			importRecommendation();
 			return;
 		}
@@ -212,18 +232,11 @@ export function ManagedDocumentView({
 		}
 	});
 
-	const headerRight = adapter.headerNotice ? (
-		<text fg={colors.warning} attributes={TextAttributes.DIM}>
-			{adapter.headerNotice}
-		</text>
-	) : undefined;
-
 	if (mode === 'view') {
 		return (
 			<DocumentHomeView
 				title={adapter.title}
 				subtitle={adapter.subtitle}
-				headerRight={headerRight}
 				hasContent={snapshot.hasContent}
 				previewContent={snapshot.previewContent}
 				previewFiletype={adapter.previewFiletype}
@@ -239,7 +252,6 @@ export function ManagedDocumentView({
 		<DocumentFormView
 			title={adapter.title}
 			subtitle={adapter.subtitle}
-			headerRight={headerRight}
 			editorTitle={adapter.editorTitle}
 			editInitial={editInitial}
 			editorActive={active && (panel === 'editor' || focus === 'editor')}
@@ -248,10 +260,10 @@ export function ManagedDocumentView({
 			syntaxStyle={syntaxStyle}
 			textareaFocused={focus === 'editor'}
 			showRecommendation={showRecommendation}
-			recommendationFocused={focus === 'recommend'}
-			recommendationTitle={adapter.recommendationTitle}
-			recommendationContent={adapter.recommendationContent}
-			recommendationFiletype={adapter.recommendationFiletype}
+			recommendationFocused={recommendationAvailable && focus === 'recommend'}
+			recommendationTitle={adapter.recommendationTitle ?? ''}
+			recommendationContent={adapter.recommendationContent ?? ''}
+			recommendationFiletype={adapter.recommendationFiletype ?? 'text'}
 			editorRef={editorRef}
 			recommendationScrollRef={recommendationScrollRef}
 			onContentChange={() => setDirty(true)}

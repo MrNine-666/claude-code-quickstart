@@ -10,7 +10,8 @@ export type ExecFn = (command: string, args: readonly string[], options?: {timeo
 // Skills core：已安装检测 + skills find 搜索 + parser（design D11）。
 // 搜索数据源固定为 `npx --yes skills find <query>`，命令不可用/不可解析时报错，不回退 catalogue。
 
-export type SkillsCliAgent = 'claude-code' | 'codex';
+export type SkillsCliAgent = 'claude-code' | 'codex' | 'pi';
+export type SkillsScope = 'global' | 'project';
 
 export function skillsAgentOf(agentContext: AgentContext): SkillsCliAgent {
 	switch (agentContext) {
@@ -18,6 +19,8 @@ export function skillsAgentOf(agentContext: AgentContext): SkillsCliAgent {
 			return 'claude-code';
 		case 'cx':
 			return 'codex';
+		case 'pi':
+			return 'pi';
 	}
 }
 
@@ -25,7 +28,8 @@ export function skillsAgentOf(agentContext: AgentContext): SkillsCliAgent {
 // 共享投影只关心 Claude Code / Codex 两侧；其它 universal agent（Cline/Cursor 等）displayName 忽略。
 export const SKILL_AGENT_DISPLAY_TO_CONTEXT: Readonly<Record<string, AgentContext>> = {
 	'Claude Code': 'cc',
-	Codex: 'cx'
+	Codex: 'cx',
+	Pi: 'pi'
 };
 
 /** 某 skill 是否在给定 agent 上（按 agents displayName 判定）。纯函数，供投影与门禁复用。 */
@@ -197,11 +201,18 @@ export async function readGlobalSkillLockMetadata(homeDir = resolveHome()): Prom
  *
  * 返回 Promise，支持后台并发执行（design D13）。
  */
-export async function getInstalledSkills(agentOrExec?: AgentContext | ExecFn, execArg?: ExecFn): Promise<InstalledSkill[]> {
+export async function getInstalledSkills(
+	agentOrExec?: AgentContext | ExecFn,
+	execArg?: ExecFn,
+	scope: SkillsScope = 'global'
+): Promise<InstalledSkill[]> {
 	// 区分「显式单侧」与「全量扫」：仅当首参为 AgentContext 字符串才带 --agent。
 	const explicitAgent = typeof agentOrExec === 'string' ? agentOrExec : undefined;
 	const exec = typeof agentOrExec === 'function' ? agentOrExec : execArg ?? execCommand;
-	const args = ['--yes', 'skills', 'list', '-g'];
+	const args = ['--yes', 'skills', 'list'];
+	if (scope === 'global') {
+		args.push('-g');
+	}
 	if (explicitAgent) {
 		args.push('--agent', skillsAgentOf(explicitAgent));
 	}
@@ -230,7 +241,7 @@ export async function getInstalledSkills(agentOrExec?: AgentContext | ExecFn, ex
 		throw new Error('Skills 列表检测失败：JSON 顶层不是数组');
 	}
 
-	const lockMetadata = await readGlobalSkillLockMetadata();
+	const lockMetadata = scope === 'global' ? await readGlobalSkillLockMetadata() : new Map<string, SkillInstallMetadata>();
 	const records: InstalledSkill[] = [];
 	for (const item of parsed) {
 		if (!isRecord(item)) {

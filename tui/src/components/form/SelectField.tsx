@@ -28,7 +28,7 @@ export function SelectField({ label, value, options, helpText, focused, onChange
 			<box flexDirection="row" alignItems="center">
 				<FormLabel label={label} focused={focused} />
 				<FormControlFrame>
-					<text fg={focused ? colors.primary : colors.text}>
+					<text fg={focused ? colors.primary : colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 						{selectedIndex > 0 ? '‹ ' : '  '}
 						{visibleOptions.map((option) => option.value === value ? `[${option.label}]` : option.label).join('  ')}
 						{selectedIndex < options.length - 1 ? ' ›' : ''}
@@ -37,7 +37,7 @@ export function SelectField({ label, value, options, helpText, focused, onChange
 			</box>
 			{helpText ? (
 				<box marginLeft={FORM_VALUE_MARGIN_LEFT}>
-					<text fg={colors.muted} attributes={TextAttributes.DIM}>
+					<text fg={colors.muted} attributes={TextAttributes.DIM} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 						{helpText}
 					</text>
 				</box>

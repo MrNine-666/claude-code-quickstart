@@ -10,7 +10,7 @@ import {
 	type ApplyUpdatesDeps,
 	type ApplyUpdatesResult
 } from './update.js';
-import {installTool, TOOL_DEFINITIONS, type ToolId, type ToolDefinition} from './tools-install.js';
+import {detectTool, installTool, TOOL_DEFINITIONS, type ToolId, type ToolDefinition} from './tools-install.js';
 import {atomicWrite} from './fs-utils.js';
 import {resolveHome, settingsPath} from './paths.js';
 import type {AgentContext} from '../state/manage-state.js';
@@ -21,6 +21,7 @@ import {
 	type LifecycleCommand
 } from './tools-lifecycle.js';
 import {hasUpdate} from './semver.js';
+import {refreshNpmGlobalBinPath} from './npm-path.js';
 import {
 	DSH_TOOL_ID,
 	detectDshLifecycle,
@@ -84,14 +85,14 @@ export type InstallComponentDeps = {
 const INSTALL_TIMEOUT_MS = 300000;
 
 /**
- * 全部受管组件定义（10 项）：ClaudeCode + 9 工具，直接复用 registry（DRY，单一真理源）。
+ * 全部受管组件定义直接复用 registry（DRY，单一真理源）。
  * 顺序即 TOOL_DEFINITIONS 顺序（ClaudeCode 首位）；分组展示顺序由 sortComponentsByToolGroup 决定。
  */
 export const COMPONENT_DEFINITIONS: readonly ComponentDefinition[] = TOOL_DEFINITIONS;
 
 // ── 分组与可见性 / 共享投影（shared-resource-injection-ui）────────────────────
-// group: agent = 主 Agent（Claude Code / Codex 两上下文常显）；
-//        companion = 仅 Claude Code（Ccline）；workflow = 开发过程约束（OpenSpec/Trellis/CcgWorkflow）；
+// group: agent = 主 Agent（Claude Code / Codex / Pi 上下文）；
+//        companion = 全局 npm 伴随工具（Ccline / PiWeb）；workflow = 开发过程约束（OpenSpec/Trellis/CcgWorkflow）；
 //        knowledge-graph = 代码知识图谱（CodeGraph/GitNexus）。
 // sharingKind: Tools 共享列表呈现分类（inject 双态 / 全局 CLI / Agent 独占）。
 // Tools UI 主路径 = projectSharedToolComponents；filterVisibleComponents 仅兼容 legacy 门禁。
@@ -114,13 +115,16 @@ export type ComponentMeta = {
 };
 
 const BOTH_CONTEXTS: readonly AgentContext[] = ['cc', 'cx'];
+const ALL_CONTEXTS: readonly AgentContext[] = ['cc', 'cx', 'pi'];
 
 export const COMPONENT_META: Readonly<Record<ComponentId, ComponentMeta>> = {
 	ClaudeCode: {group: 'agent', contexts: BOTH_CONTEXTS, sharingKind: 'agent-exclusive'},
 	CodexCli: {group: 'agent', contexts: BOTH_CONTEXTS, sharingKind: 'agent-exclusive'},
+	PiCli: {group: 'agent', contexts: ALL_CONTEXTS, sharingKind: 'agent-exclusive'},
 	AntigravityCli: {group: 'agent', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
 	DeepSeekHarness: {group: 'agent', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
 	Ccline: {group: 'companion', contexts: ['cc'], sharingKind: 'agent-exclusive'},
+	PiWeb: {group: 'companion', contexts: ALL_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
 	OpenSpec: {group: 'workflow', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
 	Trellis: {group: 'workflow', contexts: BOTH_CONTEXTS, sharingKind: 'fully-shared-no-inject'},
 	CcgWorkflow: {group: 'workflow', contexts: BOTH_CONTEXTS, sharingKind: 'shared-cli-per-agent-inject'},
@@ -134,8 +138,8 @@ export const COMPONENT_META: Readonly<Record<ComponentId, ComponentMeta>> = {
 export const TOOL_GROUP_ORDER: readonly ToolGroup[] = ['agent', 'companion', 'workflow', 'knowledge-graph'];
 
 export const TOOL_GROUP_META: Readonly<Record<ToolGroup, ToolGroupDisplayMeta>> = {
-	agent: {label: 'Agent', description: 'Claude Code / Codex / Antigravity 等主入口 CLI'},
-	companion: {label: 'statusLine', description: '状态栏与伴随增强'},
+	agent: {label: 'Agent', description: 'Claude Code / Codex / Pi / Antigravity 等主入口 CLI'},
+	companion: {label: '全局伴随工具', description: '通过 npm 全局安装的 Agent 伴随工具'},
 	workflow: {label: '工作流', description: '约束开发过程，规范 Agent 的协作与交付'},
 	'knowledge-graph': {label: '代码知识图谱', description: '索引代码结构，为 Agent 提供架构级上下文'}
 };
@@ -259,6 +263,11 @@ function projectOneSharedComponent(component: ManagedComponent): SharedManagedCo
 				cx: {
 					context: 'cx' as const,
 					integrated: hasCodexCodeGraphIntegration()
+				},
+				pi: {
+					context: 'pi' as const,
+					integrated: false,
+					statusHint: 'Pi 暂不支持 CodeGraph 接入'
 				}
 			};
 			return {
@@ -286,6 +295,11 @@ function projectOneSharedComponent(component: ManagedComponent): SharedManagedCo
 				context: 'cx' as const,
 				integrated: cxIntegrated,
 				version: cxIntegrated ? cxVersion || undefined : undefined
+			},
+			pi: {
+				context: 'pi' as const,
+				integrated: false,
+				statusHint: 'Pi 不使用 CcgWorkflow 的 Agent 注入'
 			}
 		};
 		const installedVersions = [ccIntegrated ? component.currentVersion : '', cxIntegrated ? cxVersion : ''].filter(
@@ -327,7 +341,7 @@ export function isInjectableComponent(id: ComponentId): boolean {
  * Codex 下必须看 ~/.codex 的真实落盘信号，不能把 Claude Code 或全局 CLI 状态直接复用过来。
  * 仅供 filterVisibleComponents（legacy）使用。
  */
-function withContextInstallState(component: ManagedComponent, context: AgentContext): ManagedComponent {
+	function withContextInstallState(component: ManagedComponent, context: AgentContext): ManagedComponent {
 	if (component.id === 'CodeGraph') {
 		const label = context === 'cx' ? 'Codex 未接入 CodeGraph' : 'Claude Code 未接入 CodeGraph';
 		return withAgentIntegration(component, hasCodeGraphIntegration(context), label);
@@ -418,8 +432,8 @@ function friendlyError(text: string, fallback: string): string {
 }
 
 /**
- * 检测全部受管组件（10 项），不聚合 Skills/MCP（11.7）。
- * 复用 update.checkCliToolUpdates（返回正好 10 个 CLI 组件：ClaudeCode/Ccline/CcgWorkflow/OpenSpec/Trellis/CodeGraph/GitNexus/CodexCli + AntigravityCli + DeepSeekHarness），
+ * 检测全部受管组件（12 项），不聚合 Skills/MCP（11.7）。
+ * 复用 update.checkCliToolUpdates（返回受管 npm/CLI 组件：ClaudeCode/Ccline/PiCli/PiWeb/CcgWorkflow/OpenSpec/Trellis/CodeGraph/GitNexus/CodexCli + AntigravityCli + DeepSeekHarness），
  * join COMPONENT_DEFINITIONS 静态字段（description/kind/command 等）。
  */
 export async function detectComponents(onProgress?: ProgressCallback, forceRefresh = false): Promise<ManagedComponent[]> {
@@ -538,6 +552,10 @@ export async function uninstallComponent(
 	}
 
 	const exec = deps.exec ?? execCommand;
+	const context: AgentContext = deps.agentContext ?? 'cc';
+	if (context === 'pi' && isInjectableComponent(id)) {
+		return {id, success: false, error: `${definition.name} 不支持 Pi Agent 接入`};
+	}
 	if (definition.id === DSH_TOOL_ID) {
 		try {
 			const lifecycle = await (deps.dshDetect ?? detectDshLifecycle)({exec, env: deps.env, platform: deps.platform});
@@ -561,7 +579,6 @@ export async function uninstallComponent(
 		return {id, success: false, error: `快照失败: ${message}`};
 	}
 
-	const context: AgentContext = deps.agentContext ?? 'cc';
 	let dshLifecycle: DshLifecycleProjection | undefined;
 	let dshWarning: string | undefined;
 	try {
@@ -680,6 +697,9 @@ export async function injectComponent(
 	if (!isInjectableComponent(id)) {
 		return {id, success: false, error: `${id} 不支持 per-agent 安装`};
 	}
+	if (target === 'pi') {
+		return {id, success: false, error: `${id} 不支持 Pi Agent 接入`};
+	}
 
 	return installComponent(id, onProgress, {...deps, agentContext: target});
 }
@@ -693,6 +713,9 @@ export async function ejectComponent(
 ): Promise<ComponentUninstallOutcome> {
 	if (!isInjectableComponent(id)) {
 		return {id, success: false, error: `${id} 不支持 per-agent 卸载`};
+	}
+	if (target === 'pi') {
+		return {id, success: false, error: `${id} 不支持 Pi Agent 接入`};
 	}
 
 	return uninstallComponent(id, onProgress, {...deps, agentContext: target, fullUninstall: false});
@@ -735,6 +758,13 @@ async function uninstallNpmPackage(
 	const result = await exec('npm', args, {timeout: INSTALL_TIMEOUT_MS});
 	if (result.code !== 0) {
 		throw new Error(friendlyError(result.stderr || result.stdout, `npm uninstall 失败 (exit ${result.code})`));
+	}
+
+	// Pi CLI/Pi Web 的 npm 零退出还不足以证明 shim 已消失；刷新 global bin 后做一次命令事实对账。
+	if (definition.id === 'PiCli' || definition.id === 'PiWeb') {
+		await refreshNpmGlobalBinPath(onProgress, definition.id, exec);
+		const status = await detectTool(definition, exec);
+		if (status.installed) throw new Error(`${definition.name} 卸载后命令仍可用`);
 	}
 }
 

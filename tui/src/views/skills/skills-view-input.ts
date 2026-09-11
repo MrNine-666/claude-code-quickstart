@@ -2,18 +2,11 @@ import type {KeyEvent} from '@opentui/core';
 import {toast} from '../../components/index.js';
 import type {DetectionCache} from '../../hooks/use-detection-cache.js';
 import type {TaskCancellation} from '../../hooks/use-task-cancellation.js';
-import {
-	pendingSourceReplacements,
-	selectedHomeRow,
-	selectedInstalled,
-	shouldRunSearch,
-	type SkillsViewState
-} from '../../state/skills-view-state.js';
+import {pendingSourceReplacements, selectedHomeRow, selectedInstalled, type SkillsViewState} from '../../state/skills-view-state.js';
 import {
 	runConfirmedUninstallAction,
 	runInstallToTargetsAction,
 	openCurrentSkillSourceAction,
-	runSearchAction,
 	runTopologyTransitionAction,
 	runUpdateSelectedIfReadyAction
 } from './skills-view-actions.js';
@@ -46,7 +39,7 @@ export function handleSkillsKey(
 		return;
 	}
 	if (view.mode === 'install') {
-		handleInstallKey(keyEvent, view, dispatch, services, cache);
+		handleInstallKey(keyEvent, view, dispatch, cache, onExitToNav);
 		return;
 	}
 	handleListKey(keyEvent, view, dispatch, services, cache, onExitToNav, taskCancellation);
@@ -117,28 +110,21 @@ function handleListKey(
 ): void {
 	const name = keyEvent.name;
 	if (view.filterFocused) {
-		if (name === 'escape') {
-			keyEvent.preventDefault?.();
-			dispatch({type: 'filter-clear'});
-			return;
-		}
 		if (name === 'tab') {
 			keyEvent.preventDefault?.();
 			dispatch({type: 'filter-blur'});
 			return;
 		}
-		const nav = mapNavKey(name);
-		if (nav) {
-			keyEvent.preventDefault?.();
-			dispatch({type: nav === 'up' ? 'nav-up' : 'nav-down'});
-			return;
-		}
-		if (name === 'enter' || name === 'return') keyEvent.preventDefault?.();
 		return;
 	}
 
-	if (name === 'escape' || name === 'left' || name === 'arrowleft') {
+	if (name === 'escape') {
 		onExitToNav?.();
+		return;
+	}
+	if (name === 'left' || name === 'arrowleft') {
+		keyEvent.preventDefault?.();
+		if (view.installedIndex === 0) onExitToNav?.();
 		return;
 	}
 
@@ -192,36 +178,25 @@ function handleInstallKey(
 	keyEvent: KeyEvent,
 	view: SkillsViewState,
 	dispatch: SkillsViewDispatch,
-	services: SkillsViewServices,
-	cache: DetectionCache<SkillsDetection>
+	cache: DetectionCache<SkillsDetection>,
+	onExitToNav: (() => void) | undefined
 ): void {
 	const name = keyEvent.name;
 	if (view.queryFocused) {
-		if (name === 'enter' || name === 'return') {
-			keyEvent.preventDefault?.();
-			dispatch({type: 'submit-search'});
-			if (shouldRunSearch(view)) runSearchAction(view.query, services, dispatch);
-			return;
-		}
-		if (name === 'escape') {
-			keyEvent.preventDefault?.();
-			dispatch({type: 'cancel'});
-			return;
-		}
 		if (name === 'tab') {
 			keyEvent.preventDefault?.();
 			dispatch({type: 'query-blur'});
 			return;
 		}
-		const nav = mapNavKey(name);
-		if (nav) {
-			keyEvent.preventDefault?.();
-			dispatch({type: nav === 'up' ? 'nav-up' : 'nav-down'});
-		}
 		return;
 	}
 
 	const lowerName = name.toLowerCase();
+	if (lowerName === 'left' || lowerName === 'arrowleft') {
+		keyEvent.preventDefault?.();
+		if (view.resultIndex === 0) onExitToNav?.();
+		return;
+	}
 	if (lowerName === 'space' || name === ' ') {
 		if (cache.state.status === 'success') dispatch({type: 'toggle-result'});
 		else showDetectionPending(cache);

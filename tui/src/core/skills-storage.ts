@@ -17,11 +17,16 @@ export type SkillStorageKind =
 
 export type SkillStorageOptions = {
 	readonly homeDir?: string;
+	/** 项目级 Pi Skills 所在项目根；默认当前工作目录。 */
+	readonly projectDir?: string;
 	readonly tempDir?: string;
+	/** C/X 拓扑事务在 Pi 仍是独立目标时保留 Pi global projection。 */
+	readonly preservePiGlobal?: boolean;
 };
 
 export type SkillTopology = 'claude-only' | 'codex-only' | 'shared';
 export type SkillTopologyDraft = {readonly cc: boolean; readonly cx: boolean};
+export type SkillAgentTargets = Readonly<{readonly cc: boolean; readonly cx: boolean; readonly pi: boolean}>;
 
 export type SkillStorageInspection = {
 	readonly name: string;

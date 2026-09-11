@@ -1,9 +1,13 @@
+import {execCommand} from '../core/exec.js';
 import {AGENT_CONTEXT_ORDER, type AgentContext} from '../state/manage-state.js';
 import {
 	computeSharedStatus,
+	computeSharedStatusAsync,
 	computeStatus,
 	disableServer,
+	disableServerAsync,
 	enableServer,
+	enableServerAsync,
 	getServerDetail,
 	persistMcpServer,
 	persistSharedDefinition,
@@ -122,6 +126,11 @@ export function loadSharedMcpStatus(): readonly McpSharedRow[] {
 	return computeSharedStatus();
 }
 
+/** 异步读取 Pi adapter/package 事实后再投影；同步入口保守显示 unsupported。 */
+export async function loadSharedMcpStatusAsync(exec: typeof execCommand = execCommand): Promise<readonly McpSharedRow[]> {
+	return computeSharedStatusAsync(exec);
+}
+
 /**
  * 批量开关（Section 9.1）：按目标与当前实时态差异，对两侧做开启/禁用；未变侧不写。
  * targets 为草稿态（true=开启 / false=禁用）；实时态从 computeSharedStatus 派生。
@@ -135,6 +144,9 @@ export function applyMcpToggleTargets(serverId: string, targets: Readonly<Record
 
 		for (const ctx of AGENT_CONTEXT_ORDER) {
 			const desired = targets[ctx];
+			if (desired === undefined) {
+				continue;
+			}
 			const current = row.injectByAgent[ctx].active;
 			if (desired === current) {
 				continue;
@@ -144,6 +156,46 @@ export function applyMcpToggleTargets(serverId: string, targets: Readonly<Record
 			if (!result.Success) {
 				return {ok: false, error: `${serverId} · ${ctx}: ${result.Status}`};
 			}
+		}
+
+		return {ok: true, status: 'Applied'};
+	} catch (error) {
+		return {ok: false, error: error instanceof Error ? error.message : String(error)};
+	}
+}
+
+/** 共享开关的 Pi-aware 异步入口；所有侧只在最终状态可对账时报告成功。 */
+export async function applyMcpToggleTargetsAsync(
+	serverId: string,
+	targets: Readonly<Record<AgentContext, boolean>>,
+	exec: typeof execCommand = execCommand
+): Promise<McpServiceResult> {
+	try {
+		const row = (await computeSharedStatusAsync(exec)).find(item => item.Id === serverId);
+		if (!row) return {ok: false, error: `${serverId}: NotFound`};
+
+		for (const ctx of AGENT_CONTEXT_ORDER) {
+			const desired = targets[ctx];
+			if (desired === undefined) continue;
+			const current = row.injectByAgent[ctx];
+			if (desired === current.active) continue;
+			if (!current.supported) return {ok: false, error: `${serverId} · ${ctx}: Unsupported: ${current.reason ?? '不支持'}`};
+
+			const result = desired ? await enableServerAsync(serverId, ctx, exec) : await disableServerAsync(serverId, ctx, exec);
+			if (!result.Success) return {ok: false, error: `${serverId} · ${ctx}: ${result.Status}`};
+		}
+
+		const reconciled = (await computeSharedStatusAsync(exec)).find(item => item.Id === serverId);
+		if (
+			!reconciled ||
+			AGENT_CONTEXT_ORDER.some(
+				ctx =>
+					targets[ctx] !== undefined &&
+					reconciled.injectByAgent[ctx].supported &&
+					reconciled.injectByAgent[ctx].active !== targets[ctx]
+			)
+		) {
+			return {ok: false, error: `${serverId}: MCP 开关对账失败`};
 		}
 
 		return {ok: true, status: 'Applied'};
