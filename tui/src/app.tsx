@@ -423,7 +423,9 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 
 				{/* 右侧区域：Header 独立固定行，content 卡片占满剩余空间 */}
 				<box flexDirection="column" flexGrow={1} minWidth={0}>
-					{hideAgentHeader ? null : <AgentHeader agentContext={moduleAgentContext} contexts={visibleHeaderContexts} active={headerActive} />}
+					{hideAgentHeader ? null : (
+						<AgentHeader agentContext={moduleAgentContext} contexts={visibleHeaderContexts} active={headerActive} />
+					)}
 
 					<box
 						flexDirection="column"
@@ -504,7 +506,15 @@ function Divider({width}: {readonly width: number}) {
 // spec manage-tui-shell：可见标签必须为全称，禁止内部缩写；切换不改左侧菜单顺序/选中。
 // Header 获焦后用 ←/→ 切换 Agent，并用主题色边框提示焦点。
 // 宽度使用百分比铺满父容器，而不是用 contentWidth 估算值写死，避免 Header 比 content 卡片短一截。
-function AgentHeader({agentContext, contexts, active}: {readonly agentContext: AgentContext; readonly contexts: readonly AgentContext[]; readonly active: boolean}) {
+function AgentHeader({
+	agentContext,
+	contexts,
+	active
+}: {
+	readonly agentContext: AgentContext;
+	readonly contexts: readonly AgentContext[];
+	readonly active: boolean;
+}) {
 	return (
 		<box
 			flexDirection="row"

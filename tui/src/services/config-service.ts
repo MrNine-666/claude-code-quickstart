@@ -12,7 +12,13 @@ import {
 	readCodexConfigText,
 	saveCodexConfigToml
 } from '../core/codex-config.js';
-import {applyPiConfigFillMissing, piConfigFileExists, piConfigRecommendation, readPiConfigText, savePiConfigText} from '../core/pi-config.js';
+import {
+	applyPiConfigFillMissing,
+	piConfigFileExists,
+	piConfigRecommendation,
+	readPiConfigText,
+	savePiConfigText
+} from '../core/pi-config.js';
 import {openExternalFile, type OpenExternalFileResult} from '../core/open-file.js';
 import {existsSync} from 'node:fs';
 import {atomicWrite} from '../core/fs-utils.js';
@@ -39,7 +45,7 @@ export function readCurrentConfigText(target: ConfigTarget = 'cc'): string {
 		return '';
 	}
 	const result = stripProviderEnvFromText(raw);
-	return result.ok ? result.text : raw;  // 解析失败退回原文（保留可读性，让用户看到原始内容）
+	return result.ok ? result.text : raw; // 解析失败退回原文（保留可读性，让用户看到原始内容）
 }
 
 /** 兼容旧调用：读取当前 settings.json，剥离供应商 env 字段后返回。 */
@@ -49,14 +55,23 @@ export function readCurrentSettingsTextStripped(): string {
 
 /** 组装带注释的推荐配置文本。 */
 export function loadRecommendationAnnotated(target: ConfigTarget = 'cc'): string | null {
-	return target === 'cx' ? assembleCodexRecommendationAnnotated() : target === 'pi' ? piConfigRecommendation() : assembleRecommendationAnnotated();
+	return target === 'cx'
+		? assembleCodexRecommendationAnnotated()
+		: target === 'pi'
+			? piConfigRecommendation()
+			: assembleRecommendationAnnotated();
 }
 
 /** 对编辑缓冲执行 fill-missing 合并。 */
-export function fillMissingIntoText(jsonText: string, target: ConfigTarget = 'cc'):
-	| {readonly ok: true; readonly text: string; readonly changed: number}
-	| {readonly ok: false; readonly error: string} {
-	return target === 'cx' ? applyCodexFillMissingToText(jsonText) : target === 'pi' ? applyPiConfigFillMissing(jsonText) : applyFillMissingToText(jsonText);
+export function fillMissingIntoText(
+	jsonText: string,
+	target: ConfigTarget = 'cc'
+): {readonly ok: true; readonly text: string; readonly changed: number} | {readonly ok: false; readonly error: string} {
+	return target === 'cx'
+		? applyCodexFillMissingToText(jsonText)
+		: target === 'pi'
+			? applyPiConfigFillMissing(jsonText)
+			: applyFillMissingToText(jsonText);
 }
 
 /** 获取配置目标路径（供视图展示）。 */
@@ -89,7 +104,7 @@ export function saveConfigText(content: string, target: ConfigTarget = 'cc'): {o
 	}
 
 	try {
-		JSON.parse(content);  // 校验 edited 合法 JSON
+		JSON.parse(content); // 校验 edited 合法 JSON
 	} catch (error) {
 		return {ok: false, error: `JSON 格式错误: ${error instanceof Error ? error.message : String(error)}`};
 	}

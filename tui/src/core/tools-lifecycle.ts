@@ -64,7 +64,17 @@ export function ccgWorkflowInstallCommands(context: AgentContext, claudeInstallD
 	return [
 		{
 			cmd: 'npx',
-			args: ['--yes', 'ccg-workflow@latest', 'init', '--skip-prompt', '--skip-mcp', '--lang', 'zh-CN', '--install-dir', claudeInstallDir]
+			args: [
+				'--yes',
+				'ccg-workflow@latest',
+				'init',
+				'--skip-prompt',
+				'--skip-mcp',
+				'--lang',
+				'zh-CN',
+				'--install-dir',
+				claudeInstallDir
+			]
 		}
 	];
 }

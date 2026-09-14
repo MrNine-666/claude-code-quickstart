@@ -52,7 +52,11 @@ export function ProviderHomeView({
 		key: row.key,
 		title: row.title ?? row.key,
 		leading: row.isActive ? <StatusDot kind="latest" /> : <text fg={colors.muted}>●</text>,
-		body: <text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{row.summary}</text>
+		body: (
+			<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+				{row.summary}
+			</text>
+		)
 	}));
 
 	return (

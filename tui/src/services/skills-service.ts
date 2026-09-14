@@ -240,7 +240,7 @@ export async function installSearchResultsToTargets(
 			...batch,
 			result: replacementFailure
 				? {success: false, error: replacementFailure.error ?? '同名来源替换对账失败'}
-				: actionFailure ?? {success: true}
+				: (actionFailure ?? {success: true})
 		});
 	}
 
@@ -262,9 +262,7 @@ async function validateInstallCandidates(
 	storageOptions: SkillStorageOptions = {},
 	targets: readonly SkillsInstallTarget[] = []
 ): Promise<void> {
-	const targetRoots = targets.length > 0
-		? installTargetPlans(targets).flatMap(plan => installTargetRoots(plan.targets))
-		: [];
+	const targetRoots = targets.length > 0 ? installTargetPlans(targets).flatMap(plan => installTargetRoots(plan.targets)) : [];
 	for (const result of results) {
 		const identity = searchSkillIdentity(result);
 		if (!identity || installedItems.some(item => item.name === identity.skillName)) {
@@ -431,12 +429,7 @@ async function removeUntargetedClaudeProjection(
 
 	const homeDir = storageOptions.homeDir ?? resolveHome();
 	const roots = supportedSkillsRoots(homeDir, storageOptions.projectDir ?? process.cwd());
-	const verdict = await verifySkillDeletionTarget(
-		claudeProjection.path,
-		prepared.identity.skillName,
-		roots,
-		prepared.ownership
-	);
+	const verdict = await verifySkillDeletionTarget(claudeProjection.path, prepared.identity.skillName, roots, prepared.ownership);
 	if (!verdict.ok) {
 		return `无法证明清理 Claude Code 旧投影安全：${verdict.reason}`;
 	}
@@ -456,11 +449,11 @@ export async function cleanupConfirmedReplacementSnapshots(
 	confirmedKeys: readonly string[]
 ): Promise<void> {
 	const confirmed = new Set(confirmedKeys);
-	await Promise.all(replacements.flatMap(item => (
-		item.success && item.cleanupSnapshot && confirmed.has(item.key)
-			? [cleanupSkillSnapshot(item.cleanupSnapshot)]
-			: []
-	)));
+	await Promise.all(
+		replacements.flatMap(item =>
+			item.success && item.cleanupSnapshot && confirmed.has(item.key) ? [cleanupSkillSnapshot(item.cleanupSnapshot)] : []
+		)
+	);
 }
 
 function replacementSuccess(prepared: PreparedReplacement): SkillsReplacementExecution {
@@ -503,12 +496,16 @@ export function installMultipleSkillsForView(
 	scope: SkillsScope = 'global'
 ): Promise<SkillsActionResult> {
 	const callAgents = installAgentsForTargets([agentContext]);
-	return installMultipleSkills({
-		...input,
-		copy: callAgents.length === 1,
-		scope,
-		env: createSkillsChildEnv(undefined, callAgents.includes('cx'))
-	}, onProgress, callAgents);
+	return installMultipleSkills(
+		{
+			...input,
+			copy: callAgents.length === 1,
+			scope,
+			env: createSkillsChildEnv(undefined, callAgents.includes('cx'))
+		},
+		onProgress,
+		callAgents
+	);
 }
 
 export function updateAllSkills(onProgress?: ProgressCallback, exec?: SkillsExecFn): Promise<SkillsActionResult> {
@@ -577,12 +574,7 @@ export function toggleClaudeInstall(
 		}
 
 		const source = skill.ref && !skill.source.includes('#') ? `${skill.source}#${skill.ref}` : skill.source;
-		return installSkill(
-			{source, displayName: skill.name, skillName: skill.skillName ?? skill.name},
-			onProgress,
-			['cc', 'cx'],
-			exec
-		);
+		return installSkill({source, displayName: skill.name, skillName: skill.skillName ?? skill.name}, onProgress, ['cc', 'cx'], exec);
 	}
 
 	return uninstallSkills([skill.name], onProgress, 'cc', exec);
@@ -645,7 +637,10 @@ export function uninstallSkillAllAgents(name: string, onProgress?: ProgressCallb
  * 双侧共享列表（Section 17.5）：跑一次无 `--agent` 的 getInstalledSkills → projectSharedSkills。
  * 每次实时读，不缓存；供视图 refresh 复用。exec 缝仅供测试注入。
  */
-export async function loadSharedSkillStatus(exec?: SkillsExecFn, storageOptions: SkillStorageOptions = {}): Promise<readonly SkillSharedRow[]> {
+export async function loadSharedSkillStatus(
+	exec?: SkillsExecFn,
+	storageOptions: SkillStorageOptions = {}
+): Promise<readonly SkillSharedRow[]> {
 	const installed = exec ? await getInstalledSkills(exec) : await getInstalledSkills();
 	return projectSharedSkills(await inspectInstalledSkillStorage(installed, storageOptions));
 }

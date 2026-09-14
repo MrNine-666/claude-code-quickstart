@@ -52,7 +52,14 @@ export function CodePreview({content, filetype, showLineNumbers = true}: CodePre
 
 function LineNumber({index, width}: {readonly index: number; readonly width: number}) {
 	return (
-		<text flexShrink={0} fg={colors.lineNumberForeground} bg={colors.lineNumberBackground} selectable selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+		<text
+			flexShrink={0}
+			fg={colors.lineNumberForeground}
+			bg={colors.lineNumberBackground}
+			selectable
+			selectionBg={colors.selectionBg}
+			selectionFg={colors.selectionFg}
+		>
 			{`${String(index + 1).padStart(width, ' ')} │ `}
 		</text>
 	);
@@ -109,7 +116,12 @@ function readJsonToken(line: string, cursor: number): {readonly token: JsonToken
 	return {token: {type: 'string', text: char}, nextCursor: cursor + 1};
 }
 
-function readWhile(line: string, start: number, predicate: (char: string) => boolean, type: JsonTokenType): {readonly token: JsonToken; readonly nextCursor: number} {
+function readWhile(
+	line: string,
+	start: number,
+	predicate: (char: string) => boolean,
+	type: JsonTokenType
+): {readonly token: JsonToken; readonly nextCursor: number} {
 	let cursor = start + 1;
 	while (cursor < line.length && predicate(line[cursor]!)) cursor++;
 	return {token: {type, text: line.slice(start, cursor)}, nextCursor: cursor};
@@ -147,12 +159,18 @@ function jsonPreviewTokens(line: string, jsonc: boolean): readonly PreviewToken[
 function jsonTokenColor(type: JsonTokenType): string {
 	const {jsonTokens} = getActiveTheme();
 	switch (type) {
-		case 'key': return jsonTokens.key;
-		case 'string': return jsonTokens.string;
-		case 'number': return jsonTokens.number;
-		case 'boolean': return jsonTokens.boolean;
-		case 'punct': return jsonTokens.punct;
-		case 'space': return jsonTokens.space;
+		case 'key':
+			return jsonTokens.key;
+		case 'string':
+			return jsonTokens.string;
+		case 'number':
+			return jsonTokens.number;
+		case 'boolean':
+			return jsonTokens.boolean;
+		case 'punct':
+			return jsonTokens.punct;
+		case 'space':
+			return jsonTokens.space;
 	}
 }
 
@@ -165,9 +183,7 @@ function tomlPreviewTokens(line: string): readonly PreviewToken[] {
 	const commentIndex = findTomlUnquotedCharacter(line, '#');
 	const content = commentIndex === -1 ? line : line.slice(0, commentIndex);
 	const comment = commentIndex === -1 ? '' : line.slice(commentIndex);
-	const tokens = isTomlTableHeader(content)
-		? tomlTableTokens(content)
-		: tomlKeyValueTokens(content);
+	const tokens = isTomlTableHeader(content) ? tomlTableTokens(content) : tomlKeyValueTokens(content);
 	if (comment) {
 		tokens.push({text: comment, fg: colors.muted, attributes: TextAttributes.DIM});
 	}

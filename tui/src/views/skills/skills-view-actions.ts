@@ -165,10 +165,7 @@ function confirmedInstallKeys(
 	const replacementByKey = new Map(execution.replacements.map(item => [item.key, item]));
 	const findBySource = (items: readonly InstalledSkillItem[], name: string, source: string): InstalledSkillItem | undefined =>
 		items.find(
-			item =>
-				item.name === name &&
-				item.provenance.kind === 'known' &&
-				skillSourcesEquivalent(item.provenance.installSource, source)
+			item => item.name === name && item.provenance.kind === 'known' && skillSourcesEquivalent(item.provenance.installSource, source)
 		);
 
 	return results.flatMap(result => {
@@ -226,7 +223,7 @@ export function runTopologyTransitionAction(
 				: targetCx === 'empty'
 					? (() => {
 							throw new Error('当前测试服务不支持 Pi-only 目标');
-						  })()
+						})()
 					: await services.transitionTopology(current, targetCx, progressSink(dispatch), signal);
 			throwIfAborted(signal);
 			await finishTopologyLifecycle(result, cache, dispatch, current, target, signal);
@@ -260,9 +257,9 @@ async function finishTopologyLifecycle(
 		{
 			message:
 				result.outcome === 'complete'
-						? `${name} 已切换为${agentTargetsLabel(target)}`
-						: result.outcome === 'partial'
-							? `${name} 内容可用，但目标投影尚未完全完成`
+					? `${name} 已切换为${agentTargetsLabel(target)}`
+					: result.outcome === 'partial'
+						? `${name} 内容可用，但目标投影尚未完全完成`
 						: result.outcome === 'restored'
 							? `${name} 切换失败，已恢复原拓扑`
 							: undefined,
@@ -346,7 +343,7 @@ export function runConfirmedUninstallAction(
 				return;
 			}
 
-			const error = outcome.outcome === 'complete' ? undefined : outcome.error ?? '卸载未完全完成';
+			const error = outcome.outcome === 'complete' ? undefined : (outcome.error ?? '卸载未完全完成');
 			dispatch({type: 'uninstall-reconciled', installed: refreshed.result ?? [], ...(error ? {error} : {})});
 			const completeCount = outcome.items.filter(item => item.result.outcome === 'complete').length;
 			if (outcome.outcome === 'complete') toast.success(`已卸载 ${completeCount} 个 Skill`);
@@ -374,15 +371,17 @@ export function runUpdateSelectedIfReadyAction(
 	if (!signal) return;
 	void services
 		.updateInstances(targets, progressSink(dispatch), signal)
-		.then(result => reconcileUpdateLifecycle(
-			result,
-			cache,
-			dispatch,
-			signal,
-			result.noChange
-				? `${result.updatedNames.length} 个名称已是最新版本`
-				: `已更新 ${result.updatedNames.length} 个名称${result.skippedInstanceIds.length > 0 ? `，跳过 ${result.skippedInstanceIds.length} 个未知来源` : ''}`
-		))
+		.then(result =>
+			reconcileUpdateLifecycle(
+				result,
+				cache,
+				dispatch,
+				signal,
+				result.noChange
+					? `${result.updatedNames.length} 个名称已是最新版本`
+					: `已更新 ${result.updatedNames.length} 个名称${result.skippedInstanceIds.length > 0 ? `，跳过 ${result.skippedInstanceIds.length} 个未知来源` : ''}`
+			)
+		)
 		.catch((error: unknown) => {
 			if (!signal.aborted) dispatch({type: 'action-failed', error: `更新失败：${errorMessage(error)}`});
 		})
@@ -434,9 +433,7 @@ export function topologyLabel(topology: SkillTopology | undefined): string {
 }
 
 export function agentTargetsLabel(target: SkillAgentTargets): string {
-	const labels = (['cc', 'cx', 'pi'] as const)
-		.filter(agent => target[agent])
-		.map(agent => AGENT_CONTEXT_LABELS[agent]);
+	const labels = (['cc', 'cx', 'pi'] as const).filter(agent => target[agent]).map(agent => AGENT_CONTEXT_LABELS[agent]);
 	return labels.length > 0 ? labels.join('、') : '无目标';
 }
 

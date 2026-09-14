@@ -71,7 +71,7 @@ export function McpHomeView({
 						fg={colors.text}
 						selectionBg={colors.selectionBg}
 						selectionFg={colors.selectionFg}
-						>{`即将删除 ${current.Id}：移除 CCQ 管理的 agent 配置；未由 CCQ 接管的 Pi 原生配置会保留。`}</text>
+					>{`即将删除 ${current.Id}：移除 CCQ 管理的 agent 配置；未由 CCQ 接管的 Pi 原生配置会保留。`}</text>
 				</Modal>
 			) : null}
 			<McpListInput

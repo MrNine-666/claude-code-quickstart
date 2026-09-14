@@ -1,11 +1,7 @@
 import {createDetectionRunner, type DetectionRunner, type DetectionRunOptions, type DetectionStateSink} from './detection-runner.js';
 import {createInitialDetectionState} from './async-detection.js';
 import {checkComponentUpdates, type UpdateComponent} from '../core/update.js';
-import {
-	detectInstalledSkillItems,
-	type ExecFn,
-	type InstalledSkillItem
-} from '../core/skills-installed.js';
+import {detectInstalledSkillItems, type ExecFn, type InstalledSkillItem} from '../core/skills-installed.js';
 import {detectComponents, type ManagedComponent} from '../core/tools-manage.js';
 
 // 视图检测服务（design D13）：Skills / Tools 首次进入立即渲染 loading，
@@ -36,21 +32,20 @@ async function detectSkillsForView(exec?: ExecFn): Promise<readonly InstalledSki
 			return [];
 		}
 
-		return [{
-			...item,
-			agents: [...new Set(projections.flatMap(projection => projection.agents))],
-			projections
-		}];
+		return [
+			{
+				...item,
+				agents: [...new Set(projections.flatMap(projection => projection.agents))],
+				projections
+			}
+		];
 	});
 }
 
 // 已安装检测（task 07-28 R1）：唯一事实源是一次不带 `--agent` 的 `skills list -g --json`。
 // 不读 `.skill-lock.json`、不扫 `.claude`/`.agents`/`.codex` 目录补充或修正列表事实。
 // exec 缝仅供测试注入桩。
-export function runSkillsDetection(
-	runner: DetectionRunner<readonly InstalledSkillItem[]>,
-	exec?: ExecFn
-): Promise<unknown> {
+export function runSkillsDetection(runner: DetectionRunner<readonly InstalledSkillItem[]>, exec?: ExecFn): Promise<unknown> {
 	return runner.run(() => detectSkillsForView(exec));
 }
 

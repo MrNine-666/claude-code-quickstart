@@ -18,11 +18,11 @@ export function createPromptsDocumentAdapter(target: PromptsTarget): ManagedDocu
 		editorTitle: '',
 		previewFiletype: 'markdown',
 		editorFiletype: 'markdown',
-			saveSuccessMessage: `已保存到 ${rulesPath}`,
-			openSuccessMessage: `已在外部应用中打开 ${rulesPath}`,
-			load: () => loadRulesSnapshot(target),
-			createInitial: () => readCurrentRules(target) ?? '',
-			openExternal: () => openRulesFile(target),
-			save: content => saveRules(content, target)
+		saveSuccessMessage: `已保存到 ${rulesPath}`,
+		openSuccessMessage: `已在外部应用中打开 ${rulesPath}`,
+		load: () => loadRulesSnapshot(target),
+		createInitial: () => readCurrentRules(target) ?? '',
+		openExternal: () => openRulesFile(target),
+		save: content => saveRules(content, target)
 	};
 }

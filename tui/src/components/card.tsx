@@ -1,6 +1,6 @@
 import React from 'react';
-import { TextAttributes } from '@opentui/core';
-import { borderColors, colors } from '../theme/index.js';
+import {TextAttributes} from '@opentui/core';
+import {borderColors, colors} from '../theme/index.js';
 
 // 通用卡片：list 与 grid 复用。焦点用 border 高亮（Claude 橙）表达
 // - focused：选中/聚焦态，border 转主色、标题加粗主色
@@ -48,15 +48,12 @@ export function Card({
 	bordered = true
 }: CardProps) {
 	const focusedBackground = focused ? colors.focusedBackground : undefined;
-	const body = children === undefined || children === null ? null : (
-		<box
-			height={multiLine ? undefined : 1}
-			overflow={multiLine ? 'visible' : 'hidden'}
-			backgroundColor={focusedBackground}
-		>
-			{children}
-		</box>
-	);
+	const body =
+		children === undefined || children === null ? null : (
+			<box height={multiLine ? undefined : 1} overflow={multiLine ? 'visible' : 'hidden'} backgroundColor={focusedBackground}>
+				{children}
+			</box>
+		);
 
 	const finalTitleColor = titleColor ?? (focused ? colors.primary : colors.text);
 
@@ -98,7 +95,11 @@ export function Card({
 									{title}
 								</text>
 							</box>
-							{titleRight === undefined ? null : <box flexShrink={0} backgroundColor={focusedBackground}>{titleRight}</box>}
+							{titleRight === undefined ? null : (
+								<box flexShrink={0} backgroundColor={focusedBackground}>
+									{titleRight}
+								</box>
+							)}
 						</box>
 					)}
 					{body}
@@ -142,7 +143,11 @@ export function Card({
 							{title}
 						</text>
 					</box>
-					{titleRight === undefined ? null : <box flexShrink={0} backgroundColor={focusedBackground}>{titleRight}</box>}
+					{titleRight === undefined ? null : (
+						<box flexShrink={0} backgroundColor={focusedBackground}>
+							{titleRight}
+						</box>
+					)}
 				</box>
 			)}
 			{body}

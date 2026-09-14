@@ -37,7 +37,10 @@ export function skillInstalledOn(skill: InstalledSkill, agentContext: AgentConte
 	return skill.agents.some(display => SKILL_AGENT_DISPLAY_TO_CONTEXT[display] === agentContext);
 }
 
-function normalizeAgentAndExec(agentOrExec: AgentContext | ExecFn | undefined, exec: ExecFn | undefined): {agentContext: AgentContext; exec: ExecFn} {
+function normalizeAgentAndExec(
+	agentOrExec: AgentContext | ExecFn | undefined,
+	exec: ExecFn | undefined
+): {agentContext: AgentContext; exec: ExecFn} {
 	return typeof agentOrExec === 'function'
 		? {agentContext: 'cc', exec: agentOrExec}
 		: {agentContext: agentOrExec ?? 'cc', exec: exec ?? execCommand};
@@ -208,7 +211,7 @@ export async function getInstalledSkills(
 ): Promise<InstalledSkill[]> {
 	// 区分「显式单侧」与「全量扫」：仅当首参为 AgentContext 字符串才带 --agent。
 	const explicitAgent = typeof agentOrExec === 'string' ? agentOrExec : undefined;
-	const exec = typeof agentOrExec === 'function' ? agentOrExec : execArg ?? execCommand;
+	const exec = typeof agentOrExec === 'function' ? agentOrExec : (execArg ?? execCommand);
 	const args = ['--yes', 'skills', 'list'];
 	if (scope === 'global') {
 		args.push('-g');
@@ -221,7 +224,9 @@ export async function getInstalledSkills(
 
 	const {code, stdout, stderr} = await exec('npx', args, {timeout: LIST_TIMEOUT_MS});
 	if (code !== 0) {
-		const detail = removeAnsiSequences(stderr || stdout).trim().slice(0, 300);
+		const detail = removeAnsiSequences(stderr || stdout)
+			.trim()
+			.slice(0, 300);
 		throw new Error(`Skills 列表检测失败 (ExitCode: ${code})${detail ? `: ${detail}` : ''}`);
 	}
 
@@ -324,10 +329,12 @@ export async function inspectInstalledSkillStorage(
 	installed: readonly InstalledSkill[],
 	options: SkillStorageOptions = {}
 ): Promise<InstalledSkill[]> {
-	return Promise.all(installed.map(async skill => ({
-		...skill,
-		storage: await inspectSkillStorage(skill.name, options)
-	})));
+	return Promise.all(
+		installed.map(async skill => ({
+			...skill,
+			storage: await inspectSkillStorage(skill.name, options)
+		}))
+	);
 }
 
 // ── 搜索（skills find） ─────────────────────────────────────────────────────
@@ -379,9 +386,7 @@ function tryParseJsonResults(text: string): SearchSkillResult[] | null {
 			return null;
 		}
 
-		return items
-			.map(normalizeSearchItem)
-			.filter((item): item is SearchSkillResult => item !== null);
+		return items.map(normalizeSearchItem).filter((item): item is SearchSkillResult => item !== null);
 	} catch {
 		return null;
 	}
@@ -399,8 +404,7 @@ function normalizeSearchItem(raw: unknown): SearchSkillResult | null {
 	}
 
 	const source = typeof item.source === 'string' ? item.source : typeof item.repo === 'string' ? item.repo : '';
-	const description =
-		typeof item.description === 'string' ? item.description : typeof item.desc === 'string' ? item.desc : '';
+	const description = typeof item.description === 'string' ? item.description : typeof item.desc === 'string' ? item.desc : '';
 	const installCount = typeof item.installCount === 'number' ? item.installCount : undefined;
 	const url = typeof item.url === 'string' ? item.url : undefined;
 
@@ -457,7 +461,10 @@ function parseTableResults(text: string): SearchSkillResult[] | null {
 		}
 
 		// 兼容旧表格格式：name  source  description（2+ 空格/制表符分列）。
-		const columns = line.split(/\t|\s{2,}/).map(c => c.trim()).filter(Boolean);
+		const columns = line
+			.split(/\t|\s{2,}/)
+			.map(c => c.trim())
+			.filter(Boolean);
 		if (columns.length < 2) {
 			continue;
 		}
@@ -668,9 +675,13 @@ export async function listRepoSkills(repo: string, agentOrExec?: AgentContext | 
 
 	const {agentContext, exec} = normalizeAgentAndExec(agentOrExec, execArg);
 	try {
-		const {code, stdout, stderr} = await exec('npx', ['--yes', 'skills', 'add', trimmed, '--list', '--agent', skillsAgentOf(agentContext)], {
-			timeout: LIST_REPO_TIMEOUT_MS
-		});
+		const {code, stdout, stderr} = await exec(
+			'npx',
+			['--yes', 'skills', 'add', trimmed, '--list', '--agent', skillsAgentOf(agentContext)],
+			{
+				timeout: LIST_REPO_TIMEOUT_MS
+			}
+		);
 
 		const skills = parseSkillsListOutput(stdout, stderr);
 		if (skills === null) {

@@ -1,6 +1,6 @@
 import React from 'react';
-import { TextAttributes } from '@opentui/core';
-import { colors } from '../../theme/index.js';
+import {TextAttributes} from '@opentui/core';
+import {colors} from '../../theme/index.js';
 
 export const FORM_LABEL_WIDTH = 18;
 export const FORM_VALUE_MARGIN_LEFT = FORM_LABEL_WIDTH + 2;
@@ -10,7 +10,7 @@ export type FormLabelProps = {
 	readonly focused: boolean;
 };
 
-export function FormLabel({ label, focused }: FormLabelProps) {
+export function FormLabel({label, focused}: FormLabelProps) {
 	return (
 		<>
 			<box width={FORM_LABEL_WIDTH} flexShrink={0} overflow="hidden">

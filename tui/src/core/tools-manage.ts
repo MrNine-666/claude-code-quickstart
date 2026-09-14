@@ -341,7 +341,7 @@ export function isInjectableComponent(id: ComponentId): boolean {
  * Codex 下必须看 ~/.codex 的真实落盘信号，不能把 Claude Code 或全局 CLI 状态直接复用过来。
  * 仅供 filterVisibleComponents（legacy）使用。
  */
-	function withContextInstallState(component: ManagedComponent, context: AgentContext): ManagedComponent {
+function withContextInstallState(component: ManagedComponent, context: AgentContext): ManagedComponent {
 	if (component.id === 'CodeGraph') {
 		const label = context === 'cx' ? 'Codex 未接入 CodeGraph' : 'Claude Code 未接入 CodeGraph';
 		return withAgentIntegration(component, hasCodeGraphIntegration(context), label);

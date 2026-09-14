@@ -1,8 +1,8 @@
 // ccq CLI 帮助文本（单一数据源）。
 // 总帮助 + 各子命令帮助。新增子命令时在此注册一行 + 补一段 help 文本即可。
 
-import { CCQ_VERSION } from '../version.js';
-import { TOOL_DEFINITIONS } from '../core/tools-install.js';
+import {CCQ_VERSION} from '../version.js';
+import {TOOL_DEFINITIONS} from '../core/tools-install.js';
 
 const AVAILABLE_TOOL_IDS = TOOL_DEFINITIONS.map(definition => definition.id).join(' / ');
 

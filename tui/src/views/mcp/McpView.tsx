@@ -42,11 +42,8 @@ export default function McpView({active, onSubModeChange, onExitToNav}: McpViewP
 
 	useEffect(() => {
 		if (!active) return;
-		const subMode = screen.kind === 'add' || screen.kind === 'edit'
-			? 'form'
-			: screen.kind === 'list' && rows.length === 0
-				? 'empty'
-				: screen.kind;
+		const subMode =
+			screen.kind === 'add' || screen.kind === 'edit' ? 'form' : screen.kind === 'list' && rows.length === 0 ? 'empty' : screen.kind;
 		onSubModeChange?.(subMode);
 	}, [active, onSubModeChange, rows.length, screen.kind]);
 
@@ -112,11 +109,11 @@ export default function McpView({active, onSubModeChange, onExitToNav}: McpViewP
 			onMoveHorizontal={direction => setSelected(previous => moveMcpGridCursor(previous, rows.length, direction))}
 			onOpenToggle={() => {
 				if (!current) return;
-					setToggleDraft({
-						cc: current.injectByAgent.cc.active,
-						cx: current.injectByAgent.cx.active,
-						pi: current.injectByAgent.pi.active
-					});
+				setToggleDraft({
+					cc: current.injectByAgent.cc.active,
+					cx: current.injectByAgent.cx.active,
+					pi: current.injectByAgent.pi.active
+				});
 				setToggleIndex(0);
 				setScreen({kind: 'select-toggle-target', serverId: current.Id});
 			}}
@@ -129,23 +126,23 @@ export default function McpView({active, onSubModeChange, onExitToNav}: McpViewP
 			}}
 			onExit={onExitToNav}
 			onMoveToggle={delta => setToggleIndex(previous => (previous + delta + AGENT_CONTEXT_ORDER.length) % AGENT_CONTEXT_ORDER.length)}
-				onToggleDraft={() => {
-					const context: AgentContext = AGENT_CONTEXT_ORDER[toggleIndex] ?? 'cc';
-					if (current && !current.injectByAgent[context].supported) return;
-					setToggleDraft(previous => ({...previous, [context]: !previous[context]}));
-				}}
-				onApplyToggle={() => {
-					if (screen.kind !== 'select-toggle-target') return;
-					const piChanged = current ? toggleDraft.pi !== current.injectByAgent.pi.active : false;
-					if (piChanged) {
-						void applyMcpToggleActionAsync(screen.serverId, toggleDraft).then(result => {
-							refresh();
-							returnToList();
-							settleAction(result);
-						});
-						return;
-					}
-					const result = applyMcpToggleAction(screen.serverId, toggleDraft);
+			onToggleDraft={() => {
+				const context: AgentContext = AGENT_CONTEXT_ORDER[toggleIndex] ?? 'cc';
+				if (current && !current.injectByAgent[context].supported) return;
+				setToggleDraft(previous => ({...previous, [context]: !previous[context]}));
+			}}
+			onApplyToggle={() => {
+				if (screen.kind !== 'select-toggle-target') return;
+				const piChanged = current ? toggleDraft.pi !== current.injectByAgent.pi.active : false;
+				if (piChanged) {
+					void applyMcpToggleActionAsync(screen.serverId, toggleDraft).then(result => {
+						refresh();
+						returnToList();
+						settleAction(result);
+					});
+					return;
+				}
+				const result = applyMcpToggleAction(screen.serverId, toggleDraft);
 				refresh();
 				returnToList();
 				settleAction(result);

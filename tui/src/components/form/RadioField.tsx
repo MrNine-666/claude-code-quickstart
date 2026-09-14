@@ -1,9 +1,9 @@
 import React from 'react';
-import { TextAttributes } from '@opentui/core';
-import { colors } from '../../theme/index.js';
-import { FormLabel, FORM_VALUE_MARGIN_LEFT } from './FormLabel.js';
-import { FormControlFrame } from './FormControlFrame.js';
-import type { SelectOption } from './field-types.js';
+import {TextAttributes} from '@opentui/core';
+import {colors} from '../../theme/index.js';
+import {FormLabel, FORM_VALUE_MARGIN_LEFT} from './FormLabel.js';
+import {FormControlFrame} from './FormControlFrame.js';
+import type {SelectOption} from './field-types.js';
 
 export type RadioFieldProps = {
 	readonly label: string;
@@ -14,8 +14,8 @@ export type RadioFieldProps = {
 	readonly compact?: boolean;
 };
 
-export function RadioField({ label, value, options, helpText, focused, compact = false }: RadioFieldProps) {
-	const optionNodes = options.map((option) => {
+export function RadioField({label, value, options, helpText, focused, compact = false}: RadioFieldProps) {
+	const optionNodes = options.map(option => {
 		const selected = option.value === value;
 		return (
 			<text
@@ -42,16 +42,25 @@ export function RadioField({ label, value, options, helpText, focused, compact =
 					<FormLabel label={label} focused={focused} />
 				)}
 				{compact ? (
-					<box flexDirection="row" flexWrap="wrap" minWidth={0}>{optionNodes}</box>
+					<box flexDirection="row" flexWrap="wrap" minWidth={0}>
+						{optionNodes}
+					</box>
 				) : (
 					<FormControlFrame>
-						<box flexDirection="row" flexWrap="wrap" minWidth={0}>{optionNodes}</box>
+						<box flexDirection="row" flexWrap="wrap" minWidth={0}>
+							{optionNodes}
+						</box>
 					</FormControlFrame>
 				)}
 			</box>
 			{helpText ? (
 				<box marginLeft={FORM_VALUE_MARGIN_LEFT}>
-					<text fg={colors.muted} attributes={TextAttributes.DIM} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+					<text
+						fg={colors.muted}
+						attributes={TextAttributes.DIM}
+						selectionBg={colors.selectionBg}
+						selectionFg={colors.selectionFg}
+					>
 						{helpText}
 					</text>
 				</box>

@@ -34,7 +34,11 @@ assert.match(source, /<text[^>]*fg=\{colors\.lineNumberForeground\}[^>]*selectab
 // HC-CODEPREVIEW-WRAPPED-LAYOUT：长行的视觉换行不能挤压行号或重排 token。
 assert.match(source, /<box key=\{index\} flexDirection="row" alignItems="flex-start">/, 'CodePreview 每个源码行必须从顶部对齐，避免行号落入续行');
 assert.match(source, /<box flexDirection="row" flexGrow=\{1\} flexShrink=\{1\} minWidth=\{0\}>/, 'CodePreview 内容列必须允许收缩以参与长行换行布局');
-assert.match(source, /<text flexShrink=\{0\}[^>]*fg=\{colors\.lineNumberForeground\}/, 'CodePreview 行号列不得被内容列挤压');
+assert.match(
+	source,
+	/<text(?=[^>]*\bflexShrink=\{0\})(?=[^>]*\bfg=\{colors\.lineNumberForeground\})[^>]*>/,
+	'CodePreview 行号列不得被内容列挤压'
+);
 assert.match(source, /<text selectable[^>]*>[\s\S]*tokensForLine\([\s\S]*<span key=\{tokenIndex\}[^>]*fg=\{token\.fg\}/, 'CodePreview 必须在单个正文 text 中使用 span 保留 token 顺序');
 
 // TOML 预览复用 CodePreview 的行号、主题与可选择复制能力，不依赖 Tree-sitter，

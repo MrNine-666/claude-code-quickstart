@@ -1,7 +1,13 @@
 import {lstat, realpath} from 'node:fs/promises';
 import {join} from 'node:path';
 import type {ProgressCallback} from '../core/exec.js';
-import {createSkillsChildEnv, runSkillsAdd, runSkillsRemove, type SkillsCommandDiagnostic, type SkillsExecFn} from '../core/skills-actions.js';
+import {
+	createSkillsChildEnv,
+	runSkillsAdd,
+	runSkillsRemove,
+	type SkillsCommandDiagnostic,
+	type SkillsExecFn
+} from '../core/skills-actions.js';
 import {resolveHome} from '../core/paths.js';
 import {
 	buildSkillsOwnershipIndex,
@@ -45,11 +51,7 @@ export {targetTopologyOfDraft, topologyOfInspection} from '../core/skills-storag
 export type {SkillAgentTargets, SkillTopology, SkillTopologyDraft} from '../core/skills-storage.js';
 
 function expectedStorageKind(topology: SkillTopology): SkillStorageInspection['kind'] {
-	return topology === 'claude-only'
-		? 'claude-only'
-		: topology === 'codex-only'
-			? 'canonical-only'
-			: 'shared-symlink';
+	return topology === 'claude-only' ? 'claude-only' : topology === 'codex-only' ? 'canonical-only' : 'shared-symlink';
 }
 
 /** 目标物化只看存储 kind（path/lstat 事实），不比较内容（design §9 / §11）。 */
@@ -314,7 +316,12 @@ export async function transitionSkillTopology(
 ): Promise<SkillsAdoptionResult> {
 	const current = currentTopologyOfItem(item);
 	if (item.provenance.kind !== 'known') {
-		return failureResult('未知来源 Skill 无法迁移：缺少可证明的来源身份', await inspectSkillStorage(item.name, options), undefined, false);
+		return failureResult(
+			'未知来源 Skill 无法迁移：缺少可证明的来源身份',
+			await inspectSkillStorage(item.name, options),
+			undefined,
+			false
+		);
 	}
 
 	if (current === target && !needsManagedMigration(item, target)) {
@@ -337,7 +344,7 @@ export async function transitionSkillTopology(
 		return failureResult('没有可用于迁移的有效 Skill 内容', preflight, undefined, false);
 	}
 
-		// current 从 Item 派生；纯旧 Codex/Pi native（无受管根记录）时 inspection 兜底为 codex-only。
+	// current 从 Item 派生；纯旧 Codex/Pi native（无受管根记录）时 inspection 兜底为 codex-only。
 	const original: SkillTopology = current ?? topologyOfInspection(preflight) ?? 'codex-only';
 
 	let snapshot: SkillSnapshot | undefined;
@@ -350,7 +357,15 @@ export async function transitionSkillTopology(
 			action = await removeTargets(item.name, removeAgent, onProgress, exec, options);
 			const intermediate = await inspectSkillStorage(item.name, options);
 			if (intermediate.kind !== 'missing') {
-				return restoreOriginalTopology(item.name, original, snapshot, commandError(action, '旧实体删除后目标树仍非空'), onProgress, exec, options);
+				return restoreOriginalTopology(
+					item.name,
+					original,
+					snapshot,
+					commandError(action, '旧实体删除后目标树仍非空'),
+					onProgress,
+					exec,
+					options
+				);
 			}
 
 			action = await addFromSnapshot(item.name, snapshot, target, onProgress, exec, options);
@@ -358,7 +373,15 @@ export async function transitionSkillTopology(
 			action = await removeTargets(item.name, ['cc', 'cx'], onProgress, exec, options);
 			const intermediate = await inspectSkillStorage(item.name, options);
 			if (intermediate.kind !== 'missing') {
-				return restoreOriginalTopology(item.name, original, snapshot, commandError(action, '双侧删除后目标树仍非空'), onProgress, exec, options);
+				return restoreOriginalTopology(
+					item.name,
+					original,
+					snapshot,
+					commandError(action, '双侧删除后目标树仍非空'),
+					onProgress,
+					exec,
+					options
+				);
 			}
 
 			action = await addFromSnapshot(item.name, snapshot, target, onProgress, exec, options);
@@ -480,7 +503,12 @@ export async function transitionSkillAgents(
 	options: SkillStorageOptions = {}
 ): Promise<SkillsAdoptionResult> {
 	if (item.provenance.kind !== 'known') {
-		return failureResult('未知来源 Skill 无法迁移：缺少可证明的来源身份', await inspectSkillStorage(item.name, options), undefined, false);
+		return failureResult(
+			'未知来源 Skill 无法迁移：缺少可证明的来源身份',
+			await inspectSkillStorage(item.name, options),
+			undefined,
+			false
+		);
 	}
 
 	if (!target.cc && !target.cx && !target.pi) {
@@ -489,11 +517,7 @@ export async function transitionSkillAgents(
 
 	// Pi 的官方 symlink 模式必须同时有 Codex canonical：Pi-only 等价于 codex-only，
 	// cc+pi 等价于 shared；这是物理拓扑约束，不改变管理页对三个 Agent 的独立展示。
-	const targetCx = target.pi
-		? target.cc
-			? 'shared'
-			: 'codex-only'
-		: targetTopologyOfDraft({cc: target.cc, cx: target.cx});
+	const targetCx = target.pi ? (target.cc ? 'shared' : 'codex-only') : targetTopologyOfDraft({cc: target.cc, cx: target.cx});
 	const currentCx = currentTopologyOfItem(item);
 	// Pi global 的删除必须走官方 `--agent pi -g`，不能被旧 C/X 收编事务的
 	// legacy direct-delete 分支提前清掉；无论目标是否保留 Pi，都先让 C/X 事务保留它。
@@ -521,13 +545,10 @@ export async function transitionSkillAgents(
 		const cxItem = preservePiDuringCx && currentCx ? withoutPiGlobalProjection(item) : item;
 		const cxNeedsTransition = currentCx !== targetCx || needsManagedMigration(cxItem, targetCx);
 		if (cxNeedsTransition) {
-			const result = await transitionSkillTopology(
-				cxItem,
-				targetCx,
-				onProgress,
-				exec,
-				{...options, preservePiGlobal: preservePiDuringCx}
-			);
+			const result = await transitionSkillTopology(cxItem, targetCx, onProgress, exec, {
+				...options,
+				preservePiGlobal: preservePiDuringCx
+			});
 			mutated ||= result.mutated;
 			if (!result.success) return {...result, mutated: mutated || result.mutated};
 		}
@@ -557,7 +578,12 @@ export async function transitionSkillAgents(
 				};
 			}
 		} catch (error) {
-			return failureResult(error instanceof Error ? error.message : String(error), await inspectSkillStorage(item.name, options), piSnapshot, mutated);
+			return failureResult(
+				error instanceof Error ? error.message : String(error),
+				await inspectSkillStorage(item.name, options),
+				piSnapshot,
+				mutated
+			);
 		}
 	}
 

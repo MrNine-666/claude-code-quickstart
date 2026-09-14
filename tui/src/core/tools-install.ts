@@ -240,7 +240,10 @@ export function parseToolVersion(text: string): string {
 /** Compare a Node/semver-like version without accepting a partial or invalid version. */
 export function isVersionAtLeast(version: string, minimum: string): boolean {
 	const parse = (value: string): readonly [number, number, number] | null => {
-		const match = value.trim().replace(/^v/i, '').match(/^(\d+)\.(\d+)\.(\d+)/);
+		const match = value
+			.trim()
+			.replace(/^v/i, '')
+			.match(/^(\d+)\.(\d+)\.(\d+)/);
 		return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
 	};
 	const actual = parse(version);
@@ -356,7 +359,11 @@ async function installNpmPackage(
 	await refreshNpmGlobalBinPath(onProgress, definition.id, exec);
 }
 
-export async function ensureNodeVersion(definition: ToolDefinition, exec: typeof execCommand, onProgress?: ProgressCallback): Promise<void> {
+export async function ensureNodeVersion(
+	definition: ToolDefinition,
+	exec: typeof execCommand,
+	onProgress?: ProgressCallback
+): Promise<void> {
 	const minimum = definition.minNodeVersion;
 	if (!minimum) return;
 

@@ -43,11 +43,7 @@ export function TextField({label, value, secret = false, helpText, focused, acti
 							selectionFg={colors.selectionFg}
 						/>
 					) : (
-						<text
-							fg={value ? colors.text : colors.muted}
-							selectionBg={colors.selectionBg}
-							selectionFg={colors.selectionFg}
-						>
+						<text fg={value ? colors.text : colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 							{displayValue || '（空）'}
 						</text>
 					)}
@@ -55,7 +51,12 @@ export function TextField({label, value, secret = false, helpText, focused, acti
 			</box>
 			{helpText ? (
 				<box marginLeft={FORM_VALUE_MARGIN_LEFT}>
-					<text fg={colors.muted} attributes={TextAttributes.DIM} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+					<text
+						fg={colors.muted}
+						attributes={TextAttributes.DIM}
+						selectionBg={colors.selectionBg}
+						selectionFg={colors.selectionFg}
+					>
 						{helpText}
 					</text>
 				</box>

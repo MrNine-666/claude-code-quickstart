@@ -93,7 +93,7 @@ for (const [name, source] of [
 ]) {
 	assert.match(
 		source,
-		/<text fg=\{colors\.muted\} attributes=\{TextAttributes\.DIM\}[^>]*selectionBg=\{colors\.selectionBg\}[^>]*selectionFg=\{colors\.selectionFg\}/,
+		/<text(?=[^>]*\bfg=\{colors\.muted\})(?=[^>]*\battributes=\{TextAttributes\.DIM\})(?=[^>]*\bselectionBg=\{colors\.selectionBg\})(?=[^>]*\bselectionFg=\{colors\.selectionFg\})[^>]*>/,
 		`${name} help 文案必须使用主题化文本选中背景/前景`
 	);
 }
@@ -114,7 +114,7 @@ assert.match(
 );
 assert.match(
 	providerHomeSource,
-	/body: <text fg=\{colors\.muted\} selectionBg=\{colors\.selectionBg\} selectionFg=\{colors\.selectionFg\}>\{row\.summary\}/,
+	/body:\s*\(\s*<text(?=[^>]*\bfg=\{colors\.muted\})(?=[^>]*\bselectionBg=\{colors\.selectionBg\})(?=[^>]*\bselectionFg=\{colors\.selectionFg\})[^>]*>\s*\{row\.summary\}\s*<\/text>\s*\)/,
 	'供应商列表卡片描述必须使用主题化文本选中背景/前景'
 );
 console.log('[PASS] 6.10 ProviderView agentContext 切换 + Codex profile 表单源码不变量');

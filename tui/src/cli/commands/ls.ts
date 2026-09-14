@@ -1,10 +1,10 @@
 // `ccq ls` — 列出 Claude provider 或 Codex profile，并标记当前默认。
 // 非 TTY 友好纯文本输出。Claude 路径复用 getProviderList + getActiveProvider。
 
-import { getProviderList, getActiveProvider } from '../../core/provider.js';
-import { scanCodexProfiles, type CodexProfileListItem } from '../../core/codex.js';
-import type { ProviderListItem } from '../../core/provider.js';
-import type { ToolTarget } from '../argv.js';
+import {getProviderList, getActiveProvider} from '../../core/provider.js';
+import {scanCodexProfiles, type CodexProfileListItem} from '../../core/codex.js';
+import type {ProviderListItem} from '../../core/provider.js';
+import type {ToolTarget} from '../argv.js';
 import {loadPiProviderDisplay} from '../../core/pi-provider.js';
 
 /** 列出 provider 展示行（含活跃标记）。供 ls 命令与 cc 未找到时复用。 */
@@ -18,7 +18,7 @@ export function listProvidersForDisplay(list: ProviderListItem[], activeKey?: st
 export function listCodexProfilesForDisplay(list: readonly CodexProfileListItem[]): string[] {
 	return list.map(p => {
 		const marker = p.isDefault ? '*' : ' ';
-		const auth = p.providerType === 'officialLogin' ? 'official login' : (p.hasApiKey ? 'api key' : 'custom');
+		const auth = p.providerType === 'officialLogin' ? 'official login' : p.hasApiKey ? 'api key' : 'custom';
 		return `${marker} ${p.key.padEnd(12)} ${p.baseUrl || '(official/default)'} ${auth}`;
 	});
 }

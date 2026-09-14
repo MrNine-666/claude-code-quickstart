@@ -184,7 +184,9 @@ async function contentManifest(skillPath: string): Promise<readonly string[]> {
 			} else if (entry.isSymbolicLink()) {
 				entries.push(`l:${itemPath}:${await readlink(entryPath)}`);
 			} else {
-				const digest = createHash('sha256').update(await readFile(entryPath)).digest('hex');
+				const digest = createHash('sha256')
+					.update(await readFile(entryPath))
+					.digest('hex');
 				entries.push(`f:${itemPath}:${digest}`);
 			}
 		}
@@ -207,11 +209,7 @@ export async function readSkillManifest(skillPath: string, expectedName: string)
 	return validation.manifest;
 }
 
-async function validateSkillDirectory(
-	skillPath: string,
-	expectedName: string,
-	includeManifest = false
-): Promise<DirectoryValidation> {
+async function validateSkillDirectory(skillPath: string, expectedName: string, includeManifest = false): Promise<DirectoryValidation> {
 	const rootFact = await lstatIfPresent(skillPath);
 	if (!rootFact?.isDirectory() || rootFact.isSymbolicLink()) {
 		return {valid: false, error: 'Skill 路径不是实体目录'};
@@ -227,9 +225,7 @@ async function validateSkillDirectory(
 		return {valid: false, error: treeError};
 	}
 
-	return includeManifest
-		? {valid: true, manifest: await contentManifest(skillPath)}
-		: {valid: true};
+	return includeManifest ? {valid: true, manifest: await contentManifest(skillPath)} : {valid: true};
 }
 
 function inspection(
@@ -310,10 +306,7 @@ export async function inspectSkillStorage(name: string, options: SkillStorageOpt
 	}
 }
 
-async function inspectSafeSkillStorage(
-	name: string,
-	paths: ReturnType<typeof skillStoragePaths>
-): Promise<SkillStorageInspection> {
+async function inspectSafeSkillStorage(name: string, paths: ReturnType<typeof skillStoragePaths>): Promise<SkillStorageInspection> {
 	const [claudeFact, canonicalFact] = await Promise.all([lstatIfPresent(paths.claudePath), lstatIfPresent(paths.canonicalPath)]);
 	if (claudeFact?.isSymbolicLink()) {
 		return inspectClaudeLink(name, paths, canonicalFact);
@@ -338,11 +331,7 @@ export function preferredSkillContentPath(value: SkillStorageInspection): string
 	return value.canonicalValid ? value.canonicalPath : value.claudeValid ? value.claudePath : undefined;
 }
 
-export async function createSkillSnapshot(
-	sourcePath: string,
-	name: string,
-	options: SkillStorageOptions = {}
-): Promise<SkillSnapshot> {
+export async function createSkillSnapshot(sourcePath: string, name: string, options: SkillStorageOptions = {}): Promise<SkillSnapshot> {
 	if (!isSafeSkillName(name)) {
 		throw new Error('Skill 名称不能安全映射到快照目录');
 	}

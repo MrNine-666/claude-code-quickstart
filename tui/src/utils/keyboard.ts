@@ -33,7 +33,11 @@ export function isAppModifier(keyEvent: KeyEventLike): boolean {
 
 /** Match a physical key event against a binding from config/keybindings.ts. */
 export function matchesKeyBinding(keyEvent: KeyEventLike, binding: string): boolean {
-	const parts = binding.toLowerCase().split('+').map(part => part.trim()).filter(Boolean);
+	const parts = binding
+		.toLowerCase()
+		.split('+')
+		.map(part => part.trim())
+		.filter(Boolean);
 	const key = parts.pop();
 	if (!key) return false;
 
@@ -110,7 +114,10 @@ function formatShortcutVariant(variant: string, platform: ShortcutPlatform): str
 }
 
 function formatShortcutStroke(stroke: string, platform: ShortcutPlatform): string {
-	const tokens = stroke.split('+').map(token => token.trim()).filter(Boolean);
+	const tokens = stroke
+		.split('+')
+		.map(token => token.trim())
+		.filter(Boolean);
 	if (tokens.length === 0) {
 		return stroke;
 	}

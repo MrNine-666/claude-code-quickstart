@@ -5,17 +5,7 @@ export type ManageModuleId = 'provider' | 'mcp' | 'skills' | 'prompts' | 'config
 // 当前 Agent 上下文：内部键用短名，界面 Header 只展示全称（AGENT_CONTEXT_LABELS）。
 export type AgentContext = 'cc' | 'cx' | 'pi';
 
-export type ManageKeyName =
-	| 'up'
-	| 'down'
-	| 'left'
-	| 'right'
-	| 'tab'
-	| 'shift-tab'
-	| 'enter'
-	| 'escape'
-	| 'q'
-	| 'other';
+export type ManageKeyName = 'up' | 'down' | 'left' | 'right' | 'tab' | 'shift-tab' | 'enter' | 'escape' | 'q' | 'other';
 
 export type ManageMenuItem = {
 	readonly id: ManageModuleId;
@@ -64,13 +54,13 @@ export const AGENT_CONTEXT_LABELS: Readonly<Record<AgentContext, string>> = {
 // Header 切换顺序（左→右），toggle 在其间循环。
 export const AGENT_CONTEXT_ORDER: readonly AgentContext[] = ['cc', 'cx', 'pi'];
 
-	/** 切换到上一个 Agent 上下文（cc ↔ cx ↔ pi 循环）。 */
+/** 切换到上一个 Agent 上下文（cc ↔ cx ↔ pi 循环）。 */
 export function previousAgentContext(current: AgentContext): AgentContext {
 	const index = AGENT_CONTEXT_ORDER.indexOf(current);
 	return AGENT_CONTEXT_ORDER[(index - 1 + AGENT_CONTEXT_ORDER.length) % AGENT_CONTEXT_ORDER.length]!;
 }
 
-	/** 切换到下一个 Agent 上下文（cc ↔ cx ↔ pi 循环）。 */
+/** 切换到下一个 Agent 上下文（cc ↔ cx ↔ pi 循环）。 */
 export function nextAgentContext(current: AgentContext): AgentContext {
 	const index = AGENT_CONTEXT_ORDER.indexOf(current);
 	return AGENT_CONTEXT_ORDER[(index + 1) % AGENT_CONTEXT_ORDER.length]!;

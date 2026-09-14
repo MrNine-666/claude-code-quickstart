@@ -1,9 +1,5 @@
 import React, {useMemo, useRef} from 'react';
-import {
-	defaultTextareaKeyBindings,
-	type InputKeyBinding,
-	type InputRenderable
-} from '@opentui/core';
+import {defaultTextareaKeyBindings, type InputKeyBinding, type InputRenderable} from '@opentui/core';
 import {useKeyboard, useRenderer} from '@opentui/react';
 import {borderColors, colors} from '../theme/index.js';
 import {copyTextWithFeedback} from '../utils/copy-feedback.js';
@@ -28,10 +24,7 @@ export function singleLineInputKeyBindings(platform = shortcutPlatform()): Input
 	const retained = defaultTextareaKeyBindings.filter(binding => {
 		// InputRenderable 的 keyBindings setter 会以 Textarea 基础绑定重建映射，不能保留 newline。
 		if (binding.name === 'return' || binding.name === 'kpenter' || binding.name === 'linefeed') return false;
-		return platform === 'darwin' || !(
-			binding.ctrl
-			&& (binding.name === 'a' || binding.name === 'z' || binding.name === 'y')
-		);
+		return platform === 'darwin' || !(binding.ctrl && (binding.name === 'a' || binding.name === 'z' || binding.name === 'y'));
 	});
 	const submitBindings: InputKeyBinding[] = [
 		{name: 'return', action: 'submit'},
@@ -60,7 +53,7 @@ export function SingleLineInput({label, value, focused, placeholder, onChange, o
 		if (typeof next === 'string') onSubmit?.(normalizeSingleLineValue(next));
 	};
 
-	useKeyboard((keyEvent) => {
+	useKeyboard(keyEvent => {
 		if (!focused || !isEditingModifier(keyEvent)) {
 			return;
 		}

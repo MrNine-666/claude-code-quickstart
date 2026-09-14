@@ -2,13 +2,13 @@
 // 由 index.tsx 在 argv 路由后调用，返回退出码；纯命令分发，不含 TUI 逻辑。
 // 新增子命令：在 argv.ts 注册动词 + 在 help.ts 加帮助 + 在此 switch 一支。
 
-import type { CliIntent } from './argv.js';
-import { helpFor, HELP_GENERAL } from './help.js';
-import { runLs } from './commands/ls.js';
-import { runTools } from './commands/tools.js';
-import { runUninstall } from './commands/uninstall.js';
-import { runUpdate } from './commands/update.js';
-import { runUse } from './commands/use.js';
+import type {CliIntent} from './argv.js';
+import {helpFor, HELP_GENERAL} from './help.js';
+import {runLs} from './commands/ls.js';
+import {runTools} from './commands/tools.js';
+import {runUninstall} from './commands/uninstall.js';
+import {runUpdate} from './commands/update.js';
+import {runUse} from './commands/use.js';
 
 /** 执行已解析的 CliIntent，返回退出码。仅处理非 tui 意图。 */
 export async function runCli(intent: CliIntent): Promise<number> {
@@ -18,7 +18,7 @@ export async function runCli(intent: CliIntent): Promise<number> {
 			return 0;
 
 		case 'version': {
-			const { CCQ_VERSION } = await import('../version.js');
+			const {CCQ_VERSION} = await import('../version.js');
 			console.log(CCQ_VERSION);
 			return 0;
 		}

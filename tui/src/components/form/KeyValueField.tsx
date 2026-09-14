@@ -1,9 +1,9 @@
 import React from 'react';
-import { TextAttributes } from '@opentui/core';
-import { colors } from '../../theme/index.js';
-import { FormLabel, FORM_VALUE_MARGIN_LEFT } from './FormLabel.js';
-import { FormControlFrame } from './FormControlFrame.js';
-import type { KeyValueEntry } from './field-types.js';
+import {TextAttributes} from '@opentui/core';
+import {colors} from '../../theme/index.js';
+import {FormLabel, FORM_VALUE_MARGIN_LEFT} from './FormLabel.js';
+import {FormControlFrame} from './FormControlFrame.js';
+import type {KeyValueEntry} from './field-types.js';
 
 export type KeyValueFieldProps = {
 	readonly label: string;
@@ -21,7 +21,7 @@ export type KeyValueFieldProps = {
  * - 非编辑态以多行只读形式展示当前键值对，便于阅读
  * - 保存按编辑语义触发、Esc 取消由 FormPanel 统一处理；Enter 维持 textarea 换行（本字段不绑 onSubmit）
  */
-export function KeyValueField({ label, entries, text, helpText, focused, active, onChange }: KeyValueFieldProps) {
+export function KeyValueField({label, entries, text, helpText, focused, active, onChange}: KeyValueFieldProps) {
 	return (
 		<box flexDirection="column">
 			<box flexDirection="row" alignItems="center">
@@ -29,27 +29,37 @@ export function KeyValueField({ label, entries, text, helpText, focused, active,
 				<FormControlFrame>
 					{active && focused ? (
 						<input
-						value={text}
-						placeholder="KEY=VALUE,KEY2=VALUE2"
-						onInput={onChange}
-						focused
-						textColor={colors.inputFocusedText}
-						cursorColor={colors.inputCursor}
-						selectionBg={colors.selectionBg}
-						selectionFg={colors.selectionFg}
-					/>
+							value={text}
+							placeholder="KEY=VALUE,KEY2=VALUE2"
+							onInput={onChange}
+							focused
+							textColor={colors.inputFocusedText}
+							cursorColor={colors.inputCursor}
+							selectionBg={colors.selectionBg}
+							selectionFg={colors.selectionFg}
+						/>
 					) : entries.length === 0 ? (
-						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>（无）</text>
+						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+							（无）
+						</text>
 					) : (
 						<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-							{entries.slice(0, 3).map((entry) => `${entry.key}=${entry.value}`).join(', ')}
+							{entries
+								.slice(0, 3)
+								.map(entry => `${entry.key}=${entry.value}`)
+								.join(', ')}
 						</text>
 					)}
 				</FormControlFrame>
 			</box>
 			{helpText ? (
 				<box marginLeft={FORM_VALUE_MARGIN_LEFT}>
-					<text fg={colors.muted} attributes={TextAttributes.DIM} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+					<text
+						fg={colors.muted}
+						attributes={TextAttributes.DIM}
+						selectionBg={colors.selectionBg}
+						selectionFg={colors.selectionFg}
+					>
 						{helpText}
 					</text>
 				</box>
@@ -60,7 +70,7 @@ export function KeyValueField({ label, entries, text, helpText, focused, active,
 
 /** 序列化 entries 为单行 `K=V,K2=V2` 文本（供 KeyValueField 编辑态初值）。 */
 export function serializeEntries(entries: readonly KeyValueEntry[]): string {
-	return entries.map((entry) => `${entry.key}=${entry.value}`).join(',');
+	return entries.map(entry => `${entry.key}=${entry.value}`).join(',');
 }
 
 /** 解析 `K=V,K2=V2` 文本为 entries（忽略空段与无等号段）。 */
@@ -77,7 +87,7 @@ export function parseEntries(raw: string): KeyValueEntry[] {
 			continue;
 		}
 
-		result.push({ key: trimmed.slice(0, eq).trim(), value: trimmed.slice(eq + 1) });
+		result.push({key: trimmed.slice(0, eq).trim(), value: trimmed.slice(eq + 1)});
 	}
 
 	return result;

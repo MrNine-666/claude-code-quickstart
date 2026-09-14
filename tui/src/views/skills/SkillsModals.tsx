@@ -43,7 +43,13 @@ export function SkillsUninstallConfirm({view}: {readonly view: SkillsViewState})
 	const targetIds = new Set(targets.map(item => item.id));
 	const targetNames = new Set(targets.map(item => item.name));
 	const sameNameOthers = view.installed.filter(item => targetNames.has(item.name) && !targetIds.has(item.id)).length;
-	const height = Math.max(3, Math.min(12, targets.reduce((count, item) => count + item.projections.length + 2, 0)));
+	const height = Math.max(
+		3,
+		Math.min(
+			12,
+			targets.reduce((count, item) => count + item.projections.length + 2, 0)
+		)
+	);
 	return (
 		<Modal active title="确认批量卸载 Skill" hint={skillsModalHint('confirm-uninstall')} tone="danger" width={SKILLS_MODAL_WIDTH}>
 			{targets.length > 0 ? (
@@ -67,9 +73,7 @@ export function SkillsUninstallConfirm({view}: {readonly view: SkillsViewState})
 							))}
 						</ThemedScrollbox>
 					</box>
-					{sameNameOthers > 0 ? (
-						<text fg={colors.warning}>{`同名其它来源的 ${sameNameOthers} 个实例不受影响。`}</text>
-					) : null}
+					{sameNameOthers > 0 ? <text fg={colors.warning}>{`同名其它来源的 ${sameNameOthers} 个实例不受影响。`}</text> : null}
 				</box>
 			) : (
 				<text fg={colors.text}>无卸载目标</text>
@@ -111,12 +115,8 @@ export function SkillsTopologyConfirmModal({view}: {readonly view: SkillsViewSta
 				{agentTargetsLabel(removedTargets) !== '无目标' ? (
 					<text fg={colors.warning}>{`本次移除：${agentTargetsLabel(removedTargets)}`}</text>
 				) : null}
-				<text fg={colors.warning}>
-					已有内容会先安全备份；新目标验证成功后才替换，失败时会保留或恢复原安装。
-				</text>
-				{migrating ? (
-					<text fg={colors.warning}>检测到旧版安装，应用后会迁移到当前支持的位置。</text>
-				) : null}
+				<text fg={colors.warning}>已有内容会先安全备份；新目标验证成功后才替换，失败时会保留或恢复原安装。</text>
+				{migrating ? <text fg={colors.warning}>检测到旧版安装，应用后会迁移到当前支持的位置。</text> : null}
 			</box>
 		</Modal>
 	);
@@ -137,9 +137,7 @@ export function SkillsSourceReplacementConfirmModal({view}: {readonly view: Skil
 			width={SKILLS_MODAL_WIDTH}
 		>
 			<box flexDirection="column">
-				<text fg={colors.warning}>
-					以下目标根中的同名实例将被覆盖；旧内容会先分别快照，操作后以完整 CLI 检测确认最终状态。
-				</text>
+				<text fg={colors.warning}>以下目标根中的同名实例将被覆盖；旧内容会先分别快照，操作后以完整 CLI 检测确认最终状态。</text>
 				<text fg={colors.text}>{`最终安装目标：${targets}`}</text>
 				<box height={height} minHeight={0} marginTop={1}>
 					<ThemedScrollbox style={{flexGrow: 1, minHeight: 0}} scrollY scrollX={false}>
@@ -176,13 +174,7 @@ export function SkillsInstallTargetModal({view}: {readonly view: SkillsViewState
 					const checked = Boolean(view.installDraft[target]);
 					const focused = target === selected;
 					const readonly = isManage ? managedTargetReadonly(managed) : target === 'cx';
-					const stateLabel = isManage
-						? managedTargetLabel(checked)
-						: readonly
-							? '● 安装'
-							: checked
-								? '● 安装'
-								: '○ 不安装';
+					const stateLabel = isManage ? managedTargetLabel(checked) : readonly ? '● 安装' : checked ? '● 安装' : '○ 不安装';
 					return (
 						<box key={target} flexDirection="row">
 							<text

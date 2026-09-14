@@ -25,7 +25,7 @@ export type {
 	SkillsBatchExecution,
 	SkillsBatchUninstallOutcome,
 	SkillsBatchUpdateOutcome,
-	SkillsReplacementExecution,
+	SkillsReplacementExecution
 };
 
 export type SkillsViewDispatch = React.Dispatch<SkillsViewAction>;

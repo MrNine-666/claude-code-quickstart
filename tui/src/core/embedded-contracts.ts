@@ -6,12 +6,12 @@
  */
 
 // JSON 契约
-import providersJson from "../../contracts/providers.json" with { type: "text" };
-import mcpServersJson from "../../contracts/mcp-servers.json" with { type: "text" };
-import claudeConfigJson from "../../contracts/claude-config.json" with { type: "text" };
-import codexConfigToml from "../../contracts/codex-config.toml" with { type: "text" };
-import piConfigJson from "../../contracts/pi-config.json" with { type: "text" };
-import piProvidersJson from "../../contracts/pi-providers.json" with { type: "text" };
+import providersJson from '../../contracts/providers.json' with {type: 'text'};
+import mcpServersJson from '../../contracts/mcp-servers.json' with {type: 'text'};
+import claudeConfigJson from '../../contracts/claude-config.json' with {type: 'text'};
+import codexConfigToml from '../../contracts/codex-config.toml' with {type: 'text'};
+import piConfigJson from '../../contracts/pi-config.json' with {type: 'text'};
+import piProvidersJson from '../../contracts/pi-providers.json' with {type: 'text'};
 
 function fileAsset(value: unknown): string {
 	return value as string;
@@ -21,12 +21,12 @@ function fileAsset(value: unknown): string {
  * 内嵌契约映射表
  */
 export const EMBEDDED_CONTRACTS = new Map<string, string>([
-	["providers.json", fileAsset(providersJson)],
-	["mcp-servers.json", fileAsset(mcpServersJson)],
-	["claude-config.json", fileAsset(claudeConfigJson)],
-	["codex-config.toml", fileAsset(codexConfigToml)],
-		["pi-config.json", fileAsset(piConfigJson)],
-		["pi-providers.json", fileAsset(piProvidersJson)],
+	['providers.json', fileAsset(providersJson)],
+	['mcp-servers.json', fileAsset(mcpServersJson)],
+	['claude-config.json', fileAsset(claudeConfigJson)],
+	['codex-config.toml', fileAsset(codexConfigToml)],
+	['pi-config.json', fileAsset(piConfigJson)],
+	['pi-providers.json', fileAsset(piProvidersJson)]
 ]);
 
 /**

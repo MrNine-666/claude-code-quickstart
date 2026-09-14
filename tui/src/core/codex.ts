@@ -2,16 +2,7 @@ import {existsSync, readFileSync, readdirSync, unlinkSync} from 'node:fs';
 import {normalizeBaseUrl, testProviderKey} from './text-utils.js';
 import {codexAuthJsonPath, codexConfigPath, codexDir, codexProfilePath} from './paths.js';
 import {atomicWrite as atomicWriteText, SECRET_FILE_MODE} from './fs-utils.js';
-import {
-	atomicWrite,
-	deletePath,
-	getPath,
-	parse,
-	redactTomlSecrets,
-	setPath,
-	stringify,
-	type TomlDocument
-} from './toml-edit.js';
+import {atomicWrite, deletePath, getPath, parse, redactTomlSecrets, setPath, stringify, type TomlDocument} from './toml-edit.js';
 
 // Codex provider/profile core：官方 profile-file 机制 + key 唯一身份（design D6/D7/D8）。
 
@@ -217,7 +208,11 @@ export function buildCodexProfileToml(input: CodexProfileInput): string {
 }
 
 /** 从真实 TOML 回填 Codex profile 支持的字段，供 textarea → form 同步复用。 */
-export function parseCodexProfileToml(key: string, content: string, profilePath = codexProfilePath(safeCodexProfileKey(key))): CodexProfile {
+export function parseCodexProfileToml(
+	key: string,
+	content: string,
+	profilePath = codexProfilePath(safeCodexProfileKey(key))
+): CodexProfile {
 	const safe = safeCodexProfileKey(key);
 	const document = parse(content);
 	const modelProvider = getPath(document, ['model_provider']);

@@ -1,6 +1,6 @@
 import React from 'react';
-import { TextAttributes } from '@opentui/core';
-import { colors } from '../theme/index.js';
+import {TextAttributes} from '@opentui/core';
+import {colors} from '../theme/index.js';
 
 // 视图标题行：title（橙色 BOLD）+ subtitle（muted）+ 可选 right（标题右侧附加节点）
 // 统一 6 个视图原先分裂的标题样式（4 白 BOLD / 2 橙 BOLD）与副标题（DIM / muted 混用）
@@ -14,7 +14,7 @@ export type ViewHeaderProps = {
 	readonly right?: React.ReactNode;
 };
 
-export function ViewHeader({ title, subtitle, right }: ViewHeaderProps) {
+export function ViewHeader({title, subtitle, right}: ViewHeaderProps) {
 	return (
 		<box flexDirection="row" flexShrink={0}>
 			<text fg={colors.primary} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
@@ -26,7 +26,7 @@ export function ViewHeader({ title, subtitle, right }: ViewHeaderProps) {
 					{subtitle}
 				</text>
 			)}
-			{right === undefined ? null : <text>{' '}</text>}
+			{right === undefined ? null : <text> </text>}
 			{right ?? null}
 		</box>
 	);

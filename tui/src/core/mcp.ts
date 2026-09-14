@@ -135,13 +135,24 @@ function backupRuntimeMcpToVault(
 	const {enabled: _enabled, disabled: _disabled, ...pureConfig} = config;
 	void _enabled;
 	void _disabled;
-	backupMcpToVault(meta, serverId, pureConfig, credentialsFromConfig(pureConfig), permissions, definitionHashFor(serverId, contractServers));
+	backupMcpToVault(
+		meta,
+		serverId,
+		pureConfig,
+		credentialsFromConfig(pureConfig),
+		permissions,
+		definitionHashFor(serverId, contractServers)
+	);
 }
 
 function syncRuntimeMcpToVault(agentContext: AgentContext): void {
 	withVaultLock(() => {
 		const runtimeServers =
-			agentContext === 'cx' ? readCodexMcpServers() : agentContext === 'pi' ? readPiRuntimeServers() : (readClaudeJson().mcpServers ?? {});
+			agentContext === 'cx'
+				? readCodexMcpServers()
+				: agentContext === 'pi'
+					? readPiRuntimeServers()
+					: (readClaudeJson().mcpServers ?? {});
 		const contractServers = loadMcpContract().servers;
 		const meta = loadVault();
 		let vaultChanged = false;
@@ -468,8 +479,8 @@ export function getServerDetail(serverId: string, agentContext: AgentContext = '
 	// config 优先取当前 Agent 运行时配置；若已禁用/删除且 vault 有备份，则用于编辑回显。
 	const config =
 		agentContext === 'pi'
-			? piRuntimeServers[serverId] ?? vaultEntry?.config ?? null
-			: runtimeServers[serverId] ?? vaultEntry?.config ?? piRuntimeServers[serverId] ?? null;
+			? (piRuntimeServers[serverId] ?? vaultEntry?.config ?? null)
+			: (runtimeServers[serverId] ?? vaultEntry?.config ?? piRuntimeServers[serverId] ?? null);
 
 	const settings = readSettings();
 	const allow = agentContext === 'cc' ? ((settings.permissions as {allow?: string[]} | undefined)?.allow ?? []) : [];

@@ -1,6 +1,6 @@
 import React from 'react';
-import { TextAttributes } from '@opentui/core';
-import { colors, PRIMARY } from '../theme/index.js';
+import {TextAttributes} from '@opentui/core';
+import {colors, PRIMARY} from '../theme/index.js';
 
 export type ModalTone = 'default' | 'warning' | 'danger';
 
@@ -15,15 +15,7 @@ export type ModalProps = {
 };
 
 const DEFAULT_MODAL_WIDTH = 40;
-export function Modal({
-	active,
-	title,
-	hint,
-	tone = 'default',
-	width = DEFAULT_MODAL_WIDTH,
-	height,
-	children
-}: ModalProps) {
+export function Modal({active, title, hint, tone = 'default', width = DEFAULT_MODAL_WIDTH, height, children}: ModalProps) {
 	if (!active) {
 		return null;
 	}
@@ -70,7 +62,7 @@ export function Modal({
 const HINT_KEY_TOKENS = new Set(['↑/↓', '空格', 'Space', 'Enter', 'Esc']);
 const HINT_KEY_SPLIT = /(↑\/↓|空格|Space|Enter|Esc)/g;
 
-function ModalHint({ hint }: { readonly hint: string }) {
+function ModalHint({hint}: {readonly hint: string}) {
 	const parts = hint.split(HINT_KEY_SPLIT);
 	return (
 		<box flexDirection="row" justifyContent="flex-end">

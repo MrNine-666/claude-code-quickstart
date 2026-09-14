@@ -46,8 +46,8 @@ const OFFICIAL_LOGIN_FORM_ERROR = '官方账号由 Codex 原生管理，请运�
  * 声明 `Codex` 段即代表该供应商可被 Codex 原生接入——Codex CLI 当前仅支持 Responses，
  * 故仅自身提供 Responses 兼容端点者才有该段（当前智谱 GLM、MiniMax、DeepSeek）；Kimi 仅暴露
  * Chat Completions，直连会 404/空流，需经 LiteLLM/OmniRoute 等网关转协议，故契约中无 Codex 段。
-	 * Codex 侧 baseUrl/model 与 Claude 侧不同源：Responses 端点与模型 ID 常与 Anthropic 兼容端点不一致；
-	 * 内置模板只预填 baseUrl，模型由用户手动填写或从上游模型列表选择。
+ * Codex 侧 baseUrl/model 与 Claude 侧不同源：Responses 端点与模型 ID 常与 Anthropic 兼容端点不一致；
+ * 内置模板只预填 baseUrl，模型由用户手动填写或从上游模型列表选择。
  *
  * custom 是表单中的结构性条目：它不是「某家供应商是否支持 Responses」的判断对象，
  * 故不靠 Codex 段声明可用性，由 buildProviderTypeOptions 直接补齐。官方登录是列表中的

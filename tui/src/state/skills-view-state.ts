@@ -206,7 +206,7 @@ export function filteredInstalled(state: SkillsViewState): readonly InstalledSki
 
 /** Item 的来源展示 label。未知来源只影响展示，不改变其 path-qualified identity。 */
 export function installedSourceLabel(item: InstalledSkillItem): string {
-	return item.provenance.kind === 'known' ? item.provenance.source ?? item.provenance.sourceUrl ?? '未知来源' : '未知来源';
+	return item.provenance.kind === 'known' ? (item.provenance.source ?? item.provenance.sourceUrl ?? '未知来源') : '未知来源';
 }
 
 /** 分组模式来源投影。所有 unknown Item 进入同一个展示组，但仍保留各自 Item id。 */
@@ -235,9 +235,7 @@ export function skillsHomeRows(state: SkillsViewState): readonly SkillsHomeRow[]
 	const collapsed = new Set(state.collapsedSourceKeys);
 	return groupInstalledBySource(filtered).flatMap(group => [
 		{kind: 'group' as const, key: `group:${group.key}`, group},
-		...(collapsed.has(group.key)
-			? []
-			: group.items.map(item => ({kind: 'skill' as const, key: `skill:${item.id}`, item})))
+		...(collapsed.has(group.key) ? [] : group.items.map(item => ({kind: 'skill' as const, key: `skill:${item.id}`, item})))
 	]);
 }
 
@@ -283,9 +281,7 @@ export function pendingBatchInstances(state: SkillsViewState): readonly Installe
  * 否则复检导致的排序变化会把操作打到同名另一来源上（R2/R7）。
  */
 export function pendingInstance(state: SkillsViewState): InstalledSkillItem | undefined {
-	return state.pendingInstanceId === undefined
-		? undefined
-		: state.installed.find(item => item.id === state.pendingInstanceId);
+	return state.pendingInstanceId === undefined ? undefined : state.installed.find(item => item.id === state.pendingInstanceId);
 }
 
 export function agentTargetsOfDraft(draft: InstallDraft): SkillAgentTargets {
@@ -470,9 +466,14 @@ function canManageAgentsOf(item: InstalledSkillItem | undefined): boolean {
 export function reduceSkillsViewState(state: SkillsViewState, action: SkillsViewAction): SkillsViewState {
 	switch (action.type) {
 		case 'installed-loaded':
-			return reconcileInstalledState(state, action.installed, {
-				pickedResultKeys: removeInstalledPickedKeys(state, action.installed)
-			}, false);
+			return reconcileInstalledState(
+				state,
+				action.installed,
+				{
+					pickedResultKeys: removeInstalledPickedKeys(state, action.installed)
+				},
+				false
+			);
 
 		case 'nav-up':
 			return navigate(state, -1);
@@ -592,7 +593,7 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				return state;
 			}
 
-				// 列表行 Enter → 管理安装 Modal。草稿只由 CLI `agents` 数组派生（R6）。
+			// 列表行 Enter → 管理安装 Modal。草稿只由 CLI `agents` 数组派生（R6）。
 			const current = selectedInstalled(state);
 			if (!current) {
 				return {...state, errorText: '当前没有可管理的 Skill'};
@@ -640,11 +641,12 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 						...current,
 						agents: current.agents.filter(agent => agent !== 'Pi'),
 						projections: current.projections.filter(projection => projection.root !== 'pi-global')
-				  }
+					}
 				: current;
-			const cxReady = targetCx === 'empty'
-				? !currentTargets.cc && !currentTargets.cx
-				: currentCx === targetCx && !needsManagedMigration(currentForCx, targetCx);
+			const cxReady =
+				targetCx === 'empty'
+					? !currentTargets.cc && !currentTargets.cx
+					: currentCx === targetCx && !needsManagedMigration(currentForCx, targetCx);
 			if (cxReady && currentTargets.pi === target.pi) {
 				return {...state, mode: 'list', pendingInstanceId: undefined, errorText: undefined};
 			}
@@ -679,9 +681,7 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				return state;
 			}
 			const current = pendingInstance(state) ?? selectedInstalled(state);
-			const canToggle = state.mode === 'select-install-target'
-				? target !== 'cx'
-				: Boolean(current?.capabilities.manageAgents);
+			const canToggle = state.mode === 'select-install-target' ? target !== 'cx' : Boolean(current?.capabilities.manageAgents);
 			if (!canToggle) {
 				return state;
 			}
@@ -1112,13 +1112,10 @@ function toggleAllSourceGroups(state: SkillsViewState): SkillsViewState {
 	};
 	const rows = skillsHomeRows(next);
 	const currentItemIndex =
-		expandAll && current?.kind === 'skill'
-			? rows.findIndex(row => row.kind === 'skill' && row.item.id === current.item.id)
-			: -1;
-	const currentGroupIndex = currentGroupKey
-		? rows.findIndex(row => row.kind === 'group' && row.group.key === currentGroupKey)
-		: -1;
-	const installedIndex = currentItemIndex >= 0 ? currentItemIndex : currentGroupIndex >= 0 ? currentGroupIndex : clamp(state.installedIndex, rows.length);
+		expandAll && current?.kind === 'skill' ? rows.findIndex(row => row.kind === 'skill' && row.item.id === current.item.id) : -1;
+	const currentGroupIndex = currentGroupKey ? rows.findIndex(row => row.kind === 'group' && row.group.key === currentGroupKey) : -1;
+	const installedIndex =
+		currentItemIndex >= 0 ? currentItemIndex : currentGroupIndex >= 0 ? currentGroupIndex : clamp(state.installedIndex, rows.length);
 	return {...next, installedIndex};
 }
 

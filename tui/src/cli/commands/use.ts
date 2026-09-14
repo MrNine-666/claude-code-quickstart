@@ -3,7 +3,7 @@
 // Codex: 复用 core/codex.ts 的 setDefaultCodexProfile，结构化写 ~/.codex/config.toml。
 // use 会写盘，持久修改默认供应商。
 
-import { getProviderList, switchProvider } from '../../core/provider.js';
+import {getProviderList, switchProvider} from '../../core/provider.js';
 import {
 	codexProfileExists,
 	isOfficialLoginKey,
@@ -11,9 +11,9 @@ import {
 	safeCodexProfileKey,
 	setDefaultCodexProfile
 } from '../../core/codex.js';
-import { testProviderKey } from '../../core/text-utils.js';
-import { listProvidersForDisplay } from './ls.js';
-import type { ToolTarget } from '../argv.js';
+import {testProviderKey} from '../../core/text-utils.js';
+import {listProvidersForDisplay} from './ls.js';
+import type {ToolTarget} from '../argv.js';
 import {loadPiProviderDisplay, parsePiProviderKey, switchPiProvider} from '../../core/pi-provider.js';
 
 function runClaudeUse(name: string): number {
