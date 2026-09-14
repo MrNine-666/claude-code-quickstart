@@ -656,12 +656,13 @@ jobs:
 
             安装完成后，在新终端中运行 `ccq` 进入管理控制台（TUI）：
 
-            - 供应商管理（多供应商切换）
-            - MCP Server 管理
-            - Skills 管理
-            - 提示词管理
+            - 供应商管理（Claude Code / Codex / Pi 多 provider 切换）
+            - MCP Server 管理（Claude Code / Codex / Pi）
+            - Skills 管理（Claude Code / Codex / Pi）
+            - 全局规则管理
             - 配置文件管理
-            - 工具管理（ClaudeCode / Ccline / OpenSpec / CodeGraph / CodexCli / AntigravityCli）
+            - 工具管理（Claude Code / Codex / Pi CLI / Pi Web / Ccline / CcgWorkflow / OpenSpec / Trellis / CodeGraph / GitNexus / AntigravityCli）
+            - 扩展管理（Pi package 安装 / 更新 / 卸载）
 
             ---
 

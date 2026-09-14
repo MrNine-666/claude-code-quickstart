@@ -1,8 +1,8 @@
 # Claude Code Quickstart (CCQ)
 
-Windows 与 macOS 双平台的 CLI Agent（Claude Code / Codex）开发环境自动化安装器。
+Windows 与 macOS 双平台的 CLI Agent（Claude Code / Codex / Pi）开发环境自动化安装器。
 
-> 目标：把「装环境」变成「跑脚本」——Windows 基于 PowerShell 5.1 单运行时，macOS 基于 Homebrew / zsh / nvm，一条命令装好 Node.js / Git 与 `ccq` 管理控制台；Claude Code / Codex 等 CLI Agent 与周边工具统一在 `ccq` 的「工具管理」中按需安装与维护，供应商 / 配置 / MCP / Skills 等也由 `ccq` 管理。
+> 目标：把「装环境」变成「跑脚本」——Windows 基于 PowerShell 5.1 单运行时，macOS 基于 Homebrew / zsh / nvm，一条命令装好 Node.js / Git 与 `ccq` 管理控制台；Claude Code / Codex / Pi 等 CLI Agent 与周边工具统一在 `ccq` 的「工具管理」中按需安装与维护，供应商 / 配置 / MCP / Skills / Pi 扩展等也由 `ccq` 管理。
 
 ---
 
@@ -26,13 +26,14 @@ Windows 与 macOS 双平台的 CLI Agent（Claude Code / Codex）开发环境自
 ## Core Features
 
 - **一键装好开发环境**：一条命令搞定 Windows / macOS 双平台的 Node.js / Git 与 `ccq` 管理控制台，已装组件实时检测自动跳过，无需手动处理版本、编码与初始化顺序
-- **Agent 与插件统一管理**：Claude Code / Codex 等 CLI Agent 与 Ccline / CcgWorkflow / OpenSpec / Trellis / CodeGraph 等周边工具，都能在「工具管理」里快捷安装 / 更新 / 卸载
+- **Agent 与插件统一管理**：Claude Code / Codex / Pi CLI 与 Ccline / Pi Web / CcgWorkflow / OpenSpec / Trellis / CodeGraph 等周边工具，都能在「工具管理」里快捷安装 / 更新 / 卸载；Pi package 扩展在独立的「扩展管理」中维护
 - **终端一键启动控制台**：装好后在任意终端输入 `ccq` 即进入管理控制台
-- **供应商快捷配置**：内置智谱 GLM / MiniMax / Kimi / DeepSeek 等供应商模板，填个 Key 就能用；Codex 侧支持官方登录（`codex login`）以及供应商配置与切换
+- **供应商快捷配置**：内置智谱 GLM / MiniMax / Kimi / DeepSeek 等供应商模板，填个 Key 就能用；Codex 侧支持官方登录（`codex login`），Pi 侧使用原生 `auth.json` / `models.json` / `settings.json` 管理 provider 与切换
 - **配置文件与供应商隔离**：每个供应商独立存放在专属 Profile 文件（Claude Code 存 `~/.claude/providers/`，Codex 存 `~/.codex/<key>.config.toml`），与主配置（`settings.json` / `config.toml`）物理分离；切换或设默认供应商时只按字段所有权合并供应商相关内容（Token / Base URL / 模型键），不触碰语言、权限、hooks、statusLine 等其他配置，MCP 也各自独立存放，切换供应商不会影响其余任何配置
-- **配置与规则一键导入**：推荐的 `settings.json` 配置与全局规则（CLAUDE.md）可一键补全导入，只补缺失项、不覆盖你已有的设置
-- **MCP 多 Agent 开关**：内置 Context7 / DeepWiki / Playwright / Exa 等 MCP 模板，凭据录入一次持久保存，可按 Claude Code / Codex 分别启用或禁用
-- **Skills 快捷管理**：基于官方 `npx skills` 管理共享本体与 Agent 投影；支持 Claude-only 显式收编、Codex-only/独立副本链接修复，以及同名不同源经强确认后的安全替换
+- **配置一键导入**：推荐的 `settings.json` 配置可一键补全导入，只补缺失项、不覆盖你已有的设置
+- **MCP 多 Agent 开关**：内置 Context7 / DeepWiki / Playwright / Exa 等 MCP 模板，凭据录入一次持久保存，可按 Claude Code / Codex / Pi 分别启用或禁用；Pi 使用 `pi-mcp-adapter` 适配
+- **Skills 快捷管理**：基于官方 `npx skills` 管理共享本体与 Agent 投影；支持 Claude Code / Codex / Pi 独立目标、来源识别、批量更新与安全卸载
+- **Pi 扩展市场**：空搜索展示已安装 Pi extension，输入关键词后搜索官方 package 目录；支持安装、更新、`A` 全部更新、卸载与外部详情链接
 - **明暗主题自适应**：TUI 自动跟随终端明暗主题切换，深浅色终端都清晰顺眼
 - **应用内自更新**：`ccq` 本体支持应用内检查更新，强确认后原子替换并可一键重启，更新前自动快照备份、失败可回滚
 
@@ -66,7 +67,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 irm 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/install.ps1' | iex
 ```
 
-PS 5.1 单运行时直跑：前置检测内联（Windows 版本 / winget 自动安装 / PS7 非阻塞推荐）+ bootstrap Basic 两步直装（NodeJS / Git），**末尾确认下载 ccq.exe 到 `%USERPROFILE%\.local\bin\` 并加入用户 PATH**。Claude Code / Codex 请在安装完成后运行 `ccq`，进入「工具管理」按需安装。
+PS 5.1 单运行时直跑：前置检测内联（Windows 版本 / winget 自动安装 / PS7 非阻塞推荐）+ bootstrap Basic 两步直装（NodeJS / Git），**末尾确认下载 ccq.exe 到 `%USERPROFILE%\.local\bin\` 并加入用户 PATH**。Claude Code / Codex / Pi 请在安装完成后运行 `ccq`，进入「工具管理」按需安装。
 
 安装完成后，建议在 Windows Terminal 中将 PowerShell 7 配置为管理员方式打开；后续新开终端执行 `ccq` 进入管理控制台。
 
@@ -80,7 +81,7 @@ PS 5.1 单运行时直跑：前置检测内联（Windows 版本 / winget 自动�
 ccq
 ```
 
-进入 6 菜单管理控制台（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills）。
+进入 7 菜单管理控制台（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills / 扩展管理）。
 
 #### macOS
 
@@ -98,7 +99,7 @@ curl -fsSL "https://github.com/MrNine-666/claude-code-quickstart/releases/latest
 ccq
 ```
 
-进入 6 菜单管理控制台。
+进入 7 菜单管理控制台。
 
 ---
 
@@ -189,7 +190,7 @@ Windows 入口基于 PowerShell 5.1+ 单运行时执行，安装基础环境并�
 2. Git
 3. `ccq.exe` 管理控制台（下载到 `%USERPROFILE%\.local\bin\` 并加入用户 PATH）
 
-Claude Code / Codex 不再由 installer 直接安装；安装完成后运行 `ccq`，在 `Claude Code` / `Codex` Header 下进入「工具管理」安装或维护对应工具。
+Claude Code / Codex / Pi 不再由 installer 直接安装；安装完成后运行 `ccq`，在对应 Agent Header 下进入「工具管理」安装或维护工具。
 
 ### macOS
 
@@ -200,21 +201,21 @@ macOS 入口从 `curl ... | bash` 启动并切换到 `/bin/zsh`，通过 Homebre
 3. Git
 4. `ccq` 管理控制台（下载到 `~/.local/bin/` 并确保该目录在 PATH）
 
-安装完成后，Claude Code / Codex、供应商、配置、全局规则、MCP、Skills、工具等均在 `ccq` 管理控制台操作，详见下节。
+安装完成后，Claude Code / Codex / Pi、供应商、配置、全局规则、MCP、Skills、工具与 Pi 扩展等均在 `ccq` 管理控制台操作，详见下节。
 
 ---
 
 ## Manage Console (ccq)
 
-安装后直接运行 `ccq` 命令进入管理控制台。`ccq` 是 OpenTUI + Bun 构建的单文件可执行产物（`tui/` 子项目交叉编译而来），安装时下载到 `~/.local/bin/ccq[.exe]`（与 Claude Code native installer 同目录），通过用户级 PATH 天然可达。控制台提供 **6 菜单**，右侧 content 顶部用全称 Header 在 `Claude Code` / `Codex` 间切换当前 Agent 上下文；也可以直接使用非交互 CLI 子命令完成常用操作：
+安装后直接运行 `ccq` 命令进入管理控制台。`ccq` 是 OpenTUI + Bun 构建的单文件可执行产物（`tui/` 子项目交叉编译而来），安装时下载到 `~/.local/bin/ccq[.exe]`（与 Claude Code native installer 同目录），通过用户级 PATH 天然可达。控制台提供 **7 菜单**，右侧 content 顶部用全称 Header 在 `Claude Code` / `Codex` / `Pi` 间切换当前 Agent 上下文；扩展管理进入后固定使用 Pi 上下文；也可以直接使用非交互 CLI 子命令完成常用操作：
 
 ### CLI Subcommands
 
 | Command | Description |
 |---|---|
-| `ccq` | 进入 OpenTUI 6 菜单管理控制台 |
-| `ccq ls [--tool claude\|codex]` | 列出 Claude provider 或 Codex profile；默认 `--tool claude` |
-| `ccq use <provider> [--tool claude\|codex]` | 设置 Claude 默认 provider 或 Codex 默认 profile；Codex 结构化写 `CODEX_HOME/config.toml` |
+| `ccq` | 进入 OpenTUI 7 菜单管理控制台 |
+| `ccq ls [--tool claude\|codex\|pi]` | 列出 Claude provider、Codex profile 或 Pi provider；默认 `--tool claude` |
+| `ccq use <provider> [--tool claude\|codex\|pi]` | 设置 Claude 默认 provider、Codex 默认 profile 或 Pi `defaultProvider`；Codex 写 `CODEX_HOME/config.toml`，Pi 写 `~/.pi/agent/settings.json` |
 | `ccq update [--check]` | 检查或更新 ccq 可执行文件；`--check` 只检查不下载 |
 | `ccq tools update [name]` | 更新全部可更新工具，或只更新指定工具 |
 | `ccq tools uninstall <name> [--yes\|-y]` | 卸载指定工具；默认要求 y/N 确认，传 `--yes` 或 `-y` 跳过确认 |
@@ -232,6 +233,9 @@ claude --settings ~/.claude/providers/custom.json
 
 # 临时指定 Codex 供应商
 codex --profile custom
+
+# 临时指定 Pi provider 与模型
+pi --provider custom --model model-id
 ```
 
 Agent 参数可以直接追加：
@@ -246,13 +250,14 @@ codex --profile custom -m gpt-5
 ```powershell
 ccq use custom --tool claude
 ccq use custom --tool codex
+ccq use custom --tool pi
 ```
 
-之后分别直接运行 `claude` 或 `codex`。这些命令直接使用当前终端，`ccq` 不参与 Agent 进程生命周期。
+之后分别直接运行 `claude`、`codex` 或 `pi`。这些命令直接使用当前终端，`ccq` 不参与 Agent 进程生命周期。
 
 ### 1) Tool Management (Tools)
 
-- Agent 组常显 ClaudeCode / CodexCli / AntigravityCli；Ccline 仅 Claude Code；OpenSpec / Trellis / CcgWorkflow / CodeGraph 在两种上下文可见
+- Agent 组常显 ClaudeCode / CodexCli / PiCli；Ccline 与 Pi Web 位于「全局伴随工具」组；OpenSpec / Trellis / CcgWorkflow / CodeGraph 等共享工具按支持的上下文显示
 - 安装 / 更新 / 卸载（强确认 + snapshot 保护）；CodeGraph 安装/更新后校验当前 Agent MCP 接入，更新后重接入已安装的 Claude/Codex 两侧，卸载最后一个 CodeGraph MCP 后自动移除共享 CLI；CcgWorkflow Codex Mode 使用官方非交互 install/uninstall
 - 侧边栏底部「检查更新」按钮可更新 ccq 可执行文件本体：发现新版本后弹窗确认，更新中在弹窗内显示 loading（Enter 禁用，Esc 停止更新），完成后可选择立即重启或稍后重启
 
@@ -262,24 +267,26 @@ ccq use custom --tool codex
 
 - Claude Code Header 下：供应商 Profile 的新增 / 编辑 / 删除 / 切换 / 设置默认；配置写入 `~/.claude/settings.json` 的 `env`，Profile 保存到 `~/.claude/providers/`
 - Codex Header 下：管理 `$CODEX_HOME/<key>.config.toml`（默认 `~/.codex/<key>.config.toml`）官方 profile 文件；key 同时作为文件名、`--profile` 名、provider id 与默认显示名
-- Codex API key 直写 `[model_providers.<key>].experimental_bearer_token`，不进入 ccq vault、不由 ccq 注入 env；`official login` 类型通过 `codex login` 完成认证
-- 内置供应商：智谱 GLM（默认 glm-5.3）、MiniMax（默认 MiniMax-M3）、Kimi Coding Plan 1M（默认 k3[1m]）、Kimi Coding Plan 256K（默认 k3-256k）、DeepSeek（默认 deepseek-v4-pro，预填 effort/上下文窗口 env）、自定义供应商
+- Pi Header 下：按 provider 级别读取 `~/.pi/agent/auth.json`、`models.json` 与 `settings.json`；支持 API Key 自定义 provider、OAuth 状态展示、provider 切换与模型维护，OAuth 登录/注销仍由 Pi `/login` / `/logout` 负责
+- Codex API key 直写 `[model_providers.<key>].experimental_bearer_token`，不进入 ccq vault、不由 ccq 注入 env；官方账号仅通过 `codex login` 完成认证，ccq 仅只读展示
+- 内置供应商：智谱 GLM、DeepSeek、Kimi Coding Plan 1M、Kimi Coding Plan 256K、MiniMax、自定义供应商；Claude 侧模型字段不预填，可通过模型发现或手动填写
   - 两个 Kimi 模板同一端点、同一 Key，只差上下文档位：1M 版需 Allegretto 及以上套餐，256K 版 Moderato 及以上即可且 token 消耗约为 1M 版一半；Andante 档可在表单里把模型改为 `kimi-for-coding`
-- Codex 内置一键模板：由 `providers.json` 各供应商的 `Codex` 段声明，与 Claude 侧同一份契约统一管理；当前智谱 GLM（glm-5.3）、MiniMax、DeepSeek（deepseek-v4-pro）
+- Codex 内置一键模板：由 `providers.json` 各供应商的 `Codex` 段声明，与 Claude 侧同一份契约统一管理；当前智谱 GLM、DeepSeek、MiniMax，模型字段不预填
 
 ![供应商管理](./assets/screenshots/tui-providers.png)
 
 ### 3) Configuration Files (Config)
 
-- Claude Code Header 下查看 `~/.claude/settings.json` 推荐配置；Codex Header 下查看 `CODEX_HOME/config.toml` 推荐配置
+- Claude Code Header 下查看 `~/.claude/settings.json` 推荐配置；Codex Header 下查看 `CODEX_HOME/config.toml` 推荐配置；Pi Header 下维护 `~/.pi/agent/settings.json` 的 ccq 所有通用字段
+- Pi Config 不维护 provider、认证、MCP、Skills、`defaultProvider` 或 `defaultModel`
 - 复用预览 / 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` fill-missing 导入；不管理 provider、MCP、Skills 或规则文件内容
 
 ![配置文件管理](./assets/screenshots/tui-config.png)
 
 ### 4) Global Rules (Prompts)
 
-- Claude Code Header 下维护 `~/.claude/CLAUDE.md`；Codex Header 下维护 `CODEX_HOME/AGENTS.md`
-- 复用预览 / 编辑 / `Ctrl+T` 推荐 / `Ctrl+O` 导入，Codex 推荐内容复用 Claude Code 推荐规则
+- Claude Code Header 下维护 `~/.claude/CLAUDE.md`；Codex Header 下维护 `CODEX_HOME/AGENTS.md`；Pi Header 下维护 `~/.pi/agent/AGENTS.md`
+- 仅提供按 Agent 上下文切换的预览、编辑与保存，不提供推荐规则面板或导入功能
 
 ![全局规则管理](./assets/screenshots/tui-prompt.png)
 
@@ -288,6 +295,7 @@ ccq use custom --tool codex
 - 列表仅展示已安装 Server，行显示状态圆点 + Server ID
 - `A` 新增、`E` 编辑（JSON 即真源，内置模板一键带出配置与凭据提示）、`D` 删除
 - `Enter` 切换当前 Header 对应 Agent 的启用 / 禁用状态；Claude Code 写 `~/.claude.json`，Codex 结构化写 `CODEX_HOME/config.toml`
+- Pi 通过 `pi-mcp-adapter` 投影 MCP 状态；Adapter 未安装或无法适配时显示“不支持”，不伪造启用状态
 - 凭据与配置备份持久化到 `~/.ccq/mcp-meta.json`，但 Active/Disabled 状态以运行时配置文件为事实源
 - 内置 MCP：Context7 / DeepWiki / Tavily / Playwright / Exa Search / ACE Tool / MasterGo / Figma / Chrome DevTools
 - 支持 none / single-key / args-token / url-embedded 等凭据类型，新增或编辑时按模板提示填写
@@ -296,11 +304,21 @@ ccq use custom --tool codex
 
 ### 6) Skills
 
-- 列表页：一次全量检测同时展示 Claude Code / Codex 状态；`Enter` 管理安装，Claude-only 可在强确认后安装到 Codex 并迁移为共享本体，Codex-only 或 Windows 独立副本可重试 Claude 共享链接；检测与刷新不会自动改动已有 Skill
+- 列表页：一次全量检测同时展示 Claude Code / Codex / Pi 状态；`Enter` 管理安装，Claude-only 可在强确认后安装到 Codex 并迁移为共享本体，Codex-only 或 Windows 独立副本可重试 Claude 共享链接；检测与刷新不会自动改动已有 Skill
 - 安装页（`a` 进入）：远程搜索框 + 扁平多选列表；双侧都没有的 Skill 正常安装，同来源已安装或来源未知项禁选；可证明同名不同源的项显示“已有同名”，执行前逐项确认旧/新来源和覆盖影响
 - 物理存储、canonical 与 Agent 链接仍由官方 Skills CLI 负责；ccq 仅在目标目录外创建安全恢复快照，并在 `add` 与文件系统/lock 对账成功后清理未选择的旧投影
+- Pi 使用官方 Skills CLI 的 `--agent pi -g` 维护 `~/.pi/agent/skills`，不把 Codex 的 `.agents/skills` 映射为 Pi target
 
 ![Skills 管理](./assets/screenshots/tui-skills.png)
+
+### 7) Extensions (Pi Packages)
+
+- 扩展管理固定使用 Pi Header；空搜索只读取已安装 Pi extension，搜索框按 Enter 后才查询官方 package 目录
+- 支持展示 package 的资源类型、作者、版本、下载量、repository 与安装状态；只有包含 `pi.extensions` 的 package 才作为扩展候选
+- `Enter` 安装/更新当前扩展，`A` 顺序更新全部已安装扩展，`D` 卸载，`O` 打开外部详情；所有 mutation 完成后按 `pi list --no-approve` 对账
+- Pi package 只做全局安装；扩展卸载不会删除 `~/.pi/agent` 下的设置、凭据、会话、Skills、Packages 或其他用户数据
+
+![扩展管理](./assets/screenshots/tui-extensions.png)
 
 ---
 
@@ -310,9 +328,9 @@ ccq use custom --tool codex
 claude-code-quickstart/
 ├── dist/                              # 默认构建输出：install.ps1/install.sh + 4 平台 ccq 可执行文件
 ├── tui/                               # 根级 OpenTUI TUI 子项目（src/ → bun build --compile）
-│   ├── contracts/                     # TUI 链契约：claude-config / mcp-servers / providers / templates（内嵌进可执行文件）
+│   ├── contracts/                     # TUI 链契约：claude-config / pi-config / pi-providers / mcp-servers / providers（内嵌进可执行文件）
 │   ├── scripts/                       # 构建 / smoke / parity 验证脚本
-│   └── src/                           # 6 菜单管理控制台实现
+│   └── src/                           # 7 菜单管理控制台实现
 ├── installer/
 │   ├── build.ps1                      # Windows / GitHub Actions 构建入口（install.ps1 + Windows ccq）
 │   ├── build.sh                       # macOS / Unix 构建入口（install.sh + macOS ccq）

@@ -363,11 +363,10 @@ ccq_show_final_summary() {
   if [ "${failed}" -eq 0 ]; then
     printf '\n'
     ccq_ui_primary "快速开始：" "developer"
-    ccq_ui_info "  claude          - 启动 Claude Code" "developer"
-    ccq_ui_info "  claude --help   - 查看帮助信息" "developer"
-    printf '\n'
     ccq_ui_primary "管理面板（可选）：" "developer"
     ccq_ui_info "  ccq            - 启动 Claude Code Quickstart 管理控制台" "developer"
+    ccq_ui_info "  工具管理       - 按需安装 Claude Code / Codex / Pi" "developer"
+    ccq_ui_info "  扩展管理       - 维护 Pi package 扩展" "developer"
   else
     printf '\n'
     ccq_ui_warning "安装完成，但有 ${failed} 个步骤失败"
@@ -424,7 +423,7 @@ ccq_confirm_basic_install_plan() {
   ccq_ui_info "  2. nvm / Node.js（Basic 必需）"
   ccq_ui_info "  3. Git（Basic 必需）"
   ccq_ui_info "  4. ccq 管理控制台（安装器末尾确认下载）"
-  ccq_ui_dim "     Claude Code / Codex 将在 ccq「工具管理」中按需安装"
+  ccq_ui_dim "     Claude Code / Codex / Pi 将在 ccq「工具管理」中按需安装"
   printf '\n'
 
   local choice
@@ -443,7 +442,7 @@ ccq_main() {
   fi
 
   ccq_show_banner "Claude Code Quickstart"
-  ccq_ui_info "一键搭建 ccq 运行基础环境（Node.js / Git），Claude Code / Codex 由工具管理按需安装" "developer"
+  ccq_ui_info "一键搭建 ccq 运行基础环境（Node.js / Git），Claude Code / Codex / Pi 由工具管理按需安装" "developer"
 
   if ! ccq_confirm_basic_install_plan; then
     ccq_ui_info "安装已取消"
@@ -456,7 +455,7 @@ ccq_main() {
   # 旧 Profile 标记块迁移清理（幂等，无残留则 no-op）
   ccq_cleanup_legacy_profile_blocks
 
-  # 基础环境直装（NodeJS / Git），Claude Code / Codex 交由 ccq 工具管理安装
+  # 基础环境直装（NodeJS / Git），Claude Code / Codex / Pi 交由 ccq 工具管理安装
   ccq_ui_primary "开始安装基础环境" "developer"
   ccq_invoke_grouped_install --skip-confirmation $(ccq_get_group_step_ids Basic)
 
@@ -510,7 +509,8 @@ ccq_confirm_executable_download() {
   ccq_ui_info "  • Skills 管理"
   ccq_ui_info "  • 提示词配置"
   ccq_ui_info "  • 配置文件管理"
-  ccq_ui_info "  • 工具管理（安装/更新 Claude Code、Codex、CodeGraph、OpenSpec 等）"
+  ccq_ui_info "  • 工具管理（安装/更新 Claude Code、Codex、Pi、CodeGraph、OpenSpec 等）"
+  ccq_ui_info "  • 扩展管理（安装/更新/卸载 Pi package 扩展）"
   printf '\n'
 
   # 1. 已安装时先比较当前版本与安装器 Release 版本。
@@ -554,9 +554,9 @@ ccq_confirm_executable_download() {
       ccq_ui_info "已跳过 ccq 可执行文件下载"
       ccq_ui_dim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
       printf '\n'
-      ccq_ui_primary "后续安装 Claude Code / Codex："
-      ccq_ui_info "  稍后安装 ccq 后运行 ccq，进入「工具管理」安装 Claude Code 或 Codex"
-      ccq_ui_info "  API Key 与 profile 可在「供应商」菜单中可视化配置"
+      ccq_ui_primary "后续安装 Claude Code / Codex / Pi："
+      ccq_ui_info "  稍后安装 ccq 后运行 ccq，进入「工具管理」按需安装 Claude Code、Codex 或 Pi"
+      ccq_ui_info "  API Key、provider/profile 可在「供应商」菜单中可视化配置；Pi 官方登录请在 Pi 中执行 /login"
       return 0
     fi
   fi
@@ -585,7 +585,8 @@ ccq_confirm_executable_download() {
     ccq_ui_primary "下一步："
     ccq_ui_info "  1. 打开一个新的终端窗口"
     ccq_ui_info "  2. 输入 ccq 进入管理控制台"
-    ccq_ui_info "  3. 进入「工具管理」安装 Claude Code 或 Codex，再到「供应商」配置 API Key/profile"
+    ccq_ui_info "  3. 进入「工具管理」安装 Claude Code、Codex 或 Pi，再到「供应商」配置 API Key、provider/profile"
+    ccq_ui_info "  4. 使用「扩展管理」维护 Pi package 扩展"
     printf '\n'
     ccq_ui_dim "（当前会话 PATH 尚未刷新，必须开启新终端 ccq 命令才生效）"
   else
@@ -596,9 +597,9 @@ ccq_confirm_executable_download() {
     ccq_ui_info "  2. 下载对应平台的可执行文件（${exe_name}）"
     ccq_ui_info "  3. 放置到 ~/.local/bin 并设置可执行权限（chmod +x）"
     printf '\n'
-    ccq_ui_primary "后续安装 Claude Code / Codex："
-    ccq_ui_info "  等待 ccq 安装完成后运行 ccq，进入「工具管理」安装 Claude Code 或 Codex"
-    ccq_ui_info "  API Key 与 profile 可在「供应商」菜单中可视化配置"
+    ccq_ui_primary "后续安装 Claude Code / Codex / Pi："
+    ccq_ui_info "  等待 ccq 安装完成后运行 ccq，进入「工具管理」按需安装 Claude Code、Codex 或 Pi"
+    ccq_ui_info "  API Key、provider/profile 可在「供应商」菜单中可视化配置；Pi 官方登录请在 Pi 中执行 /login"
   fi
 }
 

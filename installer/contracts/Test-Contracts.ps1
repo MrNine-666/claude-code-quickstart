@@ -33,7 +33,7 @@ function Read-ContractJson {
 function Read-TuiContractJson {
     param([Parameter(Mandatory)][string]$RelativePath)
 
-    # TUI 契约（claude-config/mcp-servers/providers/templates）位于 tui/contracts/（TDR-10 拆分）
+    # TUI 契约（claude-config/mcp-servers/providers）位于 tui/contracts/（TDR-10 拆分）
     $path = Join-Path $script:TuiContractsRoot $RelativePath
     if (-not (Test-Path $path -PathType Leaf)) {
         throw "TUI 契约文件不存在: $path"
@@ -353,33 +353,6 @@ function Test-ClaudeConfigContract {
     Assert-ClaudeConfigDescriptionsCoverMap 'claude-config.descriptions.env-defaults' $Contract['ClaudeConfigEnvDefaults'] $descriptions['ClaudeConfigEnvDefaults']
     if (-not $descriptions.ContainsKey('ClaudeConfigBasePermissions') -or [string]::IsNullOrWhiteSpace([string]$descriptions['ClaudeConfigBasePermissions'])) {
         Add-Issue 'claude-config.descriptions.base-permissions 缺少或为空'
-    }
-}
-
-function Test-TemplatesContract {
-    param([Parameter(Mandatory)][hashtable]$Contract)
-
-    $templateIds = @($Contract['Templates'] | ForEach-Object { [string]$_['Id'] })
-    foreach ($requiredId in @(
-        'claude-md-template.base',
-        'claude-md-template.platform-windows',
-        'codex-md-template.base'
-    )) {
-        if ($templateIds -notcontains $requiredId) {
-            Add-Issue "templates 缺少条目: $requiredId"
-        }
-    }
-
-    foreach ($template in @($Contract['Templates'])) {
-        $id = [string]$template['Id']
-        $source = [string]$template['Source']
-        if ($source -match '^installer/(core|steps)/') {
-            Add-Issue "templates.$id Source 仍引用旧 installer 路径: $source"
-            continue
-        }
-        if ($source -match '^tui/') {
-            Assert-PathExists "templates.$id Source" (Join-Path $script:RepoRoot $source)
-        }
     }
 }
 
@@ -1741,7 +1714,6 @@ function Main {
     # TUI 契约（tui/contracts/，TDR-10 拆分）
     Test-McpContract -Contract (Read-TuiContractJson 'mcp-servers.json')
     Test-ClaudeConfigContract -Contract (Read-TuiContractJson 'claude-config.json')
-    Test-TemplatesContract -Contract (Read-TuiContractJson 'templates/index.json')
     Test-UserPathPreservationContract
     Test-ProfileLegacyCleanupContract
 

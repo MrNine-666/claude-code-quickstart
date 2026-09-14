@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 # Install.ps1 - CCQ（安装入口）
 # 功能: 首次安装入口（Onboarding），PS5.1 单运行时直跑——前置检测 + 基础环境直装
-#       （NodeJS / Git）+ ccq 下载引导；Claude Code / Codex 由 ccq 工具管理安装
+#       （NodeJS / Git）+ ccq 下载引导；Claude Code / Codex / Pi 由 ccq 工具管理安装
 
 param(
     [switch]$ListSteps,
@@ -411,7 +411,8 @@ function Confirm-CcqExecutableDownload {
     Write-UiInfo "  • Skills 管理"
     Write-UiInfo "  • 提示词配置"
     Write-UiInfo "  • 配置文件管理"
-    Write-UiInfo "  • 工具管理（安装/更新 Claude Code、Codex、CodeGraph、OpenSpec 等）"
+    Write-UiInfo "  • 工具管理（安装/更新 Claude Code、Codex、Pi、CodeGraph、OpenSpec 等）"
+    Write-UiInfo "  • 扩展管理（安装/更新/卸载 Pi package 扩展）"
     Write-Host ""
 
     # 1. 已安装时先比较当前版本与安装器 Release 版本。
@@ -457,9 +458,9 @@ function Confirm-CcqExecutableDownload {
             Write-UiInfo "已跳过 ccq 可执行文件下载"
             Write-UiDim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
             Write-Host ""
-            Write-UiPrimary "后续安装 Claude Code / Codex："
-            Write-UiInfo "  稍后安装 ccq 后运行 ccq，进入「工具管理」安装 Claude Code 或 Codex"
-            Write-UiInfo "  API Key 与 profile 可在「供应商」菜单中可视化配置"
+            Write-UiPrimary "后续安装 Claude Code / Codex / Pi："
+            Write-UiInfo "  稍后安装 ccq 后运行 ccq，进入「工具管理」按需安装 Claude Code、Codex 或 Pi"
+            Write-UiInfo "  API Key、provider/profile 可在「供应商」菜单中可视化配置；Pi 官方登录请在 Pi 中执行 /login"
             return
         }
     }
@@ -489,7 +490,7 @@ function Confirm-CcqExecutableDownload {
         Write-UiInfo "  1. 打开 Windows Terminal，新建一个 PowerShell 7 标签页"
         Write-UiDim "     （Windows Terminal 中点击标签栏的 ∨ 下拉菜单选择 PowerShell）"
         Write-UiInfo "  2. 输入 ccq 进入管理控制台"
-        Write-UiInfo "  3. 进入「工具管理」安装 Claude Code 或 Codex，再到「供应商」配置 API Key/profile"
+        Write-UiInfo "  3. 进入「工具管理」安装 Claude Code、Codex 或 Pi，再到「供应商」配置 API Key、provider/profile"
         Write-Host ""
         Write-UiDim "（当前会话 PATH 尚未刷新，必须开启新终端 ccq 命令才生效）"
     } else {
@@ -501,9 +502,9 @@ function Confirm-CcqExecutableDownload {
         Write-UiInfo "  2. 下载对应平台的可执行文件（$exeName）"
         Write-UiInfo "  3. 放置到任意 PATH 目录"
         Write-Host ""
-        Write-UiPrimary "后续安装 Claude Code / Codex："
-        Write-UiInfo "  等待 ccq 安装完成后运行 ccq，进入「工具管理」安装 Claude Code 或 Codex"
-        Write-UiInfo "  API Key 与 profile 可在「供应商」菜单中可视化配置"
+        Write-UiPrimary "后续安装 Claude Code / Codex / Pi："
+        Write-UiInfo "  等待 ccq 安装完成后运行 ccq，进入「工具管理」按需安装 Claude Code、Codex 或 Pi"
+        Write-UiInfo "  API Key、provider/profile 可在「供应商」菜单中可视化配置；Pi 官方登录请在 Pi 中执行 /login"
     }
 }
 
@@ -608,9 +609,10 @@ function Show-FinalSummary {
         Write-Host ""
         Write-UiPrimary "下一步：" -Level Detail
         Write-UiInfo "  1. 安装完成后打开新终端运行: ccq" -Level Detail
-        Write-UiInfo "  2. 在右侧 Header 选择 Claude Code 或 Codex" -Level Detail
-        Write-UiInfo "  3. 进入「工具管理」安装 Claude Code / Codex" -Level Detail
-        Write-UiInfo "  4. 从 Release 手动下载 ccq-windows-{x64|arm64}.exe 到 PATH 目录也可补装 ccq" -Level Detail
+        Write-UiInfo "  2. 在右侧 Header 选择 Claude Code、Codex 或 Pi" -Level Detail
+        Write-UiInfo "  3. 进入「工具管理」按需安装 Claude Code / Codex / Pi" -Level Detail
+        Write-UiInfo "  4. 使用「扩展管理」维护 Pi package 扩展" -Level Detail
+        Write-UiInfo "  5. 从 Release 手动下载 ccq-windows-{x64|arm64}.exe 到 PATH 目录也可补装 ccq" -Level Detail
     } else {
         Write-UiWarning "安装完成，但有 $($Results.Failed) 个步骤失败"
         Write-Host ""
@@ -649,7 +651,7 @@ function Confirm-BasicInstallPlan {
     Write-UiInfo "  4. Node.js（运行 ccq 工具管理所需）"
     Write-UiInfo "  5. Git（基础开发环境）"
     Write-UiInfo "  6. ccq 管理控制台（安装器末尾确认下载）"
-    Write-UiDim "     Claude Code / Codex 将在 ccq「工具管理」中按需安装"
+    Write-UiDim "     Claude Code / Codex / Pi 将在 ccq「工具管理」中按需安装"
     Write-Host ""
 
     $choice = Show-SingleSelectMenu `
@@ -888,7 +890,7 @@ function Main {
         # 欢迎横幅
         Show-CcqLogo -Subtitle "Claude Code Quickstart"
 
-        Write-UiInfo "一键搭建 ccq 运行基础环境（Node.js / Git），Claude Code / Codex 由工具管理按需安装" -Level Detail
+        Write-UiInfo "一键搭建 ccq 运行基础环境（Node.js / Git），Claude Code / Codex / Pi 由工具管理按需安装" -Level Detail
         Write-Host ""
 
         if (-not (Confirm-BasicInstallPlan)) {
@@ -905,7 +907,7 @@ function Main {
         # ── 旧 Profile 标记块迁移清理（幂等，无残留则 no-op）
         Invoke-ProfileLegacyCleanup
 
-        # ── 基础环境直装（NodeJS / Git），Claude Code / Codex 交由 ccq 工具管理安装
+        # ── 基础环境直装（NodeJS / Git），Claude Code / Codex / Pi 交由 ccq 工具管理安装
         $state = [InstallState]::new()
         $state.Mode = "Install-Basic"
 
