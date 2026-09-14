@@ -93,7 +93,7 @@ function assertClaudeLsHasNoActiveMarker(message) {
 	assert.equal(output.some(line => /^ {2}\*/.test(line)), false, `${message}: ccq ls 不应显示 active 星号`);
 }
 
-// 新增 A（deepseek：模型键 + CLAUDE_CODE_EFFORT_LEVEL extra env）、B（moonshot：模型键 + 上下文窗口 extra env，无 EFFORT_LEVEL），均不激活
+// 新增 A（deepseek：不预填模型 + CLAUDE_CODE_EFFORT_LEVEL extra env）、B（moonshot：不预填模型 + 上下文窗口 extra env，无 EFFORT_LEVEL），均不激活
 const a = addProvider({builtinKey: 'deepseek', apiKey: 'sk-ds-aaaaaaaa', activate: false});
 assert.equal(a.success, true, '新增 A 应成功');
 const b = addProvider({builtinKey: 'moonshot', apiKey: 'sk-kimi-bbbbbbbb', activate: false});
@@ -109,7 +109,7 @@ switchProvider(a.key);
 let env = readSettings().env;
 assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'sk-ds-aaaaaaaa');
 assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic');
-assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'deepseek-v4-pro', 'A 模型键写入');
+assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, undefined, 'A 不预填模型键');
 assert.equal(env.CLAUDE_CODE_EFFORT_LEVEL, 'max', 'A extra env 写入');
 assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '80', 'ClaudeConfig 非 provider env 保留');
 console.log('[PASS] 8.3 设置默认 A：模型键 + extra env + ClaudeConfig env 保留');
@@ -119,7 +119,7 @@ switchProvider(b.key);
 env = readSettings().env;
 assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'sk-kimi-bbbbbbbb', '切到 B token');
 assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.kimi.com/coding');
-assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'k3[1m]', 'B 模型键写入');
+assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, undefined, 'B 不预填模型键');
 assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '1048576', 'B extra env 写入（K3 1M 上下文）');
 assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1048576', 'B extra env 写入（K3 上下文上限）');
 assert.equal('CLAUDE_CODE_EFFORT_LEVEL' in env, false, '不残留旧供应商 A 的 extra env');

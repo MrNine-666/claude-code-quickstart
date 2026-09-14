@@ -138,9 +138,9 @@ try {
 	assert.equal(isOfficialLoginActive(), true, 'official 激活 + auth.json 存在 → isOfficialLoginActive=true');
 	assert.equal(resolveDefaultCodexProfileKey(), CODEX_OFFICIAL_LOGIN_KEY, '默认 key 解析为 official sentinel');
 	assert.equal(listCodexProfiles().find(item => item.key === 'official')?.isDefault, true, 'list 标记 official 为当前默认');
-	// 删除 official 虚拟条目 = 登出（清空 auth.json），不被「当前默认」保护拦截（登出即其本意）。
-	deleteCodexProfile('official');
-	assert.equal(existsSync(join(codexHome, 'auth.json')), false, '删除 official 虚拟条目 = 登出，清空 auth.json');
+	// official 虚拟条目只读：登录/注销均由 Codex 原生命令管理，ccq 不得删除 auth.json。
+	assert.throws(() => deleteCodexProfile('official'), /只读身份.*codex logout/, 'official 删除必须指向 Codex 原生 logout');
+	assert.equal(existsSync(join(codexHome, 'auth.json')), true, '拒绝删除 official 不得清空 auth.json');
 	// 非默认真实 profile 删除不影响 auth.json（恢复 auth.json 后验证）。
 	writeFileSync(join(codexHome, 'auth.json'), '{"access_token":"secret2"}', 'utf8');
 	deleteCodexProfile(key);
@@ -148,10 +148,10 @@ try {
 	assert.equal(existsSync(join(codexHome, 'auth.json')), true, '删除 API-key profile 不应清空 auth.json');
 	saveCodexProfile({key: 'other', providerType: 'apiKey', baseUrl: 'https://api.example.com', apiKey: 'sk-other-token'});
 	setDefaultCodexProfile('other');
-	// official 未激活（auth.json 存在但默认指向 other）仍可被删除登出。
-	deleteCodexProfile('official');
-	assert.equal(existsSync(join(codexHome, 'auth.json')), false, '非激活态删除 official 仍登出清空 auth.json');
-	console.log('[PASS] 5.9 Codex profile 删除保护 + official 虚拟条目默认态根治（isDefault/list/登出）');
+	// official 未激活（auth.json 存在但默认指向 other）仍保持只读，不能绕过原生命令注销。
+	assert.throws(() => deleteCodexProfile('official'), /只读身份.*codex logout/, '非激活态 official 也必须保持只读');
+	assert.equal(existsSync(join(codexHome, 'auth.json')), true, '非激活态拒绝删除 official 不得清空 auth.json');
+	console.log('[PASS] 5.9 Codex profile 删除保护 + official 虚拟条目默认态根治（isDefault/list/只读）');
 
 	// ── 5.11 存量迁移：清理历史遗留 official.config.toml 空壳，保留真实供应商数据 ──
 	// 空壳（无 model_provider / model_providers）→ 清理。

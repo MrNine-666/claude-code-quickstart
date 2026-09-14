@@ -11,14 +11,13 @@ import {
 	saveCodexProfile,
 	saveCodexProfileToml,
 	scanCodexProfiles,
-	setDefaultCodexProfile,
-	writeCodexAuthJson
+	setDefaultCodexProfile
 } from '../src/core/codex.ts';
 import {buildCodexForm, removeCodexProvider, saveCodexProviderForm} from '../src/services/codex-service.ts';
 import {saveProviderForm} from '../src/services/provider-service.ts';
 import {runLs} from '../src/cli/commands/ls.ts';
 import {runUse} from '../src/cli/commands/use.ts';
-import {atomicWrite} from '../src/core/fs-utils.ts';
+import {atomicWrite, SECRET_FILE_MODE} from '../src/core/fs-utils.ts';
 
 function temporaryHome(prefix) {
 	const home = mkdtempSync(join(tmpdir(), prefix));
@@ -291,7 +290,7 @@ console.log('[PASS] Codex TOML 契约 + 损坏 profile 容错 + partial success'
 
 		saveCodexProfile({key: 'secure', providerType: 'apiKey', baseUrl: 'https://secure.test/v1', apiKey: 'fixture-codex-secure'});
 		setDefaultCodexProfile('secure');
-		writeCodexAuthJson('{"access_token":"fixture-auth-token"}');
+		atomicWrite(join(home, '.codex', 'auth.json'), '{"access_token":"fixture-auth-token"}', {mode: SECRET_FILE_MODE});
 		assertSecretMode(join(home, '.codex', 'secure.config.toml'), 'Codex profile');
 		assertSecretMode(join(home, '.codex', 'config.toml'), 'Codex config');
 		assertSecretMode(join(home, '.codex', 'auth.json'), 'Codex auth');

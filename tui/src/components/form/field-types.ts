@@ -13,7 +13,7 @@ export type KeyValueEntry = {
 	readonly value: string;
 };
 
-/** 表单字段（判别联合：6 种通用类型；业务专属内容通过 FormPanel.custom 注入） */
+/** 表单字段（判别联合：7 种通用类型；业务专属内容通过 FormPanel.custom 注入） */
 export type FormField =
 	| {
 			readonly id: string;
@@ -33,6 +33,14 @@ export type FormField =
 	| {
 			readonly id: string;
 			readonly type: 'secret';
+			readonly label: string;
+			readonly value: string;
+			readonly helpText?: string;
+			readonly disabled?: boolean;
+	  }
+	| {
+			readonly id: string;
+			readonly type: 'model-select';
 			readonly label: string;
 			readonly value: string;
 			readonly helpText?: string;

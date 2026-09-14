@@ -3,6 +3,12 @@
   "Source": "manage/source/core/provider.ts",
   "SettingsPath": "~/.claude/settings.json",
   "ProfilesDir": "~/.claude/providers",
+  "ModelDiscovery": {
+    "Protocol": "openai-compatible",
+    "Path": "/v1/models",
+    "PathMode": "append",
+    "Auth": "bearer"
+  },
   "ManagedEnv": {
     "AuthTokenKey": "ANTHROPIC_AUTH_TOKEN",
     "BaseUrlKey": "ANTHROPIC_BASE_URL",
@@ -24,30 +30,50 @@
       "Description": "智谱 GLM Coding Plan",
       "BaseUrl": "https://open.bigmodel.cn/api/anthropic",
       "PlatformUrl": "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
-      "ModelEnv": {
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4.5-air",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.3",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.3"
+      "ModelDiscovery": {
+        "Protocol": "anthropic",
+        "Path": "/v1/models",
+        "PathMode": "append",
+        "Auth": "bearer"
+      },
+      "CodexModelDiscovery": {
+        "Protocol": "openai-compatible",
+        "BaseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+        "Path": "/models",
+        "PathMode": "append",
+        "Auth": "bearer"
       },
       "Codex": {
         "BaseUrl": "https://open.bigmodel.cn/api/v1",
-        "Model": "glm-5.3",
         "Note": "GLM-5.3 已支持 OpenAI Responses，可用于 Codex。"
       }
     },
-    "minimax": {
-      "Name": "MiniMax",
-      "Description": "MiniMax API",
-      "BaseUrl": "https://api.minimaxi.com/anthropic",
-      "PlatformUrl": "https://platform.minimaxi.com/user-center/basic-information/interface-key",
-      "ModelEnv": {
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M3",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M3",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M3"
+    "deepseek": {
+      "Name": "DeepSeek",
+      "Description": "DeepSeek Anthropic API",
+      "BaseUrl": "https://api.deepseek.com/anthropic",
+      "PlatformUrl": "https://platform.deepseek.com/api_keys",
+      "ModelDiscovery": {
+        "Protocol": "openai-compatible",
+        "BaseUrl": "https://api.deepseek.com",
+        "Path": "/models",
+        "PathMode": "absolute",
+        "Auth": "bearer"
+      },
+      "ExtraEnv": {
+        "CLAUDE_CODE_EFFORT_LEVEL": "max",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": 786432
       },
       "Codex": {
-        "BaseUrl": "https://api.minimax.io/v1",
-        "Model": "MiniMax-M3"
+        "BaseUrl": "https://api.deepseek.com/",
+        "Note": "当前 DeepSeek 已支持接入 Codex。"
+      },
+      "CodexModelDiscovery": {
+        "Protocol": "openai-compatible",
+        "BaseUrl": "https://api.deepseek.com",
+        "Path": "/models",
+        "PathMode": "absolute",
+        "Auth": "bearer"
       }
     },
     "moonshot": {
@@ -56,10 +82,11 @@
       "Note": "K3 需 Moderato 及以上套餐，1M 上下文需 Allegretto 及以上；低档套餐请改用 256K 模板。上下文窗口 env 须与模型档位一致，改模型时同步改窗口值。",
       "BaseUrl": "https://api.kimi.com/coding",
       "PlatformUrl": "https://www.kimi.com/code/console",
-      "ModelEnv": {
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "k3[1m]",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "k3[1m]",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": "k3[1m]"
+      "ModelDiscovery": {
+        "Protocol": "anthropic",
+        "Path": "/v1/models",
+        "PathMode": "append",
+        "Auth": "bearer"
       },
       "ExtraEnv": {
         "CLAUDE_CODE_AUTO_COMPACT_WINDOW": 1048576,
@@ -72,35 +99,36 @@
       "Note": "K3 需 Moderato 及以上套餐；token 消耗约为 1M 版一半。Andante 档可将模型改为 kimi-for-coding。上下文窗口 env 须与模型档位一致。",
       "BaseUrl": "https://api.kimi.com/coding",
       "PlatformUrl": "https://www.kimi.com/code/console",
-      "ModelEnv": {
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "k3-256k",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "k3-256k",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": "k3-256k"
+      "ModelDiscovery": {
+        "Protocol": "anthropic",
+        "Path": "/v1/models",
+        "PathMode": "append",
+        "Auth": "bearer"
       },
       "ExtraEnv": {
         "CLAUDE_CODE_AUTO_COMPACT_WINDOW": 262144,
         "CLAUDE_CODE_MAX_CONTEXT_TOKENS": 262144
       }
     },
-    "deepseek": {
-      "Name": "DeepSeek",
-      "Description": "DeepSeek Anthropic API",
-      "Note": "官方推荐 opus/sonnet 走 deepseek-v4-pro、haiku 走 flash 的分层映射。",
-      "BaseUrl": "https://api.deepseek.com/anthropic",
-      "PlatformUrl": "https://platform.deepseek.com/api_keys",
-      "ModelEnv": {
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro"
+    "minimax": {
+      "Name": "MiniMax",
+      "Description": "MiniMax API",
+      "BaseUrl": "https://api.minimaxi.com/anthropic",
+      "PlatformUrl": "https://platform.minimaxi.com/user-center/basic-information/interface-key",
+      "ModelDiscovery": {
+        "Protocol": "anthropic",
+        "Path": "/v1/models",
+        "PathMode": "append",
+        "Auth": "x-api-key"
       },
-      "ExtraEnv": {
-        "CLAUDE_CODE_EFFORT_LEVEL": "max",
-        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": 786432
+      "CodexModelDiscovery": {
+        "Protocol": "openai-compatible",
+        "Path": "/v1/models",
+        "PathMode": "append",
+        "Auth": "bearer"
       },
       "Codex": {
-        "BaseUrl": "https://api.deepseek.com/",
-        "Model": "deepseek-v4-pro",
-        "Note": "当前 DeepSeek 已支持接入 Codex。"
+        "BaseUrl": "https://api.minimax.io/v1"
       }
     },
     "custom": {

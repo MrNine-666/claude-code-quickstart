@@ -318,15 +318,8 @@ export function readCodexProfileToml(key: string): string {
 }
 
 export function deleteCodexProfile(key: string): void {
-	// official login 虚拟条目：无磁盘文件，删除语义 = 登出（清空 auth.json）。
-	// 不走「当前默认拒绝删除」保护——登出即其本意；破坏性确认由视图层危险 Modal 承担。
 	if (isOfficialLoginKey(key)) {
-		const authPath = codexAuthJsonPath();
-		if (existsSync(authPath)) {
-			unlinkSync(authPath);
-		}
-
-		return;
+		throw new Error('Codex 官方账号为只读身份，请通过 Codex 原生命令 codex logout 管理。');
 	}
 
 	const safe = safeCodexProfileKey(key);
@@ -335,17 +328,13 @@ export function deleteCodexProfile(key: string): void {
 	}
 
 	const profile = codexProfileExists(safe) ? readCodexProfile(safe) : null;
+	if (profile?.providerType === 'officialLogin') {
+		throw new Error('Codex 官方账号为只读身份，请通过 Codex 原生命令 codex logout 管理。');
+	}
+
 	const profilePath = codexProfilePath(safe);
 	if (existsSync(profilePath)) {
 		unlinkSync(profilePath);
-	}
-
-	// 历史遗留：真实文件型 officialLogin profile 删除时同步清 auth.json（存量迁移后不再产生）。
-	if (profile?.providerType === 'officialLogin') {
-		const authPath = codexAuthJsonPath();
-		if (existsSync(authPath)) {
-			unlinkSync(authPath);
-		}
 	}
 }
 
@@ -363,55 +352,6 @@ function currentDefaultProviderKey(): string {
 /** official login 当前是否为激活默认态：config.toml 无供应商键 + auth.json 存在。 */
 export function isOfficialLoginActive(): boolean {
 	return currentDefaultProviderKey() === '' && existsSync(codexAuthJsonPath());
-}
-
-/**
- * 读取 ~/.codex/auth.json 明文原文（供编辑态回填）。
- * 与 readCodexAuthJsonPreview 的脱敏预览不同：此处返回真实 token，仅用于表单可编辑场景。
- * 文件不存在返回空串（编辑态视为「新建登录」，保存即写入）。
- */
-export function readCodexAuthJsonRaw(): string {
-	const authPath = codexAuthJsonPath();
-	if (!existsSync(authPath)) {
-		return '';
-	}
-
-	return readFileSync(authPath, 'utf8');
-}
-
-/**
- * 写入 ~/.codex/auth.json（明文 JSON）。空内容语义 = 登出（删除文件）。
- * 非空内容必须是合法 JSON 对象，否则抛错（不写入半成品）。auth.json 由 codex login 生成，
- * ccq 此前只读；本函数是「official 可编辑」特性的唯一写入口，写入前做 JSON 合法性校验。
- */
-export function writeCodexAuthJson(rawJson: string): {loggedOut: boolean} {
-	const authPath = codexAuthJsonPath();
-	const trimmed = rawJson.trim();
-
-	// 空内容即登出：删除 auth.json（不存在则幂等无操作）。
-	if (trimmed === '') {
-		if (existsSync(authPath)) {
-			unlinkSync(authPath);
-		}
-
-		return {loggedOut: true};
-	}
-
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(trimmed);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`auth.json 不是合法 JSON：${message}`);
-	}
-
-	if (!isRecord(parsed)) {
-		throw new Error('auth.json 顶层必须是 JSON 对象');
-	}
-
-	// 规范化为 2 空格缩进后原子写入，保持与 codex login 产物一致的可读格式。
-	atomicWriteText(authPath, `${JSON.stringify(parsed, null, 2)}\n`, {mode: SECRET_FILE_MODE});
-	return {loggedOut: false};
 }
 
 /**

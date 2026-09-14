@@ -85,7 +85,11 @@ assert.equal(keyFor(providerBindings, PROVIDER_COMMANDS.FORM_OPTION_PREV), 'left
 assert.equal(keyFor(providerBindings, PROVIDER_COMMANDS.FORM_OPTION_NEXT), 'right', 'Provider 表单选项后移应绑定 Right');
 assert.equal(keyFor(providerBindings, PROVIDER_COMMANDS.FORM_MULTI_SELECT_TOGGLE), 'space', 'Pi Provider 模型多选应绑定 Space');
 const piProviderFormShortcuts = Object.fromEntries(viewShortcuts('provider', 'form-pi').map(shortcut => [shortcut.label, shortcut.key]));
-assert.equal(piProviderFormShortcuts['获取上游模型'], 'Ctrl+D', 'Pi Provider footer 应展示获取上游模型');
+assert.equal(
+	piProviderFormShortcuts['获取上游模型'],
+	formatShortcutKey('ctrl+d', process.platform === 'darwin' ? 'darwin' : 'default'),
+	'Pi Provider footer 应展示获取上游模型'
+);
 assert.equal(piProviderFormShortcuts['切换选择'], 'Space', 'Pi Provider footer 应展示 Space 多选');
 assert.equal(piProviderFormShortcuts['选项'], '←/→', 'Pi Provider footer 应展示 radio/select 选项切换');
 assert.equal(piProviderFormShortcuts['添加自定义'], undefined, 'Pi Provider footer 不应再展示 A 添加自定义模型');
@@ -102,9 +106,11 @@ assert.equal(
 	'自定义模型不应再作为独立 footer 子模式'
 );
 const providerFormSource = readFileSync(new URL('../src/views/provider/ProviderFormView.tsx', import.meta.url), 'utf8');
+const providerViewSource = readFileSync(new URL('../src/views/provider/ProviderView.tsx', import.meta.url), 'utf8');
 const formPanelSource = readFileSync(new URL('../src/components/form/FormPanel.tsx', import.meta.url), 'utf8');
+const modelSelectSource = readFileSync(new URL('../src/components/form/ModelSelectField.tsx', import.meta.url), 'utf8');
 assert.doesNotMatch(providerFormSource, /Ctrl\+D|Space 多选|Ctrl\/Cmd\+S/, 'ProviderFormView 不应自行硬编码 Pi 快捷键提示');
-assert.match(providerFormSource, /onDiscover \? \(/, '模型列表必须与 Pi Provider 表单共存');
+assert.match(providerFormSource, /piModelDiscovery \? \(/, 'Pi 多选模型列表必须与 CC/CX 单选字段共存');
 assert.doesNotMatch(providerFormSource, /setDiscovery\(null\)/, 'Esc 不得通过清空 discovery 隐藏模型列表');
 assert.doesNotMatch(
 	providerFormSource,
@@ -114,9 +120,12 @@ assert.doesNotMatch(
 assert.match(providerFormSource, /MODEL_DISCOVERY_LIST_HEIGHT/, '内嵌模型列表必须受控滚动，避免撑出表单视口');
 assert.match(providerFormSource, /toast\.warning\('请先填写 Base URL，再获取上游模型'\)/, 'Base URL 为空时必须用 toast 提示先填写地址');
 assert.doesNotMatch(providerFormSource, /toast\.info\('正在获取上游模型…'\)/, 'Ctrl+D 开始获取时不应弹 toast');
-assert.doesNotMatch(providerFormSource, /toast\.success\(`已获取 \$\{candidates\.length\} 个上游模型`\)/, 'Ctrl+D 成功后不应弹 toast');
+assert.match(providerFormSource, /toast\.success\(`已获取 \$\{candidates\.length\} 个上游模型`\)/, 'Ctrl+D 成功后必须给出可感知的成功反馈');
 assert.match(providerFormSource, /<ListLoadingState message="正在获取上游模型"\s*\/>/, 'Ctrl+D 加载期间必须保留列表加载状态');
-assert.match(providerFormSource, /toast\.error\(`获取上游模型失败：\$\{reason\}`\)/, 'Ctrl+D 失败后必须弹错误 toast');
+assert.match(providerFormSource, /toast\.error\(reason \|\| '模型发现失败'\)/, 'Ctrl+D 失败后必须直接展示上游错误 toast');
+assert.match(providerFormSource, /const discoveryShortcutQueued = useRef\(false\)/, '模型发现快捷键必须有同事件去重标记');
+assert.match(providerFormSource, /const triggerDiscover = \(requestedFieldId\?: string, forceRefresh = false\) => \{/, '模型发现快捷键必须经统一触发器分发');
+assert.equal((providerFormSource.match(/void handleDiscover\(/g) ?? []).length, 0, '表单层和页面层不得重复直接调用模型发现');
 assert.match(providerFormSource, /onKeyEvent=\{handleFormKey\}/, 'Ctrl+D 必须由表单控件在任意字段焦点下接收');
 assert.match(
 	providerFormSource,
@@ -141,6 +150,43 @@ assert.doesNotMatch(
 assert.doesNotMatch(providerFormSource, /FORM_ADD_CUSTOM_MODEL/, 'Pi Provider 不应再处理 A 添加自定义模型');
 assert.doesNotMatch(providerFormSource, /FORM_DISCOVERY_CONFIRM|applyDiscovery|applyModelIds/, '模型列表不应再有 Enter 应用阶段');
 assert.doesNotMatch(formPanelSource, /MultiSelectField|multi-select/, 'FormPanel 不应内置业务多选字段');
+assert.match(formPanelSource, /field\.type === 'model-select'/, 'FormPanel 必须把模型字段渲染为特殊单选控件');
+assert.match(modelSelectSource, /onSubmit=\{onSubmit\}/, '模型单选控件必须由 input submit 触发即时选择');
+assert.match(providerFormSource, /modelSelectFieldIds/, 'CC/CX 表单必须声明模型字段绑定');
+assert.match(providerFormSource, /handleSingleModelSelect/, 'CC/CX 候选选择必须直接回写当前模型字段');
+assert.match(providerFormSource, /setSingleModelFocus\(null\)/, 'CC/CX 选择模型后必须关闭候选列表');
+assert.match(providerFormSource, /handleSingleModelFocus/, 'CC/CX 模型字段获得焦点后必须打开共享候选列表');
+assert.match(providerFormSource, /focusedSingleModelCandidates/, 'CC/CX 模型候选必须按当前 input 草稿过滤');
+assert.match(
+	providerFormSource,
+	/const handleSingleModelSubmit = \(fieldId: string\) => \{[\s\S]*?if \(singleModelFocus !== fieldId\) \{[\s\S]*?handleSingleModelFocus\(fieldId\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?handleSingleModelSelect\(fieldId\);/,
+	'CC/CX 模型 input 在列表隐藏时按 Enter 必须先展开候选列表'
+);
+assert.match(providerFormSource, /onSubmit: handleSingleModelSubmit/, 'CC/CX 模型 input 的 Enter 必须走展开/选择统一处理');
+assert.match(
+	providerFormSource,
+	/singleModelSelect && onDiscover && matchesProviderCommand\(keyEvent, PROVIDER_COMMANDS\.FORM_DISCOVER\)/,
+	'CC/CX Ctrl+D 必须在表单层全局处理'
+);
+assert.match(
+	providerViewSource,
+	/if \(screen\.kind === 'add' \|\| screen\.kind === 'edit'\) return;/,
+	'ProviderView 不得覆盖 ProviderFormView 上报的 form-model/form-pi 子模式'
+);
+const singleModelFormShortcuts = Object.fromEntries(
+	viewShortcuts('provider', 'form-model').map(shortcut => [shortcut.label, shortcut.key])
+);
+assert.equal(
+	singleModelFormShortcuts['获取/刷新模型'],
+	formatShortcutKey('ctrl+d', process.platform === 'darwin' ? 'darwin' : 'default'),
+	'CC/CX Provider footer 应展示 Ctrl+D 获取/刷新模型'
+);
+const singleModelKeyStart = providerFormSource.indexOf('const handleSingleModelKey');
+const formKeyStart = providerFormSource.indexOf('const handleFormKey');
+assert.ok(singleModelKeyStart >= 0 && formKeyStart > singleModelKeyStart, '必须存在单选字段和表单级键盘处理器');
+assert.doesNotMatch(providerFormSource.slice(singleModelKeyStart, formKeyStart), /FORM_DISCOVER/, 'CC/CX 模型 input 不得私有处理 Ctrl+D');
+assert.match(formPanelSource, /onFocus\?: \(id: string\) => void/, 'FormPanel 必须向模型字段传递焦点回调');
+assert.match(modelSelectSource, /useEffect/, '模型字段必须响应逻辑焦点变化自动展开候选');
 assert.match(formPanelSource, /readonly custom\?: ReactNode/, '业务自定义字段应由父组件通过 custom slot 传入');
 assert.match(providerFormSource, /custom=\{/, 'Provider 模型列表应通过 FormPanel custom slot 注入');
 console.log('[PASS] Pi Provider 模型列表快捷键与 footer 来自统一 registry');

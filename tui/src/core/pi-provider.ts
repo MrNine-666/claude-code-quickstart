@@ -3,6 +3,11 @@ import {atomicWrite, readJsonFileStrict, SECRET_FILE_MODE, withProfileLock, writ
 import {loadContract} from './contracts.js';
 import {piAuthJsonPath, piModelsJsonPath, piSettingsPath} from './paths.js';
 import {maskApiKey} from './text-utils.js';
+import {
+	buildModelDiscoveryEndpoint as buildSharedModelDiscoveryEndpoint,
+	discoverModels,
+	normalizeDiscoveredModels
+} from './model-discovery.js';
 import type {ProviderDisplayData, ProviderDisplayProfile} from './provider.js';
 import type {FormField} from '../components/form/field-types.js';
 
@@ -641,43 +646,13 @@ export type PiModelDiscoveryResult =
 
 export function buildPiModelDiscoveryEndpoint(baseUrl: string, api: string): string | null {
 	if (api !== 'openai-completions' && api !== 'openai-responses') return null;
-	let url: URL;
-	try {
-		url = new URL(baseUrl.trim());
-	} catch {
-		return null;
-	}
-	if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
-	const path = url.pathname.replace(/\/+$/u, '');
-	if (/\/models$/iu.test(path)) return url.toString();
-	if (/\/v1$/iu.test(path)) {
-		url.pathname = `${path}/models`;
-		return url.toString();
-	}
-	url.pathname = `${path}/v1/models`;
-	return url.toString();
+	return buildSharedModelDiscoveryEndpoint(baseUrl);
 }
 
 export const buildModelDiscoveryEndpoint = buildPiModelDiscoveryEndpoint;
 
-function discoveryModels(payload: unknown): readonly PiModelDefinition[] {
-	const values = Array.isArray(payload)
-		? payload
-		: isObject(payload) && Array.isArray(payload.data)
-			? payload.data
-			: isObject(payload) && Array.isArray(payload.models)
-				? payload.models
-				: [];
-	const unique = new Map<string, PiModelDefinition>();
-	for (const value of values) {
-		const model = modelObject(value);
-		if (model) unique.set(model.id, model);
-	}
-	return [...unique.values()].sort((left, right) => left.id.localeCompare(right.id));
-}
-
 export function normalizePiDiscoveredModels(payload: unknown): readonly PiModelDefinition[] {
-	return discoveryModels(payload);
+	return normalizeDiscoveredModels(payload).map(model => ({...model}) as PiModelDefinition);
 }
 
 export async function discoverPiModels(input: {
@@ -686,51 +661,20 @@ export async function discoverPiModels(input: {
 	readonly apiKey?: string;
 	readonly options?: PiModelDiscoveryOptions;
 }): Promise<PiModelDiscoveryResult> {
-	const endpoint = buildPiModelDiscoveryEndpoint(input.baseUrl, input.api);
-	if (!endpoint) return {ok: false, kind: 'unsupported', error: '该 Pi API 协议没有可用的模型发现接口，请手工填写模型 ID'};
 	const options = input.options ?? {};
-	const timeoutMs = Math.max(1, options.timeoutMs ?? 10000);
-	const maxResponseBytes = Math.max(1024, options.maxResponseBytes ?? 2 * 1024 * 1024);
-	const controller = new AbortController();
-	let timedOut = false;
-	const timer = setTimeout(() => {
-		timedOut = true;
-		controller.abort();
-	}, timeoutMs);
-	const abort = () => controller.abort();
-	options.signal?.addEventListener('abort', abort, {once: true});
-	try {
-		if (options.signal?.aborted) return {ok: false, kind: 'cancelled', error: '模型发现已取消'};
-		const fetchImpl = options.fetchImpl ?? fetch;
-		const response = await fetchImpl(endpoint, {
-			headers: input.apiKey ? {Authorization: `Bearer ${input.apiKey}`, Accept: 'application/json'} : {Accept: 'application/json'},
-			signal: controller.signal
-		});
-		if (!response.ok) return {ok: false, kind: 'http', error: `模型发现请求失败（HTTP ${response.status}）`};
-		const contentLength = Number(response.headers.get('content-length') ?? '0');
-		if (Number.isFinite(contentLength) && contentLength > maxResponseBytes)
-			return {ok: false, kind: 'invalid', error: '模型发现响应过大，已停止解析'};
-		const raw = await response.text();
-		if (new TextEncoder().encode(raw).byteLength > maxResponseBytes)
-			return {ok: false, kind: 'invalid', error: '模型发现响应过大，已停止解析'};
-		let payload: unknown;
-		try {
-			payload = JSON.parse(raw) as unknown;
-		} catch {
-			return {ok: false, kind: 'invalid', error: '模型发现响应不是合法 JSON'};
-		}
-		const models = discoveryModels(payload);
-		if (models.length === 0) return {ok: false, kind: 'invalid', error: '模型发现响应未包含可用模型 ID'};
-		return {ok: true, endpoint, models};
-	} catch (error) {
-		if (options.signal?.aborted) return {ok: false, kind: 'cancelled', error: '模型发现已取消'};
-		if (timedOut || (error instanceof Error && error.name === 'AbortError'))
-			return {ok: false, kind: 'timeout', error: '模型发现请求超时'};
-		return {ok: false, kind: 'network', error: '模型发现请求失败，请检查 Base URL、网络或 API Key'};
-	} finally {
-		clearTimeout(timer);
-		options.signal?.removeEventListener('abort', abort);
+	if (input.api !== 'openai-completions' && input.api !== 'openai-responses') {
+		return {ok: false, kind: 'unsupported', error: '该 Pi API 协议没有可用的模型发现接口，请手工填写模型 ID'};
 	}
+	const result = await discoverModels({
+		baseUrl: input.baseUrl,
+		apiKey: input.apiKey,
+		signal: options.signal,
+		timeoutMs: options.timeoutMs,
+		maxResponseBytes: options.maxResponseBytes,
+		fetchImpl: options.fetchImpl
+	});
+	if (!result.ok) return result;
+	return {ok: true, endpoint: result.endpoint, models: result.models.map(model => ({...model}) as PiModelDefinition)};
 }
 
 export function mergePiModels(existing: readonly unknown[] | string, additions: readonly unknown[]): readonly PiModelDefinition[] {

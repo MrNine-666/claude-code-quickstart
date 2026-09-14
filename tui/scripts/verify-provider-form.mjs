@@ -23,7 +23,14 @@ const {addProvider} = await import('../src/core/provider.ts');
 
 // ── 文件名校验 ──────────────────────────────────────────────────────────────
 assert.deepEqual(
-	validateProviderForm('add-builtin', {profileKey: 'my-zhipu', baseUrl: 'https://x', apiKey: 'sk-x', modelEnv: {}, env: {}, activateAfterSave: false}),
+	validateProviderForm('add-builtin', {
+		profileKey: 'my-zhipu',
+		baseUrl: 'https://x',
+		apiKey: 'sk-x',
+		modelEnv: {},
+		env: {},
+		activateAfterSave: false
+	}),
 	[],
 	'合法英文文件名应通过'
 );
@@ -36,10 +43,23 @@ const badName = validateProviderForm('add-custom', {
 	env: {},
 	activateAfterSave: false
 });
-assert.ok(badName.some(e => /英文文件名/.test(e)), '非法文件名应提示英文文件名');
+assert.ok(
+	badName.some(e => /英文文件名/.test(e)),
+	'非法文件名应提示英文文件名'
+);
 
-const emptyName = validateProviderForm('add-builtin', {profileKey: '', baseUrl: 'https://x', apiKey: 'sk-x', modelEnv: {}, env: {}, activateAfterSave: false});
-assert.ok(emptyName.some(e => /文件名不能为空/.test(e)), '空文件名应报错');
+const emptyName = validateProviderForm('add-builtin', {
+	profileKey: '',
+	baseUrl: 'https://x',
+	apiKey: 'sk-x',
+	modelEnv: {},
+	env: {},
+	activateAfterSave: false
+});
+assert.ok(
+	emptyName.some(e => /文件名不能为空/.test(e)),
+	'空文件名应报错'
+);
 
 assert.deepEqual(
 	validateProviderForm('edit', {profileKey: '', baseUrl: 'https://x', apiKey: 'sk-x', modelEnv: {}, env: {}, activateAfterSave: false}),
@@ -86,19 +106,53 @@ console.log('[PASS] 8.2 端到端：用户文件名落盘 + env 区写入 env');
 // ── 内置模板表单结构（HC-12 单层 env：env 区走底部 JSON，不再是表单字段） ──
 const builtinForm = buildProviderFormModel({mode: 'add-builtin', builtinKey: 'deepseek'});
 assert.equal(builtinForm.mode, 'add-builtin');
-assert.equal(builtinForm.values.modelEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'deepseek-v4-flash');
-assert.equal(builtinForm.values.modelEnv.ANTHROPIC_DEFAULT_OPUS_MODEL, 'deepseek-v4-pro');
-assert.equal(builtinForm.values.modelEnv.ANTHROPIC_DEFAULT_SONNET_MODEL, 'deepseek-v4-pro');
+assert.deepEqual(builtinForm.values.modelEnv, {}, 'DeepSeek 内置模板不预填模型');
 assert.ok(Array.isArray(builtinForm.fields), '应返回 fields 数组');
 // add 模式首字段为供应商类型 radio
 assert.equal(builtinForm.fields[0].id, 'providerType', 'add 模式首字段为供应商类型');
 assert.equal(builtinForm.fields[0].type, 'radio');
 // 核心可编辑字段存在
-assert.ok(builtinForm.fields.some(f => f.id === 'profileKey' && f.type === 'text'), '文件名字段可编辑');
-assert.ok(builtinForm.fields.some(f => f.id === 'baseUrl'), '含 baseUrl 字段');
-assert.ok(builtinForm.fields.some(f => f.id === 'apiKey'), '含 apiKey 字段');
+assert.ok(
+	builtinForm.fields.some(f => f.id === 'profileKey' && f.type === 'text'),
+	'文件名字段可编辑'
+);
+assert.ok(
+	builtinForm.fields.some(f => f.id === 'baseUrl'),
+	'含 baseUrl 字段'
+);
+assert.ok(
+	builtinForm.fields.some(f => f.id === 'apiKey'),
+	'含 apiKey 字段'
+);
+assert.equal(
+	builtinForm.fields[builtinForm.fields.findIndex(field => field.id === 'baseUrl') + 1]?.id,
+	'apiKey',
+	'Claude 表单 API Key 必须紧跟 Base URL'
+);
+const claudeEditFields = buildProviderFormModel({
+	mode: 'edit',
+	profileKey: 'deepseek',
+	profile: {
+		env: {
+			ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
+			ANTHROPIC_AUTH_TOKEN: 'sk-edit'
+		}
+	}
+}).fields;
+assert.equal(
+	claudeEditFields[claudeEditFields.findIndex(field => field.id === 'baseUrl') + 1]?.id,
+	'apiKey',
+	'Claude 编辑表单 API Key 必须紧跟 Base URL'
+);
+for (const id of ['ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL']) {
+	assert.equal(builtinForm.fields.find(f => f.id === id)?.type, 'model-select', `${id} 必须使用模型单选字段`);
+}
 // env 在 values 维护（底部 JSON 区），不再是表单字段
-assert.equal(builtinForm.fields.find(f => f.id === 'env'), undefined, 'env 不再是表单字段');
+assert.equal(
+	builtinForm.fields.find(f => f.id === 'env'),
+	undefined,
+	'env 不再是表单字段'
+);
 assert.ok(typeof builtinForm.values.env === 'object', 'values.env 存在');
 assert.equal(builtinForm.values.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '786432', '内置模板 ExtraEnv 预填进 env 区');
 assert.equal('ANTHROPIC_MODEL' in builtinForm.values.env, false, '模板不再含 ANTHROPIC_MODEL');
@@ -109,18 +163,18 @@ console.log('[PASS] 8.2 内置模板表单结构（env 走 values 不走 fields�
 const kimi1m = buildProviderFormModel({mode: 'add-builtin', builtinKey: 'moonshot'}).values;
 const kimi256k = buildProviderFormModel({mode: 'add-builtin', builtinKey: 'moonshot-256k'}).values;
 assert.equal(kimi1m.baseUrl, kimi256k.baseUrl, 'Kimi 双档共用同一 Coding Plan 端点');
-assert.equal(kimi1m.modelEnv.ANTHROPIC_DEFAULT_OPUS_MODEL, 'k3[1m]');
-assert.equal(kimi256k.modelEnv.ANTHROPIC_DEFAULT_OPUS_MODEL, 'k3-256k');
 // 窗口值必须与模型档位一致：调小会过早压缩丢上下文，调大会触发上下文超限报错。
 assert.equal(kimi1m.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '1048576');
 assert.equal(kimi1m.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1048576');
 assert.equal(kimi256k.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '262144');
 assert.equal(kimi256k.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '262144');
-// 三个受管模型槽位须同档（该端点只有一个模型，无强弱分层可言）。
-for (const values of [kimi1m, kimi256k]) {
-	const expected = values.modelEnv.ANTHROPIC_DEFAULT_OPUS_MODEL;
-	assert.equal(values.modelEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL, expected);
-	assert.equal(values.modelEnv.ANTHROPIC_DEFAULT_SONNET_MODEL, expected);
+// 所有内置供应商均不预填模型，模型由用户手动填写或从上游发现结果中选择。
+for (const key of ['glm', 'deepseek', 'moonshot', 'moonshot-256k', 'minimax']) {
+	assert.deepEqual(
+		buildProviderFormModel({mode: 'add-builtin', builtinKey: key}).values.modelEnv,
+		{},
+		`${key} 内置模板不预填模型`
+	);
 }
 // profileKey 默认取契约 key，两档互不覆盖同一落盘文件。
 assert.equal(kimi1m.profileKey, 'moonshot');
@@ -129,7 +183,48 @@ console.log('[PASS] Kimi 1M / 256K 双档模板：端点一致 + 模型与窗口
 
 // ── providerType 选项唯一事实源为契约（含 custom 占位条目，代码内不得硬编码追加） ──
 const contractProviders = loadProviderContract().builtinProviders;
+assert.deepEqual(
+	loadProviderContract().modelDiscovery,
+	{
+		protocol: 'openai-compatible',
+		path: '/v1/models',
+		pathMode: 'append',
+		auth: 'bearer'
+	},
+	'模型发现契约必须声明 OpenAI-compatible /v1/models Bearer fallback 约定'
+);
+assert.deepEqual(contractProviders.minimax.modelDiscovery, {
+	protocol: 'anthropic',
+	path: '/v1/models',
+	pathMode: 'append',
+	auth: 'x-api-key'
+}, 'MiniMax Anthropic discovery 必须保留 /anthropic path 并使用 X-Api-Key');
+assert.deepEqual(contractProviders.deepseek.modelDiscovery, {
+	protocol: 'openai-compatible',
+	baseUrl: 'https://api.deepseek.com',
+	path: '/models',
+	pathMode: 'absolute',
+	auth: 'bearer'
+}, 'DeepSeek discovery 必须使用根域 /models，而不是 Anthropic /v1/models');
+assert.deepEqual(contractProviders.glm.modelDiscovery, {
+	protocol: 'anthropic',
+	path: '/v1/models',
+	pathMode: 'append',
+	auth: 'bearer'
+}, 'GLM 模型目录 discovery 必须使用 Authorization Bearer');
+assert.deepEqual(contractProviders.glm.codexModelDiscovery, {
+	protocol: 'openai-compatible',
+	baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+	path: '/models',
+	pathMode: 'append',
+	auth: 'bearer'
+}, 'Codex discovery 必须使用独立于 Claude 的 Coding Plan Base URL 配置');
 const contractKeys = Object.keys(contractProviders);
+assert.deepEqual(
+	contractKeys,
+	['glm', 'deepseek', 'moonshot', 'moonshot-256k', 'minimax', 'custom'],
+	'供应商模板顺序须为 GLM → DeepSeek → Kimi → MiniMax → 自定义'
+);
 const typeField = builtinForm.fields[0];
 assert.deepEqual(
 	typeField.options.map(o => o.value),

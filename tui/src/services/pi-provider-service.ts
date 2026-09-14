@@ -44,11 +44,12 @@ export function savePiProviderForm(input: PiProviderFormInput, values: PiProvide
 	}
 }
 
-export async function discoverPiProviderModels(values: PiProviderFormValues): Promise<readonly string[]> {
+export async function discoverPiProviderModels(values: PiProviderFormValues, signal?: AbortSignal): Promise<readonly string[]> {
 	const result = await discoverPiModels({
 		baseUrl: values.baseUrl,
 		api: values.api ?? 'openai-completions',
-		apiKey: values.apiKey
+		apiKey: values.apiKey,
+		options: {signal}
 	});
 	if (!result.ok) throw new Error(result.error);
 	return result.models.map(model => model.id);

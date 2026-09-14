@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {
@@ -9,64 +9,93 @@ import {
 	validateCodexProviderForm
 } from '../src/core/codex-provider-form.ts';
 import {loadProviderContract} from '../src/core/provider-contract.ts';
-import {buildCodexForm, codexProviderFormAdapter, loadCodexProviderProfile, saveCodexProviderForm} from '../src/services/codex-service.ts';
+import {codexProviderFormAdapter, saveCodexProviderForm} from '../src/services/codex-service.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'ccq-codex-provider-form-'));
 process.env.CCQ_HOME = home;
 process.env.CODEX_HOME = join(home, '.codex');
 
 try {
-	// ── 5.4 provider 类型：Codex 独立供应商类型 + official login + 内置模板 + custom，无 OpenAI-compatible 标签 ──
+	// ── 5.4 provider 类型：Codex 独立供应商类型 + 内置模板 + custom，无 official login / OpenAI-compatible 标签 ──
 	const add = buildCodexProviderFormModel({mode: 'add'});
 	const providerTypeField = add.fields.find(field => field.id === 'providerType');
 	assert.equal(providerTypeField?.type, 'radio', '新增表单首字段为 providerType radio');
 	const options = providerTypeField?.type === 'radio' ? providerTypeField.options : [];
 	assert.deepEqual(
 		options.map(option => option.value),
-		['officialLogin', 'glm', 'minimax', 'deepseek', 'custom'],
-		'Codex 供应商类型仅含 official login、Codex 原生可接入的智谱 GLM/MiniMax/DeepSeek 与自定义'
+		['glm', 'deepseek', 'minimax', 'custom'],
+		'Codex 表单供应商类型仅含 Codex 原生可接入的智谱 GLM/MiniMax/DeepSeek 与自定义'
 	);
-	assert.ok(options.some(option => option.value === 'officialLogin' && option.label === 'official login'), 'Codex 增加 official login 类型');
-	assert.ok(options.some(option => option.value === 'glm' && /GLM/.test(option.label)), 'Codex 内置智谱 GLM（GLM-5.3 支持 Responses）');
-	assert.ok(options.some(option => option.value === 'minimax' && /MiniMax/.test(option.label)), 'Codex 保留 MiniMax 内置类型');
-	assert.ok(options.some(option => option.value === 'custom'), 'Codex 保留自定义供应商类型');
+	assert.equal(options.some(option => option.value === 'officialLogin'), false, 'Codex 表单不得提供 official login 类型');
+	assert.ok(
+		options.some(option => option.value === 'glm' && /GLM/.test(option.label)),
+		'Codex 内置智谱 GLM（GLM-5.3 支持 Responses）'
+	);
+	assert.ok(
+		options.some(option => option.value === 'minimax' && /MiniMax/.test(option.label)),
+		'Codex 保留 MiniMax 内置类型'
+	);
+	assert.ok(
+		options.some(option => option.value === 'custom'),
+		'Codex 保留自定义供应商类型'
+	);
 	assert.equal(options.at(-1)?.value, 'custom', 'custom 恒定排在选项末位（结构性条目，非契约 Codex 段派生）');
-	assert.equal(options.some(option => /OpenAI-compatible/i.test(option.label)), false, '不得新增 OpenAI-compatible 标签');
-	assert.equal(options.some(option => option.value === 'bailian'), false, 'Codex 不再提供阿里云百炼类型');
-	assert.ok(options.some(option => option.value === 'deepseek' && /DeepSeek/.test(option.label)), 'Codex 内置 DeepSeek（V4 起原生 Responses）');
+	assert.equal(
+		options.some(option => /OpenAI-compatible/i.test(option.label)),
+		false,
+		'不得新增 OpenAI-compatible 标签'
+	);
+	assert.equal(
+		options.some(option => option.value === 'bailian'),
+		false,
+		'Codex 不再提供阿里云百炼类型'
+	);
+	assert.ok(
+		options.some(option => option.value === 'deepseek' && /DeepSeek/.test(option.label)),
+		'Codex 内置 DeepSeek（V4 起原生 Responses）'
+	);
 	// Kimi 仍仅 Chat Completions，Codex 只认 Responses，直连不可用，故不内置一键模板。
-	assert.equal(options.some(option => ['moonshot', 'moonshot-256k'].includes(option.value)), false, 'Codex 不内置仅 Chat Completions 的 Kimi');
-	assert.equal(add.fields.some(field => field.id === 'codexProfileToml'), false, '表单字段区不得展示写死 TOML readonly 字段');
-	// 默认 add 表单默认 official login（虚拟条目，无文件名字段）；文件名文案在真实供应商类型下校验。
+	assert.equal(
+		options.some(option => ['moonshot', 'moonshot-256k'].includes(option.value)),
+		false,
+		'Codex 不内置仅 Chat Completions 的 Kimi'
+	);
+	assert.equal(
+		add.fields.some(field => field.id === 'codexProfileToml'),
+		false,
+		'表单字段区不得展示写死 TOML readonly 字段'
+	);
+	assert.equal(add.values.providerType, 'custom', 'Codex 新增表单默认使用 API-key custom 类型');
+	assert.ok(add.fields.some(field => field.id === 'baseUrl'), 'Codex 新增表单默认展示 Base URL');
+	assert.equal(add.fields.some(field => field.id === 'authJson'), false, 'Codex 表单不得展示 auth.json 编辑/预览字段');
+	// 文件名文案在真实供应商类型下校验。
 	const customAdd = buildCodexProviderFormModel({mode: 'add', providerType: 'custom'});
 	assert.equal(customAdd.fields.find(field => field.id === 'profileKey')?.label, '文件名', 'profile key 文案应面向用户显示为文件名');
-
-	// official login 现为结构性单例的虚拟条目（不落盘、可幂等激活），类型选项恒定展示，不再按存在性隐藏。
-	const officialAlwaysShown = buildCodexProviderFormModel({mode: 'add', providerType: 'officialLogin'});
-	const officialTypeField = officialAlwaysShown.fields.find(field => field.id === 'providerType');
-	const officialTypeOptions = officialTypeField?.type === 'radio' ? officialTypeField.options : [];
-	assert.equal(officialTypeOptions.some(option => option.value === 'officialLogin'), true, 'official login 类型恒定展示（虚拟条目结构性单例）');
-	assert.equal(officialAlwaysShown.values.providerType, 'officialLogin', '显式请求 official login 时保留该类型');
-	console.log('[PASS] 5.4 Codex provider 类型：official login 恒定展示 + 内置供应商 + custom，无 OpenAI-compatible');
+	assert.throws(
+		() => buildCodexProviderFormModel({mode: 'add', providerType: 'officialLogin'}),
+		/官方账号.*Codex 原生管理/,
+		'Codex 表单即使被外部传入 official login 也必须拒绝构造'
+	);
+	console.log('[PASS] 5.4 Codex provider 类型：仅 API-key 供应商 + custom，无 official login / OpenAI-compatible');
 
 	// ── 内置供应商模板：仅保留 Codex 原生可接入者，按官方 Responses 兼容 base_url 预填 ──
 	const codexGlm = buildCodexProviderFormModel({mode: 'add', providerType: 'glm'}).values;
 	assert.equal(codexGlm.profileKey, 'glm');
 	assert.equal(codexGlm.baseUrl, 'https://open.bigmodel.cn/api/v1');
-	assert.equal(codexGlm.model, 'glm-5.3');
+	assert.equal(codexGlm.model, '', 'GLM Codex 模板不预填模型');
 	assert.match(codexGlm.toml, /base_url\s*=\s*"https:\/\/open\.bigmodel\.cn\/api\/v1"/, '智谱 Responses base_url 写入 TOML');
 	assert.doesNotMatch(codexGlm.toml, /wire_api\s*=/, '智谱模板省略 Codex 默认 wire_api');
 
 	const minimax = buildCodexProviderFormModel({mode: 'add', providerType: 'minimax'}).values;
 	assert.equal(minimax.profileKey, 'minimax');
 	assert.equal(minimax.baseUrl, 'https://api.minimax.io/v1');
-	assert.equal(minimax.model, 'MiniMax-M3');
+	assert.equal(minimax.model, '', 'MiniMax Codex 模板不预填模型');
 
 	const codexDeepseek = buildCodexProviderFormModel({mode: 'add', providerType: 'deepseek'}).values;
 	assert.equal(codexDeepseek.profileKey, 'deepseek');
 	assert.equal(codexDeepseek.baseUrl, 'https://api.deepseek.com/');
-	// Responses 端点为根域（非 /anthropic），默认使用 v4-pro。
-	assert.equal(codexDeepseek.model, 'deepseek-v4-pro');
+	// Responses 端点为根域（非 /anthropic），模型留空由用户选择。
+	assert.equal(codexDeepseek.model, '', 'DeepSeek Codex 模板不预填模型');
 	assert.match(codexDeepseek.toml, /base_url\s*=\s*"https:\/\/api\.deepseek\.com"/, 'base_url 落盘去尾斜杠');
 	console.log('[PASS] Codex 内置供应商模板预填官方 Responses 兼容 base_url（智谱 GLM + MiniMax + DeepSeek）');
 
@@ -112,8 +141,8 @@ try {
 	}
 	console.log('[PASS] Codex 模板唯一事实源为 providers.json Codex 段（与 Claude 侧统一管理）');
 
-	// ── 字段提示（helpText）：每个字段都须有说明，含 official login 与 custom 两个结构性条目 ──
-	for (const type of ['officialLogin', 'glm', 'minimax', 'deepseek', 'custom']) {
+	// ── 字段提示（helpText）：每个可编辑类型的字段都须有说明 ──
+	for (const type of ['glm', 'minimax', 'deepseek', 'custom']) {
 		for (const field of buildCodexProviderFormModel({mode: 'add', providerType: type}).fields) {
 			assert.ok(field.helpText?.trim(), `add/${type} 的 ${field.id} 须有 helpText`);
 		}
@@ -121,16 +150,35 @@ try {
 	const editFields = buildCodexProviderFormModel({
 		mode: 'edit',
 		providerType: 'deepseek',
-		profile: {key: 'deepseek', providerType: 'apiKey', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash', hasApiKey: true, profilePath: '/tmp/x.toml'}
+		profile: {
+			key: 'deepseek',
+			providerType: 'apiKey',
+			baseUrl: 'https://api.deepseek.com',
+			model: 'deepseek-v4-flash',
+			hasApiKey: true,
+			profilePath: '/tmp/x.toml'
+		}
 	}).fields;
+	assert.equal(
+		editFields[editFields.findIndex(field => field.id === 'baseUrl') + 1]?.id,
+		'apiKey',
+		'Codex 编辑表单 API Key 必须紧跟 Base URL'
+	);
 	for (const field of editFields) {
 		assert.ok(field.helpText?.trim(), `edit 态的 ${field.id} 须有 helpText`);
 	}
 	const cxFields = buildCodexProviderFormModel({mode: 'add', providerType: 'deepseek'}).fields;
+	assert.equal(
+		cxFields[cxFields.findIndex(field => field.id === 'baseUrl') + 1]?.id,
+		'apiKey',
+		'Codex 表单 API Key 必须紧跟 Base URL'
+	);
+	assert.equal(cxFields.find(f => f.id === 'model')?.type, 'model-select', 'Codex 默认模型必须使用模型单选字段');
+	assert.equal(buildCodexProviderFormModel({mode: 'add'}).fields.some(field => field.type === 'model-select'), true, 'Codex 默认 API-key 表单应挂载模型发现字段');
 	const fieldHelp = id => cxFields.find(f => f.id === id).helpText;
 	// baseUrl 提示须点明 Responses（与 Claude 侧 Anthropic 兼容端点不同源，是最常见误填点）。
 	assert.match(fieldHelp('baseUrl'), /Responses/, 'baseUrl 提示须点明 Responses 端点');
-	// providerType 提示随类型变化（与 Claude 侧同构）：Codex.Note → Description，official login 用固定文案。
+	// providerType 提示随类型变化（与 Claude 侧同构）：Codex.Note → Description。
 	const typeHelpFor = type =>
 		buildCodexProviderFormModel({mode: 'add', providerType: type}).fields.find(f => f.id === 'providerType').helpText;
 	assert.equal(typeHelpFor('glm'), builtinProviders.glm.codex.note, '智谱展示契约 Codex.Note');
@@ -139,9 +187,8 @@ try {
 	assert.doesNotMatch(typeHelpFor('deepseek'), /models\.json/, 'DeepSeek 不得提示未明确要求的 models.json 额外配置');
 	assert.equal(typeHelpFor('minimax'), builtinProviders.minimax.description, '无 Codex.Note 时回退 Description');
 	assert.equal(typeHelpFor('custom'), builtinProviders.custom.description, 'custom 展示契约 Description');
-	assert.match(typeHelpFor('officialLogin'), /codex login/, 'official login 用固定文案（不在契约内）');
-	const distinctTypeHelps = new Set(['officialLogin', 'glm', 'minimax', 'deepseek', 'custom'].map(typeHelpFor));
-	assert.equal(distinctTypeHelps.size, 5, '五种类型的提示须各不相同（随类型变化，非静态文案）');
+	const distinctTypeHelps = new Set(['glm', 'minimax', 'deepseek', 'custom'].map(typeHelpFor));
+	assert.equal(distinctTypeHelps.size, 4, '四种可编辑类型的提示须各不相同（随类型变化，非静态文案）');
 	// 刻意不回退顶层 Note：那是 Claude 侧的接入限制（套餐档位等），串到 Codex 侧会误导。
 	assert.equal(
 		typeHelpFor('deepseek').includes(builtinProviders.deepseek.note),
@@ -159,44 +206,9 @@ try {
 	// apiKey 提示须含契约 PlatformUrl，并点明 Codex 侧密钥明文落 TOML（与 Claude 侧 vault 语义不同）。
 	assert.ok(fieldHelp('apiKey').includes(builtinProviders.deepseek.platformUrl), 'apiKey 提示须含契约 PlatformUrl');
 	assert.match(fieldHelp('apiKey'), /experimental_bearer_token/, 'apiKey 提示须点明写入 experimental_bearer_token');
-	// activateAfterSave 的激活语义按类型分流：official login 是清空供应商键，真实 provider 是写入。
-	const officialActivateHelp = buildCodexProviderFormModel({mode: 'add', providerType: 'officialLogin'}).fields.find(f => f.id === 'activateAfterSave').helpText;
-	assert.match(officialActivateHelp, /清空/, 'official login 激活提示须说明清空供应商键');
+	// activateAfterSave 对所有表单类型都表示写入并激活该 profile。
 	assert.match(fieldHelp('activateAfterSave'), /设为默认/, '真实 provider 激活提示须说明写入并设为默认');
-	assert.notEqual(officialActivateHelp, fieldHelp('activateAfterSave'), '两类激活语义不同，提示不得共用');
-	console.log('[PASS] Codex 侧字段提示齐备（类型提示随契约 Note 变化 / Responses 端点 / 密钥落盘位置 / 激活语义分流）');
-
-	// ── 5.7 official login：虚拟条目，无文件名/Base URL/model/API Key 字段，仅只读 auth.json + 激活开关 ──
-	const official = buildCodexProviderFormModel({mode: 'add', providerType: 'officialLogin'});
-	const officialFieldIds = official.fields.map(field => field.id);
-	assert.equal(official.values.providerType, 'officialLogin');
-	assert.equal(official.values.profileKey, 'official', 'official login profileKey 固定为 sentinel');
-	assert.equal(officialFieldIds.includes('profileKey'), false, 'official login 不展示文件名字段（虚拟条目）');
-	assert.equal(officialFieldIds.includes('baseUrl'), false, 'official login 不展示 Base URL 字段');
-	assert.equal(officialFieldIds.includes('model'), false, 'official login 不展示默认模型字段（归 Config 页管）');
-	assert.equal(officialFieldIds.includes('apiKey'), false, 'official login 不展示 API Key 字段');
-	assert.equal(officialFieldIds.includes('authJson'), true, 'official login 展示只读 auth.json 状态字段');
-	assert.equal(officialFieldIds.includes('activateAfterSave'), true, 'official login 保留保存后激活开关');
-	assert.match(official.values.authJson, /未检测到 ~\/\.codex\/auth\.json/, '无 auth.json 时应提示运行 codex login');
-	assert.equal(validateCodexProviderForm('add', official.values).length, 0,
-		'official login 不校验文件名/API key/Base URL');
-
-	mkdirSync(process.env.CODEX_HOME, {recursive: true});
-	writeFileSync(join(process.env.CODEX_HOME, 'auth.json'), JSON.stringify({
-		access_token: 'access-secret',
-		refresh_token: 'refresh-secret',
-		account: {email: 'user@example.com', api_key: 'key-secret'}
-	}, null, 2));
-	const officialWithAuth = buildCodexProviderFormModel({mode: 'add', providerType: 'officialLogin'});
-	const authPreview = codexProviderFormAdapter.buildText(officialWithAuth.values);
-	assert.match(authPreview, /"access_token": "\*\*\*"/, 'auth.json textarea 应脱敏 access_token');
-	assert.match(authPreview, /"api_key": "\*\*\*"/, 'auth.json textarea 应递归脱敏 api_key');
-	assert.equal(authPreview.includes('access-secret'), false, 'auth.json textarea 不得泄漏 access token');
-	assert.equal(authPreview.includes('key-secret'), false, 'auth.json textarea 不得泄漏 API key');
-	const parsedAuthPreview = codexProviderFormAdapter.parseText(officialWithAuth.values, '用户误编辑 auth preview');
-	assert.equal(parsedAuthPreview.ok, true, 'official login 的 auth.json textarea 不参与 TOML 解析');
-	assert.equal(codexProviderFormAdapter.isTextReadOnly?.(officialWithAuth.values), true, 'official login 的 auth.json textarea 应只读');
-	console.log('[PASS] 5.7 official login 使用只读脱敏 auth.json textarea');
+	console.log('[PASS] Codex 侧字段提示齐备（类型提示随契约 Note 变化 / Responses 端点 / 密钥落盘位置）');
 
 	// ── 5.5/5.6 API-key provider：字段 → TOML，TOML → 字段 ─────────────────────
 	const apiValues = {
@@ -212,8 +224,11 @@ try {
 	assert.match(toml, /model_provider\s*=\s*"deepseek"/, '字段变更生成 TOML model_provider');
 	assert.match(toml, /base_url\s*=\s*"https:\/\/api\.deepseek\.com"/, 'Base URL 规范化后写 TOML');
 	assert.match(toml, /experimental_bearer_token\s*=\s*"sk-secret-should-never-leak"/, 'API key 写 experimental_bearer_token');
-	assert.equal(/env_key\s*=|requires_openai_auth\s*=|\[model_providers\.deepseek\.auth\]/.test(toml), false,
-		'认证字段互斥：不得含 env_key/auth/requires_openai_auth');
+	assert.equal(
+		/env_key\s*=|requires_openai_auth\s*=|\[model_providers\.deepseek\.auth\]/.test(toml),
+		false,
+		'认证字段互斥：不得含 env_key/auth/requires_openai_auth'
+	);
 	assert.equal(codexProviderFormAdapter.isTextReadOnly?.(apiValues), false, 'API-key provider TOML textarea 应可编辑');
 	const parsed = codexProviderValuesFromToml(apiValues, toml);
 	assert.equal(parsed.ok, true, 'TOML textarea 可解析回字段');
@@ -228,7 +243,14 @@ try {
 	const editModel = buildCodexProviderFormModel({
 		mode: 'edit',
 		providerType: 'custom',
-		profile: {key: 'deepseek', providerType: 'apiKey', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', hasApiKey: true, profilePath: ''},
+		profile: {
+			key: 'deepseek',
+			providerType: 'apiKey',
+			baseUrl: 'https://api.deepseek.com',
+			model: 'deepseek-chat',
+			hasApiKey: true,
+			profilePath: ''
+		},
 		rawToml: toml
 	});
 	const editApiKeyField = editModel.fields.find(field => field.id === 'apiKey');
@@ -238,7 +260,14 @@ try {
 	const editNoToml = buildCodexProviderFormModel({
 		mode: 'edit',
 		providerType: 'custom',
-		profile: {key: 'deepseek', providerType: 'apiKey', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', hasApiKey: true, profilePath: ''}
+		profile: {
+			key: 'deepseek',
+			providerType: 'apiKey',
+			baseUrl: 'https://api.deepseek.com',
+			model: 'deepseek-chat',
+			hasApiKey: true,
+			profilePath: ''
+		}
 	});
 	assert.equal(editNoToml.values.apiKey, '', '无 rawToml 时 edit 态 apiKey 回退空串');
 	console.log('[PASS] 5.5b Codex edit 态 secret 字段回填明文 token（对齐 Claude 编辑回显）');
@@ -248,32 +277,14 @@ try {
 	assert.equal(invalid.ok, false, '无效 TOML 应返回错误，不回填字段');
 	console.log('[PASS] 5.5 无效 TOML 拒绝回填/保存');
 
-	// ── official login 编辑态：auth.json 明文可编辑 + 空内容登出 ────────────────
-	const authPath = join(process.env.CCQ_HOME, '.codex', 'auth.json');
-	writeFileSync(authPath, '{"tokens":{"access_token":"eyJreal"}}', 'utf8');
-	// edit 态回填明文原文（非脱敏），且 textarea 放开编辑。
-	const officialEdit = buildCodexForm({mode: 'edit', profileKey: 'official', profile: loadCodexProviderProfile('official')});
-	assert.equal(officialEdit.values.authEditable, true, 'official edit 态 authEditable=true');
-	assert.match(officialEdit.values.authJson, /eyJreal/, 'edit 态回填明文 access_token（非脱敏 ***）');
-	assert.equal(codexProviderFormAdapter.isTextReadOnly?.(officialEdit.values), false, 'official edit 态 textarea 可编辑');
-	// add 态仍为脱敏只读（安全边界不回退）。
-	const officialAdd = buildCodexForm({mode: 'add', providerType: 'officialLogin'});
-	assert.equal(codexProviderFormAdapter.isTextReadOnly?.(officialAdd.values), true, 'official add 态 textarea 仍只读');
-	// 保存改动后的明文 → 写回 auth.json。
-	const edited = {...officialEdit.values, authJson: '{"tokens":{"access_token":"eyJnew"}}'};
-	const saveOk = saveCodexProviderForm({mode: 'edit', profileKey: 'official', providerType: 'officialLogin'}, edited);
-	assert.equal(saveOk.ok, true, 'official edit 保存应成功');
-	assert.match(readFileSync(authPath, 'utf8'), /eyJnew/, '编辑后的明文写回 auth.json');
-	// 空内容保存 = 登出（删除 auth.json）。
-	const logout = saveCodexProviderForm({mode: 'edit', profileKey: 'official', providerType: 'officialLogin'}, {...officialEdit.values, authJson: '   '});
-	assert.equal(logout.ok, true, '空内容保存应成功');
-	assert.equal(existsSync(authPath), false, '空内容保存 = 登出，删除 auth.json');
-	// 非法 JSON 拒绝写入（不产生半成品文件）。
-	writeFileSync(authPath, '{"tokens":{"access_token":"eyJkeep"}}', 'utf8');
-	const badJson = saveCodexProviderForm({mode: 'edit', profileKey: 'official', providerType: 'officialLogin'}, {...officialEdit.values, authJson: '{not json'});
-	assert.equal(badJson.ok, false, '非法 JSON 应拒绝保存');
-	assert.match(readFileSync(authPath, 'utf8'), /eyJkeep/, '非法 JSON 保存失败时不破坏原 auth.json');
-	console.log('[PASS] 5.7b official login 编辑态：auth.json 明文可编辑 + 空内容登出 + 非法 JSON 拒绝');
+	// official login 仍是列表中的只读虚拟身份，任何旧调用都不得重新打开表单写入路径。
+	const rejectedOfficial = saveCodexProviderForm(
+		{mode: 'edit', profileKey: 'official', providerType: 'officialLogin'},
+		{...apiValues, providerType: 'officialLogin'}
+	);
+	assert.equal(rejectedOfficial.ok, false, 'official login 旧表单调用必须拒绝保存');
+	assert.match(rejectedOfficial.ok ? '' : rejectedOfficial.error, /官方账号.*Codex 原生管理/, '拒绝原因必须指向 Codex 原生官方登录');
+	console.log('[PASS] 5.7 Codex official login 不进入表单，仅由 Codex 原生登录管理');
 } finally {
 	rmSync(home, {recursive: true, force: true});
 	delete process.env.CCQ_HOME;

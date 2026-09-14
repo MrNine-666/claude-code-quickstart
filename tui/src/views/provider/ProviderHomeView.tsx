@@ -15,7 +15,6 @@ export type ProviderHomeViewProps = {
 	readonly loadFailures: readonly {readonly key: string; readonly reason: string}[];
 	readonly currentKey?: string;
 	readonly currentIsActive: boolean;
-	readonly currentIsOfficial: boolean;
 	readonly confirmingDelete: boolean;
 	readonly onMove: (delta: number) => void;
 	readonly onSwitch: () => void;
@@ -38,7 +37,6 @@ export function ProviderHomeView({
 	loadFailures,
 	currentKey,
 	currentIsActive,
-	currentIsOfficial,
 	confirmingDelete,
 	onMove,
 	onSwitch,
@@ -81,7 +79,7 @@ export function ProviderHomeView({
 						label: isPi
 							? '添加第一个自定义供应商；订阅供应商请在 Pi 中使用 /login'
 							: isCodex
-								? '添加第一个供应商（可在表单内选择类型，支持 official login / 自定义）'
+								? '添加第一个供应商（可在表单内选择类型；官方账号请运行 codex login）'
 								: '添加第一个供应商（可在表单内选择类型，含自定义）',
 						enabled: true
 					}}
@@ -92,17 +90,15 @@ export function ProviderHomeView({
 			{confirmingDelete && currentKey ? (
 				<Modal
 					active
-					title={currentIsOfficial ? '确认登出官方账号' : currentIsActive ? '禁止删除活跃供应商' : '确认删除供应商'}
+					title={currentIsActive ? '禁止删除活跃供应商' : '确认删除供应商'}
 					hint="Enter 确认  Esc 取消"
 					tone="danger"
 					width={HOME_MODAL_WIDTH}
 				>
 					<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-						{currentIsOfficial
-							? '将清空 ~/.codex/auth.json 登出 Codex 官方账号，此操作不可撤销。'
-							: currentIsActive
-								? `${currentKey} 是当前活跃供应商，删除前请先切换到其他供应商。`
-								: `即将删除供应商 ${currentKey}，此操作不可撤销。`}
+						{currentIsActive
+							? `${currentKey} 是当前活跃供应商，删除前请先切换到其他供应商。`
+							: `即将删除供应商 ${currentKey}，此操作不可撤销。`}
 					</text>
 				</Modal>
 			) : null}

@@ -5,6 +5,7 @@ import {colors} from '../../theme/index.js';
 import {isEditingModifier} from '../../utils/keyboard.js';
 import {ErrorPanel} from '../error-panel.js';
 import {TextField} from './TextField.js';
+import {ModelSelectField} from './ModelSelectField.js';
 import {SelectField} from './SelectField.js';
 import {RadioField} from './RadioField.js';
 import {KeyValueField, serializeEntries} from './KeyValueField.js';
@@ -33,6 +34,18 @@ export type FormPanelProps = {
 	readonly onCancel: () => void;
 	/** Page-owned app shortcut hook; runs before generic form modifier handling. */
 	readonly onKeyEvent?: (keyEvent: KeyEvent) => boolean;
+	/** State and callbacks for model-select fields. */
+	readonly modelSelect?: {
+		readonly fieldIds: readonly string[];
+		readonly openFieldId: string | null;
+		readonly loading: boolean;
+		readonly candidates: readonly string[];
+		readonly cursor: number;
+		readonly onChange: (id: string, value: string) => void;
+		readonly onSubmit: (id: string) => void;
+		readonly onFocus?: (id: string) => void;
+		readonly onKeyDown?: (id: string, keyEvent: KeyEvent) => boolean;
+	};
 	/** Optional page-owned custom content rendered in the same vertical field flow. */
 	readonly custom?: ReactNode;
 };
@@ -84,6 +97,7 @@ export function FormPanel({
 	onSubmit,
 	onCancel,
 	onKeyEvent,
+	modelSelect,
 	custom
 }: FormPanelProps) {
 	useKeyboard(keyEvent => {
@@ -160,7 +174,12 @@ export function FormPanel({
 					</box>
 					{field.helpText ? (
 						<box marginLeft={FORM_VALUE_MARGIN_LEFT}>
-							<text fg={colors.muted} attributes={TextAttributes.DIM} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+							<text
+								fg={colors.muted}
+								attributes={TextAttributes.DIM}
+								selectionBg={colors.selectionBg}
+								selectionFg={colors.selectionFg}
+							>
 								{field.helpText}
 							</text>
 						</box>
@@ -186,6 +205,34 @@ export function FormPanel({
 					helpText={field.helpText}
 					focused={focused}
 					onChange={value => onFieldChange(field.id, value)}
+				/>
+			);
+		} else if (field.type === 'model-select') {
+			const modelState = modelSelect?.fieldIds.includes(field.id) ? modelSelect : undefined;
+			node = (
+				<ModelSelectField
+					label={field.label}
+					value={live}
+					helpText={field.helpText}
+					focused={focused}
+					active={active}
+					open={modelState?.openFieldId === field.id}
+					loading={modelState?.loading ?? false}
+					candidates={modelState?.candidates ?? []}
+					cursor={modelState?.cursor ?? 0}
+					onChange={value => {
+						if (modelState) modelState.onChange(field.id, value);
+						else onFieldChange(field.id, value);
+					}}
+					onSubmit={() => {
+						if (modelState) modelState.onSubmit(field.id);
+					}}
+					onFocus={modelState ? () => modelState.onFocus?.(field.id) : undefined}
+					onKeyDown={
+						modelState?.openFieldId === field.id && modelState.onKeyDown
+							? keyEvent => modelState.onKeyDown?.(field.id, keyEvent) ?? false
+							: undefined
+					}
 				/>
 			);
 		} else if (field.type === 'key-value') {
@@ -231,7 +278,12 @@ export function FormPanel({
 	return (
 		<box flexDirection="column">
 			<box marginBottom={1}>
-				<text fg={colors.primary} attributes={TextAttributes.BOLD} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+				<text
+					fg={colors.primary}
+					attributes={TextAttributes.BOLD}
+					selectionBg={colors.selectionBg}
+					selectionFg={colors.selectionFg}
+				>
 					{title}
 				</text>
 			</box>

@@ -45,6 +45,7 @@ export {
 	type FormPanelProps
 } from './form/FormPanel.js';
 export {TextField, type TextFieldProps} from './form/TextField.js';
+export {ModelSelectField, type ModelSelectFieldProps} from './form/ModelSelectField.js';
 export {SelectField, type SelectFieldProps} from './form/SelectField.js';
 export {RadioField, type RadioFieldProps} from './form/RadioField.js';
 export {KeyValueField, serializeEntries, parseEntries, type KeyValueFieldProps} from './form/KeyValueField.js';

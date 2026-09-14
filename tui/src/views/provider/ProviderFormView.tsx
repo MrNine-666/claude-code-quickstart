@@ -56,9 +56,11 @@ export type ProviderFormProps<TInput, TValues, TModel extends ProviderFormModelB
 	readonly save: (input: TInput, values: TValues) => ProviderFormSubmitResult;
 	readonly validate: (values: TValues) => string[];
 	readonly adapter: ProviderFormAdapter<TInput, TValues, TModel>;
-	/** Optional async upstream model discovery. The form owns candidate selection and submits the draft with the form. */
-	readonly onDiscover?: (values: TValues) => Promise<readonly string[]>;
+	/** Optional async upstream model discovery. */
+	readonly onDiscover?: (values: TValues, signal?: AbortSignal) => Promise<readonly string[]>;
 	readonly onApplyDiscovered?: (values: TValues, modelIds: readonly string[]) => TValues;
+	/** CC/CX model fields use the candidate list as a single-select field. */
+	readonly modelSelectFieldIds?: readonly string[];
 };
 
 type ModelSelectionState = {
@@ -120,10 +122,15 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 	validate,
 	adapter,
 	onDiscover,
-	onApplyDiscovered
+	onApplyDiscovered,
+	modelSelectFieldIds = []
 }: ProviderFormProps<TInput, TValues, TModel>) {
 	const formAdapter = adapter;
+	const piModelDiscovery = Boolean(onDiscover && onApplyDiscovered);
 	const [fields, setFields] = useState(model.fields);
+	const discoverableModelFieldIds =
+		modelSelectFieldIds.length > 0 ? modelSelectFieldIds : fields.filter(field => field.type === 'model-select').map(field => field.id);
+	const singleModelSelect = Boolean(onDiscover && discoverableModelFieldIds.length > 0);
 	const [values, setValues] = useState<Record<string, string>>(() => deriveValues(model.fields));
 	const [focusedIndex, setFocusedIndex] = useState(() => firstEditableIndex(model.fields));
 	const [errors, setErrors] = useState<string[]>([]);
@@ -137,19 +144,28 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 	const pendingTextareaSync = useRef<string | null>(null);
 	const modelDiscoveryRequest = useRef(0);
 	const discoveryInFlight = useRef(false);
+	const discoveryAbort = useRef<AbortController | null>(null);
+	const discoveryCacheKey = useRef<string | null>(null);
+	const discoverySourceKey = useRef<string | null>(null);
+	const discoveryShortcutQueued = useRef(false);
 	const [discovery, setDiscovery] = useState<ModelDiscoveryState>(() =>
-		initialModelDiscoveryState((model.values as {readonly models?: unknown}).models)
+		initialModelDiscoveryState(piModelDiscovery ? (model.values as {readonly models?: unknown}).models : undefined)
 	);
 	const [modelFocus, setModelFocus] = useState<ModelFocus>(null);
+	const [singleModelFocus, setSingleModelFocus] = useState<string | null>(null);
+	const [singleModelCursor, setSingleModelCursor] = useState(0);
 	const hasTextEditor = formAdapter.showTextEditor !== false;
 	const filteredCandidates = filterModelCandidates(discovery.candidates, discovery.manualValue);
 	const selectedModel = discovery.candidates[discovery.cursor];
 	const filteredCursor = selectedModel ? Math.max(0, filteredCandidates.indexOf(selectedModel)) : 0;
+	const singleModelCandidatesFor = (fieldId: string | null | undefined): readonly string[] =>
+		fieldId ? filterModelCandidates(discovery.candidates, values[fieldId] ?? '') : [];
+	const focusedSingleModelCandidates = singleModelCandidatesFor(singleModelFocus);
 
 	useEffect(() => {
 		if (!active || !onSubModeChange) return;
-		onSubModeChange(onDiscover ? 'form-pi' : 'form');
-	}, [active, onDiscover, onSubModeChange]);
+		onSubModeChange(piModelDiscovery ? 'form-pi' : singleModelSelect ? 'form-model' : 'form');
+	}, [active, onSubModeChange, piModelDiscovery, singleModelSelect]);
 
 	const textFocused = hasTextEditor && focusedIndex === fields.length;
 	const fieldFocused = modelFocus === null && !textFocused;
@@ -161,6 +177,35 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 				: textFocused
 					? JSON_FIELD_ID
 					: `form-field-${focusedIndex}-${fields[focusedIndex]?.id ?? 'unknown'}`;
+
+	function discoveryContextKey(valuesToInspect: TValues): string {
+		const candidate = valuesToInspect as {readonly baseUrl?: unknown; readonly apiKey?: unknown};
+		const baseUrl = typeof candidate.baseUrl === 'string' ? candidate.baseUrl.trim() : '';
+		const apiKey = typeof candidate.apiKey === 'string' ? candidate.apiKey : '';
+		let hash = 2166136261;
+		for (const char of apiKey) {
+			hash ^= char.codePointAt(0) ?? 0;
+			hash = Math.imul(hash, 16777619);
+		}
+		const mode = piModelDiscovery ? 'pi' : singleModelSelect ? 'single' : 'none';
+		return `${mode}\u0000${baseUrl}\u0000${apiKey.length}:${hash >>> 0}`;
+	}
+
+	function resetDiscoveryForValues(nextValues: TValues): void {
+		if (!onDiscover) return;
+		const nextKey = discoveryContextKey(nextValues);
+		if (discoverySourceKey.current === nextKey) {
+			return;
+		}
+		discoverySourceKey.current = nextKey;
+		discoveryCacheKey.current = null;
+		modelDiscoveryRequest.current += 1;
+		discoveryAbort.current?.abort();
+		discoveryAbort.current = null;
+		setDiscovery(initialModelDiscoveryState(piModelDiscovery ? (nextValues as {readonly models?: unknown}).models : undefined));
+		setSingleModelFocus(null);
+		setSingleModelCursor(0);
+	}
 
 	useEffect(() => {
 		if (!scrollRef.current) {
@@ -186,6 +231,14 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 		pendingTextareaSync.current = text;
 		textareaRef.current.setText(text);
 	}, [text]);
+
+	useEffect(() => {
+		if (!singleModelSelect || singleModelFocus === null) return;
+		const focusedId = fields[focusedIndex]?.id;
+		if (!focusedId || !discoverableModelFieldIds.includes(focusedId)) {
+			setSingleModelFocus(null);
+		}
+	}, [discoverableModelFieldIds, fields, focusedIndex, singleModelFocus, singleModelSelect]);
 
 	useEffect(() => {
 		if (model.mode === 'edit') {
@@ -214,10 +267,11 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 		setText(formAdapter.buildText(nextBase));
 		setFocusedIndex(firstEditableIndex(nextModel.fields));
 		setErrors([]);
+		resetDiscoveryForValues(nextBase);
 	}, [values.providerType, model.mode, buildForm, formAdapter]);
 
 	const handleMoveFocus = (direction: 1 | -1) => {
-		if (onDiscover) {
+		if (piModelDiscovery) {
 			const lastFieldIndex = nextEditableIndex(fields, fields.length, -1);
 			if (modelFocus === 'list') {
 				if (direction > 0) {
@@ -312,6 +366,25 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 		}
 		setText(formAdapter.buildText(nextFormValues));
 		setErrors([]);
+		if (id === 'baseUrl' || id === 'apiKey' || id === 'providerType') {
+			resetDiscoveryForValues(nextFormValues);
+		}
+	};
+
+	const handleSingleModelFocus = (fieldId: string) => {
+		if (!singleModelSelect || !discoverableModelFieldIds.includes(fieldId) || discovery.candidates.length === 0) {
+			return;
+		}
+
+		setSingleModelFocus(fieldId);
+		const candidates = singleModelCandidatesFor(fieldId);
+		setSingleModelCursor(current => Math.min(current, Math.max(0, candidates.length - 1)));
+	};
+
+	const handleSingleModelChange = (fieldId: string, value: string) => {
+		handleFieldChange(fieldId, value);
+		const candidates = filterModelCandidates(discovery.candidates, value);
+		setSingleModelCursor(current => Math.min(current, Math.max(0, candidates.length - 1)));
 	};
 
 	const readCurrentValues = (): {readonly ok: true; readonly values: TValues} | {readonly ok: false; readonly error: string} => {
@@ -344,6 +417,7 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 			setFields(currentFields => [...formAdapter.syncFields!(parsed.values, currentFields)]);
 		}
 		setValues(prev => ({...prev, ...formAdapter.valuesToRecord(parsed.values)}));
+		resetDiscoveryForValues(parsed.values);
 	};
 
 	const handleManualModelChange = (value: string) => {
@@ -391,8 +465,11 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 		return [...new Set(manual ? [...selected, manual] : selected)];
 	};
 
-	const handleDiscover = async () => {
+	const handleDiscover = async (requestedFieldId?: string, forceRefresh = false) => {
 		if (!onDiscover || discoveryInFlight.current || discovery.status === 'loading') return;
+		const focusedModelFieldId = fields[focusedIndex]?.id;
+		const targetFieldId = requestedFieldId ?? focusedModelFieldId;
+		const singleModelTargetFieldId = targetFieldId && discoverableModelFieldIds.includes(targetFieldId) ? targetFieldId : undefined;
 		const parsed = readCurrentValues();
 		if (!parsed.ok) {
 			toast.error(parsed.error);
@@ -404,8 +481,18 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 			const baseUrlIndex = fields.findIndex(field => field.id === 'baseUrl');
 			if (baseUrlIndex >= 0) {
 				setModelFocus(null);
+				setSingleModelFocus(null);
 				setFocusedIndex(baseUrlIndex);
 			}
+			return;
+		}
+		const contextKey = discoveryContextKey(parsed.values);
+		discoverySourceKey.current = contextKey;
+		if (singleModelSelect && !forceRefresh && discoveryCacheKey.current === contextKey && discovery.candidates.length > 0) {
+			setSingleModelFocus(singleModelTargetFieldId ?? null);
+			const visibleCandidates = singleModelCandidatesFor(singleModelTargetFieldId);
+			setSingleModelCursor(current => Math.min(current, Math.max(0, visibleCandidates.length - 1)));
+			toast.info(`已加载 ${discovery.candidates.length} 个上游模型`);
 			return;
 		}
 		const previous: ModelSelectionState = {
@@ -415,25 +502,50 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 			manualValue: discovery.manualValue
 		};
 		const requestId = ++modelDiscoveryRequest.current;
+		const controller = new AbortController();
+		discoveryAbort.current = controller;
 		discoveryInFlight.current = true;
 		setErrors([]);
 		setDiscovery({status: 'loading', ...previous});
-		setModelFocus('list');
+		if (singleModelSelect) setSingleModelFocus(singleModelTargetFieldId ?? null);
+		else setModelFocus('list');
 		try {
-			const candidates = [...new Set((await onDiscover(parsed.values)).map(model => model.trim()).filter(Boolean))];
+			const candidates = [
+				...new Set((await onDiscover(parsed.values, controller.signal)).map(model => model.trim()).filter(Boolean))
+			];
 			if (requestId !== modelDiscoveryRequest.current) {
 				discoveryInFlight.current = false;
 				return;
 			}
 			if (candidates.length === 0) {
 				discoveryInFlight.current = false;
-				setDiscovery({status: 'manual', ...previous, manualValue: ''});
-				setModelFocus('manual');
+				setDiscovery({status: singleModelSelect ? 'idle' : 'manual', ...previous, manualValue: ''});
+				if (singleModelSelect) setSingleModelFocus(singleModelTargetFieldId ?? null);
+				else setModelFocus('manual');
 				toast.warning('上游未返回可用模型，请手工添加模型');
+				return;
+			}
+			if (singleModelSelect) {
+				discoveryInFlight.current = false;
+				discoveryCacheKey.current = contextKey;
+				setDiscovery({
+					status: 'selecting',
+					candidates,
+					selected: new Set(candidates),
+					cursor: Math.min(singleModelCursor, Math.max(0, candidates.length - 1)),
+					manualValue: ''
+				});
+				setSingleModelFocus(singleModelTargetFieldId ?? null);
+				const visibleCandidates = singleModelTargetFieldId
+					? filterModelCandidates(candidates, values[singleModelTargetFieldId] ?? '')
+					: [];
+				setSingleModelCursor(current => Math.min(current, Math.max(0, visibleCandidates.length - 1)));
+				toast.success(`已获取 ${candidates.length} 个上游模型`);
 				return;
 			}
 			const mergedCandidates = [...new Set([...previous.candidates, ...candidates])];
 			discoveryInFlight.current = false;
+			discoveryCacheKey.current = contextKey;
 			setDiscovery({
 				status: 'selecting',
 				candidates: mergedCandidates,
@@ -442,6 +554,7 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 				manualValue: previous.manualValue
 			});
 			setModelFocus('list');
+			toast.success(`已获取 ${candidates.length} 个上游模型`);
 		} catch (error) {
 			if (requestId !== modelDiscoveryRequest.current) {
 				discoveryInFlight.current = false;
@@ -449,10 +562,23 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 			}
 			discoveryInFlight.current = false;
 			const reason = error instanceof Error ? error.message : String(error);
-			setDiscovery({status: 'manual', ...previous, manualValue: ''});
-			setModelFocus('manual');
-			toast.error(`获取上游模型失败：${reason}`);
+			setDiscovery({status: singleModelSelect ? 'idle' : 'manual', ...previous, manualValue: ''});
+			if (singleModelSelect) setSingleModelFocus(singleModelTargetFieldId ?? null);
+			else setModelFocus('manual');
+			toast.error(reason || '模型发现失败');
+		} finally {
+			if (discoveryAbort.current === controller) discoveryAbort.current = null;
 		}
+	};
+
+	const triggerDiscover = (requestedFieldId?: string, forceRefresh = false) => {
+		if (discoveryShortcutQueued.current) return;
+		discoveryShortcutQueued.current = true;
+		const request = handleDiscover(requestedFieldId, forceRefresh);
+		queueMicrotask(() => {
+			discoveryShortcutQueued.current = false;
+		});
+		void request;
 	};
 
 	const addManualModel = (rawValue?: string) => {
@@ -482,12 +608,13 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_CANCEL)) {
 			keyEvent.preventDefault();
 			if (discovery.status === 'loading') modelDiscoveryRequest.current += 1;
+			discoveryAbort.current?.abort();
 			onCancel();
 			return true;
 		}
 		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_DISCOVER)) {
 			keyEvent.preventDefault();
-			void handleDiscover();
+			triggerDiscover();
 			return true;
 		}
 		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_UP)) {
@@ -518,15 +645,68 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 			}
 			return true;
 		}
-		// Enter on the list does not apply a separate draft; Ctrl+S submits the list with the form.
+		// Enter on Pi's list does not apply a separate draft; Ctrl+S submits the list with the form.
 		return true;
 	};
 
+	const handleSingleModelSelect = (fieldId: string) => {
+		if (!singleModelFocus || singleModelFocus !== fieldId || discovery.status === 'loading') return;
+		const candidates = singleModelCandidatesFor(fieldId);
+		const model = candidates[singleModelCursor];
+		if (!model) return;
+		handleFieldChange(fieldId, model);
+		setSingleModelFocus(null);
+	};
+
+	const handleSingleModelSubmit = (fieldId: string) => {
+		if (singleModelFocus !== fieldId) {
+			handleSingleModelFocus(fieldId);
+			return;
+		}
+		handleSingleModelSelect(fieldId);
+	};
+
+	const handleSingleModelKey = (keyEvent: KeyEvent): boolean => {
+		if (singleModelFocus === null) return false;
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_CANCEL)) {
+			keyEvent.preventDefault();
+			if (discovery.status === 'loading') modelDiscoveryRequest.current += 1;
+			discoveryAbort.current?.abort();
+			discoveryInFlight.current = false;
+			setSingleModelFocus(null);
+			setDiscovery(current => ({...current, status: current.candidates.length > 0 ? 'selecting' : 'idle'}));
+			return true;
+		}
+		if (discovery.status === 'loading') {
+			const name = keyEvent.name.toLowerCase();
+			return name === 'up' || name === 'arrowup' || name === 'down' || name === 'arrowdown';
+		}
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_UP)) {
+			keyEvent.preventDefault();
+			setSingleModelCursor(current => Math.max(0, current - 1));
+			return true;
+		}
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_DOWN)) {
+			keyEvent.preventDefault();
+			const candidates = singleModelCandidatesFor(singleModelFocus);
+			setSingleModelCursor(current => Math.min(Math.max(0, candidates.length - 1), current + 1));
+			return true;
+		}
+		return false;
+	};
+
 	const handleFormKey = (keyEvent: KeyEvent): boolean => {
+		if (singleModelSelect && onDiscover && matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_DISCOVER)) {
+			keyEvent.preventDefault();
+			triggerDiscover(undefined, singleModelFocus !== null);
+			return true;
+		}
+		if (singleModelFocus !== null) return handleSingleModelKey(keyEvent);
 		if (!onDiscover || modelFocus !== null) return false;
+		if (!singleModelSelect && !piModelDiscovery) return false;
 		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_DISCOVER)) {
 			keyEvent.preventDefault();
-			void handleDiscover();
+			triggerDiscover();
 			return true;
 		}
 		return false;
@@ -538,13 +718,20 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 			handleSubmit();
 			return;
 		}
+		if (singleModelSelect && onDiscover && matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_DISCOVER)) {
+			keyEvent.preventDefault();
+			triggerDiscover(undefined, singleModelFocus !== null);
+			return;
+		}
 		if (modelFocus !== null) {
 			handleModelFocusKey(keyEvent);
 			return;
 		}
+		if (singleModelFocus !== null) return;
 		if (onDiscover && matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_DISCOVER)) {
+			if (!piModelDiscovery) return;
 			keyEvent.preventDefault();
-			void handleDiscover();
+			triggerDiscover();
 			return;
 		}
 		if (!textFocused) return;
@@ -627,8 +814,23 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 					onSubmit={handleSubmit}
 					onCancel={onCancel}
 					onKeyEvent={handleFormKey}
+					modelSelect={
+						singleModelSelect
+							? {
+									fieldIds: discoverableModelFieldIds,
+									openFieldId: singleModelFocus,
+									loading: discovery.status === 'loading',
+									candidates: focusedSingleModelCandidates,
+									cursor: singleModelCursor,
+									onChange: handleSingleModelChange,
+									onSubmit: handleSingleModelSubmit,
+									onFocus: handleSingleModelFocus,
+									onKeyDown: (_fieldId, keyEvent) => handleSingleModelKey(keyEvent)
+								}
+							: undefined
+					}
 					custom={
-						onDiscover ? (
+						piModelDiscovery ? (
 							<ProviderModelDiscoveryPanel
 								discovery={discovery}
 								modelFocus={modelFocus}

@@ -12,7 +12,6 @@ import {
 	redactCodexTomlForOutput,
 	saveCodexProfileToml,
 	setDefaultCodexProfile,
-	writeCodexAuthJson,
 	type CodexProfile
 } from '../core/codex.js';
 import {codexAuthJsonPath} from '../core/paths.js';
@@ -26,10 +25,11 @@ import {
 	type CodexProviderFormModel,
 	type CodexProviderFormValues
 } from '../core/codex-provider-form.js';
-import {CODEX_OFFICIAL_LOGIN_KEY} from '../core/codex.js';
 import type {ProviderDisplayData} from '../core/provider.js';
 import type {ProviderServiceResult} from './provider-service.js';
 import type {ProviderFormAdapter} from '../types/provider-form-adapter.js';
+import {discoverModels} from '../core/model-discovery.js';
+import {resolveModelDiscoveryConfig} from '../core/provider-contract.js';
 
 // Codex service：把 Codex profile core 包装为 ProviderView 可消费的 service，视图不直接读写 ~/.codex。
 
@@ -81,9 +81,8 @@ export function loadCodexProviderDisplay(): ProviderDisplayData {
 			authToken: profile.hasApiKey ? '<managed-by-codex-profile>' : '',
 			profilePath: profile.profilePath,
 			isActive: profile.isDefault,
-			maskedApiKey: profile.hasApiKey
-				? 'sk-****'
-				: (official ? (officialLoggedIn ? 'codex login' : '未登录') : '未配置')
+			maskedApiKey: profile.hasApiKey ? 'sk-****' : official ? (officialLoggedIn ? 'codex login' : '未登录') : '未配置',
+			...(official ? {canEdit: false, canDelete: false, canSwitch: true} : {})
 		};
 	});
 	const active = profiles.find(profile => profile.isActive);
@@ -109,7 +108,11 @@ export function loadCodexProviderProfile(profilePath: string): CodexProfile | nu
 	}
 
 	try {
-		const key = profilePath.split(/[/\\]/).pop()?.replace(/\.config\.toml$/, '') ?? '';
+		const key =
+			profilePath
+				.split(/[/\\]/)
+				.pop()
+				?.replace(/\.config\.toml$/, '') ?? '';
 		return key ? readCodexProfile(key) : null;
 	} catch {
 		return null;
@@ -132,6 +135,26 @@ export function buildCodexForm(input: CodexProviderFormInput): CodexProviderForm
 	return buildCodexProviderFormModel(input);
 }
 
+/** 获取 Codex 供应商的上游模型；选择结果只回填表单，不直接修改 TOML 文件。 */
+export async function discoverCodexProviderModels(values: CodexProviderFormValues, signal?: AbortSignal): Promise<readonly string[]> {
+	const discoveryConfig = resolveModelDiscoveryConfig({
+		side: 'codex',
+		providerType: values.providerType,
+		profileKey: values.profileKey,
+		baseUrl: values.baseUrl
+	});
+	const result = await discoverModels({
+		baseUrl: discoveryConfig.baseUrl ?? values.baseUrl,
+		path: discoveryConfig.path,
+		pathMode: discoveryConfig.pathMode,
+		auth: discoveryConfig.auth,
+		apiKey: values.apiKey,
+		signal
+	});
+	if (!result.ok) throw new Error(result.error);
+	return result.models.map(model => model.id);
+}
+
 export function saveCodexProviderForm(input: CodexProviderFormInput, values: CodexProviderFormValues): ProviderServiceResult<CodexProfile> {
 	const errors = validateCodexProviderForm(input.mode, values);
 	if (errors.length > 0) {
@@ -139,29 +162,6 @@ export function saveCodexProviderForm(input: CodexProviderFormInput, values: Cod
 	}
 
 	try {
-		// official login 是不落盘的虚拟条目：不写 profile 文件。
-		// - add 态：仅按需激活（清空 config.toml 供应商键，回到 auth.json 登录态）。
-		// - edit 态（authEditable）：直接写入 ~/.codex/auth.json 明文；空内容即登出（删除文件）。
-		if (values.providerType === 'officialLogin') {
-			if (input.mode === 'edit' && values.authEditable) {
-				writeCodexAuthJson(values.authJson);
-			} else if (input.mode !== 'edit' && values.activateAfterSave) {
-				setDefaultCodexProfile(CODEX_OFFICIAL_LOGIN_KEY);
-			}
-
-			return {
-				ok: true,
-				data: {
-					key: CODEX_OFFICIAL_LOGIN_KEY,
-					providerType: 'officialLogin',
-					baseUrl: '',
-					model: '',
-					hasApiKey: false,
-					profilePath: ''
-				}
-			};
-		}
-
 		const key = input.mode === 'edit' ? (input.profileKey ?? values.profileKey) : values.profileKey.trim();
 		if (input.mode !== 'edit' && codexProfileExists(key)) {
 			return {
@@ -206,6 +206,10 @@ export function switchActiveCodexProvider(key: string): ProviderServiceResult<{p
 }
 
 export function removeCodexProvider(key: string): ProviderServiceResult<{clearedSettings: boolean}> {
+	if (isOfficialLoginKey(key)) {
+		return {ok: false, error: 'Codex 官方账号为只读身份，请通过 Codex 原生命令 codex logout 管理。'};
+	}
+
 	try {
 		deleteCodexProfile(key);
 		return {ok: true, data: {clearedSettings: false}};
@@ -222,8 +226,6 @@ function codexValuesToRecord(values: CodexProviderFormValues): Record<string, st
 		baseUrl: values.baseUrl,
 		model: values.model,
 		apiKey: values.apiKey,
-		authJson: values.authJson,
-		authEditable: values.authEditable ? 'yes' : 'no',
 		activateAfterSave: values.activateAfterSave ? 'yes' : 'no'
 	};
 }
@@ -254,17 +256,10 @@ function updateCodexTomlFromFields(values: CodexProviderFormValues): string {
 		}
 	}
 
-	if (values.providerType === 'officialLogin') {
-		document = deletePath(document, ['model_provider']);
-		document = deletePath(document, ['model_providers', key]);
-		return stringify(document);
-	}
-
 	document = setPath(document, ['model_provider'], key);
 	const provider = getPath(document, ['model_providers', key]);
-	const nextProvider: Record<string, unknown> = provider && typeof provider === 'object' && !Array.isArray(provider)
-		? {...(provider as Record<string, unknown>)}
-		: {name: key};
+	const nextProvider: Record<string, unknown> =
+		provider && typeof provider === 'object' && !Array.isArray(provider) ? {...(provider as Record<string, unknown>)} : {name: key};
 	nextProvider.name = key;
 	if (baseUrl) {
 		nextProvider.base_url = baseUrl;
@@ -291,50 +286,39 @@ function recordToCodexValues(record: Record<string, string>, fallback: CodexProv
 		baseUrl: record.baseUrl ?? '',
 		model: record.model ?? '',
 		apiKey: record.apiKey ?? '',
-		// authJson/authEditable 随 record 透传，保住 official 编辑态的明文 auth.json 与可编辑标志。
-		authJson: record.authJson ?? fallback.authJson,
-		authEditable: (record.authEditable ?? (fallback.authEditable ? 'yes' : 'no')) === 'yes',
 		activateAfterSave: (record.activateAfterSave ?? 'yes') === 'yes'
 	};
 	return {...values, toml: updateCodexTomlFromFields(values)};
 }
 
 export const codexProviderFormAdapter: ProviderFormAdapter<CodexProviderFormInput, CodexProviderFormValues, CodexProviderFormModel> = {
-	textLabel: (values) => values.providerType === 'officialLogin'
-		? (values.authEditable ? 'auth.json（明文·可编辑）' : 'auth.json（只读脱敏预览）')
-		: '最终 TOML（供应商配置文件）',
-	title: (model) => model.mode === 'edit' ? '编辑供应商' : '添加供应商',
+	textLabel: '最终 TOML（供应商配置文件）',
+	title: model => (model.mode === 'edit' ? '编辑供应商' : '添加供应商'),
 	savedMessage: (model, values) =>
 		model.mode === 'edit'
 			? `供应商 ${values.profileKey} 已更新`
 			: `供应商 ${values.profileKey} 已添加${values.activateAfterSave ? '并激活' : ''}`,
 	valuesToRecord: codexValuesToRecord,
 	recordToValues: recordToCodexValues,
-	buildText: (values) => values.providerType === 'officialLogin' ? values.authJson : (values.toml || codexProviderValuesToToml(values)),
-	// official 编辑态：textarea 即 auth.json 编辑区，回写 authJson；只读预览态与其他 provider 维持原语义。
-	parseText: (baseValues, raw) => {
-		if (baseValues.providerType === 'officialLogin') {
-			return baseValues.authEditable
-				? {ok: true, values: {...baseValues, authJson: raw}}
-				: {ok: true, values: baseValues};
-		}
-
-		return codexProviderValuesFromToml(baseValues, raw);
-	},
-	makeProviderTypeInput: (providerType) => ({mode: 'add', providerType}),
+	buildText: values => values.toml || codexProviderValuesToToml(values),
+	parseText: codexProviderValuesFromToml,
+	makeProviderTypeInput: providerType => ({mode: 'add', providerType}),
 	makeSubmitInput: (model, record) => ({
 		mode: model.mode,
 		profileKey: model.mode === 'edit' ? record.profileKey : undefined,
 		profile: null,
 		providerType: record.providerType
 	}),
-	// official 只读预览态 textarea 禁编辑；编辑态（authEditable）放开明文编辑。
-	isTextReadOnly: (values) => values.providerType === 'officialLogin' && !values.authEditable
+	isTextReadOnly: () => false
 };
 
 export function readCodexProfileToml(profilePath: string): string {
 	try {
-		const key = profilePath.split(/[/\\]/).pop()?.replace(/\.config\.toml$/, '') ?? '';
+		const key =
+			profilePath
+				.split(/[/\\]/)
+				.pop()
+				?.replace(/\.config\.toml$/, '') ?? '';
 		return key ? readCodexProfileTomlByKey(key) : '';
 	} catch {
 		return readFileSync(profilePath, 'utf8');

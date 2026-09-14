@@ -24,6 +24,8 @@ import {
 	type ProviderSavePayload
 } from '../core/provider-form.js';
 import {readJsonFile} from '../core/fs-utils.js';
+import {discoverModels} from '../core/model-discovery.js';
+import {resolveModelDiscoveryConfig} from '../core/provider-contract.js';
 
 // Provider service：TUI 视图唯一入口，封装 core 调用为结构化结果，组件不直接读写文件。
 
@@ -73,8 +75,31 @@ export function buildForm(input: ProviderFormInput): ProviderFormModel {
 	return buildProviderFormModel(input);
 }
 
+/** 获取 Claude 供应商的上游模型；只返回会写入当前模型字段的 ID，不写入磁盘。 */
+export async function discoverProviderModels(values: ProviderFormValues, signal?: AbortSignal): Promise<readonly string[]> {
+	const discoveryConfig = resolveModelDiscoveryConfig({
+		side: 'claude',
+		providerType: values.providerType,
+		profileKey: values.profileKey,
+		baseUrl: values.baseUrl
+	});
+	const result = await discoverModels({
+		baseUrl: discoveryConfig.baseUrl ?? values.baseUrl,
+		path: discoveryConfig.path,
+		pathMode: discoveryConfig.pathMode,
+		auth: discoveryConfig.auth,
+		apiKey: values.apiKey,
+		signal
+	});
+	if (!result.ok) throw new Error(result.error);
+	return result.models.map(model => model.id);
+}
+
 /** 保存 Provider 表单：先校验，再分流 add/edit core 调用。 */
-export function saveProviderForm(input: ProviderFormInput, values: ProviderFormValues): ProviderServiceResult<AddProviderResult | {key: string; renamed: boolean}> {
+export function saveProviderForm(
+	input: ProviderFormInput,
+	values: ProviderFormValues
+): ProviderServiceResult<AddProviderResult | {key: string; renamed: boolean}> {
 	const mode = input.mode;
 	const errors = validateProviderForm(mode, values);
 	if (errors.length > 0) {

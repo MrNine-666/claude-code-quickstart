@@ -179,6 +179,19 @@ function providerShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		]);
 	}
 
+	if (subMode === 'form-model') {
+		return [
+			...buildShortcuts([
+				{command: PROVIDER_COMMANDS.FORM_UP, label: '字段/候选'},
+				{command: PROVIDER_COMMANDS.FORM_DOWN, label: '字段/候选'},
+				{command: PROVIDER_COMMANDS.FORM_DISCOVER, label: '获取/刷新模型'},
+				{command: PROVIDER_COMMANDS.FORM_SAVE, label: '保存'},
+				{command: PROVIDER_COMMANDS.FORM_CANCEL, label: '取消/关闭列表'}
+			]),
+			...manualShortcuts([{key: 'Enter', label: '选择模型'}])
+		];
+	}
+
 	if (subMode === 'form') {
 		return buildShortcuts([
 			{command: PROVIDER_COMMANDS.FORM_UP, label: '字段'},

@@ -48,6 +48,7 @@ const textFieldSource = readFileSync(new URL('../src/components/form/TextField.t
 const radioFieldSource = readFileSync(new URL('../src/components/form/RadioField.tsx', import.meta.url), 'utf8');
 const selectFieldSource = readFileSync(new URL('../src/components/form/SelectField.tsx', import.meta.url), 'utf8');
 const keyValueFieldSource = readFileSync(new URL('../src/components/form/KeyValueField.tsx', import.meta.url), 'utf8');
+const modelSelectFieldSource = readFileSync(new URL('../src/components/form/ModelSelectField.tsx', import.meta.url), 'utf8');
 assert.match(providerViewSource, /agentContext:\s*AgentContext/, 'ProviderView props 必须接收 agentContext');
 assert.match(providerViewSource, /createProviderViewAdapter\(agentContext\)/, 'ProviderView 必须由 agentContext 构造领域 adapter');
 assert.match(providerAdapterSource, /const isCodex = agentContext === 'cx'/, 'Provider adapter 必须由 agentContext 切换 Codex 模式');
@@ -67,6 +68,8 @@ assert.match(
 	/save=\{saveCodexProviderForm\}/,
 	'Codex Provider 新增必须走 Codex service/core，不得复用 Claude provider'
 );
+assert.match(providerViewSource, /currentIsOfficial[\s\S]*不可在表单中编辑|不可在表单中编辑[\s\S]*currentIsOfficial/, 'Codex official 必须在视图层阻止编辑');
+assert.match(providerViewSource, /Codex 官方账号.*codex logout/, 'Codex official 操作必须指向 Codex 原生 logout');
 assert.match(
 	providerAdapterSource,
 	/switchActive: isPi \? switchActivePiProvider : isCodex \? switchActiveCodexProvider : switchActiveProvider/,
@@ -84,9 +87,9 @@ assert.match(
 );
 for (const [name, source] of [
 	['TextField', textFieldSource],
-	['RadioField', radioFieldSource],
-	['SelectField', selectFieldSource],
-	['KeyValueField', keyValueFieldSource]
+		['RadioField', radioFieldSource],
+		['SelectField', selectFieldSource],
+		['KeyValueField', keyValueFieldSource]
 ]) {
 	assert.match(
 		source,
@@ -94,6 +97,11 @@ for (const [name, source] of [
 		`${name} help 文案必须使用主题化文本选中背景/前景`
 	);
 }
+assert.match(
+	modelSelectFieldSource,
+	/attributes=\{TextAttributes\.DIM\}[\s\S]*selectionBg=\{colors\.selectionBg\}[\s\S]*selectionFg=\{colors\.selectionFg\}/,
+	'ModelSelectField help 文案必须使用主题化文本选中背景/前景'
+);
 assert.match(
 	radioFieldSource,
 	/fg=\{selected \? colors\.navSelectedForeground : focused \? colors\.primary : colors\.text\}[\s\S]{0,120}selectionBg=\{colors\.selectionBg\}[\s\S]{0,80}selectionFg=\{colors\.selectionFg\}/,
@@ -138,7 +146,7 @@ assertUserFieldsIntact('add+activate');
 let settings = readSettings();
 assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, 'sk-glm-aaaaaaaaaaaa', 'AUTH_TOKEN 应写入');
 assert.equal(settings.env.ANTHROPIC_BASE_URL, 'https://open.bigmodel.cn/api/anthropic', 'BASE_URL 应写入');
-assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.3', '受管模型键应写入');
+assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, undefined, '内置模板不应预填受管模型键');
 assert.equal(settings.env.EXISTING, 'keep-me', '已有非受管 env 键应保留');
 console.log('[PASS] 5.7 add+activate 字段所有权');
 
@@ -279,26 +287,18 @@ assert.equal(
 	'Codex service 不改 Claude settings'
 );
 
-// official login 是虚拟条目：保存不落盘，activateAfterSave=false 时纯 no-op（仅返回虚拟形态）。
-const official = saveCodexProviderForm(
-	{mode: 'add', providerType: 'officialLogin'},
-	{
-		...buildCodexForm({mode: 'add', providerType: 'officialLogin'}).values,
-		activateAfterSave: false
-	}
+// official login 仍是列表中的虚拟身份，但不再属于 Codex 表单类型。
+const defaultCodexForm = buildCodexForm({mode: 'add'});
+assert.equal(defaultCodexForm.values.providerType, 'custom', 'Codex 默认新增表单使用 API-key custom 类型');
+assert.equal(defaultCodexForm.fields.some(field => field.id === 'authJson'), false, 'Codex 表单不得暴露 auth.json 字段');
+assert.throws(
+	() => buildCodexForm({mode: 'add', providerType: 'officialLogin'}),
+	/官方账号.*Codex 原生管理/,
+	'Codex 表单不得构造 official login 类型'
 );
-assert.equal(official.ok, true, 'official login 保存成功（虚拟条目，不落盘）');
-assert.equal(official.ok ? official.data.key : '', 'official', 'official login 返回 sentinel key');
-assert.equal(existsSync(join(process.env.CODEX_HOME, 'official.config.toml')), false, 'official login 保存不落盘 profile 文件');
-// 结构性单例：无需重复守卫，再次保存幂等成功（不再产生 official2 之类真实文件）。
-const officialAgain = saveCodexProviderForm(
-	{mode: 'add', providerType: 'officialLogin'},
-	{
-		...buildCodexForm({mode: 'add', providerType: 'officialLogin'}).values,
-		activateAfterSave: false
-	}
-);
-assert.equal(officialAgain.ok, true, 'official login 再次保存幂等成功（结构性单例，无重复守卫）');
+const officialRow = codexDisplay.profiles.find(profile => profile.key === 'official');
+assert.equal(officialRow?.canEdit, false, 'Codex official 列表项不可编辑');
+assert.equal(officialRow?.canDelete, false, 'Codex official 列表项不可删除');
 writeFileSync(join(process.env.CODEX_HOME, 'auth.json'), '{"access_token":"secret"}', 'utf8');
 const switched = switchActiveCodexProvider('official');
 assert.equal(switched.ok, true, 'Codex official-login set default 应成功');
@@ -307,9 +307,10 @@ const switchBack = switchActiveCodexProvider('deepseek');
 assert.equal(switchBack.ok, true, 'Codex API-key set default 应成功');
 assert.equal(loadCodexProviderDisplay().activeKey, 'deepseek', 'Codex display 标记 API-key 默认 profile');
 const remove = removeCodexProvider('official');
-assert.equal(remove.ok, true, 'official 虚拟条目删除 = 登出，返回成功');
-assert.equal(existsSync(join(process.env.CODEX_HOME, 'auth.json')), false, '删除 official 虚拟条目应清空 auth.json（登出）');
-console.log('[PASS] 6.1/6.2/6.3 Codex Provider service 路径隔离 + TOML adapter + official 虚拟条目激活/登出');
+assert.equal(remove.ok, false, 'official 虚拟条目删除必须拒绝');
+assert.match(remove.ok ? '' : remove.error, /codex logout/, 'official 删除拒绝必须指向 Codex 原生 logout');
+assert.equal(existsSync(join(process.env.CODEX_HOME, 'auth.json')), true, '拒绝删除 official 不得清空 auth.json');
+console.log('[PASS] 6.1/6.2/6.3 Codex Provider service 路径隔离 + TOML adapter + official 只读虚拟条目');
 
 // ── 编辑活跃 profile 必须同步 config.toml（否则子文件已改、config.toml 停留旧值）──
 const syncBase = buildCodexForm({mode: 'add', providerType: 'custom'});

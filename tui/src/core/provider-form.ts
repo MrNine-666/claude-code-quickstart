@@ -56,11 +56,7 @@ export type ProviderSavePayload =
 
 const AUTH_TOKEN_KEY = 'ANTHROPIC_AUTH_TOKEN';
 const BASE_URL_KEY = 'ANTHROPIC_BASE_URL';
-const MODEL_KEY_ORDER = [
-	'ANTHROPIC_DEFAULT_HAIKU_MODEL',
-	'ANTHROPIC_DEFAULT_OPUS_MODEL',
-	'ANTHROPIC_DEFAULT_SONNET_MODEL'
-];
+const MODEL_KEY_ORDER = ['ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL'];
 
 /**
  * 三个受管模型键的用途说明。第三方供应商下这些别名不存在，须逐个指向真实模型 ID；
@@ -90,7 +86,7 @@ function buildProviderTypeOptions(): SelectOption[] {
 
 /** 默认供应商类型：首个内置供应商，无内置时回退自定义。 */
 function firstBuiltinKey(): string | undefined {
-	const keys = Object.keys(loadProviderContract().builtinProviders).filter((key) => key !== PROVIDER_CUSTOM_TYPE);
+	const keys = Object.keys(loadProviderContract().builtinProviders).filter(key => key !== PROVIDER_CUSTOM_TYPE);
 	return keys.length > 0 ? keys[0] : undefined;
 }
 
@@ -165,10 +161,7 @@ export function buildProviderFormModel(input: ProviderFormInput): ProviderFormMo
 	// add 模式：providerType 决定预填模板（builtin key 或 'custom'），表单内可切换覆盖。
 	let providerType = '';
 	if (input.mode !== 'edit') {
-		providerType =
-			input.mode === 'add-custom'
-				? PROVIDER_CUSTOM_TYPE
-				: input.builtinKey ?? firstBuiltinKey() ?? PROVIDER_CUSTOM_TYPE;
+		providerType = input.mode === 'add-custom' ? PROVIDER_CUSTOM_TYPE : (input.builtinKey ?? firstBuiltinKey() ?? PROVIDER_CUSTOM_TYPE);
 		const template = getProviderTemplate(providerType);
 		values.providerType = providerType;
 		values.profileKey = template.profileKey;
@@ -217,7 +210,7 @@ export function buildProviderFormModel(input: ProviderFormInput): ProviderFormMo
 					label: '文件名',
 					value: values.profileKey,
 					helpText: '填写文件名主体；保存为 ~/.claude/providers/<文件名>.json。若同名文件已存在，将拒绝创建，请更换文件名后重试。'
-			  },
+				},
 		{
 			id: 'baseUrl',
 			type: 'text',
@@ -232,7 +225,9 @@ export function buildProviderFormModel(input: ProviderFormInput): ProviderFormMo
 			type: 'secret',
 			label: 'API Key',
 			value: values.apiKey,
-			helpText: selected?.platformUrl ? `在 ${selected.platformUrl} 创建；写入 profile 后以脱敏形式展示。` : '写入 profile 后以脱敏形式展示。'
+			helpText: selected?.platformUrl
+				? `在 ${selected.platformUrl} 创建；写入 profile 后以脱敏形式展示。`
+				: '写入 profile 后以脱敏形式展示。'
 		}
 	);
 
@@ -241,7 +236,7 @@ export function buildProviderFormModel(input: ProviderFormInput): ProviderFormMo
 	for (const key of MODEL_KEY_ORDER) {
 		fields.push({
 			id: key,
-			type: 'text',
+			type: 'model-select',
 			label: labels[key] ?? key,
 			value: values.modelEnv[key] ?? '',
 			helpText: MODEL_KEY_HELP[key]
