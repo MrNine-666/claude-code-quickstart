@@ -83,19 +83,61 @@ function ConvertTo-WindowsBuildPath {
     return "windows/$normalized"
 }
 
-function Get-InstallBuildOrder {
+function Get-ArtifactBuildOrder {
     <#
     .SYNOPSIS
-    返回安装入口脚本构建时需要按顺序拼接的文件路径数组。
+    返回单个 Windows artifact（按 Role）构建时需要拼接的文件路径数组。
+    .DESCRIPTION
+    Role 数据驱动：CoreFiles 始终拼接；IncludeSteps 为真时才追加 step 模块；
+    最后追加 EntryFile。Install 与 CcqDownload 共用同一段构建/校验代码，不按 role 复制。
     #>
-    $artifact = Get-BuildArtifactConfig -Platform Windows -Role Install
-    $coreFiles = Get-BuildArtifactPathList -Artifact $artifact -FieldName 'CoreFiles'
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$Artifact
+    )
 
-    . "$PSScriptRoot\windows\core\Registry.ps1"
-    $stepFiles = @(Get-StepFiles | ForEach-Object { ConvertTo-WindowsBuildPath -Path $_ })
+    $coreFiles = Get-BuildArtifactPathList -Artifact $Artifact -FieldName 'CoreFiles'
+    $order = @($coreFiles)
 
-    $order = @($coreFiles + $stepFiles + @([string]$artifact['EntryFile']))
-    return $order
+    if ($Artifact.ContainsKey('IncludeSteps') -and [bool]$Artifact['IncludeSteps']) {
+        . "$PSScriptRoot\windows\core\Registry.ps1"
+        $stepFiles = @(Get-StepFiles | ForEach-Object { ConvertTo-WindowsBuildPath -Path $_ })
+        $order += $stepFiles
+    }
+
+    $order += [string]$Artifact['EntryFile']
+    return ,@($order)
+}
+
+function Get-PlatformTuiArtifactNames {
+    <#
+    .SYNOPSIS
+    从 UpdateTransports.GzipAssets 派生指定平台的 TUI raw/gzip 文件集合。
+    .DESCRIPTION
+    可执行文件与 gzip 名称只能有一个来源：UpdateTransports.GzipAssets[].Raw
+    （gzip = Raw + '.gz'）。严禁再用「除 install 脚本外的全部 artifact」这类过滤推断，
+    否则新增 download-ccq.* 脚本会被当成可执行文件处理。
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('Windows', 'macOS')]
+        [string]$Platform
+    )
+
+    $manifest = Get-BuildManifest
+    $names = [System.Collections.Generic.List[string]]::new()
+    foreach ($asset in @($manifest['UpdateTransports']['GzipAssets'])) {
+        $raw = [string]$asset['Raw']
+        # Windows 可执行文件带 .exe 后缀；macOS raw 无扩展名。区分只用于选择平台集合，
+        # 文件名本身仍逐字来自 GzipAssets。
+        $isWindowsAsset = $raw.EndsWith('.exe')
+        $belongsToPlatform = ($Platform -eq 'Windows' -and $isWindowsAsset) -or
+            ($Platform -eq 'macOS' -and -not $isWindowsAsset)
+        if (-not $belongsToPlatform) { continue }
+        $names.Add($raw)
+        $names.Add([string]$asset['Gzip'])
+    }
+    return ,@($names)
 }
 
 function Get-ScriptParamBlockInfo {
@@ -206,11 +248,7 @@ function Invoke-ManageTuiPackage {
 
     # 验证产物并复制到 OutputDir；TUI 本地构建直接输出到 repo 根 dist/。
     $tuiArtifactDir = Join-Path $repoRoot 'dist'
-    $manifest = Get-BuildManifest
-    $expectedFiles = @(
-        $manifest['BuildEntrypoints']['Windows']['Artifacts'] |
-            Where-Object { [string]$_ -ne 'install.ps1' }
-    )
+    $expectedFiles = Get-PlatformTuiArtifactNames -Platform Windows
 
     $allSuccess = $true
     foreach ($fileName in $expectedFiles) {
@@ -475,13 +513,16 @@ function Clear-KnownBuildArtifacts {
         @()
     }
 
-    # SkipTuiBuild 模式下保留交叉编译的可执行产物与 gzip 资产，只重建 install 脚本，
-    # 因此这一层只清理 install 脚本与 legacy 残留，ccq-* 与 *.gz 留给 download-artifact 提供。
+    # SkipTuiBuild 模式下保留交叉编译的可执行产物与 gzip 资产，只重建脚本类 artifact，
+    # 因此这一层只清理脚本 artifact（由 Role 判定）与 legacy 残留，ccq-* 与 *.gz 留给
+    # download-artifact 提供。
+    # 注意：脚本类 artifact 必须由 Role 判定，不能用「除 install 脚本外的全部」推断。
+    $platformArtifactsConfig = @($manifest[$platformKey]['Artifacts'])
+    $scriptArtifacts = @($platformArtifactsConfig | Where-Object {
+        [string]$_['Role'] -in @('Install', 'CcqDownload')
+    } | ForEach-Object { [string]$_['OutputFile'] })
     if ($SkipTuiBuild) {
-        $platformArtifactsConfig = @($manifest[$platformKey]['Artifacts'])
-        $installOutputFile = ($platformArtifactsConfig | Where-Object { [string]$_['Role'] -eq 'Install' } |
-            Select-Object -First 1)['OutputFile']
-        $filesToClean = @([string]$installOutputFile) + $legacyArtifacts
+        $filesToClean = @($scriptArtifacts + $legacyArtifacts)
     } else {
         $filesToClean = @($platformArtifacts + $legacyArtifacts)
     }
@@ -569,25 +610,29 @@ function Main {
     $builtItems = [System.Collections.Generic.List[hashtable]]::new()
     $allOk = $true
 
-    Write-Host ''
-    Write-Host '─── 构建 Windows Install 单文件版本 ───────────────────────' -ForegroundColor Yellow
-    $installArtifact = Get-BuildArtifactConfig -Platform Windows -Role Install
-    $installOrder = @(Get-InstallBuildOrder)
-    $installOutput = Join-Path $OutputDir ([string]$installArtifact['OutputFile'])
-    Build-SingleFileScript `
-        -InstallerRoot $InstallerRoot `
-        -FileOrder $installOrder `
-        -OutputPath $installOutput `
-        -RequiresHeader ([string]$installArtifact['RequiresHeader']) `
-        -HoistParamFromRelativePath ([string]$installArtifact['HoistParamFrom']) `
-        -OutputEncoding ([string]$installArtifact['OutputEncoding'])
+    # Role 数据驱动：Install 与 CcqDownload 共用同一段构建与语法校验代码，不按 role 复制粘贴。
+    foreach ($artifact in @((Get-BuildManifest)['Windows']['Artifacts'])) {
+        $role = [string]$artifact['Role']
+        Write-Host ''
+        Write-Host "─── 构建 Windows $role 单文件版本 ───────────────────────" -ForegroundColor Yellow
+        $artifactOrder = Get-ArtifactBuildOrder -Artifact $artifact
+        $artifactOutput = Join-Path $OutputDir ([string]$artifact['OutputFile'])
+        $hoistParamFrom = if ($artifact.ContainsKey('HoistParamFrom')) { [string]$artifact['HoistParamFrom'] } else { '' }
+        Build-SingleFileScript `
+            -InstallerRoot $InstallerRoot `
+            -FileOrder $artifactOrder `
+            -OutputPath $artifactOutput `
+            -RequiresHeader ([string]$artifact['RequiresHeader']) `
+            -HoistParamFromRelativePath $hoistParamFrom `
+            -OutputEncoding ([string]$artifact['OutputEncoding'])
 
-    Write-Host ''
-    Write-Host '─── Windows 语法检查 ──────────────────────────────────────' -ForegroundColor Yellow
-    $installOk = Test-BuiltScriptSyntax -ScriptPath $installOutput
-    $allOk = $allOk -and $installOk
+        Write-Host ''
+        Write-Host "─── Windows $role 语法检查 ─────────────────────────────────" -ForegroundColor Yellow
+        $artifactOk = Test-BuiltScriptSyntax -ScriptPath $artifactOutput
+        $allOk = $allOk -and $artifactOk
 
-    $builtItems.Add(@{ Name = 'Windows Install'; Path = $installOutput; Ok = $installOk })
+        $builtItems.Add(@{ Name = "Windows $role"; Path = $artifactOutput; Ok = $artifactOk })
+    }
 
     Assert-ExpectedWindowsOutputs -OutputDir $OutputDir
 

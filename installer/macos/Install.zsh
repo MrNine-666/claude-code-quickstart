@@ -77,28 +77,16 @@ ccq_parse_args() {
   esac
 }
 
-ccq_source_file() {
-  local file_path="${1:-}"
-  [ -f "${file_path}" ] || return 1
-  source "${file_path}"
-}
-
-ccq_load_core() {
-  if [ "${CCQ_BUILT_MODE:-0}" = "1" ] && command -v ccq_set_output_mode >/dev/null 2>&1; then
-    ccq_set_output_mode "${CCQ_PARAM_OUTPUT_MODE}"
-    return 0
-  fi
-
-  local core_dir="${CCQ_MACOS_ROOT}/core"
-  local core_file
-  for core_file in Ui Process Profile Platform PackageManager Json Registry Bootstrap Update; do
-    ccq_source_file "${core_dir}/${core_file}.zsh" || {
-      printf '无法加载 macOS core: %s\n' "${core_file}.zsh" >&2
-      return 1
-    }
-  done
-  ccq_set_output_mode "${CCQ_PARAM_OUTPUT_MODE}"
-}
+# ─── 加载 core（顺序声明唯一位于 core/Load.zsh）─────────────────────────────
+# 本入口不再硬编码 core 文件列表：只 source Load.zsh 并调用 ccq_load_core。
+# 专用入口 Download-Ccq.zsh 复用同一份声明。
+#
+# 为什么 macOS 不能用 build.json 做 manifest 驱动加载：读取 JSON 只能依赖 node
+# （见 core/Json.zsh / core/Registry.zsh），而 CCQ 专用入口恰恰不能依赖 node，
+# 因此加载顺序改由 contracts/Test-Contracts.ps1 断言 build.json 的
+# MacOS.Artifacts[*].CoreFiles 与 Load.zsh 的 CCQ_CORE_ORDER 声明集合一致；
+# 二者漂移必然导致门禁失败。
+source "${CCQ_MACOS_ROOT}/core/Load.zsh"
 
 ccq_load_step_modules() {
   if [ "${CCQ_BUILT_MODE:-0}" = "1" ]; then
@@ -459,148 +447,11 @@ ccq_main() {
   ccq_ui_primary "开始安装基础环境" "developer"
   ccq_invoke_grouped_install --skip-confirmation $(ccq_get_group_step_ids Basic)
 
-  # ccq 可执行文件下载确认（TDR-6）
+  # ccq 可执行文件下载确认（TDR-6；install 模式保留首次下载确认）
+  # 完整 install 沿用既有语义：ccq 下载失败只告警，不把基础环境安装判为失败；
+  # 失败返回值由专用入口（Download-Ccq.zsh）作为退出码使用。
   printf '\n'
-  ccq_confirm_executable_download
-}
-
-ccq_get_release_download_base_url() {
-  # 解析 ccq 可执行文件下载基址；tag 构建使用当前 Release，源码运行回退 latest。
-  if [ -n "${CCQ_RELEASE_DOWNLOAD_BASE_URL:-}" ]; then
-    printf '%s' "${CCQ_RELEASE_DOWNLOAD_BASE_URL%/}"
-    return 0
-  fi
-
-  # 哨兵判断以 v 开头（与 build 的 GITHUB_REF_NAME=v* 约定一致）。
-  # 不能比对 __CCQ_RELEASE_TAG__ 字面量：build 用全局替换注入 tag，会把此处哨兵也
-  # 换成实际 tag，导致 "v2.1.0-rc.x" != "v2.1.0-rc.x" 恒为假 → 永远走 latest 兜底。
-  local tag="${CCQ_RELEASE_TAG:-}"
-  case "${tag}" in
-    v*)
-      printf 'https://github.com/MrNine-666/claude-code-quickstart/releases/download/%s' "${tag}"
-      return 0
-      ;;
-  esac
-
-  printf 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download'
-}
-
-ccq_get_release_target_version() {
-  # 从 Release tag 提取可与 ccq --version 比较的目标版本。
-  local tag="${CCQ_RELEASE_TAG:-}" version=""
-  case "${tag}" in
-    v*) version="$(ccq_normalize_version "${tag}")" ;;
-    *) return 0 ;;
-  esac
-  case "${version}" in
-    [0-9]*.[0-9]*.[0-9]*) printf '%s' "${version}" ;;
-  esac
-}
-
-ccq_confirm_executable_download() {
-  # 在 install 末尾弹出确认，询问用户是否下载 ccq 可执行文件到 ~/.local/bin
-  # 遵守 TDR-6：用户拒绝则跳过；确认则按平台架构下载并设置可执行权限
-
-  ccq_ui_primary "ccq 管理工具安装"
-  printf '\n'
-  ccq_ui_info "ccq 是 Claude Code Quickstart 的管理控制台，提供以下功能："
-  ccq_ui_info "  • 供应商管理（Provider 配置）"
-  ccq_ui_info "  • MCP Server 管理"
-  ccq_ui_info "  • Skills 管理"
-  ccq_ui_info "  • 提示词配置"
-  ccq_ui_info "  • 配置文件管理"
-  ccq_ui_info "  • 工具管理（安装/更新 Claude Code、Codex、Pi、CodeGraph、OpenSpec 等）"
-  ccq_ui_info "  • 扩展管理（安装/更新/卸载 Pi package 扩展）"
-  printf '\n'
-
-  # 1. 已安装时先比较当前版本与安装器 Release 版本。
-  local installed_json installed_status installed_path installed_version target_version current_version decision
-  installed_json="$(ccq_test_executable_installed)"
-  installed_status="$(printf '%s' "${installed_json}" | grep -o '"isInstalled":[^,}]*' | cut -d: -f2)"
-
-  if [ "${installed_status}" = "1" ] || [ "${installed_status}" = "true" ]; then
-    installed_path="$(printf '%s' "${installed_json}" | grep -o '"path":"[^"]*"' | cut -d'"' -f4)"
-    installed_version="$(printf '%s' "${installed_json}" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)"
-    current_version="$(ccq_normalize_version "${installed_version}")"
-    target_version="$(ccq_get_release_target_version)"
-
-    ccq_ui_success "✓ ccq 可执行文件已安装: ${installed_path}"
-    ccq_ui_info "  当前版本: ${current_version}"
-
-    if [ -z "${target_version}" ]; then
-      ccq_ui_warning "无法确定安装器目标版本，已保留现有 ccq"
-      ccq_ui_dim "  如需更新，请使用正式 Release 安装脚本或在 ccq 中执行更新"
-      return 0
-    fi
-
-    ccq_ui_info "  目标版本: ${target_version}"
-    if [ "${current_version}" = "${target_version}" ]; then
-      ccq_ui_success "✓ 当前版本与目标版本一致，无需覆盖"
-      return 0
-    fi
-
-    ccq_ui_warning "检测到 ccq 版本不一致"
-    decision="$(ccq_prompt_single "是否覆盖现有文件？" 1 "是，覆盖为 ${target_version}" "否，保留当前版本 ${current_version}")" || decision=1
-    if [ "${decision}" != "0" ]; then
-      ccq_ui_info "已保留当前 ccq 版本: ${current_version}"
-      return 0
-    fi
-
-    ccq_ui_warning "将使用目标版本 ${target_version} 覆盖当前版本 ${current_version}"
-  else
-    decision="$(ccq_prompt_single "是否现在下载 ccq 可执行文件到 ~/.local/bin？（拒绝则跳过，可稍后手动安装）" 0 "是，下载 ccq" "否，稍后手动安装")" || decision=1
-    if [ "${decision}" != "0" ]; then
-      printf '\n'
-      ccq_ui_info "已跳过 ccq 可执行文件下载"
-      ccq_ui_dim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
-      printf '\n'
-      ccq_ui_primary "后续安装 Claude Code / Codex / Pi："
-      ccq_ui_info "  稍后安装 ccq 后运行 ccq，进入「工具管理」按需安装 Claude Code、Codex 或 Pi"
-      ccq_ui_info "  API Key、provider/profile 可在「供应商」菜单中可视化配置；Pi 官方登录请在 Pi 中执行 /login"
-      return 0
-    fi
-  fi
-
-  printf '\n'
-  ccq_ui_info "正在准备下载 ccq 可执行文件..."
-
-  # 2. 检测平台架构
-  local arch
-  arch="$(ccq_get_architecture)"
-  ccq_ui_info "检测到平台架构: ${arch}"
-
-  # 3. 构建下载 URL
-  local base_url exe_name download_url
-  base_url="$(ccq_get_release_download_base_url)"
-  exe_name="ccq-${arch}"
-  download_url="${base_url}/${exe_name}"
-
-  ccq_ui_dim "  下载 URL: ${download_url}"
-
-  # 4. 执行下载与安装
-  if ccq_install_executable "${download_url}"; then
-    printf '\n'
-    ccq_ui_success " ccq 可执行文件安装成功！"
-    printf '\n'
-    ccq_ui_primary "下一步："
-    ccq_ui_info "  1. 打开一个新的终端窗口"
-    ccq_ui_info "  2. 输入 ccq 进入管理控制台"
-    ccq_ui_info "  3. 进入「工具管理」安装 Claude Code、Codex 或 Pi，再到「供应商」配置 API Key、provider/profile"
-    ccq_ui_info "  4. 使用「扩展管理」维护 Pi package 扩展"
-    printf '\n'
-    ccq_ui_dim "（当前会话 PATH 尚未刷新，必须开启新终端 ccq 命令才生效）"
-  else
-    printf '\n'
-    ccq_ui_warning "ccq 可执行文件下载失败"
-    ccq_ui_info "您可以稍后手动下载："
-    ccq_ui_info "  1. 访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
-    ccq_ui_info "  2. 下载对应平台的可执行文件（${exe_name}）"
-    ccq_ui_info "  3. 放置到 ~/.local/bin 并设置可执行权限（chmod +x）"
-    printf '\n'
-    ccq_ui_primary "后续安装 Claude Code / Codex / Pi："
-    ccq_ui_info "  等待 ccq 安装完成后运行 ccq，进入「工具管理」按需安装 Claude Code、Codex 或 Pi"
-    ccq_ui_info "  API Key、provider/profile 可在「供应商」菜单中可视化配置；Pi 官方登录请在 Pi 中执行 /login"
-  fi
+  ccq_confirm_executable_download install || true
 }
 
 ccq_main "$@"

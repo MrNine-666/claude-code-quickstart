@@ -103,6 +103,9 @@ jobs:
         run: |
           set -eu
           zsh -n installer/macos/Install.zsh
+          zsh -n installer/macos/Download-Ccq.zsh
+          zsh -n installer/macos/core/Load.zsh
+          zsh -n installer/macos/core/Ccq.zsh
           sh installer/build.sh --check
 
       - name: 验证 contracts JS 语法
@@ -299,7 +302,8 @@ jobs:
         shell: pwsh
         run: |
           $contract = Get-Content -Raw ".\installer\contracts\build.json" | ConvertFrom-Json
-          foreach ($name in @($contract.BuildEntrypoints.MacOS.Artifacts | Where-Object { $_ -ne 'install.sh' })) {
+          $macScripts = @($contract.MacOS.Artifacts | Where-Object { $_.Role -in @('Install', 'CcqDownload') } | ForEach-Object { $_.OutputFile })
+          foreach ($name in @($contract.BuildEntrypoints.MacOS.Artifacts | Where-Object { $_ -notin $macScripts })) {
             Remove-Item -LiteralPath (Join-Path ".\dist" $name) -Force -ErrorAction SilentlyContinue
           }
 
@@ -328,16 +332,23 @@ jobs:
             }
           }
 
+      - name: 解析 Windows 构建产物清单
+        id: windows-artifact-paths
+        shell: pwsh
+        run: |
+          $contract = Get-Content -Raw ".\installer\contracts\build.json" | ConvertFrom-Json
+          $delimiter = "EOF_$([guid]::NewGuid().ToString('N'))"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "paths<<$delimiter"
+          foreach ($name in @($contract.BuildEntrypoints.Windows.Artifacts)) {
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "dist/$name"
+          }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value $delimiter
+
       - name: 上传 Windows 构建产物
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: built-windows-${{ github.sha }}
-          path: |
-            dist/install.ps1
-            dist/ccq-windows-x64.exe
-            dist/ccq-windows-x64.exe.gz
-            dist/ccq-windows-arm64.exe
-            dist/ccq-windows-arm64.exe.gz
+          path: ${{ steps.windows-artifact-paths.outputs.paths }}
           retention-days: 7
 
   smoke-windows:
@@ -420,7 +431,7 @@ jobs:
 
       - name: 清理非 macOS TUI 产物
         run: |
-          windows_assets="$(node -e 'const c=require("./installer/contracts/build.json"); console.log(c.BuildEntrypoints.Windows.Artifacts.filter(x=>x!=="install.ps1").join(" "))')"
+          windows_assets="$(node -e 'const c=require("./installer/contracts/build.json"); const scripts=new Set(c.Windows.Artifacts.filter(a=>a.Role==="Install"||a.Role==="CcqDownload").map(a=>a.OutputFile)); console.log(c.BuildEntrypoints.Windows.Artifacts.filter(x=>!scripts.has(x)).join(" "))')"
           for file in ${windows_assets}; do rm -f "dist/${file}"; done
 
       - name: 构建 macOS 单文件脚本
@@ -444,18 +455,28 @@ jobs:
               exit 1
             fi
           done
-          zsh -n dist/install.sh
+          # 脚本类 artifact 由 Role 派生，逐个走 zsh -n 语法检查（含新增 download-ccq.zsh）
+          for script in $(node -e 'const c=require("./installer/contracts/build.json"); console.log(c.MacOS.Artifacts.filter(a=>a.Role==="Install"||a.Role==="CcqDownload").map(a=>"dist/"+a.OutputFile).join(" "))'); do
+            zsh -n "${script}"
+            printf '[PASS] zsh -n %s\n' "${script}"
+          done
+
+      - name: 解析 macOS 构建产物清单
+        id: macos-artifact-paths
+        run: |
+          set -eu
+          delimiter="EOF_$(date +%s%N)"
+          {
+            echo "paths<<${delimiter}"
+            node -e 'const c=require("./installer/contracts/build.json"); for (const n of c.BuildEntrypoints.MacOS.Artifacts) console.log(`dist/${n}`)'
+            echo "${delimiter}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: 上传 macOS 构建产物
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: built-macos-${{ github.sha }}
-          path: |
-            dist/install.sh
-            dist/ccq-macos-x64
-            dist/ccq-macos-x64.gz
-            dist/ccq-macos-arm64
-            dist/ccq-macos-arm64.gz
+          path: ${{ steps.macos-artifact-paths.outputs.paths }}
           retention-days: 7
 
   smoke-macos:
@@ -650,6 +671,21 @@ jobs:
             curl -fsSL 'https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/install.sh' | bash
             ```
 
+            ### 只安装 CCQ 管理控制台（不安装 Node.js / Git 等基础环境）
+
+            Windows（Windows PowerShell 5.1+）：
+
+            ```powershell
+            Set-ExecutionPolicy Bypass -Scope Process -Force
+            irm 'https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/download-ccq.ps1' | iex
+            ```
+
+            macOS：
+
+            ```sh
+            curl -fsSL 'https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/download-ccq.zsh' | zsh
+            ```
+
             ---
 
             ## 管理控制台
@@ -670,8 +706,10 @@ jobs:
 
             | 文件 | 运行时要求 | 用途 |
             |------|------------|------|
-            | `install.ps1` | Windows PowerShell 5.1+ | Windows 安装入口（前置检测 + 基础环境直装） |
-            | `install.sh` | macOS bash → zsh | macOS 安装入口 |
+            | `install.ps1` | Windows PowerShell 5.1+ | Windows 完整安装入口（前置检测 + 基础环境直装 + ccq 下载引导） |
+            | `download-ccq.ps1` | Windows PowerShell 5.1+ | 只安装 ccq 管理控制台的 Windows 入口（不装 Node.js / Git 等） |
+            | `install.sh` | macOS bash → zsh | macOS 完整安装入口 |
+            | `download-ccq.zsh` | macOS zsh | 只安装 ccq 管理控制台的 macOS 入口（不装 Node.js / Git 等） |
             | `ccq-windows-x64.exe` | Windows x64 | ccq 管理控制台可执行文件（Windows x64） |
             | `ccq-windows-arm64.exe` | Windows ARM64 | ccq 管理控制台可执行文件（Windows ARM64） |
             | `ccq-macos-x64` | macOS Intel | ccq 管理控制台可执行文件（macOS Intel） |

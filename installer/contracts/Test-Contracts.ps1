@@ -17,6 +17,8 @@ $script:TuiContractsRoot = Join-Path $script:RepoRoot 'tui\contracts'
 $script:WindowsRoot = Join-Path $script:InstallerRoot 'windows'
 $script:CoreRoot = Join-Path $script:WindowsRoot 'core'
 $script:StepsRoot = Join-Path $script:WindowsRoot 'steps'
+$script:CcqCorePath = Join-Path $script:CoreRoot 'Ccq.ps1'
+$script:BuildContractJsonPath = Join-Path $PSScriptRoot 'build.json'
 
 function Read-ContractJson {
     param([Parameter(Mandatory)][string]$RelativePath)
@@ -28,6 +30,42 @@ function Read-ContractJson {
     }
 
     return (Get-Content -Path $path -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable -ErrorAction Stop)
+}
+
+function Resolve-MacOSArtifactCoreFiles {
+    <#
+    .SYNOPSIS
+    解析 macOS artifact 实际使用的 core 文件列表。
+    .DESCRIPTION
+    macOS 各 role 加载同一套 core（仅 step 模块不同），因此 CoreFiles 只在 Install role 声明一次，
+    其余 role 用 ReuseCoreFilesFromRole 复用。该解析与 installer/build.sh 的 coreFilesFor 语义一致；
+    此处是测试侧的唯一实现，避免回退逻辑在测试里被复制多份。
+    .OUTPUTS
+    string[] - core 文件相对路径；无法解析时返回空数组（由调用方判为失败）。
+    #>
+    param(
+        [Parameter(Mandatory)][hashtable]$Artifact,
+        [Parameter(Mandatory)][object[]]$AllArtifacts
+    )
+
+    if ($Artifact.ContainsKey('CoreFiles') -and @($Artifact['CoreFiles']).Count -gt 0) {
+        return ,@($Artifact['CoreFiles'])
+    }
+
+    $sourceRole = if ($Artifact.ContainsKey('ReuseCoreFilesFromRole')) {
+        [string]$Artifact['ReuseCoreFilesFromRole']
+    } else {
+        ''
+    }
+    if ([string]::IsNullOrWhiteSpace($sourceRole)) {
+        return ,@()
+    }
+
+    $source = @($AllArtifacts | Where-Object { [string]$_['Role'] -eq $sourceRole } | Select-Object -First 1)
+    if ($source.Count -eq 0 -or -not $source[0].ContainsKey('CoreFiles')) {
+        return ,@()
+    }
+    return ,@($source[0]['CoreFiles'])
 }
 
 function Read-TuiContractJson {
@@ -379,41 +417,65 @@ function Test-BuildManifestContract {
     $macOSArtifacts = @($Contract['MacOS']['Artifacts'])
     $windowsOutputs = @($windowsArtifacts | ForEach-Object { [string]$_['OutputFile'] })
     $macOSOutputs = @($macOSArtifacts | ForEach-Object { [string]$_['OutputFile'] })
-    $allOutputs = @($windowsOutputs + $macOSOutputs)
-    $windowsExeArtifacts = @('ccq-windows-x64.exe', 'ccq-windows-x64.exe.gz', 'ccq-windows-arm64.exe', 'ccq-windows-arm64.exe.gz')
-    $macOSExeArtifacts = @('ccq-macos-x64', 'ccq-macos-x64.gz', 'ccq-macos-arm64', 'ccq-macos-arm64.gz')
-    $releaseOutputs = @($allOutputs + $windowsExeArtifacts + $macOSExeArtifacts)
 
-    Assert-Equal 'build.windows.outputs' @('install.ps1') $windowsOutputs
-    Assert-Equal 'build.macos.outputs' @('install.sh') $macOSOutputs
-    Assert-Equal 'build.release.outputs' @('install.ps1', 'install.sh', 'ccq-windows-x64.exe', 'ccq-windows-x64.exe.gz', 'ccq-windows-arm64.exe', 'ccq-windows-arm64.exe.gz', 'ccq-macos-x64', 'ccq-macos-x64.gz', 'ccq-macos-arm64', 'ccq-macos-arm64.gz') $releaseOutputs
-
-    # raw -> gzip 映射是唯一文件名来源；client 传输层与 CI 都消费它。
+    # raw -> gzip 映射是唯一文件名来源；client 传输层、build 与 CI 都消费它。
+    # 不再维护第二份 release 名单：只断言自洽（gzip == raw + '.gz'）与平台归属。
     $gzipMappings = @($Contract['UpdateTransports']['GzipAssets'])
     Assert-Equal 'build.update-transports.count' 4 $gzipMappings.Count
-    $expectedMappings = @(
-        @{ Raw = 'ccq-windows-x64.exe'; Gzip = 'ccq-windows-x64.exe.gz' },
-        @{ Raw = 'ccq-windows-arm64.exe'; Gzip = 'ccq-windows-arm64.exe.gz' },
-        @{ Raw = 'ccq-macos-x64'; Gzip = 'ccq-macos-x64.gz' },
-        @{ Raw = 'ccq-macos-arm64'; Gzip = 'ccq-macos-arm64.gz' }
-    )
-    for ($i = 0; $i -lt $expectedMappings.Count; $i++) {
-        Assert-Equal "build.update-transports.$i.raw" $expectedMappings[$i].Raw ([string]$gzipMappings[$i]['Raw'])
-        Assert-Equal "build.update-transports.$i.gzip" $expectedMappings[$i].Gzip ([string]$gzipMappings[$i]['Gzip'])
-        if ("$($gzipMappings[$i]['Raw']).gz" -ne [string]$gzipMappings[$i]['Gzip']) {
-            Add-Issue "gzip artifact 名称必须是 raw 名称加 .gz: $($gzipMappings[$i]['Gzip'])"
+    $windowsExeArtifacts = @()
+    $macOSExeArtifacts = @()
+    foreach ($mapping in $gzipMappings) {
+        $raw = [string]$mapping['Raw']
+        $gzip = [string]$mapping['Gzip']
+        if ("$raw.gz" -ne $gzip) {
+            Add-Issue "gzip artifact 名称必须是 raw 名称加 .gz: $gzip"
+        }
+        if ($raw.EndsWith('.exe')) {
+            $windowsExeArtifacts += $raw
+            $windowsExeArtifacts += $gzip
+        } else {
+            $macOSExeArtifacts += $raw
+            $macOSExeArtifacts += $gzip
         }
     }
-    Assert-Equal 'build.release.count' 10 $releaseOutputs.Count
+    if (@($windowsExeArtifacts).Count -ne 4) {
+        Add-Issue "Windows raw/gzip 传输资产应为 4 个，实际: $(@($windowsExeArtifacts).Count)"
+    }
+    if (@($macOSExeArtifacts).Count -ne 4) {
+        Add-Issue "macOS raw/gzip 传输资产应为 4 个，实际: $(@($macOSExeArtifacts).Count)"
+    }
 
+    # Release 精确集合 = 两个平台 Artifacts 的并集（含新增专用脚本）；数量由并集派生，不写死魔数。
     $entrypoints = $Contract['BuildEntrypoints']
+    $releaseOutputs = @(@($entrypoints['Windows']['Artifacts']) + @($entrypoints['MacOS']['Artifacts']))
+
+    foreach ($output in $windowsOutputs) {
+        if ($output -notin @($entrypoints['Windows']['Artifacts'])) {
+            Add-Issue "Windows artifact 集合缺少脚本产物: $output"
+        }
+    }
+    foreach ($output in $macOSOutputs) {
+        if ($output -notin @($entrypoints['MacOS']['Artifacts'])) {
+            Add-Issue "macOS artifact 集合缺少脚本产物: $output"
+        }
+    }
+    foreach ($asset in $windowsExeArtifacts) {
+        if ($asset -notin @($entrypoints['Windows']['Artifacts'])) {
+            Add-Issue "Windows artifact 集合缺少传输资产: $asset"
+        }
+    }
+    foreach ($asset in $macOSExeArtifacts) {
+        if ($asset -notin @($entrypoints['MacOS']['Artifacts'])) {
+            Add-Issue "macOS artifact 集合缺少传输资产: $asset"
+        }
+    }
+
+    Assert-Equal 'build.release.outputs' @($releaseOutputs | Sort-Object) @($entrypoints['ReleaseArtifacts'] | Sort-Object)
     Assert-Equal 'build.entrypoints.windows.script' 'installer/build.ps1' $entrypoints['Windows']['Script']
     Assert-Equal 'build.entrypoints.windows.allowed' @('Windows') @($entrypoints['Windows']['AllowedPlatforms'])
-    Assert-Equal 'build.entrypoints.windows.artifacts' @('install.ps1', 'ccq-windows-x64.exe', 'ccq-windows-x64.exe.gz', 'ccq-windows-arm64.exe', 'ccq-windows-arm64.exe.gz') @($entrypoints['Windows']['Artifacts'])
     Assert-Equal 'build.entrypoints.macos.script' 'installer/build.sh' $entrypoints['MacOS']['Script']
     Assert-Equal 'build.entrypoints.macos.allowed' @('macos') @($entrypoints['MacOS']['AllowedPlatforms'])
-    Assert-Equal 'build.entrypoints.macos.artifacts' @('install.sh', 'ccq-macos-x64', 'ccq-macos-x64.gz', 'ccq-macos-arm64', 'ccq-macos-arm64.gz') @($entrypoints['MacOS']['Artifacts'])
-    Assert-Equal 'build.entrypoints.release-artifacts' $releaseOutputs @($entrypoints['ReleaseArtifacts'])
+    Assert-Equal 'build.release.derived-count' @($releaseOutputs).Count @($entrypoints['ReleaseArtifacts']).Count
 
     foreach ($output in $releaseOutputs) {
         if ($output -in @('ccq.ps1', 'ccq.sh') -or $output -match '\.built\.') {
@@ -438,8 +500,12 @@ function Test-BuildManifestContract {
             }
         }
 
-        if ($role -eq 'Install') {
-            Assert-Equal 'build.Windows.Install.OutputEncoding' 'asciiTrampoline' ([string]$artifact['OutputEncoding'])
+        if ($role -in @('Install', 'CcqDownload')) {
+            Assert-Equal "build.Windows.$role.OutputEncoding" 'asciiTrampoline' ([string]$artifact['OutputEncoding'])
+            Assert-Equal "build.Windows.$role.RequiresHeader" '#Requires -Version 5.1' ([string]$artifact['RequiresHeader'])
+        }
+        if ($role -eq 'CcqDownload') {
+            Assert-Equal 'build.Windows.CcqDownload.IncludeSteps' $false ([bool]$artifact['IncludeSteps'])
         }
     }
 
@@ -450,6 +516,22 @@ function Test-BuildManifestContract {
             Add-Issue "build.MacOS.$role EntryFile 必须指向 macos/*.zsh，实际: $entryFile"
         } else {
             Assert-PathExists "build.MacOS.$role EntryFile" (Join-Path $script:InstallerRoot $entryFile)
+        }
+        # 该 helper 用 return ,$array 保形，调用方不得再用 @(...) 包裹（否则空列表会嵌套为 @(@()) 使 Count 读为 1）。
+        $macCoreFiles = Resolve-MacOSArtifactCoreFiles -Artifact $artifact -AllArtifacts $macOSArtifacts
+        if ($macCoreFiles.Count -eq 0) {
+            Add-Issue "build.MacOS.$role 未解析出任何 core 文件（需声明 CoreFiles 或 ReuseCoreFilesFromRole）"
+        }
+        foreach ($coreFile in $macCoreFiles) {
+            $corePath = [string]$coreFile
+            if ($corePath -notmatch '^macos/core/.+\.zsh$') {
+                Add-Issue "build.MacOS.$role CoreFiles 必须指向 macos/core/*.zsh，实际: $corePath"
+            } else {
+                Assert-PathExists "build.MacOS.$role CoreFile" (Join-Path $script:InstallerRoot $corePath)
+            }
+        }
+        if ($role -eq 'CcqDownload') {
+            Assert-Equal 'build.MacOS.CcqDownload.IncludeSteps' $false ([bool]$artifact['IncludeSteps'])
         }
     }
 
@@ -477,6 +559,22 @@ function Test-BuildManifestContract {
         Add-Issue 'installer/build.sh 清理未覆盖当前 macOS raw/gzip，旧文件可能伪装构建成功'
     }
 
+    if ($buildPs1 -match "-ne 'install\.ps1'") {
+        Add-Issue 'installer/build.ps1 仍用「除 install 脚本外的全部」推断可执行文件'
+    }
+    if ($buildSh -match "!== 'install\.sh'|=== 'install\.sh'") {
+        Add-Issue 'installer/build.sh 仍用「除 install 脚本外的全部」推断可执行文件'
+    }
+    if ($buildPs1 -notmatch "UpdateTransports'\]\['GzipAssets'") {
+        Add-Issue 'installer/build.ps1 未从 UpdateTransports.GzipAssets 派生 raw/gzip 名称'
+    }
+    if ($buildSh -notmatch 'UpdateTransports\.GzipAssets') {
+        Add-Issue 'installer/build.sh 未从 UpdateTransports.GzipAssets 派生 raw/gzip 名称'
+    }
+    if ($buildPs1 -match 'Get-InstallBuildOrder') {
+        Add-Issue 'installer/build.ps1 仍保留写死 Role 的 Get-InstallBuildOrder'
+    }
+
     if ($buildPs1 -match "ValidateSet\('All'|ValidateSet\('MacOS'|Get-BuildArtifactConfig\s+-Platform\s+MacOS|Build-ZshSingleFileScript") {
         Add-Issue 'installer/build.ps1 仍包含 All/MacOS 构建路径'
     }
@@ -502,7 +600,9 @@ function Test-CanonicalSourceLayout {
     }
 
     $distPath = Join-Path $script:RepoRoot 'dist'
-    $validReleaseArtifacts = @('ccq-windows-x64.exe', 'ccq-windows-x64.exe.gz', 'ccq-windows-arm64.exe', 'ccq-windows-arm64.exe.gz', 'ccq-macos-x64', 'ccq-macos-x64.gz', 'ccq-macos-arm64', 'ccq-macos-arm64.gz')
+    # 唯一的 release 名单来自 build.json（禁止在测试里维护第二份）。
+    $buildContract = Read-ContractJson 'build.json'
+    $validReleaseArtifacts = @($buildContract['BuildEntrypoints']['ReleaseArtifacts'])
     if (Test-Path $distPath -PathType Container) {
         foreach ($file in @(Get-ChildItem -Path $distPath -File)) {
             if ($file.Name -in $validReleaseArtifacts) { continue }
@@ -522,44 +622,82 @@ function Test-CcqVersionHandoffContract {
         Assert-Equal 'ccq.version.normalize-command-output' '1.2.3-rc.1' (ConvertTo-CcqComparableVersion -Version 'ccq v1.2.3-rc.1')
     }
 
-    $windowsInstall = Get-Content -Path (Join-Path $script:WindowsRoot 'Install.ps1') -Raw -Encoding UTF8
+    # Windows CCQ handoff 的唯一定义处是 core/Ccq.ps1；Install.ps1 不得再声明。
+    $ccqSource = Get-Content -Path $script:CcqCorePath -Raw -Encoding UTF8
     foreach ($requiredPattern in @(
         'function\s+Get-CcqReleaseTargetVersion',
+        'function\s+Get-CcqReleaseDownloadBaseUrl',
+        'function\s+Confirm-CcqExecutableDownload',
         '版本一致，无需覆盖',
         '检测到 ccq 版本不一致',
         '是否覆盖现有文件',
         '-DefaultIndex\s+1',
-        '无法确定安装器目标版本，已保留现有 ccq'
+        '无法确定安装器目标版本，已保留现有 ccq',
+        "Mode -eq 'Dedicated'"
     )) {
-        if ($windowsInstall -notmatch $requiredPattern) {
+        if ($ccqSource -notmatch $requiredPattern) {
             Add-Issue "Windows ccq version handoff 缺少契约片段: $requiredPattern"
         }
     }
 
+    $windowsInstallSource = Get-Content -Path (Join-Path $script:WindowsRoot 'Install.ps1') -Raw -Encoding UTF8
+    foreach ($legacyPattern in @(
+        'function\s+Confirm-CcqExecutableDownload',
+        'function\s+Get-CcqReleaseTargetVersion',
+        'function\s+Get-CcqReleaseTag',
+        'function\s+Get-CcqReleaseDownloadBaseUrl',
+        'function\s+Get-CcqArchitecture',
+        'function\s+Install-CcqExecutable'
+    )) {
+        if ($windowsInstallSource -match $legacyPattern) {
+            Add-Issue "Windows Install.ps1 仍定义 CCQ 行为函数: $legacyPattern"
+        }
+    }
+
+    $macCcqPath = Join-Path $script:InstallerRoot 'macos\core\Ccq.zsh'
     $macInstallPath = Join-Path $script:InstallerRoot 'macos\Install.zsh'
     $macProcessPath = Join-Path $script:InstallerRoot 'macos\core\Process.zsh'
+    $macCcq = Get-Content -Path $macCcqPath -Raw -Encoding UTF8
     $macInstall = Get-Content -Path $macInstallPath -Raw -Encoding UTF8
     $macProcess = Get-Content -Path $macProcessPath -Raw -Encoding UTF8
     foreach ($requiredPattern in @(
         'ccq_get_release_target_version\(\)',
+        'ccq_confirm_executable_download\(\)',
         '版本一致，无需覆盖',
         '检测到 ccq 版本不一致',
         '是否覆盖现有文件',
-        'ccq_prompt_single[^\r\n]+\s1\s',
-        '无法确定安装器目标版本，已保留现有 ccq'
+        'ccq_show_single_select_menu[^\r\n]+\s1\s',
+        '无法确定安装器目标版本，已保留现有 ccq',
+        'dedicated',
+        'CCQ_PLATFORM_ERROR'
     )) {
-        if ($macInstall -notmatch $requiredPattern) {
+        if ($macCcq -notmatch $requiredPattern) {
             Add-Issue "macOS ccq version handoff 缺少契约片段: $requiredPattern"
         }
     }
-    if ($macProcess -notmatch 'ccq_normalize_version\(\)') {
+    if ($macCcq -notmatch 'ccq_normalize_version\(\)') {
         Add-Issue 'macOS ccq handoff 缺少 ccq_normalize_version'
+    }
+    foreach ($legacyPattern in @(
+        '^ccq_confirm_executable_download\(\)',
+        '^ccq_get_release_target_version\(\)',
+        '^ccq_get_release_download_base_url\(\)',
+        '^ccq_get_architecture\(\)',
+        '^ccq_install_executable\(\)',
+        '^ccq_download_file\(\)'
+    )) {
+        if ($macInstall -match $legacyPattern) {
+            Add-Issue "macOS Install.zsh 仍定义 CCQ 行为函数: $legacyPattern"
+        }
+        if ($macProcess -match $legacyPattern) {
+            Add-Issue "macOS Process.zsh 仍定义 CCQ 行为函数: $legacyPattern"
+        }
     }
 
     $parseTokens = $null
     $parseErrors = $null
     $windowsAst = [System.Management.Automation.Language.Parser]::ParseFile(
-        (Join-Path $script:WindowsRoot 'Install.ps1'),
+        $script:CcqCorePath,
         [ref]$parseTokens,
         [ref]$parseErrors
     )
@@ -580,6 +718,7 @@ function Test-CcqVersionHandoffContract {
     $script:CcqHandoffMenuCount = 0
     $script:CcqHandoffDefaultIndex = -1
     $script:CcqHandoffInstallCalled = $false
+    $script:CcqHandoffInstallSuccess = $true
 
     function Test-CcqExecutableInstalled {
         return @{ IsInstalled = $true; Version = $script:CcqHandoffCurrentVersion; Path = 'C:\fake\ccq.exe' }
@@ -596,7 +735,7 @@ function Test-CcqVersionHandoffContract {
     function Install-CcqExecutable {
         param([string]$DownloadUrl)
         $script:CcqHandoffInstallCalled = $true
-        return @{ Success = $true; ErrorMessage = ''; Path = 'C:\fake\ccq.exe' }
+        return @{ Success = [bool]$script:CcqHandoffInstallSuccess; ErrorMessage = ''; Path = 'C:\fake\ccq.exe' }
     }
     function Write-Host { param([Parameter(ValueFromRemainingArguments)][object[]]$Object) }
     function Write-UiPrimary { param([string]$Message, [string]$Level) }
@@ -605,7 +744,7 @@ function Test-CcqVersionHandoffContract {
     function Write-UiSuccess { param([string]$Message, [string]$Level) }
     function Write-UiWarning { param([string]$Message, [string]$Level) }
 
-    Confirm-CcqExecutableDownload | Out-Null
+    Confirm-CcqExecutableDownload -Mode Install | Out-Null
     Assert-Equal 'ccq.handoff.same.menu-count' 0 $script:CcqHandoffMenuCount
     Assert-Equal 'ccq.handoff.same.install-called' $false $script:CcqHandoffInstallCalled
 
@@ -613,7 +752,7 @@ function Test-CcqVersionHandoffContract {
     $script:CcqHandoffMenuCount = 0
     $script:CcqHandoffInstallCalled = $false
     $script:CcqHandoffDecision = 1
-    Confirm-CcqExecutableDownload | Out-Null
+    Confirm-CcqExecutableDownload -Mode Install | Out-Null
     Assert-Equal 'ccq.handoff.different.menu-count' 1 $script:CcqHandoffMenuCount
     Assert-Equal 'ccq.handoff.different.default-preserve' 1 $script:CcqHandoffDefaultIndex
     Assert-Equal 'ccq.handoff.preserve.install-called' $false $script:CcqHandoffInstallCalled
@@ -621,9 +760,63 @@ function Test-CcqVersionHandoffContract {
     $script:CcqHandoffMenuCount = 0
     $script:CcqHandoffInstallCalled = $false
     $script:CcqHandoffDecision = 0
-    Confirm-CcqExecutableDownload | Out-Null
+    Confirm-CcqExecutableDownload -Mode Install | Out-Null
     Assert-Equal 'ccq.handoff.overwrite.menu-count' 1 $script:CcqHandoffMenuCount
     Assert-Equal 'ccq.handoff.overwrite.install-called' $true $script:CcqHandoffInstallCalled
+
+    # Dedicated 模式：首次未安装时跳过首次确认菜单，直接视为已授权下载。
+    $script:CcqHandoffInstalledState = @{ IsInstalled = $true; Version = $script:CcqHandoffCurrentVersion; Path = 'C:\fake\ccq.exe' }
+    function Test-CcqExecutableInstalled { return $script:CcqHandoffInstalledState }
+    $script:CcqHandoffInstalledState = @{ IsInstalled = $false; Version = ''; Path = 'C:\fake\ccq.exe' }
+    $script:CcqHandoffMenuCount = 0
+    $script:CcqHandoffInstallCalled = $false
+    Confirm-CcqExecutableDownload -Mode Dedicated | Out-Null
+    Assert-Equal 'ccq.handoff.dedicated.first-menu-count' 0 $script:CcqHandoffMenuCount
+    Assert-Equal 'ccq.handoff.dedicated.install-called' $true $script:CcqHandoffInstallCalled
+
+    # Dedicated 模式仍保留版本不一致时的默认保留安全确认。
+    $script:CcqHandoffInstalledState = @{ IsInstalled = $true; Version = '1.2.2'; Path = 'C:\fake\ccq.exe' }
+    $script:CcqHandoffTargetVersion = '1.2.3'
+    $script:CcqHandoffMenuCount = 0
+    $script:CcqHandoffInstallCalled = $false
+    $script:CcqHandoffDecision = 1
+    Confirm-CcqExecutableDownload -Mode Dedicated | Out-Null
+    Assert-Equal 'ccq.handoff.dedicated.mismatch-menu-count' 1 $script:CcqHandoffMenuCount
+    Assert-Equal 'ccq.handoff.dedicated.mismatch-default-preserve' 1 $script:CcqHandoffDefaultIndex
+    Assert-Equal 'ccq.handoff.dedicated.mismatch-preserve' $false $script:CcqHandoffInstallCalled
+
+    # 返回值契约：专用入口用 handoff 结果决定退出码，因此失败必须可区分于「有意跳过」。
+    $script:CcqHandoffInstalledState = @{ IsInstalled = $false; Version = ''; Path = 'C:\fake\ccq.exe' }
+    $script:CcqHandoffTargetVersion = '1.2.3'
+    $script:CcqHandoffInstallCalled = $false
+    $script:CcqHandoffInstallSuccess = $false
+    $dedicatedFailure = Confirm-CcqExecutableDownload -Mode Dedicated
+    Assert-Equal 'ccq.handoff.dedicated.failure-returns-false' $false ([bool]$dedicatedFailure)
+    Assert-Equal 'ccq.handoff.dedicated.failure-attempted-install' $true $script:CcqHandoffInstallCalled
+
+    $script:CcqHandoffInstallCalled = $false
+    $script:CcqHandoffInstallSuccess = $true
+    $dedicatedSuccess = Confirm-CcqExecutableDownload -Mode Dedicated
+    Assert-Equal 'ccq.handoff.dedicated.success-returns-true' $true ([bool]$dedicatedSuccess)
+
+    # 有意跳过不是失败：install 模式用户拒绝首次下载时仍返回 $true。
+    $script:CcqHandoffInstallCalled = $false
+    $script:CcqHandoffMenuCount = 0
+    $script:CcqHandoffDecision = 1
+    $installSkip = Confirm-CcqExecutableDownload -Mode Install
+    Assert-Equal 'ccq.handoff.install.skip-returns-true' $true ([bool]$installSkip)
+    Assert-Equal 'ccq.handoff.install.skip-attempted-install' $false $script:CcqHandoffInstallCalled
+
+    # 同版本与目标版本未知属于「已可用 / 安全保留」，同样不是失败。
+    $script:CcqHandoffInstalledState = @{ IsInstalled = $true; Version = '1.2.3'; Path = 'C:\fake\ccq.exe' }
+    $sameVersionResult = Confirm-CcqExecutableDownload -Mode Install
+    Assert-Equal 'ccq.handoff.same-version-returns-true' $true ([bool]$sameVersionResult)
+
+    $script:CcqHandoffTargetVersion = ''
+    $unknownTargetResult = Confirm-CcqExecutableDownload -Mode Install
+    Assert-Equal 'ccq.handoff.unknown-target-returns-true' $true ([bool]$unknownTargetResult)
+    $script:CcqHandoffTargetVersion = '1.2.3'
+    $script:CcqHandoffInstalledState = @{ IsInstalled = $true; Version = $script:CcqHandoffCurrentVersion; Path = 'C:\fake\ccq.exe' }
 }
 
 # dot-source 必须发生在脚本作用域；若放在函数内，Registry 等函数会随函数返回而失效。
@@ -631,10 +824,13 @@ function Test-CcqVersionHandoffContract {
 #       由 tui/scripts/verify-contracts.mjs 校验），installer 侧不再 dot-source 已删除的
 #       windows/steps/ClaudeConfig.ps1，仅做 JSON 自洽校验。
 . (Join-Path $script:CoreRoot 'Ui.ps1')
+# 顺序与 build.json 的 Windows CoreFiles 保持一致（Process < Profile < Admin < Net < Ccq < Registry），
+# 避免测试侧的加载顺序成为第二份事实来源。
 . (Join-Path $script:CoreRoot 'Process.ps1')
 . (Join-Path $script:CoreRoot 'Profile.ps1')
 . (Join-Path $script:CoreRoot 'Admin.ps1')
 . (Join-Path $script:CoreRoot 'Net.ps1')
+. (Join-Path $script:CoreRoot 'Ccq.ps1')
 . (Join-Path $script:CoreRoot 'Registry.ps1')
 
 function Test-CleanupPolicyContract {
@@ -677,7 +873,7 @@ function Test-UserPathPreservationContract {
     #>
     param()
 
-    $processSource = Get-Content -Path (Join-Path $script:CoreRoot 'Process.ps1') -Raw -Encoding UTF8
+    $processSource = Get-Content -Path $script:CcqCorePath -Raw -Encoding UTF8
     if ($processSource -notmatch 'DoNotExpandEnvironmentNames') {
         Add-Issue 'user-path.source 缺少原始注册表值读取保护'
     }
@@ -688,7 +884,7 @@ function Test-UserPathPreservationContract {
     $pathFunctionTokens = $null
     $pathFunctionErrors = $null
     $processAst = [System.Management.Automation.Language.Parser]::ParseFile(
-        (Join-Path $script:CoreRoot 'Process.ps1'),
+        $script:CcqCorePath,
         [ref]$pathFunctionTokens,
         [ref]$pathFunctionErrors
     )
@@ -911,7 +1107,7 @@ function Test-ProfileLegacyCleanupContract {
 }
 
 function Test-CcqGzipTransportContract {
-    $processPath = Join-Path $script:CoreRoot 'Process.ps1'
+    $processPath = $script:CcqCorePath
     $processSource = Get-Content -Path $processPath -Raw -Encoding UTF8
     foreach ($requiredPattern in @(
         'function\s+Expand-CcqGzipFile',
@@ -926,7 +1122,7 @@ function Test-CcqGzipTransportContract {
         }
     }
 
-    $macProcessPath = Join-Path $script:InstallerRoot 'macos\core\Process.zsh'
+    $macProcessPath = Join-Path $script:InstallerRoot 'macos\core\Ccq.zsh'
     $macProcessSource = Get-Content -Path $macProcessPath -Raw -Encoding UTF8
     foreach ($requiredPattern in @(
         'ccq_download_file\(\)',
@@ -955,7 +1151,7 @@ function Test-CcqGzipTransportContract {
         [ref]$parseErrors
     )
     if (@($parseErrors).Count -gt 0) {
-        Add-Issue 'Windows ccq gzip transport 无法解析 Process.ps1'
+        Add-Issue 'Windows ccq gzip transport 无法解析 Ccq.ps1'
         return
     }
 
@@ -1195,10 +1391,10 @@ function Test-CcqGzipTransportContract {
 }
 
 function Test-CcqLockedFileReplaceContract {
-    $processPath = Join-Path $script:CoreRoot 'Process.ps1'
+    $processPath = $script:CcqCorePath
     $processSource = Get-Content -Path $processPath -Raw -Encoding UTF8
 
-    # 正向断言：Process.ps1 含替换运行中映像所需的关键片段。
+    # 正向断言：core/Ccq.ps1 含替换运行中映像所需的关键片段。
     # 注意：重试常量必须绑定到赋值处。裸 '20' / '250' 会被任意 PS 源码撞上，
     # 那种断言对空实现同样通过，等于没断言。
     foreach ($requiredPattern in @(
@@ -1228,7 +1424,7 @@ function Test-CcqLockedFileReplaceContract {
         [ref]$parseErrors
     )
     if (@($parseErrors).Count -gt 0) {
-        Add-Issue 'Windows ccq locked-file replace 无法解析 Process.ps1'
+        Add-Issue 'Windows ccq locked-file replace 无法解析 Ccq.ps1'
         return
     }
 
@@ -1457,7 +1653,7 @@ function Test-CcqLockedFileReplaceContract {
         $script:CcqCleanupWarnings = @()
 
         # 把两个真实函数重新定义在当前 probe scope，使下方 scoped cmdlet wrapper
-        # 能命中 post-replace 删除边界；函数文本仍来自已解析的生产 Process.ps1。
+        # 能命中 post-replace 删除边界；函数文本仍来自已解析的生产 Ccq.ps1。
         Invoke-Expression $cleanupFunction.Extent.Text
         Invoke-Expression $replaceFunction.Extent.Text
         $originalWriteUiWarning = (Get-Command Write-UiWarning -CommandType Function -ErrorAction Stop).ScriptBlock
@@ -1698,12 +1894,247 @@ function Test-CcqLockedFileReplaceContract {
     }
 }
 
+function Test-CcqSingleDefinitionContract {
+    <#
+    防重复门禁（fail closed）：确保 CCQ 行为实现只有一份，且专用入口不内联实现。
+    #>
+
+    # ① Windows：每个 CCQ 行为函数在 installer/windows/** 恰好定义一次，且位于 core/Ccq.ps1。
+    $windowsCcqFunctions = @(
+        'Get-CcqArchitecture',
+        'Get-CcqExecutablePath',
+        'ConvertTo-CcqComparableVersion',
+        'Test-CcqExecutableInstalled',
+        'Test-CcqExecutableLocked',
+        'Get-CcqLockHolderProcesses',
+        'Restore-CcqExecutableBackup',
+        'Clear-CcqReplacementBackupsAfterVerifiedReplace',
+        'Replace-CcqExecutable',
+        'Expand-CcqGzipFile',
+        'Install-CcqExecutable',
+        'Get-UserPathRegistryState',
+        'Set-UserPathRegistryValue',
+        'Add-DirectoryToUserPath',
+        'Get-CcqReleaseTag',
+        'Get-CcqReleaseTargetVersion',
+        'Get-CcqReleaseDownloadBaseUrl',
+        'Confirm-CcqExecutableDownload'
+    )
+    $definitionFiles = @{}
+    foreach ($name in $windowsCcqFunctions) { $definitionFiles[$name] = @() }
+
+    foreach ($file in @(Get-ChildItem -Path $script:WindowsRoot -Recurse -Filter '*.ps1' -File)) {
+        $tokens = $null
+        $parseErrors = $null
+        $fileAst = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$parseErrors)
+        if (@($parseErrors).Count -gt 0) {
+            Add-Issue "ccq.unique 无法解析 PowerShell 文件: $($file.FullName)"
+            continue
+        }
+        foreach ($functionNode in @($fileAst.FindAll({
+            param($Node)
+            $Node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+        }, $true))) {
+            if ($definitionFiles.ContainsKey($functionNode.Name)) {
+                $definitionFiles[$functionNode.Name] += $file.FullName
+            }
+        }
+    }
+
+    foreach ($name in $windowsCcqFunctions) {
+        $locations = @($definitionFiles[$name])
+        if ($locations.Count -ne 1) {
+            Add-Issue "ccq.unique $name 应在 installer/windows 全树恰好定义一次，实际 $($locations.Count) 次: $($locations -join ', ')"
+            continue
+        }
+        if (-not [System.StringComparer]::OrdinalIgnoreCase.Equals($locations[0], $script:CcqCorePath)) {
+            Add-Issue "ccq.unique $name 应只定义在 core/Ccq.ps1，实际: $($locations[0])"
+        }
+    }
+
+    # ①b macOS：每个 CCQ 行为函数在 installer/macos/** 恰好定义一次，且位于 core/Ccq.zsh。
+    $macCcqPath = Join-Path $script:InstallerRoot 'macos\core\Ccq.zsh'
+    $macCcqFunctions = @(
+        'ccq_get_architecture',
+        'ccq_get_executable_path',
+        'ccq_normalize_version',
+        'ccq_test_executable_installed',
+        'ccq_download_file',
+        'ccq_install_executable',
+        'ccq_get_release_download_base_url',
+        'ccq_get_release_target_version',
+        'ccq_confirm_executable_download'
+    )
+    $macDefinitionFiles = @{}
+    foreach ($name in $macCcqFunctions) { $macDefinitionFiles[$name] = @() }
+    foreach ($file in @(Get-ChildItem -Path (Join-Path $script:InstallerRoot 'macos') -Recurse -Filter '*.zsh' -File)) {
+        $lines = @(Get-Content -Path $file.FullName -Encoding UTF8)
+        for ($index = 0; $index -lt $lines.Count; $index++) {
+            foreach ($name in $macCcqFunctions) {
+                if ($lines[$index] -match "^$([regex]::Escape($name))\(\)\s*\{") {
+                    $macDefinitionFiles[$name] += ("$($file.FullName):$($index + 1)")
+                }
+            }
+        }
+    }
+    foreach ($name in $macCcqFunctions) {
+        $locations = @($macDefinitionFiles[$name])
+        if ($locations.Count -ne 1) {
+            Add-Issue "ccq.unique.macos $name 应在 installer/macos 全树恰好定义一次，实际 $($locations.Count) 次: $($locations -join ', ')"
+            continue
+        }
+        if (-not $locations[0].StartsWith($macCcqPath + ':', [System.StringComparison]::OrdinalIgnoreCase)) {
+            Add-Issue "ccq.unique.macos $name 应只定义在 core/Ccq.zsh，实际: $($locations[0])"
+        }
+    }
+
+    # ② Process.ps1 / Install.ps1 不再定义任何 CCQ 行为函数。
+    foreach ($legacyPath in @((Join-Path $script:CoreRoot 'Process.ps1'), (Join-Path $script:WindowsRoot 'Install.ps1'))) {
+        $legacySource = Get-Content -Path $legacyPath -Raw -Encoding UTF8
+        foreach ($name in $windowsCcqFunctions) {
+            if ($legacySource -match "(?m)^\s*function\s+$([regex]::Escape($name))\b") {
+                Add-Issue "ccq.unique $([System.IO.Path]::GetFileName($legacyPath)) 仍定义 CCQ 函数: $name"
+            }
+        }
+    }
+
+    # ③ 两个专用入口不得包含资产名拼接/架构映射/版本比较/落地替换/PATH 写入/step 生命周期。
+    $windowsEntryPath = Join-Path $script:WindowsRoot 'Download-Ccq.ps1'
+    $macEntryPath = Join-Path $script:InstallerRoot 'macos\Download-Ccq.zsh'
+    Assert-PathExists 'ccq.entry.windows' $windowsEntryPath
+    Assert-PathExists 'ccq.entry.macos' $macEntryPath
+
+    $windowsEntrySource = Get-Content -Path $windowsEntryPath -Raw -Encoding UTF8
+    foreach ($forbiddenPattern in @(
+        'Get-CcqArchitecture',
+        'ConvertTo-CcqComparableVersion',
+        'Get-CcqReleaseTargetVersion',
+        'File\]::Replace',
+        '\bMove-Item',
+        'Add-DirectoryToUserPath',
+        'Set-UserPathRegistryValue',
+        'ccq-\$\{?\s*arch',
+        'Get-StepFiles',
+        'core[\\/]Bootstrap\.ps1'
+    )) {
+        if ($windowsEntrySource -match $forbiddenPattern) {
+            Add-Issue "ccq.entry.windows 专用入口不应包含实现细节: $forbiddenPattern"
+        }
+    }
+    if ($windowsEntrySource -notmatch 'Confirm-CcqExecutableDownload\s+-Mode\s+Dedicated') {
+        Add-Issue 'ccq.entry.windows 未以 Dedicated 模式调用共享 handoff'
+    }
+    # 专用入口是脚本化调用入口：必须消费 handoff 返回值并以非零码退出，
+    # 否则下载失败会被 `irm | iex` 或 CI 当作成功。
+    if ($windowsEntrySource -notmatch 'if\s*\(\s*-not\s+\(?\s*Confirm-CcqExecutableDownload\s+-Mode\s+Dedicated\s*\)?\s*\)') {
+        Add-Issue 'ccq.entry.windows 未检查共享 handoff 的失败返回值'
+    }
+    if ($windowsEntrySource -notmatch 'exit\s+1') {
+        Add-Issue 'ccq.entry.windows 下载失败时没有非零退出'
+    }
+    # 完整 install 必须丢弃返回值（既保持「告警不中断」，也避免向控制台打印 True/False）。
+    $windowsInstallForHandoff = Get-Content -Path (Join-Path $script:WindowsRoot 'Install.ps1') -Raw -Encoding UTF8
+    if ($windowsInstallForHandoff -notmatch '\$null\s*=\s*Confirm-CcqExecutableDownload\s+-Mode\s+Install') {
+        Add-Issue 'ccq.entry.windows Install.ps1 未显式丢弃 handoff 返回值'
+    }
+
+    $macEntrySource = Get-Content -Path $macEntryPath -Raw -Encoding UTF8
+    foreach ($forbiddenPattern in @(
+        'ccq_get_architecture',
+        'ccq_get_release_target_version',
+        'ccq_get_release_download_base_url',
+        'ccq_install_executable',
+        'ccq_get_executable_path',
+        '\bmv\s+-f',
+        'chmod\s+\+x',
+        'ccq-\$\{?arch',
+        'ccq_load_step_modules',
+        'core[\\/]Bootstrap\.zsh'
+    )) {
+        if ($macEntrySource -match $forbiddenPattern) {
+            Add-Issue "ccq.entry.macos 专用入口不应包含实现细节: $forbiddenPattern"
+        }
+    }
+    if ($macEntrySource -notmatch 'ccq_confirm_executable_download\s+dedicated') {
+        Add-Issue 'ccq.entry.macos 未以 dedicated 模式调用共享 handoff'
+    }
+    # macOS 脚本退出码直接来自最后一条命令，因此专用入口不得吞掉失败状态。
+    if ($macEntrySource -match 'ccq_confirm_executable_download\s+dedicated[^\r\n]*\|\|\s*(true|:)' ) {
+        Add-Issue 'ccq.entry.macos 专用入口吞掉了 handoff 失败状态'
+    }
+    # 完整 install 继续沿用「告警不中断」语义，显式容忍失败返回值。
+    $macInstallForHandoff = Get-Content -Path (Join-Path $script:InstallerRoot 'macos\Install.zsh') -Raw -Encoding UTF8
+    if ($macInstallForHandoff -notmatch 'ccq_confirm_executable_download\s+install\s*\|\|\s*true') {
+        Add-Issue 'ccq.entry.macos Install.zsh 未显式容忍安装模式下的 ccq 下载失败'
+    }
+
+    # ④ macOS core 声明（core/Load.zsh CCQ_CORE_ORDER）与 build.json MacOS.Artifacts[*].CoreFiles 一致。
+    $loadPath = Join-Path $script:InstallerRoot 'macos\core\Load.zsh'
+    Assert-PathExists 'macos.core.load' $loadPath
+    $loadSource = Get-Content -Path $loadPath -Raw -Encoding UTF8
+    $orderMatch = [regex]::Match($loadSource, '(?s)CCQ_CORE_ORDER=\((.*?)\)')
+    if (-not $orderMatch.Success) {
+        Add-Issue 'macos.core.load 缺少 CCQ_CORE_ORDER 有序声明'
+    } else {
+        $declaredOrder = @($orderMatch.Groups[1].Value -split '\s+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { [string]$_ })
+        $buildContract = Read-ContractJson 'build.json'
+        $macArtifacts = @($buildContract['MacOS']['Artifacts'])
+        foreach ($artifact in $macArtifacts) {
+            $role = [string]$artifact['Role']
+            # 同上：helper 已用 return ,$array 保形，此处不能再包裹 @(...)。
+            $artifactCore = Resolve-MacOSArtifactCoreFiles -Artifact $artifact -AllArtifacts $macArtifacts
+            if ($artifactCore.Count -eq 0) {
+                Add-Issue "ccq.macos.$role.core-order 无法解析 core 集合"
+                continue
+            }
+            $declaredCore = @($artifactCore | ForEach-Object {
+                [System.IO.Path]::GetFileNameWithoutExtension([string]$_)
+            })
+            Assert-Equal "ccq.macos.$role.core-order" @($declaredOrder | Sort-Object) @($declaredCore | Sort-Object)
+        }
+    }
+
+    # macOS Install.zsh 不得再出现硬编码 core 文件加载列表。
+    $macInstallSource = Get-Content -Path (Join-Path $script:InstallerRoot 'macos\Install.zsh') -Raw -Encoding UTF8
+    if ($macInstallSource -match 'for\s+core_file\s+in\s+Ui\s') {
+        Add-Issue 'macOS Install.zsh 仍硬编码 core 加载列表'
+    }
+    if ($macInstallSource -notmatch 'core/Load\.zsh') {
+        Add-Issue 'macOS Install.zsh 未通过 core/Load.zsh 加载 core'
+    }
+
+    # ⑤ 无第二份 release 名单/数量魔数。
+    foreach ($relativePath in @(
+        '.github\workflows\build-and-release.yml',
+        'tui\scripts\verify-build-runtime.mjs',
+        'tui\scripts\verify-gzip-assets.mjs',
+        'installer\build.ps1',
+        'installer\build.sh'
+    )) {
+        $fullPath = Join-Path $script:RepoRoot $relativePath
+        if (-not (Test-Path $fullPath -PathType Leaf)) { continue }
+        $content = Get-Content -Path $fullPath -Raw -Encoding UTF8
+        if ($content -match 'ReleaseArtifacts\.length,\s*\d+') {
+            Add-Issue "$relativePath 仍写死 ReleaseArtifacts 数量魔数"
+        }
+    }
+
+    # ⑥ 专用入口不执行 installer step 生命周期（无 step 安装函数调用）。
+    if ($windowsEntrySource -match 'Install-NodeJS|Install-Git|Invoke-GroupedInstall|StepGroups') {
+        Add-Issue 'ccq.entry.windows 专用入口触发了 installer step 生命周期'
+    }
+    if ($macEntrySource -match 'ccq_invoke_grouped_install|ccq_show_step_list') {
+        Add-Issue 'ccq.entry.macos 专用入口触发了 installer step 生命周期'
+    }
+}
+
 function Main {
     if (-not (Test-Path $script:InstallerRoot -PathType Container)) {
         throw "InstallerRoot 不是有效目录: $script:InstallerRoot"
     }
 
     Test-CanonicalSourceLayout
+    Test-CcqSingleDefinitionContract
     Test-CcqVersionHandoffContract
     Test-CcqGzipTransportContract
     Test-CcqLockedFileReplaceContract

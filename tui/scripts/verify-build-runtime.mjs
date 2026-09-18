@@ -196,7 +196,15 @@ async function verifyRepositoryContract() {
 	);
 	assert.match(releaseJob, /prerelease: \$\{\{ steps\.release-metadata\.outputs\.prerelease \}\}/);
 	assert.doesNotMatch(workflow, /CCQ_RELEASE_VERSION|contains\(github\.ref_name, '-(?:rc|beta|alpha)'\)|Invalid CCQ release version/);
-	assert.equal(buildContract.BuildEntrypoints.ReleaseArtifacts.length, 10, 'Release 必须保持精确十文件合同');
+	const platformReleaseArtifacts = [
+		...buildContract.BuildEntrypoints.Windows.Artifacts,
+		...buildContract.BuildEntrypoints.MacOS.Artifacts
+	];
+	assert.deepEqual(
+		[...buildContract.BuildEntrypoints.ReleaseArtifacts].sort(),
+		[...new Set(platformReleaseArtifacts)].sort(),
+		'Release 集合必须等于两个平台 Artifacts 的并集，不得维护第二份名单或数量魔数'
+	);
 	for (const asset of ['ccq-windows-arm64.exe', 'ccq-windows-arm64.exe.gz']) {
 		assert.ok(buildContract.BuildEntrypoints.ReleaseArtifacts.includes(asset), `Release 合同必须包含 ${asset}`);
 	}

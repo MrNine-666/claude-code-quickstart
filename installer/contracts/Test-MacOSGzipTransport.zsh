@@ -3,7 +3,8 @@
 set -eu
 
 script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-source "${script_dir}/../macos/core/Process.zsh"
+# CCQ 行为函数已迁入 core/Ccq.zsh；probe 直接 source 共享实现。
+source "${script_dir}/../macos/core/Ccq.zsh"
 
 probe_root="$(mktemp -d "${TMPDIR:-/tmp}/ccq-gzip-contract.XXXXXX")" || exit 1
 cleanup() {
@@ -156,5 +157,75 @@ run_failure_case() {
 
 run_failure_case double-fail 'gzip 下载失败: fixture gzip download failed'
 run_failure_case double-fail-corrupt 'gzip 解压失败或数据损坏'
+
+# ── 专用入口（dedicated）资产选择与错误平台/未知架构失败 ─────────────────────
+# 覆盖 macOS 专用入口：只允许 Darwin x64/arm64，资产名必须由架构决定，绝不回退猜测。
+CCQ_PROBE_KERNEL="Darwin"
+CCQ_PROBE_ARCH="arm64"
+uname() {
+  case "${1:-}" in
+    -s) printf '%s' "${CCQ_PROBE_KERNEL}" ;;
+    -m) printf '%s' "${CCQ_PROBE_ARCH}" ;;
+    *) command uname "$@" ;;
+  esac
+}
+
+CCQ_DEDICATED_URLS=()
+# 安装结果可控：专用入口的退出码必须忠实反映它，而不是永远返回成功。
+CCQ_PROBE_INSTALL_RESULT=0
+ccq_install_executable() {
+  CCQ_DEDICATED_URLS+=("$1")
+  return "${CCQ_PROBE_INSTALL_RESULT}"
+}
+ccq_ui_primary() { :; }
+ccq_ui_danger() { :; }
+ccq_show_single_select_menu() { printf '0'; }
+ccq_test_executable_installed() {
+  printf '{"isInstalled":0,"version":"","path":"%s"}\n' "${target_path}"
+}
+
+assert_dedicated_asset() {
+  local probe_arch="$1" expected_suffix="$2"
+  CCQ_PROBE_KERNEL="Darwin"
+  CCQ_PROBE_ARCH="${probe_arch}"
+  CCQ_DEDICATED_URLS=()
+  ccq_confirm_executable_download dedicated > /dev/null 2>&1 || fail "dedicated ${probe_arch} handoff 应成功"
+  [ "${#CCQ_DEDICATED_URLS[@]}" -eq 1 ] || fail "dedicated ${probe_arch} 应恰好调用一次安装"
+  case "${CCQ_DEDICATED_URLS[1]}" in
+    *"${expected_suffix}") ;;
+    *) fail "dedicated ${probe_arch} 资产选择错误: ${CCQ_DEDICATED_URLS[1]}" ;;
+  esac
+}
+
+assert_dedicated_asset arm64 'ccq-macos-arm64'
+assert_dedicated_asset x86_64 'ccq-macos-x64'
+
+# 安装失败的返回值必须向上传播：专用入口的退出码就是脚本退出码，
+# 否则 curl | zsh 与 CI 会把「下载失败」当作成功。
+CCQ_PROBE_KERNEL="Darwin"
+CCQ_PROBE_ARCH="arm64"
+CCQ_DEDICATED_URLS=()
+CCQ_PROBE_INSTALL_RESULT=1
+if ccq_confirm_executable_download dedicated > /dev/null 2>&1; then
+  fail 'dedicated handoff 在安装失败时必须返回非零'
+fi
+[ "${#CCQ_DEDICATED_URLS[@]}" -eq 1 ] || fail 'dedicated 安装失败场景应恰好尝试一次安装'
+CCQ_PROBE_INSTALL_RESULT=0
+
+# 非 Darwin 平台必须明确失败，不得选择 macos 资产。
+CCQ_PROBE_KERNEL="Linux"
+CCQ_PROBE_ARCH="x86_64"
+CCQ_DEDICATED_URLS=()
+if ccq_confirm_executable_download dedicated > /dev/null 2>&1; then
+  fail '非 Darwin 平台运行 dedicated handoff 应失败'
+fi
+[ "${#CCQ_DEDICATED_URLS[@]}" -eq 0 ] || fail '非 Darwin 平台不得下载任何资产'
+
+# 未知架构必须明确失败，不得回退猜测。
+CCQ_PROBE_KERNEL="Darwin"
+CCQ_PROBE_ARCH="riscv64"
+if ccq_get_architecture > /dev/null 2>&1; then
+  fail '未知架构 ccq_get_architecture 应失败'
+fi
 
 printf '%s\n' '[PASS] macOS gzip transport behavior probe passed'

@@ -10,6 +10,7 @@
       ],
       "Artifacts": [
         "install.ps1",
+        "download-ccq.ps1",
         "ccq-windows-x64.exe",
         "ccq-windows-x64.exe.gz",
         "ccq-windows-arm64.exe",
@@ -23,6 +24,7 @@
       ],
       "Artifacts": [
         "install.sh",
+        "download-ccq.zsh",
         "ccq-macos-x64",
         "ccq-macos-x64.gz",
         "ccq-macos-arm64",
@@ -31,7 +33,9 @@
     },
     "ReleaseArtifacts": [
       "install.ps1",
+      "download-ccq.ps1",
       "install.sh",
+      "download-ccq.zsh",
       "ccq-windows-x64.exe",
       "ccq-windows-x64.exe.gz",
       "ccq-windows-arm64.exe",
@@ -81,10 +85,28 @@
           "windows/core/Update.ps1",
           "windows/core/Admin.ps1",
           "windows/core/Net.ps1",
+          "windows/core/Ccq.ps1",
           "windows/core/Registry.ps1",
           "windows/core/Bootstrap.ps1"
         ],
         "IncludeSteps": true
+      },
+      {
+        "Role": "CcqDownload",
+        "OutputFile": "download-ccq.ps1",
+        "RequiresHeader": "#Requires -Version 5.1",
+        "EntryFile": "windows/Download-Ccq.ps1",
+        "HoistParamFrom": "windows/Download-Ccq.ps1",
+        "OutputEncoding": "asciiTrampoline",
+        "CoreFiles": [
+          "windows/core/Json.ps1",
+          "windows/core/Ui.ps1",
+          "windows/core/Process.ps1",
+          "windows/core/Net.ps1",
+          "windows/core/Ccq.ps1",
+          "windows/core/Registry.ps1"
+        ],
+        "IncludeSteps": false
       }
     ]
   },
@@ -98,7 +120,9 @@
         "IncludeSteps": true,
         "Wrapper": "bash-to-zsh",
         "CoreFiles": [
+          "macos/core/Load.zsh",
           "macos/core/Ui.zsh",
+          "macos/core/Ccq.zsh",
           "macos/core/Process.zsh",
           "macos/core/Profile.zsh",
           "macos/core/Platform.zsh",
@@ -108,6 +132,14 @@
           "macos/core/Bootstrap.zsh",
           "macos/core/Update.zsh"
         ]
+      },
+      {
+        "Role": "CcqDownload",
+        "OutputFile": "download-ccq.zsh",
+        "EntryFile": "macos/Download-Ccq.zsh",
+        "IncludeSteps": false,
+        "Wrapper": "bash-to-zsh",
+        "ReuseCoreFilesFromRole": "Install"
       }
     ]
   }

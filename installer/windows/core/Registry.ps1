@@ -98,6 +98,55 @@ function Get-StepsContractPath {
     return (Join-Path $contractsRoot 'steps.json')
 }
 
+function Get-CoreLoadOrder {
+    <#
+    .SYNOPSIS
+    从 contracts/build.json 读取指定 Role 的 core 加载顺序。
+    .DESCRIPTION
+    source 模式下入口不再硬编码 core 文件列表：顺序唯一来源于
+    BuildEntrypoints.Windows.Artifacts[Role].CoreFiles。合同或该 Role 缺失时抛出明确
+    诊断，绝不回退到第二份 inline 名单。
+    .PARAMETER Role
+    构建清单中的 artifact Role（如 Install / CcqDownload）。
+    .OUTPUTS
+    string[] - 相对 installer/ 的 core 文件路径数组。
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Role
+    )
+
+    $contractsRoot = Get-RegistryContractsRoot
+    if ([string]::IsNullOrWhiteSpace($contractsRoot)) {
+        throw '无法定位 installer/contracts 目录，不能解析 core 加载顺序。'
+    }
+
+    $buildContractPath = Join-Path $contractsRoot 'build.json'
+    if (-not (Test-Path -LiteralPath $buildContractPath -PathType Leaf)) {
+        throw "构建清单不存在，不能解析 core 加载顺序: $buildContractPath"
+    }
+
+    try {
+        $manifest = Get-Content -Path $buildContractPath -Encoding UTF8 -Raw | ConvertFrom-JsonToHashtable
+    } catch {
+        throw "无法解析构建清单 $buildContractPath`: $($_.Exception.Message)"
+    }
+
+    if (-not $manifest.Contains('Windows') -or -not $manifest['Windows'].Contains('Artifacts')) {
+        throw "构建清单缺少 Windows.Artifacts 节: $buildContractPath"
+    }
+
+    foreach ($artifact in @($manifest['Windows']['Artifacts'])) {
+        if ([string]$artifact['Role'] -ne $Role) { continue }
+        if (-not $artifact.Contains('CoreFiles')) {
+            throw "构建清单 Windows/$Role 缺少 CoreFiles: $buildContractPath"
+        }
+        return ,@($artifact['CoreFiles'] | ForEach-Object { [string]$_ })
+    }
+
+    throw "构建清单中不存在 Windows/$Role artifact 配置: $buildContractPath"
+}
+
 function Get-RegistryValue {
     <#
     .SYNOPSIS

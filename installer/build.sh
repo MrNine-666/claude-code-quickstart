@@ -162,22 +162,40 @@ function artifactFor(manifest, role) {
   return artifact;
 }
 
+// macOS 各 role 加载同一套 core（只有 step 模块不同），因此 CoreFiles 只在 Install role
+// 声明一次；声明了 ReuseCoreFilesFromRole 的 role 直接复用，避免同一份名单在 build.json 里
+// 出现两份而漂移。installer/contracts/Test-Contracts.ps1 断言同样的回退语义。
+function coreFilesFor(manifest, artifact) {
+  if (Array.isArray(artifact.CoreFiles)) return artifact.CoreFiles;
+  const sourceRole = artifact.ReuseCoreFilesFromRole;
+  if (!sourceRole) fail(`artifact ${artifact.Role} 既未声明 CoreFiles 也未声明 ReuseCoreFilesFromRole`);
+  const source = artifactFor(manifest, sourceRole);
+  if (!Array.isArray(source.CoreFiles) || source.CoreFiles.length === 0) {
+    fail(`artifact ${artifact.Role} 复用的 ${sourceRole}.CoreFiles 为空`);
+  }
+  return source.CoreFiles;
+}
+
 function macOSBuildOrder(manifest, stepsContract, role) {
   const artifact = artifactFor(manifest, role);
-  const order = [...(artifact.CoreFiles || []).map(normalizeRelPath)];
+  const order = [...coreFilesFor(manifest, artifact).map(normalizeRelPath)];
   if (artifact.IncludeSteps) order.push(...macOSStepFiles(manifest, stepsContract));
   order.push(normalizeRelPath(artifact.EntryFile));
   return { artifact, order };
 }
 
-function contractEmbeds() {
-  // install artifact 只需要安装链 steps 契约；TUI 契约由 ccq 可执行文件内嵌。
+function contractEmbeds(manifest, role) {
+  // role-aware：install artifact 需要安装链 steps 契约；CcqDownload 不执行 step，
+  // 不嵌 steps 契约，避免给不执行 step 的入口制造无用依赖。
+  // TUI 契约由 ccq 可执行文件内嵌。
+  const artifact = artifactFor(manifest, role);
+  if (!artifact.IncludeSteps) return [];
   return [
     { file: 'steps.json', sourceDir: 'installer/contracts', marker: 'CCQ_CONTRACT_STEPS_JSON', env: 'CCQ_STEPS_CONTRACT' },
   ];
 }
 
-function appendMacOSWrapper(lines) {
+function appendMacOSWrapper(lines, embeds) {
   lines.push('#!/usr/bin/env bash');
   lines.push('set +x 2>/dev/null || true');
   lines.push('# ═══════════════════════════════════════════════════════════════════════════════');
@@ -208,14 +226,14 @@ function appendMacOSWrapper(lines) {
   lines.push('export CCQ_CONTRACTS_DIR="${CCQ_BUILT_CONTRACTS_DIR}"');
 
   // 导出环境变量（仅针对有 env 字段的契约）
-  for (const contract of contractEmbeds()) {
+  for (const contract of embeds) {
     if (contract.env) {
       lines.push(`export ${contract.env}="\${CCQ_BUILT_CONTRACTS_DIR}/${contract.file}"`);
     }
   }
 
   // 嵌入所有契约和脚本文件（每项经 sourceDir 定位拆分后的契约目录）
-  for (const contract of contractEmbeds()) {
+  for (const contract of embeds) {
     const contractPath = path.join(repoRoot, contract.sourceDir, contract.file);
     if (!fs.existsSync(contractPath)) fail(`契约文件不存在，无法生成自包含 macOS artifact: ${contractPath}`);
 
@@ -258,7 +276,9 @@ function filterZshSource(relativePath) {
     }
     const trimmed = line.trim();
     if (trimmed === 'source "${file_path}"' || trimmed === 'source "${full_path}"') continue;
-    if (/^\s*ccq_main "\$@"\s*$/.test(line)) continue;
+    // 入口只 source Load.zsh；built artifact 已内联 Load.zsh，必须去掉该行。
+    if (trimmed === 'source "${CCQ_MACOS_ROOT}/core/Load.zsh"') continue;
+    if (/^\s*ccq_(?:main|download_main) "\$@"\s*$/.test(line)) continue;
     lines.push(line);
   }
 
@@ -306,9 +326,13 @@ function buildManageTuiPackage(manifest) {
   }
 
   // macOS 构建入口只输出 macOS ccq 产物；TUI 本地构建直接输出到 repo 根 dist/。
+  // raw/gzip 名称只能来自 UpdateTransports.GzipAssets，不得用「除 install 脚本外的全部」推断。
   const tuiArtifactDir = path.join(repoRoot, 'dist');
-  const expectedFiles = manifest.BuildEntrypoints.MacOS.Artifacts
-    .filter((fileName) => fileName !== 'install.sh');
+  const expectedFiles = [];
+  for (const asset of manifest.UpdateTransports.GzipAssets) {
+    if (asset.Raw.endsWith('.exe')) continue; // Windows raw
+    expectedFiles.push(asset.Raw, asset.Gzip);
+  }
 
   let allSuccess = true;
   for (const fileName of expectedFiles) {
@@ -344,7 +368,7 @@ function buildMacOSArtifact(manifest, stepsContract, role) {
 
   const outputPath = path.join(outputDir, artifact.OutputFile);
   const lines = [];
-  appendMacOSWrapper(lines);
+  appendMacOSWrapper(lines, contractEmbeds(manifest, role));
   lines.push('# 原始文件:');
   for (const relPath of order) lines.push(`#   - ${relPath}`);
 
@@ -360,28 +384,37 @@ function buildMacOSArtifact(manifest, stepsContract, role) {
     : '__CCQ_RELEASE_TAG__';
   const content = lines.join('\n').replace(/__CCQ_RELEASE_TAG__/g, releaseTag);
 
-  const entryFile = order[order.length - 1] || '';
-  const finalLines = [content, ''];
-  if (/macos\/Install\.zsh$/.test(entryFile)) finalLines.push('ccq_main "$@"');
-  else fail(`无法识别 macOS artifact 入口文件: ${entryFile}`);
+  const entryCalls = {
+    Install: 'ccq_main "$@"',
+    CcqDownload: 'ccq_download_main "$@"',
+  };
+  const entryCall = entryCalls[role];
+  if (!entryCall) fail(`无法识别 macOS artifact role: ${role}`);
+  const finalLines = [content, '', entryCall];
 
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, `${finalLines.join('\n')}`, 'utf8');
   fs.chmodSync(outputPath, 0o755);
   pass(`已生成: ${outputPath}`);
-  validateMacOSArtifact(outputPath);
+  validateMacOSArtifact(outputPath, artifact);
   return outputPath;
 }
 
-function validateMacOSArtifact(outputPath) {
+function validateMacOSArtifact(outputPath, artifact) {
   const content = readText(outputPath);
   if (!content.startsWith('#!/usr/bin/env bash')) fail(`${path.basename(outputPath)} 缺少 bash wrapper shebang`);
   if (!content.includes('export CCQ_BUILT_MODE=1')) fail(`${path.basename(outputPath)} 缺少 CCQ_BUILT_MODE`);
-  if (!content.includes('CCQ_CONTRACT_STEPS_JSON')) fail(`${path.basename(outputPath)} 未嵌入 steps contract`);
+  if (artifact.IncludeSteps && !content.includes('CCQ_CONTRACT_STEPS_JSON')) {
+    fail(`${path.basename(outputPath)} 未嵌入 steps contract`);
+  }
+  if (!artifact.IncludeSteps && content.includes('CCQ_CONTRACT_STEPS_JSON')) {
+    fail(`${path.basename(outputPath)} 不应嵌入 steps contract`);
+  }
   const forbiddenSourceLines = content.split(/\r?\n/).filter((line) => {
     const trimmed = line.trim();
     return trimmed === 'source "${file_path}"' || trimmed === 'source "${full_path}"'
-      || trimmed === '. "${file_path}"' || trimmed === '. "${full_path}"';
+      || trimmed === '. "${file_path}"' || trimmed === '. "${full_path}"'
+      || trimmed === 'source "${CCQ_MACOS_ROOT}/core/Load.zsh"';
   });
   if (forbiddenSourceLines.length > 0) fail(`${path.basename(outputPath)} 仍包含入口模块加载 source 行`);
 
@@ -395,11 +428,15 @@ function validateMacOSArtifact(outputPath) {
 }
 
 function clearKnownBuildArtifacts(manifest) {
-  // 清理当前 macOS 入口拥有的 install/raw/gzip，保留 Windows 产物。
-  // skipTuiBuild 模式下只清理 install.sh，保留已交叉编译的 ccq-macos-* 与 gzip 资产，
-  // 供 CI 下游 job 复用 build-tui job 通过 download-artifact 提供的现成可执行文件。
+  // 清理当前 macOS 入口拥有的 artifact，保留 Windows 产物。
+  // 脚本类 artifact 由 Role 判定（Install / CcqDownload）；skipTuiBuild 模式下只清理
+  // 脚本产物，保留已交叉编译的 ccq-macos-* 与 gzip 资产，供 CI 下游 job 复用
+  // build-tui job 通过 download-artifact 提供的现成可执行文件。
+  const scriptOutputs = manifest.MacOS.Artifacts
+    .filter((artifact) => artifact.Role === 'Install' || artifact.Role === 'CcqDownload')
+    .map((artifact) => artifact.OutputFile);
   const files = skipTuiBuild
-    ? manifest.BuildEntrypoints.MacOS.Artifacts.filter((f) => f === 'install.sh')
+    ? scriptOutputs
     : manifest.BuildEntrypoints.MacOS.Artifacts;
   for (const fileName of files) {
     const fullPath = path.join(outputDir, fileName);
@@ -440,6 +477,10 @@ if (skipTuiBuild) {
 console.log('');
 
 buildMacOSArtifact(manifest, stepsContract, 'Install');
+for (const artifact of manifest.MacOS.Artifacts) {
+  if (artifact.Role === 'Install') continue;
+  buildMacOSArtifact(manifest, stepsContract, artifact.Role);
+}
 
 ensureExpectedOutputs(manifest);
 console.log('');

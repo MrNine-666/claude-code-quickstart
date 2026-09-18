@@ -43,17 +43,31 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 $script:WindowsRoot = if ([string]::IsNullOrWhiteSpace($PSScriptRoot)) { "" } else { $PSScriptRoot }
 $script:InstallerRoot = if ([string]::IsNullOrWhiteSpace($script:WindowsRoot)) { "" } else { Split-Path -Parent $script:WindowsRoot }
 
-# ─── Dot-source 核心模块 ────────────────────────────────────────────────────
-
+# ─── Dot-source 核心模块（顺序由 contracts/build.json 唯一决定）──────────────
+#
+# source 模式的 core 加载顺序不再在本入口内硬编码：Json.ps1 + Registry.ps1 只是
+# bootstrap（前者提供 PS5.1 hashtable 转换，后者提供合同定位与 Get-CoreLoadOrder），
+# 其余 core 由 Get-CoreLoadOrder 从 BuildEntrypoints.Windows.Artifacts[Role].CoreFiles
+# 读取后按序 dot-source。release trampoline 已由 build.ps1 内联全部 core，没有可用的
+# $PSScriptRoot，因此下面整段以 $script:WindowsRoot 为空时跳过。
+#
+# 注意：dot-source 语句不能独立成行以 ". " 开头，否则会被 build.ps1 的 dot-source
+# 过滤规则当作入口加载语句删除；这里把它放进 if 语句体内以保留该行。
 . "$script:WindowsRoot\core\Json.ps1"
-. "$script:WindowsRoot\core\Ui.ps1"
-. "$script:WindowsRoot\core\Process.ps1"
-. "$script:WindowsRoot\core\Profile.ps1"
-. "$script:WindowsRoot\core\Update.ps1"
-. "$script:WindowsRoot\core\Admin.ps1"
-. "$script:WindowsRoot\core\Net.ps1"
 . "$script:WindowsRoot\core\Registry.ps1"
-. "$script:WindowsRoot\core\Bootstrap.ps1"
+
+if (-not [string]::IsNullOrWhiteSpace($script:WindowsRoot)) {
+    $coreFiles = Get-CoreLoadOrder -Role 'Install'
+    foreach ($coreRelPath in $coreFiles) {
+        $coreLeaf = Split-Path -Leaf $coreRelPath
+        if ($coreLeaf -in @('Json.ps1', 'Registry.ps1')) { continue }
+        $corePath = Join-Path $script:InstallerRoot $coreRelPath
+        if (-not (Test-Path -LiteralPath $corePath -PathType Leaf)) {
+            throw "core 模块不存在: $corePath（来源: contracts/build.json）"
+        }
+        if ($corePath) { . $corePath }
+    }
+}
 
 # ─── Dot-source 所有步骤模块（从 Registry 动态加载）──────────────────────────
 
@@ -330,182 +344,6 @@ function Invoke-GroupedInstall {
     }
 
     return $results
-}
-
-# ─── CCQ 可执行文件下载确认 ───────────────────────────────────────────────────
-
-function Get-CcqReleaseTag {
-    <#
-    .SYNOPSIS
-    返回当前安装器对应的 Release tag；源码模式通常为不可比较的占位值。
-    #>
-    param()
-
-    $tag = [Environment]::GetEnvironmentVariable("CCQ_RELEASE_TAG", "Process")
-    if ([string]::IsNullOrWhiteSpace($tag)) {
-        $tag = $script:CcqReleaseTag
-    }
-
-    return $tag.Trim()
-}
-
-function Get-CcqReleaseTargetVersion {
-    <#
-    .SYNOPSIS
-    从 Release tag 提取可与 ccq --version 比较的目标版本。
-    #>
-    param()
-
-    $tag = Get-CcqReleaseTag
-    if ($tag -notlike 'v*') {
-        return ""
-    }
-
-    $version = ConvertTo-CcqComparableVersion -Version $tag
-    if ($version -notmatch '^\d+\.\d+\.\d+') {
-        return ""
-    }
-
-    return $version
-}
-
-function Get-CcqReleaseDownloadBaseUrl {
-    <#
-    .SYNOPSIS
-    解析 ccq 可执行文件下载基址；tag 构建使用当前 Release，源码运行回退 latest。
-    #>
-    param()
-
-    $overrideUrl = [Environment]::GetEnvironmentVariable("CCQ_RELEASE_DOWNLOAD_BASE_URL", "Process")
-    if (-not [string]::IsNullOrWhiteSpace($overrideUrl)) {
-        return $overrideUrl.TrimEnd('/')
-    }
-
-    $tag = Get-CcqReleaseTag
-
-    # 哨兵判断改用"tag 是否以 v 开头"（与 build.ps1 的 GITHUB_REF_NAME -like 'v*' 约定一致）。
-    # 不可比对占位符字面量：build 用全文 Replace 注入 tag，会把此处的 "__CCQ_RELEASE_TAG__" 一并
-    # 替换成实际 tag，导致 `$tag -ne $tag` 恒为 false → 永远走 latest 兜底（已实测复现）。
-    if ($tag -like 'v*') {
-        return "https://github.com/MrNine-666/claude-code-quickstart/releases/download/$tag"
-    }
-
-    return "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download"
-}
-
-function Confirm-CcqExecutableDownload {
-    <#
-    .SYNOPSIS
-    在 install 末尾弹出确认，询问用户是否下载 ccq 可执行文件到 PATH 目录
-    .DESCRIPTION
-    遵守 TDR-6：用户拒绝则跳过；确认则按平台架构下载到 %USERPROFILE%\.local\bin\ccq.exe
-    并通过注册表 HKCU\Environment 加入用户 PATH（非 Profile）。
-    #>
-    param()
-
-    Write-UiPrimary "ccq 管理工具安装"
-    Write-Host ""
-    Write-UiInfo "ccq 是 Claude Code Quickstart 的管理控制台，提供以下功能："
-    Write-UiInfo "  • 供应商管理（Provider 配置）"
-    Write-UiInfo "  • MCP Server 管理"
-    Write-UiInfo "  • Skills 管理"
-    Write-UiInfo "  • 提示词配置"
-    Write-UiInfo "  • 配置文件管理"
-    Write-UiInfo "  • 工具管理（安装/更新 Claude Code、Codex、Pi、CodeGraph、OpenSpec 等）"
-    Write-UiInfo "  • 扩展管理（安装/更新/卸载 Pi package 扩展）"
-    Write-Host ""
-
-    # 1. 已安装时先比较当前版本与安装器 Release 版本。
-    $installed = Test-CcqExecutableInstalled
-    $targetVersion = Get-CcqReleaseTargetVersion
-    if ($installed.IsInstalled) {
-        Write-UiSuccess "✓ ccq 可执行文件已安装: $($installed.Path)"
-        Write-UiInfo "  当前版本: $($installed.Version)"
-
-        if ([string]::IsNullOrWhiteSpace($targetVersion)) {
-            Write-UiWarning "无法确定安装器目标版本，已保留现有 ccq"
-            Write-UiDim "  如需更新，请使用正式 Release 安装脚本或在 ccq 中执行更新"
-            return
-        }
-
-        Write-UiInfo "  目标版本: $targetVersion"
-        $currentVersion = ConvertTo-CcqComparableVersion -Version $installed.Version
-        if ([string]::Equals($currentVersion, $targetVersion, [System.StringComparison]::OrdinalIgnoreCase)) {
-            Write-UiSuccess "✓ 当前版本与目标版本一致，无需覆盖"
-            return
-        }
-
-        Write-UiWarning "检测到 ccq 版本不一致"
-        $overwriteDecision = Show-SingleSelectMenu `
-            -Title "是否覆盖现有文件？" `
-            -Options @("是，覆盖为 $targetVersion", "否，保留当前版本 $currentVersion") `
-            -DefaultIndex 1
-
-        if ($overwriteDecision -ne 0) {
-            Write-UiInfo "已保留当前 ccq 版本: $currentVersion"
-            return
-        }
-
-        Write-UiWarning "将使用目标版本 $targetVersion 覆盖当前版本 $currentVersion"
-    } else {
-        $decision = Show-SingleSelectMenu `
-            -Title "是否现在下载 ccq 可执行文件到 PATH 目录？" `
-            -Options @("是，下载 ccq", "否，稍后手动安装") `
-            -DefaultIndex 0
-
-        if ($decision -ne 0) {
-            Write-Host ""
-            Write-UiInfo "已跳过 ccq 可执行文件下载"
-            Write-UiDim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
-            Write-Host ""
-            Write-UiPrimary "后续安装 Claude Code / Codex / Pi："
-            Write-UiInfo "  稍后安装 ccq 后运行 ccq，进入「工具管理」按需安装 Claude Code、Codex 或 Pi"
-            Write-UiInfo "  API Key、provider/profile 可在「供应商」菜单中可视化配置；Pi 官方登录请在 Pi 中执行 /login"
-            return
-        }
-    }
-
-    Write-Host ""
-    Write-UiInfo "正在准备下载 ccq 可执行文件..."
-
-    # 2. 检测平台架构
-    $arch = Get-CcqArchitecture
-    Write-UiInfo "检测到平台架构: $arch"
-
-    # 3. 构建下载 URL
-    $baseUrl = Get-CcqReleaseDownloadBaseUrl
-    $exeName = "ccq-${arch}.exe"
-    $downloadUrl = "${baseUrl}/${exeName}"
-
-    Write-UiDim "  下载 URL: $downloadUrl"
-
-    # 4. 执行下载与安装
-    $installResult = Install-CcqExecutable -DownloadUrl $downloadUrl
-
-    if ($installResult.Success) {
-        Write-Host ""
-        Write-UiSuccess " ccq 可执行文件安装成功！"
-        Write-Host ""
-        Write-UiPrimary "下一步："
-        Write-UiInfo "  1. 打开 Windows Terminal，新建一个 PowerShell 7 标签页"
-        Write-UiDim "     （Windows Terminal 中点击标签栏的 ∨ 下拉菜单选择 PowerShell）"
-        Write-UiInfo "  2. 输入 ccq 进入管理控制台"
-        Write-UiInfo "  3. 进入「工具管理」安装 Claude Code、Codex 或 Pi，再到「供应商」配置 API Key、provider/profile"
-        Write-Host ""
-        Write-UiDim "（当前会话 PATH 尚未刷新，必须开启新终端 ccq 命令才生效）"
-    } else {
-        Write-Host ""
-        Write-UiWarning "ccq 可执行文件下载失败"
-        Write-UiDim "  错误: $($installResult.ErrorMessage)"
-        Write-UiInfo "您可以稍后手动下载："
-        Write-UiInfo "  1. 访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
-        Write-UiInfo "  2. 下载对应平台的可执行文件（$exeName）"
-        Write-UiInfo "  3. 放置到任意 PATH 目录"
-        Write-Host ""
-        Write-UiPrimary "后续安装 Claude Code / Codex / Pi："
-        Write-UiInfo "  等待 ccq 安装完成后运行 ccq，进入「工具管理」按需安装 Claude Code、Codex 或 Pi"
-        Write-UiInfo "  API Key、provider/profile 可在「供应商」菜单中可视化配置；Pi 官方登录请在 Pi 中执行 /login"
-    }
 }
 
 # ─── 步骤列表输出 ────────────────────────────────────────────────────────────
@@ -922,9 +760,11 @@ function Main {
             Show-FinalSummary -State $state -Results $results
         }
 
-        # ── ccq 可执行文件下载确认（TDR-6）
+        # ── ccq 可执行文件下载确认（TDR-6；install 模式保留首次下载确认）
+        # 完整 install 沿用既有语义：ccq 下载失败只告警，不把基础环境安装判为失败。
+        # 返回值供专用入口（download-ccq.ps1）决定退出码；这里显式丢弃以免打印 True/False。
         Write-Host ""
-        Confirm-CcqExecutableDownload
+        $null = Confirm-CcqExecutableDownload -Mode Install
 
     } catch {
         Write-UiDanger "CCQ 运行中发生严重错误: $($_.Exception.Message)"

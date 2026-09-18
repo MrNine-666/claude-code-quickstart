@@ -8,16 +8,18 @@ Claude Code Quickstart 的跨平台安装器源码目录。这里面向维护者
 
 ```text
 installer/
-├── build.ps1              # Windows / CI Windows 构建入口：生成 install.ps1 并拷贝 Windows ccq 产物
-├── build.sh               # macOS / Unix 构建入口：生成 install.sh 并拷贝 macOS ccq 产物
+├── build.ps1              # Windows / CI Windows 构建入口：生成 install.ps1 / download-ccq.ps1 并拷贝 Windows ccq 产物
+├── build.sh               # macOS / Unix 构建入口：生成 install.sh / download-ccq.zsh 并拷贝 macOS ccq 产物
 ├── contracts/             # install 链契约：steps / build / cleanup-policy + Test-Contracts.ps1
 ├── windows/
-│   ├── Install.ps1        # Windows PS 5.1+ 安装入口
-│   ├── core/              # Windows PowerShell runtime core
+│   ├── Install.ps1        # Windows PS 5.1+ 完整安装入口
+│   ├── Download-Ccq.ps1   # Windows 专用 CCQ 下载入口（不装基础环境）
+│   ├── core/              # Windows PowerShell runtime core（Ccq.ps1 为 CCQ 行为唯一实现）
 │   └── steps/             # Windows 安装步骤模块
 └── macos/
-    ├── Install.zsh        # macOS bash→zsh 安装入口
-    ├── core/              # macOS zsh runtime core
+    ├── Install.zsh        # macOS bash→zsh 完整安装入口
+    ├── Download-Ccq.zsh   # macOS 专用 CCQ 下载入口（不装基础环境）
+    ├── core/              # macOS zsh runtime core（Ccq.zsh 为 CCQ 实现，Load.zsh 为加载顺序唯一声明）
     └── steps/             # macOS 安装步骤模块
 ```
 
@@ -30,8 +32,11 @@ installer/
 ### Windows
 
 ```powershell
-# 运行源码安装入口（PS 5.1+ 兼容）
+# Windows 源码安装入口（PS 5.1+ 兼容）
 pwsh -File installer/windows/Install.ps1
+
+# 只安装 ccq 的专用入口（不装 Node.js / Git）
+pwsh -File installer/windows/Download-Ccq.ps1
 
 # 查看 Basic 步骤列表
 pwsh -File installer/windows/Install.ps1 -ListSteps
@@ -43,11 +48,15 @@ pwsh -File installer/windows/Install.ps1 -ListSteps
 # 运行源码安装入口
 zsh installer/macos/Install.zsh
 
+# 只安装 ccq 的专用入口（不装 Node.js / Git）
+zsh installer/macos/Download-Ccq.zsh
+
 # 查看 Basic 步骤列表
 zsh installer/macos/Install.zsh --list-steps
 
 # zsh 语法检查
 zsh -n installer/macos/Install.zsh
+zsh -n installer/macos/Download-Ccq.zsh
 ```
 
 ---
@@ -65,10 +74,12 @@ sh installer/build.sh
 sh installer/build.sh --check
 ```
 
-默认输出到仓库根目录 `dist/`。Release 上传 10 个 artifact：
+默认输出到仓库根目录 `dist/`。Release 上传 12 个 artifact：
 
-- `install.ps1`
-- `install.sh`
+- `install.ps1`（Windows 完整安装入口，ASCII trampoline）
+- `download-ccq.ps1`（Windows 专用 CCQ 下载入口，ASCII trampoline）
+- `install.sh`（macOS 完整安装入口，bash→zsh wrapper）
+- `download-ccq.zsh`（macOS 专用 CCQ 下载入口，bash→zsh wrapper，不嵌 steps 契约）
 - `ccq-windows-x64.exe`
 - `ccq-windows-x64.exe.gz`
 - `ccq-windows-arm64.exe`
@@ -77,6 +88,8 @@ sh installer/build.sh --check
 - `ccq-macos-x64.gz`
 - `ccq-macos-arm64`
 - `ccq-macos-arm64.gz`
+
+artifact 精确集合由 `contracts/build.json` 的 `BuildEntrypoints.{Windows,MacOS}.Artifacts` 与 `ReleaseArtifacts` 唯一决定；可执行文件与 gzip 名称只能从 `UpdateTransports.GzipAssets` 派生（gzip = raw + `.gz`）。脚本类 artifact 由 `Role`（`Install` / `CcqDownload`）判定。
 
 ---
 

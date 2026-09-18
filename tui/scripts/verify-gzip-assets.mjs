@@ -12,7 +12,7 @@ try {
 	// ── raw -> gzip 映射必须与 installer 契约同源，且覆盖四个平台 ────────────────
 	const contract = JSON.parse(readFileSync(new URL('../../installer/contracts/build.json', import.meta.url), 'utf8'));
 	const contractMappings = contract.UpdateTransports.GzipAssets;
-	assert.equal(contractMappings.length, 4, '契约必须声明四个平台的 gzip 传输资产');
+	assert.equal(contractMappings.length, RAW_TO_GZIP.length, '契约 gzip 资产数量必须与打包脚本映射一致');
 	assert.deepEqual(
 		RAW_TO_GZIP.map(item => [item.raw, item.gzip]),
 		contractMappings.map(item => [item.Raw, item.Gzip]),
@@ -23,7 +23,15 @@ try {
 		assert.ok(contract.BuildEntrypoints.ReleaseArtifacts.includes(raw), `Release 必须仍发布 raw: ${raw}`);
 		assert.ok(contract.BuildEntrypoints.ReleaseArtifacts.includes(gzip), `Release 必须发布 gzip: ${gzip}`);
 	}
-	assert.equal(contract.BuildEntrypoints.ReleaseArtifacts.length, 10, 'Release artifact 必须精确为 10 个');
+	const platformArtifacts = [
+		...contract.BuildEntrypoints.Windows.Artifacts,
+		...contract.BuildEntrypoints.MacOS.Artifacts
+	];
+	assert.deepEqual(
+		[...contract.BuildEntrypoints.ReleaseArtifacts].sort(),
+		[...new Set(platformArtifacts)].sort(),
+		'Release 集合必须等于两个平台 Artifacts 的并集，不得维护第二份名单或数量魔数'
+	);
 
 	// ── 确定性：同一输入重复压缩字节一致（mtime/OS 头被固定） ────────────────────
 	const payload = Buffer.alloc(64 * 1024);
@@ -63,7 +71,7 @@ try {
 		rmSync(emptyDir, {recursive: true, force: true});
 	}
 
-	console.log('[PASS] gzip 更新资产：确定性 + roundtrip + 契约同源 10 artifact');
+	console.log('[PASS] gzip 更新资产：确定性 + roundtrip + 契约同源 artifact 集合');
 } finally {
 	rmSync(workDir, {recursive: true, force: true});
 }
