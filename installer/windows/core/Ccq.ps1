@@ -1,4 +1,4 @@
-# Ccq.ps1 - ccq 可执行文件管理（Windows 平台唯一实现）
+﻿# Ccq.ps1 - ccq 可执行文件管理（Windows 平台唯一实现）
 # 功能: 架构/路径检测、版本规范化与比较、Release tag/URL 解析、下载（gzip-first/raw fallback）、
 #       运行中映像替换与回滚、replacement backup cleanup、用户 PATH 注册表写入、下载 handoff 确认。
 # 说明: 完整 install 与 download-ccq.ps1 专用入口都 dot-source 本文件消费同一实现；
