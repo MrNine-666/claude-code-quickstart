@@ -32,6 +32,7 @@ Windows 与 macOS 双平台的 CLI Agent 环境安装器与管理控制台，支
 | Claude Code / Codex / Pi 各有一套配置目录与格式，换个 Agent 就要重新查文档 | 一个 `ccq` 管三个 Agent，顶部 Header 切换当前上下文，三套配置互不影响 |
 | 手改 `settings.json` / `config.toml` 换供应商，容易连带改坏语言、权限、hooks | 供应商独立 Profile 存放，切换或设默认只更新供应商相关字段，其余配置原样不动 |
 | 给 Pi 加自定义 Provider 时，模型能力（上下文窗口、输出上限、价格、思考等级）要逐项手填 | 从上游发现模型，并按 Pi 官方目录自动补齐能力字段 |
+| 中转或网关按客户端身份（User-Agent 等）校验，Pi 直连请求被拒 | Pi 供应商表单内置 Claude Code / Codex CLI / Gemini CLI 请求头预设，选一下即可伪装成对应客户端 |
 | MCP 凭据在多处重复录入，Skills 装在哪、扩展有没有更新全靠记忆 | 凭据录入一次持久保存；MCP / Skills / 扩展各有独立视图展示状态并一键维护 |
 | 卸载或覆盖操作怕残留、怕误删 | 关键操作带确认与快照保护，卸载不触碰用户数据与已有配置 |
 
@@ -43,6 +44,7 @@ Windows 与 macOS 双平台的 CLI Agent 环境安装器与管理控制台，支
 - **三个 Agent，一个控制台**：Claude Code / Codex / Pi 的工具、供应商、配置、MCP、Skills 都在 `ccq` 里管理，顶部 Header 切换 Agent 上下文，三套配置互不干扰
 - **供应商开箱即用**：内置智谱 GLM / DeepSeek / Kimi Coding Plan / MiniMax 等模板，填 Key 就能跑；支持官方登录（`codex login`）、模型发现与 OAuth 状态展示
 - **Pi 模型能力自动补齐**：从上游发现模型后，按 Pi 官方目录补上上下文窗口、输出上限、输入类型、价格与思考等级等能力字段，省去逐项查文档
+- **Pi 客户端身份预设**：中转按客户端身份校验时，不必手抄 User-Agent；在供应商表单选「Claude Code / Codex CLI / Gemini CLI」预设、确认覆盖即可，预设按当前 API 协议过滤，不会给出不相干的选项
 - **配置隔离，切换零副作用**：每个供应商独立存放在专属 Profile 文件，切换或设默认只更新供应商相关字段（Token / Base URL / 模型键），语言、权限、hooks、statusLine 等个人配置原样保留
 - **推荐配置一键导入**：内置推荐配置可一键补全，只补缺失项、不覆盖你已有的设置
 - **MCP 一次录入，多端复用**：Context7 / DeepWiki / Playwright / Exa 等模板，凭据录入一次持久保存，可按 Claude Code / Codex / Pi 分别启停
@@ -305,7 +307,9 @@ Pi 的默认 Provider 在 `ccq` 的「配置文件」页设置 `settings.json.de
 - Codex 一键模板：智谱 GLM、DeepSeek、MiniMax 开箱可用，模型字段留空待你填写或由模型发现带出
 - Pi Header 下：按 provider 级别管理 `~/.pi/agent/auth.json`、`models.json` 与 `settings.json`，支持 API Key 自定义 Provider、OAuth 状态展示与模型维护；登录 / 注销由 Pi 原生 `/login` / `/logout` 负责
 - **模型发现**：填好 Base URL 与 API Key 后按 `Ctrl+D` 拉取上游模型列表，支持 `anthropic-messages` / `openai-completions` / `openai-responses` / `google-generative-ai` 四类协议；无法列出模型的端点会提示手工填写模型 ID
-- **能力自动补全**：在模型列表按 `Space` 即可按 Pi 官方目录（`https://pi.dev/api/models`）匹配来源，自动补齐上下文窗口、输出上限、输入类型、价格与思考等级；同名多来源时先看摘要或最终 JSON，按 `Enter` 确认来源，`Space` 勾选 / 取消勾选（取消后再次按 `Space` 可换来源）、`Ctrl+S` 保存
+- **能力自动补全**：在模型列表按 `Space` 即可按 Pi 官方目录（`https://pi.dev/api/models`）匹配来源，自动补齐上下文窗口、输出上限、输入类型、价格与思考等级；同名多来源时摘要里能看到上下文 / 输出 / 输入 / 价格与思考档位（或最终 JSON），按 `Enter` 确认来源，`Space` 勾选 / 取消勾选（取消后再次按 `Space` 可换来源）、`Ctrl+S` 保存
+- **客户端身份（请求头）预设**：部分中转按客户端身份（User-Agent 等）校验时，在「请求头」编辑区上方的预设动作行左右键选 Claude Code / Codex CLI / Gemini CLI，`Enter` 应用（覆盖前弹窗确认）；预设只在文本层面填充，不落盘、不记录选中状态，也不会被后续模型发现重置
+- **请求头与认证头可手工编辑**：请求头是 JSON 对象，值为 Pi 配置语法（`$ENV` 插值、`!command` 执行、`$$` 表示字面 `$`），可用 `$VAR` 引用 `auth.json` 里的凭据而不把密钥写进配置文件；`anthropic-messages` 协议还可切换认证头形态（Pi 默认 `x-api-key`，或追加 `Authorization: Bearer`）
 - **补全不覆盖你的配置**：上游与官方目录只用于填充能力字段，你手工配置的值与 Pi 支持的扩展字段都会保留，协议（API）以表单选择为准；目录不可达时按已有信息保存并提示
 - 凭据与模型定义分开存放：API Key 写入 `auth.json`，模型能力写入 `models.json`；通过 Pi `/login` 建立的账号在列表中只读展示
 - 供应商卡片一眼看懂：API Key 类展示 `baseUrl · 掩码凭据 · 自定义/官方`，OAuth 类展示授权登录状态

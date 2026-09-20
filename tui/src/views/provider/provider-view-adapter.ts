@@ -64,9 +64,7 @@ function providerHomeSummary(
 	const credential = `${profile.baseUrl || '未配置 Base URL'} · ${profile.maskedApiKey}`;
 	if (context.isPi) {
 		// 卡片只展示凭据事实（`baseUrl · 掩码凭据 · 类型` / 登录状态），不拼请求头状态。
-		return profile.authKind === 'oauth'
-			? loginSummary(profile.authStatus)
-			: `${credential} · ${piCredentialTypeLabel(profile.source)}`;
+		return profile.authKind === 'oauth' ? loginSummary(profile.authStatus) : `${credential} · ${piCredentialTypeLabel(profile.source)}`;
 	}
 	if (context.isCodex && context.official) {
 		return isCodexOfficialLoggedIn() ? '已授权登录' : '未授权登录';

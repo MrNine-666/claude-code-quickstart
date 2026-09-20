@@ -75,9 +75,11 @@ export function piConfigRecommendation(): string {
 	const overview = (config.Descriptions?.Overview ?? []).flatMap(commentLines).map(line => `  // ${line}`);
 
 	if (members.length === 0) {
-		return overview.length > 0 ? `{
+		return overview.length > 0
+			? `{
 ${overview.join('\n')}
-}` : '{}';
+}`
+			: '{}';
 	}
 
 	const body = overview.length > 0 ? [...overview, members.join(',\n')].join('\n') : members.join(',\n');
@@ -87,14 +89,18 @@ ${body}
 }
 
 function commentLines(comment: string): string[] {
-	return String(comment).split(/\r?\n/u).map(line => line.trim());
+	return String(comment)
+		.split(/\r?\n/u)
+		.map(line => line.trim());
 }
 
 function annotateMember(key: string, value: unknown, description: string | undefined, indent: string): string {
 	const valueJson = JSON.stringify(value, null, 2);
 	const valueIndented = valueJson.includes('\n') ? valueJson.replace(/\n/g, `\n${indent}`) : valueJson;
 	const comments = description
-		? commentLines(description).map(line => `${indent}// ${line}`).join('\n') + '\n'
+		? commentLines(description)
+				.map(line => `${indent}// ${line}`)
+				.join('\n') + '\n'
 		: '';
 	return `${comments}${indent}"${key}": ${valueIndented}`;
 }

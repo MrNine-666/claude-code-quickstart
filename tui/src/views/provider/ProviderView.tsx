@@ -70,8 +70,7 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 	const currentIsOfficial = adapter.isOfficial(current);
 	const currentIsReadOnly = currentIsOfficial || current?.canEdit === false;
 	// Pi 内置 / `/login` Provider 可编辑传输层覆盖（仅 headers / authHeader），与凭据侧 canEdit 正交。
-	const currentEditBlocked =
-		currentIsOfficial || (adapter.isPi ? current?.canEditTransport !== true : current?.canEdit === false);
+	const currentEditBlocked = currentIsOfficial || (adapter.isPi ? current?.canEditTransport !== true : current?.canEdit === false);
 
 	useEffect(() => {
 		setDisplay(adapter.loadDisplay());

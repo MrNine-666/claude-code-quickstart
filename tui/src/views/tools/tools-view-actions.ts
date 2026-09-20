@@ -465,9 +465,7 @@ export function updateAll(
 			const failureDetails = [...failedIds].map(id => `${id}: ${updateFailureMessage(failedItems, id, '未返回失败详情')}`);
 			for (const detail of failureDetails) console.error('[tools] 批量更新失败', detail);
 			const summary =
-				failedIds.size === 0
-					? `已更新 ${targets.length} 个组件`
-					: `${updatedCount}/${targets.length} 成功，部分更新失败`;
+				failedIds.size === 0 ? `已更新 ${targets.length} 个组件` : `${updatedCount}/${targets.length} 成功，部分更新失败`;
 			if (failedIds.size === 0) {
 				toast.success(summary);
 				dispatch({type: 'batch-done', components});

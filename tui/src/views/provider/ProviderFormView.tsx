@@ -1138,11 +1138,7 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 			    且供应商字段多、textarea 若参与 flex 分配会被挤没（用户约束①），故 textarea
 			    用静态常量高度 TEXTAREA_HEIGHT（非动态算高，不违反「禁止 height 算式」核心诉求）；
 			    滚动内容内 textarea 必须有确定高度，否则会塌成 0 高。 */}
-			<box
-				height={TEXTAREA_HEIGHT}
-				borderStyle="rounded"
-				borderColor={textFocused ? borderColors.active : borderColors.inactive}
-			>
+			<box height={TEXTAREA_HEIGHT} borderStyle="rounded" borderColor={textFocused ? borderColors.active : borderColors.inactive}>
 				<textarea
 					ref={textareaRef}
 					initialValue={text}
@@ -1269,12 +1265,7 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 				</box>
 			) : null}
 
-			<Modal
-				active={pendingPreset !== null}
-				title="覆盖请求头？"
-				hint="Enter 确认 · Esc 取消"
-				tone="warning"
-			>
+			<Modal active={pendingPreset !== null} title="覆盖请求头？" hint="Enter 确认 · Esc 取消" tone="warning">
 				<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 					{`即将用「${pendingPresetLabel}」预设覆盖当前请求头。`}
 				</text>
