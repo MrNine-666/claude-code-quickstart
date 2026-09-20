@@ -17,6 +17,11 @@ import {removeSkillTarget} from '../src/core/skills-storage.ts';
 //   4) 所有权歧义（同一 (root,name) 被多个 Item 声明）拒绝定向删除。
 // 目录符号链接在 win32 普通用户常被拒（EPERM），此时显式 SKIP 相关用例，不冒充通过；
 // symlink 判定逻辑待非 win32 或开发者模式环境由官方 CLI smoke 补验证。
+//
+// 载体迁移（P3b）：纯词法判定分支（C-3 路径穿越 / C-4 不安全 Skill 名称，共 2 条静态
+// 断言）已迁入 `tests/core/skills-deletion-safety.test.ts`（`verifySkillDeletionPath` 在
+// 任何 lstat 之前返回）。C-1/C-2/C-5..C-12 的 directory / symlink / broken symlink /
+// 逃逸 / 所有权歧义判定依赖真实 fs 语义，全部保留在本脚本。
 
 // verifySkillDeletionTarget 的 symlink 分支对 supportedRoots 与 target 都做 realpath 规范化，
 // 故 win32 8.3 短名、macOS /tmp→/private/tmp、挂载点符号链等 realpath/词法不一致场景下，
@@ -72,20 +77,6 @@ try {
 		assert.equal(verdict.ok, false);
 		assert.match(verdict.reason, /不是目录/);
 		console.log('[PASS] C-2 非目录文件：拒绝删除');
-	}
-
-	// ── C-3 路径穿越：词法层拒绝 ──────────────────────────────────────────────
-	{
-		const verdict = await verifySkillDeletionTarget(join(home, '.claude', 'skills', '..', '..', 'etc'), '..', roots);
-		assert.equal(verdict.ok, false);
-		console.log('[PASS] C-3 路径穿越：词法层拒绝');
-	}
-
-	// ── C-4 不安全 Skill 名称：拒绝 ───────────────────────────────────────────
-	{
-		const verdict = await verifySkillDeletionTarget(join(home, '.claude', 'skills', 'a'), 'a/b', roots);
-		assert.equal(verdict.ok, false);
-		console.log('[PASS] C-4 不安全 Skill 名称：拒绝');
 	}
 
 	// ── C-5 不存在路径：拒绝并带诊断 ──────────────────────────────────────────

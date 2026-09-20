@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
-import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {
 	gitNexusSetupCommands,
-	gitNexusIntegrationCleanupCommands,
-	gitNexusFailureDiagnostic,
-	GITNEXUS_INSTALL_PACKAGE_SPEC
+	gitNexusIntegrationCleanupCommands
 } from '../src/core/tools-lifecycle.ts';
 
 // GitNexus 领域门禁（implement.md §1/§3/§4）：断言真实 resolver + install/update/uninstall 命令顺序与失败短路。
@@ -17,37 +15,12 @@ import {
 // - npm install 失败不 setup；setup 失败不报告完整成功；卸载第一步失败不 npm uninstall。
 
 // ── §1 纯 resolver 命令事实 ───────────────────────────────────────────────────
+// [P4b 迁走] setup/cleanup 精确 argv、resolver 层无 npm、GITNEXUS_INSTALL_PACKAGE_SPEC、
+// registry 包名 → tests/core/tools-lifecycle-gitnexus.test.ts
 const setup = gitNexusSetupCommands();
-assert.equal(setup.length, 1, 'setup 只解析出一条命令');
-assert.deepEqual(
-	setup[0],
-	{cmd: 'gitnexus', args: ['setup', '--coding-agent', 'claude,codex']},
-	'setup = gitnexus setup --coding-agent claude,codex（一次接入两侧）'
-);
-
 const cleanup = gitNexusIntegrationCleanupCommands();
-assert.equal(cleanup.length, 1, 'integration cleanup 只解析出一条命令');
-assert.deepEqual(
-	cleanup[0],
-	{cmd: 'gitnexus', args: ['uninstall', '--force']},
-	'integration cleanup = gitnexus uninstall --force（上游无 target 筛选）'
-);
 
-// resolver 层不得自带 npm 生命周期：包卸载由 registry 驱动的通用 helper 负责。
-assert.equal(
-	[...setup, ...cleanup].some(command => command.cmd === 'npm'),
-	false,
-	'resolver 层不得内联 npm 命令（包名事实仅存于 registry）'
-);
-
-// 首装 dist-tag 与 registry 包名分离。
-const {TOOL_DEFINITIONS} = await import('../src/core/tools-install.ts');
-const gitnexusDefinition = TOOL_DEFINITIONS.find(definition => definition.id === 'GitNexus');
-assert.ok(gitnexusDefinition, 'GitNexus 在 registry 中');
-assert.equal(GITNEXUS_INSTALL_PACKAGE_SPEC, 'gitnexus@latest', '首装 spec 带 latest dist-tag');
-assert.equal(gitnexusDefinition.npmPackage, 'gitnexus', 'registry 包名不带 dist-tag（不污染 npm outdated/view 映射）');
-
-// ── 反例：生命周期 argv 绝不越界到仓库索引域 ──────────────────────────────────
+// ── 反例：生命周期 argv 绝不越界到仓库索引域（helper 被保留段复用，随保留段留在 verify）──
 const FORBIDDEN_SUBCOMMANDS = ['analyze', 'clean', 'serve', 'wiki', 'index'];
 function assertNoIndexScope(calls, label) {
 	for (const call of calls) {
@@ -65,30 +38,8 @@ function assertNoIndexScope(calls, label) {
 assertNoIndexScope([...setup, ...cleanup], 'resolver');
 console.log('[PASS] GitNexus resolver：setup/cleanup argv 固定，包 spec 与 registry 包名分离，无仓库索引命令');
 
-// ── setup 失败诊断（R10）：阶段 + exit code + 上游原文，不吞 engine/native 事实 ──
-{
-	const engine = gitNexusFailureDiagnostic('GitNexus 编辑器接入失败', 2, 'Unsupported engine: required node ^22.18.0 || >=24.11.0');
-	assert.match(engine, /GitNexus 编辑器接入失败 \(exit 2\)/, '保留阶段与 exit code');
-	assert.match(engine, /Unsupported engine/, '保留上游 Node.js engine 诊断');
-	assert.match(engine, /\^22\.18\.0 \|\| >=24\.11\.0/, '保留具体 engine 区间，便于用户处置');
-
-	const native = gitNexusFailureDiagnostic('GitNexus 编辑器接入刷新失败', 3, '', 'libssl.so.3: cannot open shared object file');
-	assert.match(native, /GitNexus 编辑器接入刷新失败 \(exit 3\)/, 'stderr 为空时回落 stdout 但仍带阶段');
-	assert.match(native, /libssl\.so\.3/, '保留原生依赖诊断');
-
-	assert.equal(
-		gitNexusFailureDiagnostic('GitNexus 编辑器接入失败', 1, '   \n\t  '),
-		'GitNexus 编辑器接入失败 (exit 1)',
-		'空白诊断不产生悬空冒号'
-	);
-
-	const long = gitNexusFailureDiagnostic('GitNexus 编辑器接入失败', 1, `${'x'.repeat(2000)}FINAL_CAUSE`);
-	assert.ok(long.length < 500, '超长诊断截断，避免淹没进度日志');
-	assert.match(long, /FINAL_CAUSE$/, '截断保留最有价值的尾部原因');
-
-	assert.equal(/\n/.test(gitNexusFailureDiagnostic('stage', 1, 'a\nb\nc')), false, '诊断折叠为单行，不破坏 item 记录格式');
-}
-console.log('[PASS] GitNexus setup 失败诊断：阶段 + exit code + 上游原文（engine/native 不被吞）');
+// [P4b 迁走] setup 失败诊断（阶段 + exit code + 上游 engine/native 原文）
+// → tests/core/tools-lifecycle-gitnexus.test.ts
 
 // ── §3 安装：npm install(gitnexus@latest) → setup → gitnexus -V ───────────────
 const {installTool} = await import('../src/core/tools-install.ts');
@@ -359,22 +310,11 @@ console.log('[PASS] GitNexus CLI 卸载失败 → 报告接入已清理的部分
 }
 console.log('[PASS] GitNexus 卸载 snapshot-before-write');
 
-// ── 卸载影响提示：全编辑器风险 + 仓库索引保留边界（R6/AC6）────────────────────
-const {uninstallImpactNotice} = await import('../src/core/tools-manage.ts');
-const notice = uninstallImpactNotice('GitNexus');
-assert.match(notice, /所有检测到的编辑器接入/, '提示明确会清理所有检测到的编辑器接入');
-assert.match(notice, /Cursor/, '提示点名非 ccq 安装的编辑器接入也会被清理');
-assert.match(notice, /\.gitnexus\/ 索引会保留/, '提示明确仓库 .gitnexus/ 索引保留');
-console.log('[PASS] GitNexus 卸载影响提示：全编辑器清理 + 仓库索引保留');
+// [P4b 迁走] 卸载影响提示（全编辑器清理 + 仓库索引保留）
+// → tests/core/tools-lifecycle-gitnexus.test.ts
 
-// ── CLI 与 TUI 共用同一 core 卸载入口（AC5）──────────────────────────────────
-const cliToolsSource = readFileSync(new URL('../src/cli/commands/tools.ts', import.meta.url), 'utf8');
-assert.match(cliToolsSource, /uninstallComponent[\s\S]{0,200}from '\.\.\/\.\.\/core\/tools-manage\.js'/, 'CLI 卸载走 core/tools-manage 的 uninstallComponent');
-assert.doesNotMatch(cliToolsSource, /gitnexus/i, 'CLI 层不得出现 GitNexus 特判（命令序列由 core 拥有）');
-const toolsServicesSource = readFileSync(new URL('../src/views/tools/tools-view-services.ts', import.meta.url), 'utf8');
-assert.match(toolsServicesSource, /uninstallComponent\(id, onProgress/, 'TUI service 同样调用 core uninstallComponent');
-assert.doesNotMatch(toolsServicesSource, /gitnexus/i, 'TUI service 层不得出现 GitNexus 特判');
-console.log('[PASS] GitNexus 卸载 CLI/TUI 共用 core 入口，无层外特判');
+// CLI 与 TUI 共用同一 core 卸载入口（AC5）的静态断言已迁至
+// `verify-view-architecture.mjs` 的「P1-G4」段（属通用分层规则，与该 gate 同类归并）。
 
 if (originalCcqHome === undefined) {
 	delete process.env.CCQ_HOME;

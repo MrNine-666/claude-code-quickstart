@@ -6,30 +6,18 @@ import {join} from 'node:path';
 // Phase 6.10 全局规则视图门禁：
 // - PromptsView 必须按 agentContext 切换 CLAUDE.md / AGENTS.md。
 // - 全局规则只提供查看、编辑与保存，不加载或导入推荐规则。
+//
+// [P5d 迁走] `getRulesPath` 三目标路径隔离断言（1 条静态 / 3 运行期）→
+//   tests/core/config-rules-reuse.test.ts（cc/cx 已由该文件覆盖，pi 为新增缺口）。
+// R9：adapter 描述符/路由/无推荐功能与 prompts 快捷键 registry 断言已由
+//   tests/core/prompts-document-adapter.test.ts（P1-G2）覆盖；本脚本保留真实文件读写段。
 
-const promptViewSource = ['../src/views/prompts/PromptsView.tsx', '../src/views/prompts/prompts-document-adapter.ts']
-	.map(file => readFileSync(new URL(file, import.meta.url), 'utf8'))
-	.join('\n');
-const promptsCoreSource = readFileSync(new URL('../src/core/prompts.ts', import.meta.url), 'utf8');
-const keybindingsSource = readFileSync(new URL('../src/config/keybindings.ts', import.meta.url), 'utf8');
-const shortcutsSource = readFileSync(new URL('../src/state/shortcuts.ts', import.meta.url), 'utf8');
-
-assert.match(promptViewSource, /createPromptsDocumentAdapter\(props\.agentContext\)/, 'PromptsView 必须从 agentContext 派生 adapter');
-assert.match(promptViewSource, /const rulesPath = getRulesPath\(target\)/, '全局规则 adapter 必须从 service 派生目标路径');
-assert.match(promptViewSource, /getRulesPath\(target\)/, '规则目标路径必须按 target 切换');
-assert.match(promptViewSource, /openRulesFile\(target\)/, '全局规则页必须把打开文件动作路由到 Prompts service');
-assert.match(promptViewSource, /openExternal:/, '全局规则 adapter 必须提供外部打开动作');
-assert.match(promptViewSource, /readCurrentRules\(target\)/, '规则读取必须按 target 切换');
-assert.match(promptViewSource, /saveRules\(content, target\)/, '规则保存必须按 target 切换');
-assert.match(promptViewSource, /title: '全局规则管理'/, 'Header 标题必须统一为「全局规则管理」');
-assert.match(promptViewSource, /subtitle: rulesPath/, '全局规则 Header 说明必须直接使用真实文件路径');
-assert.doesNotMatch(promptViewSource, /查看与编辑/, '全局规则 Header 说明不得包含「查看与编辑」');
-assert.doesNotMatch(promptViewSource, /当前规则/, '全局规则编辑器不得显示「当前规则」标题');
-assert.doesNotMatch(promptViewSource, /recommendation|推荐/i, '全局规则 view 不得包含推荐规则功能');
-assert.doesNotMatch(promptsCoreSource, /recommendation|推荐|loadTextContract/i, '规则 core 不得加载推荐模板');
-assert.doesNotMatch(keybindingsSource, /prompts:(?:toggle-panel|import|focus-cycle)/, '全局规则不得注册推荐边栏/导入/焦点切换命令');
-assert.doesNotMatch(shortcutsSource, /PROMPTS_COMMANDS\.(?:TOGGLE_PANEL|IMPORT|FOCUS_CYCLE)/, '全局规则 footer 不得暴露推荐命令');
-console.log('[PASS] 6.10 PromptsView agentContext + 无推荐规则功能源码不变量');
+// P1-G2 静态断言治理：原 15 条源码正则已分类处置——
+//   A 类（13 条 adapter 描述符/路由/无推荐功能、prompts 快捷键 registry）迁到
+//   tests/core/prompts-document-adapter.test.ts；B 类（2 条 agentContext 必经路径、
+//   “规则 core 不得加载推荐模板”）并入 scripts/verify-view-architecture.mjs（P1-G2 段）；C = 0。
+// 详见 .trellis/tasks/09-18-p1-static-assertion-governance/research-reconciliation-G2.md。
+console.log('[PASS] 6.10 PromptsView agentContext + 无推荐规则功能（静态合同见 verify-view-architecture.mjs）');
 
 const home = mkdtempSync(join(tmpdir(), 'ccq-prompts-view-'));
 process.env.CCQ_HOME = home;
@@ -37,33 +25,19 @@ process.env.CODEX_HOME = join(home, '.codex');
 try {
 	mkdirSync(join(home, '.claude'), {recursive: true});
 	mkdirSync(process.env.CODEX_HOME, {recursive: true});
-	const {getRulesPath, readCurrentRules, saveRules} = await import('../src/services/prompts-service.ts');
-	const {createPromptsDocumentAdapter} = await import('../src/views/prompts/prompts-document-adapter.ts');
-	const {viewShortcuts} = await import('../src/state/shortcuts.ts');
+	const {readCurrentRules, saveRules} = await import('../src/services/prompts-service.ts');
 
 	const expectedPaths = {
 		cc: join(home, '.claude', 'CLAUDE.md'),
 		cx: join(process.env.CODEX_HOME, 'AGENTS.md'),
 		pi: join(home, '.pi', 'agent', 'AGENTS.md')
 	};
+	// [P5e 去重] adapter 投影（7 条：subtitle / 无「查看与编辑」/ editorTitle / recommendationContent /
+	// importInto / openExternal / openSuccessMessage）与 prompts 编辑态 footer（1 条）已由 P1-G2 载体独占：
+	// tests/core/prompts-document-adapter.test.ts（逐条对 TARGETS 断言同导出同性质）。
 	for (const target of ['cc', 'cx', 'pi']) {
-		assert.equal(getRulesPath(target), expectedPaths[target], `${target} 全局规则目标路径错误`);
 		assert.equal(readCurrentRules(target), null, `${target} 规则缺失时返回 null`);
-		const adapter = createPromptsDocumentAdapter(target);
-		assert.equal(adapter.subtitle, expectedPaths[target], `${target} Header 说明必须展示真实规则文件路径`);
-		assert.equal(adapter.subtitle.includes('查看与编辑'), false, `${target} Header 说明不得包含「查看与编辑」`);
-		assert.equal(adapter.editorTitle, '', `${target} 不应提供「当前规则」编辑器标题`);
-		assert.equal(adapter.recommendationContent, undefined, `${target} 不应提供推荐规则内容`);
-		assert.equal(adapter.importInto, undefined, `${target} 不应提供推荐规则导入`);
-		assert.equal(typeof adapter.openExternal, 'function', `${target} 必须提供外部打开动作`);
-		assert.ok(adapter.openSuccessMessage?.includes(expectedPaths[target]), `${target} 外部打开提示必须指向目标文件`);
 	}
-
-	assert.deepEqual(
-		viewShortcuts('prompts', 'edit').map(shortcut => shortcut.label),
-		['保存', '取消'],
-		'全局规则编辑态 footer 只应提供保存和取消'
-	);
 
 	const claudeSave = saveRules('claude rules', 'cc');
 	assert.equal(claudeSave.ok, true, 'Claude rules 保存应成功');
@@ -81,7 +55,7 @@ try {
 	assert.equal(existsSync(join(home, '.pi', 'AGENTS.md')), false, 'Pi rules 保存不得写入 ~/.pi/AGENTS.md');
 	assert.equal(existsSync(join(process.cwd(), '.pi', 'AGENTS.md')), false, 'Pi rules 保存不得写入项目 .pi/AGENTS.md');
 
-	console.log('[PASS] 全局规则 cc/cx/pi 路径隔离、读写与推荐功能移除');
+	console.log('[PASS] 全局规则真实文件读写（cc/cx/pi 路径隔离投影见 tests/core/config-rules-reuse.test.ts）');
 } finally {
 	delete process.env.CCQ_HOME;
 	delete process.env.CODEX_HOME;

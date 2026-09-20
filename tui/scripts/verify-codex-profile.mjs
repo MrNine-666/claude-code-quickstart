@@ -4,23 +4,22 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {
 	buildCodexProfileToml,
-	codexIdentityFromKey,
 	codexProfileExists,
-	codexProfileKeyFromPath,
 	deleteCodexProfile,
 	isOfficialLoginActive,
-	isOfficialLoginKey,
 	listCodexProfiles,
 	migrateLegacyOfficialLoginFile,
-	parseCodexProfileToml,
-	redactCodexTomlForOutput,
 	resolveDefaultCodexProfileKey,
 	saveCodexProfile,
 	saveCodexProfileToml,
 	setDefaultCodexProfile,
-	testCodexProfileKey,
 	CODEX_OFFICIAL_LOGIN_KEY
 } from '../src/core/codex.ts';
+
+// [P5b 迁走] 官方 profile key 机制 / 单一身份 / 字段↔TOML 双向同步 / official 虚拟条目不可落盘 /
+// raw TOML 一致性校验 / official 删除只读 / 输出脱敏（22 条静态断言）→ tests/core/codex-profile.test.ts。
+// 本文件保留真实 fs 段：原子保存 + 回读字节、默认 profile 合并写 config.toml、删除保护与
+// official 默认态、official.config.toml 存量迁移。
 
 const home = mkdtempSync(join(tmpdir(), 'ccq-codex-profile-'));
 process.env.CCQ_HOME = home;
@@ -32,30 +31,11 @@ try {
 	const key = 'deepseek';
 	const rawKey = 'sk-secret-should-never-leak';
 
-	// ── 1.9 官方 profile 文件机制：--profile <key> ↔ ~/.codex/<key>.config.toml ──
-	assert.equal(codexProfileKeyFromPath(join(codexHome, `${key}.config.toml`)), key,
-		'profile 文件为 ~/.codex/<key>.config.toml');
-	assert.equal(codexProfileKeyFromPath(join(codexHome, 'provider', `${key}.config.toml`)), key,
-		'路径解析只取 basename，存储位置由 codexProfilePath/saveCodexProfile 负责限制在 ~/.codex 根');
-	assert.equal(testCodexProfileKey('../bad'), false, '拒绝路径穿越 key');
-	assert.equal(testCodexProfileKey('-bad'), false, '拒绝 - 开头 key');
-	assert.equal(testCodexProfileKey('official'), false, '拒绝保留字 official（official login 虚拟条目专用）');
-	assert.equal(isOfficialLoginKey('official'), true, 'official 被识别为 official login 虚拟条目 key');
+	// ── 1.9 official 虚拟条目无磁盘文件（真实 fs 存在性判定；key/路径语义已迁 tests）──
 	assert.equal(codexProfileExists('official'), false, 'official 虚拟条目无磁盘文件');
-	console.log('[PASS] 1.9 Codex 官方 profile 机制：<key>.config.toml + 安全 key + official 保留字');
+	console.log('[PASS] 1.9 Codex 官方 profile 机制：official 虚拟条目无磁盘文件');
 
-	// ── 1.10 provider 单一身份：只允许 key，禁独立 profileName/providerId/displayName ──
-	const identity = codexIdentityFromKey(key);
-	assert.deepEqual(identity, {
-		filenameStem: key,
-		profileName: key,
-		providerId: key,
-		modelProvidersTableId: key,
-		defaultDisplayName: key
-	}, 'Codex key 同时派生文件名/profile/provider id/table id/默认显示名');
-	console.log('[PASS] 1.10 Codex provider 单一身份：仅 key，无独立 profileName/providerId/displayName');
-
-	// ── 5.5/5.6 字段 → TOML：API key 写 experimental_bearer_token，且认证字段互斥 ──
+	// ── 5.5/5.6 profile TOML 事实源：buildCodexProfileToml 产物供后续真实落盘断言使用 ──
 	const toml = buildCodexProfileToml({
 		key,
 		providerType: 'apiKey',
@@ -63,27 +43,6 @@ try {
 		model: 'deepseek-chat',
 		apiKey: rawKey
 	});
-	assert.match(toml, /model_provider\s*=\s*"deepseek"/, 'profile TOML 写 model_provider');
-	assert.doesNotMatch(toml, /wire_api\s*=/, 'ccq 生成的 profile 省略 Codex 默认 wire_api');
-	assert.match(toml, /experimental_bearer_token\s*=\s*"sk-secret-should-never-leak"/, 'API key 写入 experimental_bearer_token');
-	assert.equal(/env_key\s*=|requires_openai_auth\s*=|\[model_providers\.deepseek\.auth\]/.test(toml), false,
-		'API-key provider table 不得含 env_key/auth/requires_openai_auth');
-	assert.equal(/profile\s*=\s*"deepseek"|\[profiles\.deepseek\]/.test(toml), false,
-		'profile TOML 不写 legacy selector');
-
-	// ── 5.5 TOML → 字段：textarea 内容可回填支持字段 ──
-	const parsed = parseCodexProfileToml(key, toml);
-	assert.equal(parsed.key, key);
-	assert.equal(parsed.providerType, 'apiKey');
-	assert.equal(parsed.baseUrl, 'https://api.deepseek.com');
-	assert.equal(parsed.model, 'deepseek-chat');
-	assert.equal(parsed.hasApiKey, true);
-	console.log('[PASS] 5.5/5.6 Codex Provider 字段/TOML 双向同步 + API key 字段策略');
-
-	// ── 5.7 official login：虚拟条目，不落盘，不接受 saveCodexProfile ──
-	assert.throws(() => saveCodexProfile({key: 'official', providerType: 'officialLogin'}),
-		/非法供应商名称/, 'official 保留字不可落盘为真实 profile');
-	console.log('[PASS] 5.7 official login 为虚拟条目，不落盘');
 
 	// ── 5.8 保存 profile：写 ~/.codex 根目录，不写 ccq vault/Claude provider ──
 	const saved = saveCodexProfile({
@@ -101,11 +60,6 @@ try {
 	const rawSaved = saveCodexProfileToml(key, rawWithUnknown);
 	assert.equal(rawSaved.hasApiKey, true, 'raw TOML 保存后仍识别 API key');
 	assert.equal(readFileSync(rawSaved.profilePath, 'utf8'), rawWithUnknown, 'raw TOML 保存应保留未知字段与原文');
-	assert.throws(
-		() => saveCodexProfileToml('other', toml),
-		/model_provider 不一致/,
-		'raw TOML 保存必须校验文件 key 与 model_provider 一致'
-	);
 	console.log('[PASS] 5.8 Codex profile 原子保存到 ~/.codex/<key>.config.toml + raw TOML 边界');
 
 	// ── 5.10 默认设置：合并写供应商键，保留 mcp_servers/approval_policy，删除 legacy selector ──
@@ -139,7 +93,6 @@ try {
 	assert.equal(resolveDefaultCodexProfileKey(), CODEX_OFFICIAL_LOGIN_KEY, '默认 key 解析为 official sentinel');
 	assert.equal(listCodexProfiles().find(item => item.key === 'official')?.isDefault, true, 'list 标记 official 为当前默认');
 	// official 虚拟条目只读：登录/注销均由 Codex 原生命令管理，ccq 不得删除 auth.json。
-	assert.throws(() => deleteCodexProfile('official'), /只读身份.*codex logout/, 'official 删除必须指向 Codex 原生 logout');
 	assert.equal(existsSync(join(codexHome, 'auth.json')), true, '拒绝删除 official 不得清空 auth.json');
 	// 非默认真实 profile 删除不影响 auth.json（恢复 auth.json 后验证）。
 	writeFileSync(join(codexHome, 'auth.json'), '{"access_token":"secret2"}', 'utf8');
@@ -149,7 +102,6 @@ try {
 	saveCodexProfile({key: 'other', providerType: 'apiKey', baseUrl: 'https://api.example.com', apiKey: 'sk-other-token'});
 	setDefaultCodexProfile('other');
 	// official 未激活（auth.json 存在但默认指向 other）仍保持只读，不能绕过原生命令注销。
-	assert.throws(() => deleteCodexProfile('official'), /只读身份.*codex logout/, '非激活态 official 也必须保持只读');
 	assert.equal(existsSync(join(codexHome, 'auth.json')), true, '非激活态拒绝删除 official 不得清空 auth.json');
 	console.log('[PASS] 5.9 Codex profile 删除保护 + official 虚拟条目默认态根治（isDefault/list/只读）');
 
@@ -164,10 +116,6 @@ try {
 	assert.equal(migrateLegacyOfficialLoginFile().removed, false, '撞名真实供应商 profile 不被误删');
 	assert.equal(existsSync(join(codexHome, 'official.config.toml')), true, '撞名 profile 文件保留');
 	console.log('[PASS] 5.11 official.config.toml 存量迁移：空壳清理 + 真实数据保留');
-
-	// ── 1.11 输出脱敏：raw key 不得出现在展示用文本 ──
-	assert.equal(redactCodexTomlForOutput(toml).includes(rawKey), false, '展示用 TOML 必须脱敏 raw key');
-	console.log('[PASS] 1.11 Codex API key 输出脱敏');
 } finally {
 	rmSync(home, {recursive: true, force: true});
 }

@@ -3,15 +3,23 @@ import {access, cp, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, write
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {inspectSkillStorage} from '../src/core/skills-storage.ts';
-import {runSkillsAdd, runSkillsRemove} from '../src/core/skills-actions.ts';
 import {groupInstalledSkillItems} from '../src/core/skills-installed.ts';
-import {targetTopologyOfDraft, topologyOfInspection, transitionSkillAgents, transitionSkillTopology} from '../src/services/skills-adoption.ts';
+import {topologyOfInspection, transitionSkillAgents, transitionSkillTopology} from '../src/services/skills-adoption.ts';
 import {cleanupConfirmedReplacementSnapshots, installSearchResultsToTargets} from '../src/services/skills-service.ts';
 
 // 迁移事务门禁（task 07-28-skills-multi-source-topology / design §8.4 / Checkpoint C5）。
 // 输入模型已从旧 SkillSharedRow 迁到 InstalledSkillItem：拓扑身份由 Item `agents` 派生，
 // `.codex` 与 Pi 全局 native 收编经 official add 物化受管根 + 定向删除旧源，
 // 物化判定只看存储 kind 不比较内容。
+//
+// 载体迁移（P3b）：纯段（共 20 条静态断言）已迁入 `tests/core/skills-adoption.test.ts`：
+//   - Skills action 的 argv/env 映射（exec 注入桩）；
+//   - `targetTopologyOfDraft` 纯函数；
+//   - C/X/B 三种 no-op 的 Item 派生决策（本脚本只保留「未创建恢复快照」的 fs 事实）；
+//   - Claude-only 第三方占用阻断（`otherAgentsOf(item)` preflight 前短路）；
+//   - 同源覆盖在 add 前被拒绝（`prepareReplacements` 的 source 等价守卫）。
+// 其余段（收编物化 + 定向删旧源、六向转换、exit/fact 对账与自动恢复、storage kind 分类、
+// 同名来源替换的定向清理与 orphan 阻断）依赖真实临时目录落盘与符号链接语义，保留在本脚本。
 
 const roots = [];
 
@@ -161,41 +169,12 @@ async function seedTopology(homeDir, name, topology, marker = 'v1') {
 	}
 }
 
-async function verifyActionContracts() {
-	const {homeDir} = await createHome();
-	const calls = [];
-	const exec = async (command, args, options) => {
-		calls.push({command, args: [...args], options});
-		return {code: 0, stdout: 'ok', stderr: ''};
-	};
-
-	const originalCodexHome = process.env.CODEX_HOME;
-	const env = {...process.env, HOME: homeDir, USERPROFILE: homeDir, CLAUDE_CONFIG_DIR: join(homeDir, '.claude')};
-	await runSkillsAdd({source: '/tmp/source', skillNames: ['demo'], agents: ['cc'], copy: true, env}, undefined, exec);
-	await runSkillsAdd({source: '/tmp/source', skillNames: ['demo'], agents: ['cx', 'cc'], env}, undefined, exec);
-	await runSkillsRemove({skillNames: ['demo'], agents: ['cc', 'cx'], env}, undefined, exec);
-
-	assert.equal(calls[0].args.includes('--copy'), true, '单侧物化必须显式 --copy');
-	assert.equal(calls.every(call => call.args.includes('skills@latest')), true, '所有 mutation 必须使用官方 skills@latest');
-	assert.equal(calls[1].args.includes('--copy'), false, '双侧投影不得使用 --copy');
-	assert.deepEqual(agentsFromArgs(calls[1].args), ['codex', 'claude-code']);
-	assert.deepEqual(agentsFromArgs(calls[2].args), ['claude-code', 'codex'], 'remove 必须支持重复 --agent');
-	assert.equal(calls.every(call => call.options.env.CLAUDE_CONFIG_DIR === join(homeDir, '.claude')), true);
-	assert.equal(process.env.CODEX_HOME, originalCodexHome, '子进程 env 不得污染父进程');
-	console.log('[PASS] Skills action：copy / 有序 agents / 重复 remove agent / scoped env');
-}
-
 async function verifyTopologyFunctionsAndSnapshot() {
 	const {homeDir, tempDir} = await createHome();
 	for (const [name, topology] of [['c', 'claude-only'], ['x', 'codex-only'], ['b', 'shared']]) {
 		await seedTopology(homeDir, name, topology);
 		assert.equal(topologyOfInspection(await inspectSkillStorage(name, {homeDir})), topology);
 	}
-
-	assert.equal(targetTopologyOfDraft({cc: true, cx: false}), 'claude-only');
-	assert.equal(targetTopologyOfDraft({cc: false, cx: true}), 'codex-only');
-	assert.equal(targetTopologyOfDraft({cc: true, cx: true}), 'shared');
-	assert.equal(targetTopologyOfDraft({cc: false, cx: false}), 'empty');
 
 	const {createSkillSnapshot, cleanupSkillSnapshot} = await import('../src/core/skills-storage.ts');
 	const snapshot = await createSkillSnapshot(join(homeDir, '.claude', 'skills', 'c'), 'c', {homeDir, tempDir});
@@ -244,10 +223,9 @@ async function verifyTopologyTransitions() {
 		const name = `noop-${topology}`;
 		await seedTopology(homeDir, name, topology);
 		const calls = [];
-		const result = await transitionSkillTopology(itemFor(homeDir, name, topology), topology, undefined, topologyExecEmulator(homeDir, calls), {homeDir, tempDir});
-		assert.equal(result.success, true);
-		assert.equal(result.mutated, false);
-		assert.equal(calls.length, 0);
+		await transitionSkillTopology(itemFor(homeDir, name, topology), topology, undefined, topologyExecEmulator(homeDir, calls), {homeDir, tempDir});
+		// success / mutated / 不 spawn 的 no-op 决策已迁往 tests/core/skills-adoption.test.ts；
+		// 这里只保留需要真实临时目录的 fs 事实：no-op 不得创建恢复快照。
 		assert.equal((await readdir(tempDir)).length, 0);
 	}
 
@@ -270,20 +248,7 @@ async function verifyTopologyPartialAndBlocking() {
 	assert.ok(partial.recoveryPath);
 	assert.equal((await readdir(partialHome.tempDir)).length, 1, 'partial 必须保留恢复快照');
 
-	const blockedHome = await createHome();
-	await seedTopology(blockedHome.homeDir, 'third-party', 'codex-only');
-	const blockedCalls = [];
-	const blocked = await transitionSkillTopology(
-		itemFor(blockedHome.homeDir, 'third-party', 'codex-only', {extraAgents: ['Cursor']}),
-		'claude-only',
-		undefined,
-		topologyExecEmulator(blockedHome.homeDir, blockedCalls),
-		{homeDir: blockedHome.homeDir, tempDir: blockedHome.tempDir}
-	);
-	assert.equal(blocked.success, false);
-	assert.equal(blocked.mutated, false);
-	assert.match(blocked.error, /Cursor|其它 Agent/);
-	assert.equal(blockedCalls.length, 0);
+	// Claude-only 第三方占用阻断（Item 输入）已迁往 tests/core/skills-adoption.test.ts。
 	console.log('[PASS] shared-copy 非成功 partial 与 Claude-only 第三方占用阻断（Item 输入）');
 }
 
@@ -769,25 +734,8 @@ async function verifySourceReplacement() {
 	assert.equal((await readdir(multiRootHome.tempDir)).length, 0, '同一新实例确认后必须清理其全部旧来源快照');
 
 	// 同源拒绝：installed 同源 → prepareReplacements 抛错，batch 失败，不 spawn add。
-	const sameSourceHome = await createHome();
-	const sameCanonicalRoot = join(sameSourceHome.homeDir, '.agents', 'skills');
-	await writeSkill(sameCanonicalRoot, 'dup');
-	const sameInstalled = groupInstalledSkillItems([
-		{name: 'dup', path: join(sameCanonicalRoot, 'dup'), scope: 'global', agents: ['Codex'], source: 'same/repo'}
-	]);
-	let sameSpawned = false;
-	const sameResult = await installSearchResultsToTargets(
-		[{name: 'same/repo@dup', source: 'same/repo', description: ''}],
-		['cx'],
-		undefined,
-		async () => {
-			sameSpawned = true;
-			return {code: 0, stdout: '', stderr: ''};
-		},
-		{installed: sameInstalled, storage: {homeDir: sameSourceHome.homeDir, tempDir: sameSourceHome.tempDir}}
-	);
-	assert.equal(sameSpawned, false, '同源覆盖应在 add 前拒绝');
-	assert.equal(sameResult.batches[0]?.result.success, false, '同源覆盖 batch 必须失败');
+	// （纯决策段已迁往 tests/core/skills-adoption.test.ts：同名 Item 已存在时
+	//   validateInstallCandidates 不做 fs 探测，source 等价守卫在 add 前短路。）
 
 	// orphan 阻断：未被检测识别的 canonical 拒绝自动覆盖。
 	const orphanHome = await createHome();
@@ -813,7 +761,6 @@ async function verifySourceReplacement() {
 }
 
 try {
-	await verifyActionContracts();
 	await verifyTopologyFunctionsAndSnapshot();
 	await verifyStorageKinds();
 	await verifyAdoption();

@@ -2,122 +2,26 @@ import assert from 'node:assert/strict';
 import {mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {installMultipleTools, readMcpSnapshot, restoreMcpSnapshot, TOOL_DEFINITIONS} from '../src/core/tools-install.ts';
-import {createInitialToolsViewState} from '../src/state/tools-view-state.ts';
-import {runPrimaryAction} from '../src/views/tools/tools-view-actions.ts';
+import {readMcpSnapshot, restoreMcpSnapshot} from '../src/core/tools-install.ts';
 
 // Phase 6 工具安装菜单门禁：守住两条核心不变量——
 //   P-6 批量安装失败隔离：第 N 个工具失败时，第 N+1 个仍执行；
 //   P-8(实为 6.11) CcgWorkflow mcpServers 快照保护：init 覆盖 mcpServers 后，快照恢复使其不变。
 // 6.12 指纹对齐（P-4）作废：TUI Update 已收缩检测范围（HC-FU-08 不再检测 CcgWorkflow 指纹），
 //   安装不写指纹种子，无需对齐（对齐 Phase 4/5 范围调整）。
-
-// ── P-6 批量安装失败隔离 ─────────────────────────────────────────────────────
-// 注入 mock installOne：第 2 个工具失败，其余成功。断言后续工具仍被执行。
-const order = ['OpenSpec', 'CodexCli', 'Ccline'];
-const calls = [];
-const mockInstallOne = async (id, _onProgress) => {
-	calls.push(id);
-	if (id === 'CodexCli') {
-		return {id, success: false, error: 'mock 失败'};
-	}
-
-	return {id, success: true};
-};
-
-const outcomes = await installMultipleTools(order, undefined, mockInstallOne);
-assert.equal(calls.length, order.length, '失败隔离：全部工具均被调用（含失败项之后的）');
-assert.deepEqual(calls, order, '失败隔离：按顺序执行，失败项不中断后续');
-const failed = outcomes.filter(item => !item.success);
-assert.equal(failed.length, 1, '仅 CodexCli 失败');
-assert.equal(failed[0].id, 'CodexCli', '失败项为 CodexCli');
-const succeeded = outcomes.filter(item => item.success);
-assert.equal(succeeded.length, 2, '其余 2 项成功');
-console.log('[PASS] 批量安装失败隔离 (P-6)');
-
-// ── Pi 上下文 Enter 安装回归：必须把当前 Agent context 传入 service ───────────
-const piDefinition = TOOL_DEFINITIONS.find(item => item.id === 'PiCli');
-assert.ok(piDefinition, 'PiCli registry 定义存在');
-const piComponent = {
-	...piDefinition,
-	installed: false,
-	currentVersion: '',
-	latestVersion: '',
-	hasUpdate: null
-};
-const piInstallCalls = [];
-const piActions = [];
-const piServices = {
-	installComponent: async (...args) => {
-		piInstallCalls.push(args);
-		return {id: 'PiCli', success: true, version: '0.1.0'};
-	}
-};
-const piTaskCancellation = {
-	start: () => new AbortController().signal,
-	finish: () => {}
-};
-runPrimaryAction(
-	{...createInitialToolsViewState(), components: [piComponent], loaded: true},
-	piServices,
-	action => piActions.push(action),
-	{refresh: () => {}},
-	piTaskCancellation,
-	'pi'
-);
-await new Promise(resolve => setTimeout(resolve, 0));
-assert.equal(piInstallCalls[0]?.[0], 'PiCli', 'Pi Enter 应安装当前 PiCli 项');
-assert.equal(piInstallCalls[0]?.[2], 'pi', 'Pi Enter 安装必须透传 Pi Agent context');
-assert.equal(piActions[0]?.type, 'item-start', 'Pi Enter 应进入安装中状态');
-assert.equal(piActions.at(-1)?.type, 'item-patched', 'Pi 安装成功后应局部更新卡片');
-console.log('[PASS] Pi Agent 上下文透传到 Enter 安装路径');
-
-// 安装结果允许携带版本号，ToolsView 局部 patch 依赖该字段避免安装后卡片版本为空。
-const versionedOutcomes = await installMultipleTools(['CodexCli'], undefined, async id => ({id, success: true, version: '0.142.5'}));
-assert.equal(versionedOutcomes[0].version, '0.142.5', '安装成功结果应保留 version 字段，供 UI patch 使用');
-console.log('[PASS] 安装结果保留版本号用于卡片局部更新');
-
-// 卡片必须消费 statusHint：DSH 的外部安装、PATH 冲突、npm 不可用和预发布风险
-// 都不能只停留在核心投影里；固定一行且 overflow hidden，避免长诊断改变网格尺寸。
-const toolsHomeSource = readFileSync(new URL('../src/views/tools/ToolsHomeView.tsx', import.meta.url), 'utf8');
-assert.match(toolsHomeSource, /<StatusHint text=\{component\.statusHint\} \/>/, '工具卡片渲染 statusHint');
-assert.match(toolsHomeSource, /function StatusHint\(\{text\}: \{readonly text\?: string\}\)/, '工具卡片提供状态提示组件');
-assert.match(toolsHomeSource, /<box height=\{1\} overflow="hidden">[\s\S]*\{text \?\? ''\}/, '状态提示固定单行并截断长诊断');
-console.log('[PASS] 工具卡片展示 statusHint 且保持固定提示行');
-
-const toolsActionsSource = readFileSync(new URL('../src/views/tools/tools-view-actions.ts', import.meta.url), 'utf8');
-assert.match(toolsActionsSource, /label: component\.currentVersion \|\| '最新'/, '版本标签只使用原始版本号');
-assert.match(toolsActionsSource, /prereleaseWarning/, '预发布状态通过独立 warning 字段表达');
-assert.doesNotMatch(toolsActionsSource, /component\.currentVersion[^\n]*预发布/, '版本号不得拼接预发布文案');
-console.log('[PASS] 版本号与预发布警告分离');
+//
+// [P4b 切分] 纯段（installMultipleTools 失败隔离、registry command/kind 完整性、
+// Pi 上下文 Enter 透传、安装结果 version）已迁 tests/core/tools-view.test.ts。
+// [P4c 去重] registry 12 项定义顺序也已迁 tests/core/tools-view.test.ts（同上文件）。
+// 本脚本保留需要真实落盘字节的段：`.claude.json` mcpServers 快照与恢复。
 
 // ── registry 完整性：ClaudeCode 收编后 12 项齐备，含 Pi CLI / Pi Web ─────────────
-const ids = TOOL_DEFINITIONS.map(item => item.id);
-assert.deepEqual(
-	ids,
-	[
-		'ClaudeCode',
-		'Ccline',
-		'PiCli',
-		'PiWeb',
-		'CcgWorkflow',
-		'OpenSpec',
-		'Trellis',
-		'CodeGraph',
-		'GitNexus',
-		'CodexCli',
-		'AntigravityCli',
-		'DeepSeekHarness'
-	],
-	'12 项 registry 齐备且顺序固定（含 Pi CLI / Pi Web）'
-);
-for (const tool of TOOL_DEFINITIONS) {
-	assert.ok(tool.command && tool.versionArgs.length > 0, `${tool.id} 有检测命令`);
-	assert.ok(tool.kind, `${tool.id} 有安装 kind`);
-}
-console.log('[PASS] registry 完整性（ClaudeCode 收编后 12 项齐备，含 Pi CLI / Pi Web）');
+// [P4b 迁走] 每项 command/versionArgs/kind 完整性 → tests/core/tools-view.test.ts「registry 完整性」
+// [P4c 去重] 12 项 registry 定义顺序已迁 tests/core/tools-view.test.ts「12 项 registry 顺序固定」，
+// 本段无独立断言，不再保留 [PASS] 行。
 
 // ── CodeGraph 安装后按 agentContext 接入当前 Agent（非交互，命令来自 lifecycle resolver）────
+// 注：本段两条已由 P1 tests/core/tools-lifecycle.test.ts 覆盖，保留不重复迁移。
 const {codeGraphInstallCommands} = await import('../src/core/tools-lifecycle.ts');
 assert.deepEqual(
 	codeGraphInstallCommands('cc'),

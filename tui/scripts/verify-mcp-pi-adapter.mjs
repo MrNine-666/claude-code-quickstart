@@ -9,8 +9,6 @@ process.env.HOME = home;
 
 const {
 	detectPiMcpAdapter,
-	hasPiMcpAdapterPackage,
-	parsePiPackageNames,
 	readLocalPiMcpAdapterFact,
 	readPiMcpAdapterOverride,
 	resetPiMcpAdapterFact
@@ -32,20 +30,8 @@ function writeText(path, value) {
 }
 
 try {
-	assert.deepEqual(parsePiPackageNames(JSON.stringify({packages: ['npm:pi-mcp-adapter@latest', {name: '@scope/other'}]})), [
-		'pi-mcp-adapter',
-		'@scope/other'
-	]);
-	assert.deepEqual(
-		parsePiPackageNames(
-			'User packages:\n  npm:pi-mcp-adapter@1.2.3\n    C:\\Users\\test\\.pi\\agent\\npm\\node_modules\\pi-mcp-adapter\n'
-		),
-		['pi-mcp-adapter'],
-		'Pi list 分组文本应只解析 package source，并去掉 npm 版本后缀'
-	);
-	assert.equal(hasPiMcpAdapterPackage(JSON.stringify(['pi-mcp-adapter'])), true);
-	assert.equal(hasPiMcpAdapterPackage(JSON.stringify(['@scope/other'])), false);
-
+	// 包名解析（parsePiPackageNames / hasPiMcpAdapterPackage）已迁
+	// tests/core/mcp-pi-adapter.test.ts；检测、投影与真实 ~/.pi 断言保留在本脚本。
 	resetPiMcpAdapterFact();
 	assert.equal(readLocalPiMcpAdapterFact().reason, 'pi-not-installed', '没有 Pi agent 目录时必须显示 Pi 未安装');
 

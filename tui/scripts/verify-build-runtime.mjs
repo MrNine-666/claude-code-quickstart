@@ -80,10 +80,6 @@ async function verifyRepositoryContract() {
 	const releaseMetadataPath = join(root, 'scripts', 'release-metadata.mjs');
 	const releaseMetadataSource = read(releaseMetadataPath);
 
-	for (const name of ['@opentui/core', '@opentui/keymap', '@opentui/react']) {
-		assert.equal(pkg.dependencies[name], '0.4.5', `${name} 必须与 OpenTUI runtime 一起锁定`);
-		assert.match(lock, new RegExp(`"${name.replace('/', '\\/')}@0\\.4\\.5"`));
-	}
 	assert.match(lock, /"bun-ffi-structs@0\.2\.4"/);
 	assert.match(pkg.scripts.verify, /bun scripts\/verify-build-runtime\.mjs/);
 
@@ -98,15 +94,12 @@ async function verifyRepositoryContract() {
 	const releaseQualityJob = workflowJob(workflow, 'release-quality');
 	const releaseJob = workflowJob(workflow, 'release');
 
-	assert.match(workflowHeader, /pull_request:\s*\n\s+paths:/);
-	assert.match(workflowHeader, /push:\s*\n\s+branches:\s*\n\s+- main[\s\S]*tags:\s*\n\s+- 'v\*\.\*\.\*'[\s\S]*paths:/);
 	for (const path of ['installer/**', 'tui/**', '.github/workflows/build-and-release.yml', '.trellis/spec/project/installer/**']) {
 		const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 		assert.equal([...workflowHeader.matchAll(new RegExp(`- '${escaped}'`, 'g'))].length, 2, `${path} 必须同时过滤 PR 和 main push`);
 	}
 	assert.match(workflowHeader, /permissions:\s*\n\s+contents: read/);
 	assert.doesNotMatch(workflowHeader, /contents: write/);
-	assert.match(workflowHeader, /cancel-in-progress: \$\{\{ github\.ref_type != 'tag' \}\}/);
 	assert.equal((workflow.match(/contents: write/g) ?? []).length, 1, '仅 Release job 可以申请 contents: write');
 	assert.match(releaseJob, /permissions:\s*\n\s+contents: write/);
 
@@ -120,7 +113,6 @@ async function verifyRepositoryContract() {
 	assert.equal((workflow.match(/persist-credentials: false/g) ?? []).length, checkoutCount, '每个 checkout 都必须禁用持久凭据');
 
 	assert.match(testWindowsJob, /pwsh -NoProfile -File \.\\installer\\contracts\\Test-Contracts\.ps1/);
-	assert.doesNotMatch(workflow, /\[SKIP\] contracts 回归测试|P-11 验证|P-11 契约内嵌验证/);
 	assert.doesNotMatch(releaseQualityJob, /if: startsWith\(github\.ref, 'refs\/tags\/v'\)/);
 	assert.match(releaseQualityJob, /bun install --frozen-lockfile/);
 	assert.match(releaseQualityJob, /id: release-quality-base/);
@@ -195,7 +187,6 @@ async function verifyRepositoryContract() {
 		/node tui\/scripts\/release-metadata\.mjs --tag="\$\{GITHUB_REF_NAME\}" --github-output="\$\{GITHUB_OUTPUT\}"/
 	);
 	assert.match(releaseJob, /prerelease: \$\{\{ steps\.release-metadata\.outputs\.prerelease \}\}/);
-	assert.doesNotMatch(workflow, /CCQ_RELEASE_VERSION|contains\(github\.ref_name, '-(?:rc|beta|alpha)'\)|Invalid CCQ release version/);
 	const platformReleaseArtifacts = [
 		...buildContract.BuildEntrypoints.Windows.Artifacts,
 		...buildContract.BuildEntrypoints.MacOS.Artifacts

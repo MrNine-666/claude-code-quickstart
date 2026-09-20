@@ -3,6 +3,12 @@ import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync}
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
+// [P5b 迁走] Config/Rules 目标路径按 agent 隔离投影（getConfigPath/getRulesPath 共 5 条）
+// + Codex 推荐配置契约含 sandbox_mode/file_opener（2 条）→ tests/core/config-rules-reuse.test.ts。
+// 「Config UI 复用快捷键」段保留在 verify：它是 `CONFIG_SHORTCUTS.includes(key)` 对自身元素的
+// 自指恒真断言，不读任何 src，迁入 tests 会制造假绿（见对账 §5）。
+// 本文件保留真实 fs 段：Claude/Codex settings 字节读写、Codex fill-missing 过滤展示、Rules 落盘。
+
 // Config / Global Rules 按 agentContext 复用 UI + 路径隔离（design D10/D11, PBT-11/PBT-12）。
 // 覆盖：
 // - Config 快捷键语义复用（预览 / e / Ctrl+T / Ctrl+O）
@@ -26,20 +32,13 @@ mkdirSync(join(home, '.claude'), {recursive: true});
 mkdirSync(process.env.CODEX_HOME, {recursive: true});
 
 try {
-	const {
-		getConfigPath,
-		readCurrentConfigText,
-		fillMissingIntoText,
-		saveConfigText,
-		loadRecommendationAnnotated
-	} = await import('../src/services/config-service.ts');
-	const {getRulesPath, readCurrentRules, saveRules} = await import('../src/services/prompts-service.ts');
-	const {codexConfigPath, codexAgentsPath, claudeDir} = await import('../src/core/paths.ts');
+	const {getConfigPath, readCurrentConfigText, fillMissingIntoText, saveConfigText} = await import(
+		'../src/services/config-service.ts'
+	);
+	const {readCurrentRules, saveRules} = await import('../src/services/prompts-service.ts');
+	const {codexConfigPath, claudeDir} = await import('../src/core/paths.ts');
 
-	// ── Config 目标文件按 agent 切换 ──
-	assert.equal(getConfigPath('cc'), join(home, '.claude', 'settings.json'), 'Claude Config 目标为 settings.json');
-	assert.equal(getConfigPath('cx'), join(process.env.CODEX_HOME, 'config.toml'), 'Codex Config 目标为 config.toml');
-	console.log('[PASS] 1.12b Config 路径隔离：settings.json ↔ config.toml');
+	// ── Config 目标文件按 agent 切换（路径投影已迁 tests；此处仍用 getConfigPath 读写真实字节）──
 
 	// Claude Config 仍剥离/保留供应商字段
 	writeFileSync(getConfigPath('cc'), JSON.stringify({env: {ANTHROPIC_AUTH_TOKEN: 'sk-claude', KEEP: 'yes'}}, null, 2), 'utf8');
@@ -77,8 +76,6 @@ try {
 		assert.match(codexFill.text, /\[hooks\]/, 'Codex fill-missing 缓冲展示 hooks table（已放开直编）');
 		// fill-missing 应补齐新增托管项：file_opener（顶层标量）。
 		assert.match(codexFill.text, /file_opener\s*=\s*"vscode"/, 'Codex fill-missing 补齐 file_opener');
-		assert.equal(loadRecommendationAnnotated('cx')?.includes('sandbox_mode'), true, 'Codex 推荐配置契约可加载');
-		assert.equal(loadRecommendationAnnotated('cx')?.includes('file_opener'), true, 'Codex 推荐配置含 file_opener');
 		const codexSaved = saveConfigText(codexFill.text, 'cx');
 		assert.equal(codexSaved.ok, true, 'Codex config.toml 保存成功');
 		assert.equal(codexSaved.warning, undefined, 'Codex Config 保存过滤缓冲时不应提示用户编辑了外部 sections');
@@ -90,10 +87,7 @@ try {
 		assert.equal(existsSync(getConfigPath('cc')), true, 'Codex 保存不删除/替换 Claude settings');
 		console.log('[PASS] 6.4/6.5/6.6 Codex Config TOML 结构化 fill-missing + 过滤展示 + 路径隔离');
 
-	// ── Global Rules 目标文件按 agent 切换 ──
-	assert.equal(getRulesPath('cc'), join(claudeDir(), 'CLAUDE.md'), 'Claude 全局规则为 CLAUDE.md');
-	assert.equal(getRulesPath('cx'), codexAgentsPath(), 'Codex 全局规则为 AGENTS.md');
-	assert.equal(/CLAUDE\.md/.test(getRulesPath('cx')), false, 'Codex 全局规则不得写 CLAUDE.md');
+	// ── Global Rules 目标文件按 agent 切换（路径投影已迁 tests；此处验证真实落盘）──
 	assert.equal(saveRules('claude rules', 'cc').ok, true, 'Claude rules 保存成功');
 	assert.equal(saveRules('codex agents', 'cx').ok, true, 'Codex rules 保存成功');
 	assert.equal(readCurrentRules('cc'), 'claude rules', 'Claude rules 从 CLAUDE.md 读取');

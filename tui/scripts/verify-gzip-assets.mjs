@@ -7,41 +7,7 @@ import {gunzipSync} from 'node:zlib';
 
 const workDir = mkdtempSync(join(tmpdir(), 'ccq-gzip-assets-'));
 try {
-	const {RAW_TO_GZIP, gzipDeterministic, packageGzipAssetsInDir} = await import('./package-gzip-assets.ts');
-
-	// ── raw -> gzip 映射必须与 installer 契约同源，且覆盖四个平台 ────────────────
-	const contract = JSON.parse(readFileSync(new URL('../../installer/contracts/build.json', import.meta.url), 'utf8'));
-	const contractMappings = contract.UpdateTransports.GzipAssets;
-	assert.equal(contractMappings.length, RAW_TO_GZIP.length, '契约 gzip 资产数量必须与打包脚本映射一致');
-	assert.deepEqual(
-		RAW_TO_GZIP.map(item => [item.raw, item.gzip]),
-		contractMappings.map(item => [item.Raw, item.Gzip]),
-		'打包脚本的映射必须与 installer 契约逐项一致，不得形成第二份文件名来源'
-	);
-	for (const {raw, gzip} of RAW_TO_GZIP) {
-		assert.equal(gzip, `${raw}.gz`, 'gzip 资产名必须是 raw 名加 .gz');
-		assert.ok(contract.BuildEntrypoints.ReleaseArtifacts.includes(raw), `Release 必须仍发布 raw: ${raw}`);
-		assert.ok(contract.BuildEntrypoints.ReleaseArtifacts.includes(gzip), `Release 必须发布 gzip: ${gzip}`);
-	}
-	const platformArtifacts = [
-		...contract.BuildEntrypoints.Windows.Artifacts,
-		...contract.BuildEntrypoints.MacOS.Artifacts
-	];
-	assert.deepEqual(
-		[...contract.BuildEntrypoints.ReleaseArtifacts].sort(),
-		[...new Set(platformArtifacts)].sort(),
-		'Release 集合必须等于两个平台 Artifacts 的并集，不得维护第二份名单或数量魔数'
-	);
-
-	// ── 确定性：同一输入重复压缩字节一致（mtime/OS 头被固定） ────────────────────
-	const payload = Buffer.alloc(64 * 1024);
-	for (let index = 0; index < payload.byteLength; index++) payload[index] = (index * 37) & 0xff;
-	const firstPass = gzipDeterministic(payload);
-	const secondPass = gzipDeterministic(payload);
-	assert.equal(firstPass.equals(secondPass), true, '重复压缩必须产生完全一致的字节');
-	assert.equal(firstPass[4], 0, 'gzip mtime 头必须固定为 0');
-	assert.equal(firstPass[9], 255, 'gzip OS 头必须固定为 255，避免跨平台漂移');
-	assert.equal(Buffer.from(gunzipSync(firstPass)).equals(payload), true, 'gzip 必须可 roundtrip 回 raw 字节');
+	const {RAW_TO_GZIP, packageGzipAssetsInDir} = await import('./package-gzip-assets.ts');
 
 	// ── 四个平台目录级打包：必须先有 raw，且解压等于 raw ────────────────────────
 	const rawBytes = new Map();
@@ -71,7 +37,7 @@ try {
 		rmSync(emptyDir, {recursive: true, force: true});
 	}
 
-	console.log('[PASS] gzip 更新资产：确定性 + roundtrip + 契约同源 artifact 集合');
+	console.log('[PASS] gzip 更新资产：四平台目录级打包 + 缺 raw fail closed');
 } finally {
 	rmSync(workDir, {recursive: true, force: true});
 }

@@ -10,6 +10,8 @@ import {dirname, join} from 'node:path';
 //   3) vault 定义 ≠ 激活态（definition-only server 三侧均 not-active，但仍列出且 hasDefinition=true）；
 //   4) 开关态实时从 runtime 文件派生：外部编辑 ~/.claude.json 后重投影立即反映；
 //   5) Codex enabled=false 第三态在投影中归为 not-active，且投影不改写/删除该禁用块（纯读不物化）。
+// 原第 6 段（网格导航纯函数 + Modal 输入隔离 testRender）已迁：
+//   tests/core/mcp-view-actions.test.ts、tests/components/mcp-modal.test.tsx。
 
 const home = mkdtempSync(join(tmpdir(), 'ccq-mcp-shared-proj-'));
 const codexHome = join(home, '.codex');
@@ -116,74 +118,6 @@ const codexAfter = readFileSync(codexConfigPath, 'utf8');
 assert.match(codexAfter, /\[mcp_servers\.gamma\]/, '投影后 [mcp_servers.gamma] 禁用块仍在（纯读不删）');
 assert.match(codexAfter, /enabled = false/, '投影后 gamma enabled=false 保留（不被重写）');
 console.log('[PASS] 13.1 Codex enabled=false 第三态归 not-active + 投影不物化/删除禁用块');
-
-// ── 6) Modal 输入隔离：目标选择上下键不得移动背景列表 ────────────────
-const React = (await import('react')).default;
-const {act} = await import('react');
-const {testRender} = await import('@opentui/react/test-utils');
-const {default: McpView} = await import('../src/views/mcp/McpView.tsx');
-const {MCP_GRID_COLUMNS, moveMcpGridCursor} = await import('../src/views/mcp/mcp-view-actions.ts');
-assert.equal(MCP_GRID_COLUMNS, 2, 'MCP 网格固定为两列');
-assert.equal(moveMcpGridCursor(0, 4, 'right'), 1, 'MCP 网格右移到同行第二列');
-assert.equal(moveMcpGridCursor(1, 4, 'down'), 3, 'MCP 网格下移保持列位置');
-assert.equal(moveMcpGridCursor(3, 4, 'down'), 1, 'MCP 网格末行下移循环到首行同列');
-const mcpHomeSource = readFileSync(new URL('../src/views/mcp/McpHomeView.tsx', import.meta.url), 'utf8');
-const badgeSource = mcpHomeSource.match(/function StateBadge[\s\S]*?function ToggleTargetModal/)?.[0] ?? '';
-assert.match(badgeSource, /\{`⊘ \$\{label\}`\}/, 'MCP 卡片的 unsupported badge 只展示 Agent 名称');
-assert.doesNotMatch(badgeSource, /state\.reason/, 'MCP 卡片不得把 Pi 扩展原因挤进卡片内容');
-assert.match(mcpHomeSource, /需先安装 \$\{PI_MCP_ADAPTER_ID\} 扩展/, 'MCP Enter 弹窗必须提示先安装 Pi adapter 扩展');
-assert.match(
-	mcpHomeSource,
-	/<McpListInput[\s\S]{0,160}active=\{active && mode === 'list'\}/,
-	'MCP 列表输入处理器只应在 list 模式挂载'
-);
-assert.match(
-	mcpHomeSource,
-	/<ToggleModalInput[\s\S]{0,160}active=\{active && mode === 'select-toggle-target'\}/,
-	'MCP 目标 Modal 输入处理器只应在对应模式挂载'
-);
-const setup = await testRender(
-	React.createElement(McpView, {active: true, onExitToNav() {}}),
-	{width: 80, height: 24}
-);
-
-try {
-	const press = async name => {
-		await act(async () => {
-			setup.renderer.keyInput.emit('keypress', {
-				name,
-				sequence: name === 'enter' ? '\r' : name,
-				ctrl: false,
-				shift: false,
-				meta: false,
-				option: false,
-				eventType: 'press',
-				repeated: false
-			});
-			await setup.renderOnce();
-		});
-	};
-
-	const initialFrame = await setup.waitForFrame(frame => /\(1\/\d+\)/.test(frame));
-	const initialGridRow = initialFrame
-		.split('\n')
-		.find(line => line.includes('alpha') && line.includes('beta'));
-	assert.ok(initialGridRow, 'MCP 网格首行应并排显示两个 Server 卡片');
-	await press('down');
-	const selectedFrame = await setup.waitForFrame(frame => /\(3\/\d+\)/.test(frame));
-	const selectedCounter = selectedFrame.match(/\(3\/\d+\)/)?.[0];
-	assert.ok(selectedCounter, 'MCP 网格下键应移动到下一行同列');
-	await press('enter');
-	await setup.waitForFrame(frame => frame.includes('管理开关'));
-	await press('down');
-	const modalFrame = await setup.waitForFrame(frame => frame.includes('Codex'));
-	assert.equal(modalFrame.includes(selectedCounter), true, 'Modal 上下键不得移动背景 MCP 列表');
-	console.log('[PASS] MCP Modal 输入隔离：上下键只移动 Modal 目标，不穿透背景列表');
-} finally {
-	await act(async () => {
-		setup.renderer.destroy();
-	});
-}
 
 delete process.env.CCQ_HOME;
 rmSync(home, {recursive: true, force: true});

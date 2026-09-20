@@ -2,43 +2,19 @@ import assert from 'node:assert/strict';
 import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {applyFillMissing, importFillMissing, loadConfigContract, mergeProviderEnvOnSave, settingsFilePath, stripProviderEnvFromText} from '../src/core/config-recommend.ts';
+import {importFillMissing, settingsFilePath} from '../src/core/config-recommend.ts';
+
+// [P5b 迁走] fill-missing 幂等性 (P-1)、DoNotManage 保护 (P-2)、ConfigView Claude ownership
+// 过滤/保存合并、Codex 推荐配置契约内容、Codex fill-missing 空缓冲补齐 → tests/core/config-view.test.ts
+// （33 条静态断言）。createConfigDocumentAdapter('cx').openExternal / openSuccessMessage 已由
+// P1-G2 载体 tests/core/config-document-adapter.test.ts 覆盖（R9），P5e 已删除 verify 侧 2 条。
+// 本文件保留真实 fs 段：importFillMissing 端到端幂等、损坏 settings.json 拒绝覆盖、
+// Codex config.toml 结构化保存 / 过滤展示 / 路径隔离 / 错误脱敏。
 
 // Phase 5 配置文件菜单门禁：守住 fill-missing 的两条核心不变量——
 //   P-1 幂等性：同一配置导入两次，第二次无变更；
 //   P-2 DoNotManage 保护：受保护键（model/statusLine/hooks/供应商 env）导入后值不变。
 // 外加损坏 settings.json 拒绝覆盖（对齐 Install-ClaudeConfig 安全策略）。
-
-const contract = loadConfigContract();
-assert.ok(contract, 'claude-config.json 契约应可加载');
-
-// ── P-1 幂等性（纯函数）─────────────────────────────────────────────────────
-const source = {language: '简体中文', env: {MAX_THINKING_TOKENS: '31999'}, permissions: {allow: ['CustomTool']}};
-const first = applyFillMissing(contract, source);
-const second = applyFillMissing(contract, first.settings);
-assert.deepEqual(second.updatedItems, [], '第二次 fill-missing 应无变更项');
-assert.deepEqual(second.settings, first.settings, '幂等：两次合并结果一致');
-console.log('[PASS] fill-missing 幂等性 (P-1)');
-
-// ── P-2 DoNotManage 保护（纯函数）───────────────────────────────────────────
-const protectedSource = {
-	model: 'my-model',
-	statusLine: {type: 'command', command: 'ccline'},
-	hooks: {Stop: [{matcher: ''}]},
-	env: {ANTHROPIC_AUTH_TOKEN: 'sk-secret', ANTHROPIC_BASE_URL: 'https://x.com'},
-	permissions: {allow: ['CustomTool']}
-};
-const guarded = applyFillMissing(contract, protectedSource);
-assert.equal(guarded.settings.model, 'my-model', 'model 不被触碰');
-assert.deepEqual(guarded.settings.statusLine, {type: 'command', command: 'ccline'}, 'statusLine 不被触碰');
-assert.deepEqual(guarded.settings.hooks, {Stop: [{matcher: ''}]}, 'hooks 不被触碰');
-assert.equal(guarded.settings.env.ANTHROPIC_AUTH_TOKEN, 'sk-secret', '供应商 token 不被触碰');
-assert.equal(guarded.settings.env.ANTHROPIC_BASE_URL, 'https://x.com', '供应商 baseUrl 不被触碰');
-assert.equal(guarded.settings.language, '简体中文', '缺失 language 被补充');
-assert.equal(guarded.settings.env.MAX_THINKING_TOKENS, '31999', '缺失受管 env 被补充');
-assert.ok(guarded.settings.permissions.allow.includes('CustomTool'), '用户已有权限保留');
-assert.ok(guarded.settings.permissions.allow.includes('Bash'), '基础权限追加');
-console.log('[PASS] DoNotManage 保护 (P-2)');
 
 // ── 端到端 importFillMissing（CCQ_HOME 隔离）────────────────────────────────
 const home = mkdtempSync(join(tmpdir(), 'ccq-config-test-'));
@@ -79,108 +55,42 @@ try {
 	rmSync(badHome, {recursive: true, force: true});
 }
 
-// ── ConfigView ownership：展示/编辑过滤外部字段，保存合并保护 ─────────────
-// DoNotManageTopLevelKeys 仅剩 model：hooks/statusLine/outputStyle 等孤儿字段已在配置文件页放开（可见可编辑），
-// mcpServers 不在 settings.json（归 ~/.claude.json + MCP 视图）但即便误入也随编辑器走。
-const claudeOriginal = JSON.stringify({
-	model: 'keep-model',
-	statusLine: {type: 'command', command: 'ccline'},
-	hooks: {Stop: [{matcher: ''}]},
-	mcpServers: {context7: {command: 'npx'}},
-	env: {ANTHROPIC_AUTH_TOKEN: 'sk-secret', MAX_THINKING_TOKENS: '123'},
-	language: '简体中文'
-}, null, 2);
-const strippedClaude = stripProviderEnvFromText(claudeOriginal);
-assert.equal(strippedClaude.ok, true, 'Claude Config 展示过滤应成功');
-assert.equal(strippedClaude.text.includes('keep-model'), false, 'Claude Config 展示必须过滤 model');
-assert.equal(strippedClaude.text.includes('statusLine'), true, 'Claude Config 展示 statusLine（孤儿字段已放开）');
-assert.equal(strippedClaude.text.includes('hooks'), true, 'Claude Config 展示 hooks（孤儿字段已放开）');
-assert.equal(strippedClaude.text.includes('mcpServers'), true, 'Claude Config 展示 mcpServers（不再过滤，正常不在 settings.json）');
-assert.equal(strippedClaude.text.includes('ANTHROPIC_AUTH_TOKEN'), false, 'Claude Config 展示必须过滤供应商 env');
-const mergedClaude = mergeProviderEnvOnSave(strippedClaude.text, claudeOriginal);
-assert.equal(mergedClaude.ok, true, 'Claude Config 保存合并应成功');
-const mergedClaudeJson = JSON.parse(mergedClaude.text);
-assert.equal(mergedClaudeJson.model, 'keep-model', 'Claude Config 保存必须保留原 model（唯一仍过滤项）');
-// statusLine/hooks/mcpServers 已由编辑器持有（未改动则保留原值），不再从原文恢复
-assert.deepEqual(mergedClaudeJson.statusLine, {type: 'command', command: 'ccline'}, 'Claude Config 保存保留 statusLine（编辑器持有）');
-assert.deepEqual(mergedClaudeJson.hooks, {Stop: [{matcher: ''}]}, 'Claude Config 保存保留 hooks（编辑器持有）');
-assert.equal(mergedClaudeJson.env.ANTHROPIC_AUTH_TOKEN, 'sk-secret', 'Claude Config 保存必须保留原供应商 env');
-console.log('[PASS] ConfigView Claude ownership 过滤展示 + 保存合并保护');
-
-// ── 6.10 Codex ConfigView：agentContext 源码不变量 + TOML 结构化保存 ─────────────
-const configViewSource = [
-	'../src/views/config/ConfigView.tsx',
-	'../src/views/config/config-document-adapter.ts',
-	'../src/components/managed-document/ManagedDocumentView.tsx',
-	'../src/components/managed-document/DocumentHomeView.tsx',
-	'../src/components/managed-document/DocumentFormView.tsx'
-].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
-assert.match(configViewSource, /createConfigDocumentAdapter\(props\.agentContext\)/, 'ConfigView 必须从 agentContext 派生 adapter');
-assert.match(configViewSource, /loadRecommendationAnnotated\(target\)/, '推荐配置必须按 target 加载');
-assert.match(configViewSource, /getConfigPath\(target\)/, '目标路径必须按 target 切换');
-assert.match(configViewSource, /openConfigFile\(target\)/, '配置文件页必须把打开文件动作路由到 Config service');
-assert.match(configViewSource, /openExternal:/, '配置文件 adapter 必须提供外部打开动作');
-assert.match(configViewSource, /readCurrentConfigText\(target\)/, '读取配置必须按 target 切换');
-assert.match(configViewSource, /configFileExists\(target\)/, '空状态必须区分目标文件存在与过滤后内容为空');
-assert.match(configViewSource, /hasContent: fileExists \|\| content\.trim\(\)\.length > 0/, '存在 config.toml 时即使过滤后为空也必须展示预览态');
-assert.match(configViewSource, /fillMissingIntoText\([^\n]+target\)/, 'Ctrl+O fill-missing 必须按 target 路由');
-assert.match(configViewSource, /saveConfigText\(content, target\)/, '保存必须按 target 路由');
-assert.match(configViewSource, /editorIsJson: !isCodex/, 'Codex Config 编辑器不得启用 JSON 校验，应交给 TOML service 校验');
-assert.match(configViewSource, /editorFiletype: isCodex \? 'text' : 'json'/, 'Codex Config 编辑器不应声明为 JSON filetype');
-assert.match(configViewSource, /previewFiletype: isCodex \? 'toml' : 'json'/, 'Codex 当前配置预览必须使用 TOML 样式');
-assert.match(configViewSource, /recommendationFiletype: isCodex \? 'toml' : 'jsonc'/, 'Codex 推荐配置预览必须使用 TOML 样式');
-assert.match(configViewSource, /title: '配置文件管理'/, 'Header 标题统一为「配置文件管理」');
-assert.match(configViewSource, /subtitle: `\$\{configPath\}`\s*\+\s*'\s*'\s*\+/, 'Header 副标题必须包含当前配置路径');
-assert.match(configViewSource, /isCodex \? '已排除供应商\/MCP配置' : isPi \? '已排除供应商\/Extensions配置' : '已排除供应商配置'/, 'Header 说明必须随 agentContext 切换');
-assert.match(configViewSource, /if \(dirty\) \{[\s\S]{0,80}toast\.info\('已放弃未保存的编辑'\)/, '取消编辑必须识别 dirty 状态');
-assert.match(configViewSource, /useEffect\(\(\) => \{[\s\S]{0,120}reset\(adapter\.load\(\)\);[\s\S]{0,40}\}, \[adapter\]\);/, 'agentContext adapter 切换时必须重载视图状态，避免旧配置页内容残留');
-assert.match(configViewSource, /setDirty\(false\);/, '保存/取消/切换后必须清理 dirty 状态，避免跨上下文误写');
-// HC-EDITOR-PANEL-STABLE：editor 面板容器父路径必须恒定（始终 row 容器内的 key='editor-panel'），
-// 推荐边栏作为带 key 的兄弟条件插入/移除。否则 split↔editor 切换会改变 editorEl 父路径，React 卸载重挂
-// TextareaEditor，<textarea initialValue> 用 editInitial 重新初始化、丢失用户编辑（关闭推荐边栏内容回退 bug）。
-// 注：React key 仅在同一父节点的兄弟间保证复用；跨父路径的 key 无效，故必须靠稳定结构而非给 TextareaEditor 加 key。
-assert.match(configViewSource, /key="editor-panel"/, 'ConfigView editor 面板必须有稳定 key，父路径恒定避免 textarea 重挂丢内容');
-assert.match(configViewSource, /key="recommend-panel"/, 'ConfigView 推荐边栏必须作为带 key 的兄弟节点条件渲染，不改变 editor 面板父路径');
-assert.doesNotMatch(configViewSource, /\?\s*\([\s\S]{0,200}\{editorEl\}[\s\S]{0,200}\)\s*:\s*\(\s*editorEl\s*\)/, 'editor 不得再走 split/非 split 两分支渲染（会改变父路径导致重挂）');
-console.log('[PASS] 6.10 ConfigView agentContext + Codex TOML 编辑源码不变量');
+// ── 6.10 Codex ConfigView：agentContext 与 TOML 结构化保存 ─────────────────────
+// P1-G2 静态断言治理：原 23 条源码正则已分类处置——
+//   A 类（16 条 adapter 描述符/路由）迁到 tests/core/config-document-adapter.test.ts；
+//   B 类（7 条 agentContext 必经路径 / dirty 编辑 / HC-EDITOR-PANEL-STABLE 结构不变量）
+//   并入 scripts/verify-view-architecture.mjs（P1-G2 段）；C = 0。
+// 详见 .trellis/tasks/09-18-p1-static-assertion-governance/research-reconciliation-G2.md。
+console.log('[PASS] 6.10 ConfigView agentContext + Codex TOML 编辑行为不变量（静态合同见 verify-view-architecture.mjs）');
 
 const codexHome = mkdtempSync(join(tmpdir(), 'ccq-config-codex-view-'));
 process.env.CCQ_HOME = codexHome;
 process.env.CODEX_HOME = join(codexHome, '.codex');
 try {
 	mkdirSync(process.env.CODEX_HOME, {recursive: true});
-	const {configFileExists, getConfigPath, loadRecommendationAnnotated, readCurrentConfigText, fillMissingIntoText, saveConfigText} = await import('../src/services/config-service.ts');
-	const {createConfigDocumentAdapter} = await import('../src/views/config/config-document-adapter.ts');
-	const annotatedRecommendation = loadRecommendationAnnotated('cx');
-	assert.match(annotatedRecommendation ?? '', /model_reasoning_effort\s*=\s*"xhigh"/, 'Codex 推荐配置应使用 xhigh 推理等级');
-	assert.match(annotatedRecommendation ?? '', /#\s*\[sandbox_workspace_write\]/, '推荐配置应展示联网增强项');
-	assert.match(annotatedRecommendation ?? '', /^\[features\]$/m, '推荐配置应启用 features 表');
-	assert.match(annotatedRecommendation ?? '', /^memories\s*=\s*true$/m, '推荐配置应启用 memories feature');
-	assert.match(annotatedRecommendation ?? '', /^\[memories\]$/m, '推荐配置应展示 memories 子选项');
-	assert.doesNotMatch(annotatedRecommendation ?? '', /notify\s*=/, '推荐配置不得写入本机通知配置');
-	const recommendedFill = fillMissingIntoText('', 'cx');
-	assert.equal(recommendedFill.ok, true, 'Codex fill-missing 应接受空配置');
-	if (recommendedFill.ok) {
-		assert.match(recommendedFill.text, /model_reasoning_effort\s*=\s*"xhigh"/, 'fill-missing 应补 xhigh 推理等级');
-		assert.doesNotMatch(recommendedFill.text, /\[sandbox_workspace_write\]/, 'fill-missing 不得自动开启网络访问');
-		assert.doesNotMatch(recommendedFill.text, /\[features\]/, 'fill-missing 不得自动开启 memories');
-	}
+	const {configFileExists, getConfigPath, readCurrentConfigText, fillMissingIntoText, saveConfigText} = await import(
+		'../src/services/config-service.ts'
+	);
+	// [P5e 去重] adapter `openExternal` / `openSuccessMessage`（2 条）已由 P1-G2 载体独占：
+	// tests/core/config-document-adapter.test.ts > openExternal 指向 Config service，成功提示指向目标路径
+	// （对 TARGETS 全量断言 `typeof openExternal === 'function'` 与 `openSuccessMessage.includes(getConfigPath(target))`）。
 	const codexPath = getConfigPath('cx');
-	const codexAdapter = createConfigDocumentAdapter('cx');
-	assert.equal(typeof codexAdapter.openExternal, 'function', 'Codex Config adapter 必须提供外部打开动作');
-	assert.ok(codexAdapter.openSuccessMessage?.includes(codexPath), 'Codex Config 外部打开提示必须指向 config.toml');
-	writeFileSync(codexPath, [
-		'model = "custom-model"',
-		'',
-		'[model_providers.deepseek]',
-		'name = "deepseek"',
-		'experimental_bearer_token = "sk-codex-config-secret"',
-		'',
-		'[mcp_servers.context7]',
-		'command = "npx"',
-		'',
-		'[hooks]'
-	].join('\n'), 'utf8');
+	writeFileSync(
+		codexPath,
+		[
+			'model = "custom-model"',
+			'',
+			'[model_providers.deepseek]',
+			'name = "deepseek"',
+			'experimental_bearer_token = "sk-codex-config-secret"',
+			'',
+			'[mcp_servers.context7]',
+			'command = "npx"',
+			'',
+			'[hooks]'
+		].join('\n'),
+		'utf8'
+	);
 
 	const before = readFileSync(codexPath, 'utf8');
 	const invalid = saveConfigText('model = "broken', 'cx');
@@ -201,15 +111,13 @@ try {
 	assert.doesNotMatch(fill.text, /\[model_providers\.deepseek\]/, 'Codex fill-missing 缓冲不得重新暴露 provider table');
 	assert.doesNotMatch(fill.text, /\[mcp_servers\.context7\]/, 'Codex fill-missing 缓冲不得重新暴露 MCP table');
 	assert.match(fill.text, /\[hooks\]/, 'Codex fill-missing 缓冲保留 hooks table（已放开直编）');
-	writeFileSync(codexPath, [
-		'[model_providers.only_provider]',
-		'name = "only_provider"',
-		'',
-		'[mcp_servers.context7]',
-		'command = "npx"',
-		'',
-		'[hooks]'
-	].join('\n'), 'utf8');
+	writeFileSync(
+		codexPath,
+		['[model_providers.only_provider]', 'name = "only_provider"', '', '[mcp_servers.context7]', 'command = "npx"', '', '[hooks]'].join(
+			'\n'
+		),
+		'utf8'
+	);
 	assert.equal(configFileExists('cx'), true, 'Codex config.toml 存在时必须可被视图识别');
 	assert.equal(readCurrentConfigText('cx').trim(), '[hooks]', '仅剩 hooks 时 Config 可见内容应展示 hooks（已放开直编）');
 

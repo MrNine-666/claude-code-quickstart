@@ -4,14 +4,16 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {groupInstalledSkillItems} from '../src/core/skills-installed.ts';
 import {uninstallSkillInstance, uninstallSkillInstances} from '../src/services/skills-service.ts';
-import {createInitialSkillsViewState, reduceSkillsViewState} from '../src/state/skills-view-state.ts';
-import {runConfirmedUninstallAction} from '../src/views/skills/skills-view-actions.ts';
 
 // uninstall planner（task 07-28-skills-multi-source-topology / design §8.3 / Checkpoint C3）：
 //   1) isolated（无同名异源）→ 官方 remove，不触碰文件系统；
 //   2) 异源同名 → 定向删除当前来源投影，保留异源 Item；
 //   3) 目标不存在 → failed，不静默成功；
 //   4) 所有权歧义 → 拒绝删除，保留目标。
+//
+// 载体迁移（P3b）：planner 纯决策段（U-1 / U-5 / U-9 / U-10，共 13 条静态断言）已迁入
+// `tests/core/skills-uninstall-planner.test.ts`（官方 remove 分支与 action 复检契约，均
+// 不读磁盘）。本脚本只保留真实路径分类与真实目录判定段（U-2/U-3/U-4/U-6/U-7/U-8）。
 
 const home = await realpath(await mkdtemp(join(tmpdir(), 'ccq-uninst-')));
 for (const dir of [join(home, '.claude', 'skills'), join(home, '.agents', 'skills'), join(home, '.codex', 'skills')]) {
@@ -27,55 +29,7 @@ function makeExec() {
 	return {exec, calls};
 }
 
-function taskCancellation() {
-	let controller;
-	return {
-		start() {
-			controller = new AbortController();
-			return controller.signal;
-		},
-		cancel() {
-			controller?.abort();
-			return Boolean(controller);
-		},
-		finish() {
-			controller = undefined;
-		}
-	};
-}
-
-function terminalDispatch(invoke) {
-	return new Promise((resolve, reject) => {
-		const timer = setTimeout(() => reject(new Error('等待 uninstall reconciliation 超时')), 2000);
-		invoke(action => {
-			if (action.type === 'uninstall-reconciled' || action.type === 'action-failed') {
-				clearTimeout(timer);
-				resolve(action);
-			}
-		});
-	});
-}
-
-function uninstallConfirmState(installed) {
-	const loaded = reduceSkillsViewState(createInitialSkillsViewState(), {type: 'installed-loaded', installed});
-	return reduceSkillsViewState(loaded, {type: 'request-uninstall'});
-}
-
 try {
-	// ── U-1 isolated：官方 remove 被调用，不直接删文件 ────────────────────────
-	{
-		const items = groupInstalledSkillItems([
-			{name: 'pdf', path: join(home, '.agents', 'skills', 'pdf'), scope: 'global', agents: ['Codex'], source: 'o/a'}
-		]);
-		const {exec, calls} = makeExec();
-		const out = await uninstallSkillInstance(items[0], items, undefined, exec, {homeDir: home});
-		assert.equal(calls.length, 1, 'isolated 必须走官方 remove 一次');
-		assert.equal(calls[0].args.includes('remove'), true);
-		assert.equal(out.outcome, 'complete');
-		assert.equal(out.mutated, true);
-		console.log('[PASS] U-1 isolated：官方 remove，complete');
-	}
-
 	// ── U-2 异源同名：定向删除当前来源，保留异源 ──────────────────────────────
 	{
 		const dirA = join(home, '.agents', 'skills', 'conf');
@@ -126,18 +80,6 @@ try {
 		assert.match(out.error, /多个来源|歧义/);
 		await access(dup);
 		console.log('[PASS] U-4 所有权歧义：拒绝删除，保留目标');
-	}
-
-	// ── U-5 isolated 官方 remove 失败 → failed 透传诊断 ────────────────────────
-	{
-		const items = groupInstalledSkillItems([
-			{name: 'fail', path: join(home, '.agents', 'skills', 'fail'), scope: 'global', agents: ['Codex'], source: 'o/a'}
-		]);
-		const exec = async () => ({code: 1, stdout: '', stderr: 'boom'});
-		const out = await uninstallSkillInstance(items[0], items, undefined, exec, {homeDir: home});
-		assert.equal(out.outcome, 'failed');
-		assert.equal(out.mutated, true, '官方命令已启动时必须复检，不能假定失败前毫无修改');
-		console.log('[PASS] U-5 官方 remove 失败：failed 透传且要求复检');
 	}
 
 	// ── U-6 Shared 的 Agent badge 可证明 Claude 投影时必须一并删除 ─────────────
@@ -228,76 +170,6 @@ try {
 		assert.equal(calls.length, 0, '后一项必须仍用原始 allItems 证明存在同名异源，不得放宽成官方 name remove');
 		await assert.rejects(() => access(present), undefined, '后续安全 Item 应继续定向删除');
 		console.log('[PASS] U-8 batch：失败继续、原始 allItems 隔离、partial 聚合');
-	}
-
-	// ── U-9 mutation 后即使 partial 也必须完整复检并采用真实列表 ──
-	{
-		const installed = groupInstalledSkillItems([
-			{name: 'partial-view', path: join(home, '.agents', 'skills', 'partial-view'), scope: 'global', agents: ['Codex'], source: 'o/a'}
-		]);
-		const refreshed = groupInstalledSkillItems([
-			{name: 'other', path: join(home, '.agents', 'skills', 'other'), scope: 'global', agents: ['Codex'], source: 'o/b'}
-		]);
-		let refreshCalls = 0;
-		const cache = {
-			async refreshAndWait() {
-				refreshCalls++;
-				return {status: 'success', result: refreshed};
-			},
-			refresh() {}
-		};
-		const action = await terminalDispatch(dispatch => runConfirmedUninstallAction(
-			uninstallConfirmState(installed),
-			{async uninstallInstances() {
-				return {
-					outcome: 'partial',
-					mutated: true,
-					error: '原实例残留',
-					items: [{item: installed[0], result: {outcome: 'partial', mutated: true, error: '原实例残留'}}]
-				};
-			}},
-			dispatch,
-			cache,
-			taskCancellation()
-		));
-		assert.equal(refreshCalls, 1, 'partial mutation 必须完整复检一次');
-		assert.equal(action.type, 'uninstall-reconciled');
-		assert.equal(action.installed, refreshed);
-		assert.equal(action.error, '原实例残留');
-		console.log('[PASS] U-9 partial mutation：完整复检并保留真实诊断');
-	}
-
-	// ── U-9 未 mutation 的安全预检失败不刷新，直接保留原列表 ──────────────────
-	{
-		const installed = groupInstalledSkillItems([
-			{name: 'blocked-view', path: join(home, '.agents', 'skills', 'blocked-view'), scope: 'global', agents: ['Codex'], source: 'o/a'}
-		]);
-		let refreshCalls = 0;
-		const cache = {
-			async refreshAndWait() {
-				refreshCalls++;
-				return {status: 'success', result: installed};
-			},
-			refresh() {}
-		};
-		const action = await terminalDispatch(dispatch => runConfirmedUninstallAction(
-			uninstallConfirmState(installed),
-			{async uninstallInstances() {
-				return {
-					outcome: 'failed',
-					mutated: false,
-					error: '路径歧义',
-					items: [{item: installed[0], result: {outcome: 'failed', mutated: false, error: '路径歧义'}}]
-				};
-			}},
-			dispatch,
-			cache,
-			taskCancellation()
-		));
-		assert.equal(refreshCalls, 0);
-		assert.equal(action.type, 'action-failed');
-		assert.equal(action.error, '路径歧义');
-		console.log('[PASS] U-10 未 mutation 的预检失败：不刷新且保留诊断');
 	}
 
 	console.log('[PASS] Skills uninstall planner 门禁全部通过');

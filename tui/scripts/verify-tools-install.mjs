@@ -2,27 +2,11 @@ import assert from 'node:assert/strict';
 import {chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {delimiter, join} from 'node:path';
-import {npmGlobalBinFromPrefix, prependPathForCurrentProcess} from '../src/core/npm-path.ts';
 
-// CodexCli 等 npm 工具安装后应立即刷新当前 ccq 进程 PATH，避免 npm shim 已生成但检测命令不可达。
-assert.equal(npmGlobalBinFromPrefix('/opt/node', 'darwin'), '/opt/node/bin', 'macOS/Linux npm global bin = <prefix>/bin');
-assert.equal(npmGlobalBinFromPrefix('/opt/node', 'linux'), '/opt/node/bin', 'Linux npm global bin = <prefix>/bin');
-assert.equal(npmGlobalBinFromPrefix('C:\\Users\\me\\AppData\\Roaming\\npm', 'win32'), 'C:\\Users\\me\\AppData\\Roaming\\npm', 'Windows npm shim 在 prefix 根目录');
-assert.equal(npmGlobalBinFromPrefix('   ', 'darwin'), null, '空 prefix 不注入 PATH');
-
+// [P4b 迁走] npm global bin 派生与当前进程 PATH 前置去重（纯平台语义）
+// → tests/core/tools-npm-path.test.ts
+// 本脚本保留需要真实子进程 / 真实落盘的段：fake npm/codex shim 检测与 CodeGraph 安装落盘。
 const originalPath = process.env.PATH;
-try {
-	process.env.PATH = ['second', 'third'].join(delimiter);
-	prependPathForCurrentProcess('first');
-	assert.equal(process.env.PATH, ['first', 'second', 'third'].join(delimiter), '新 npm bin 应前置到 PATH');
-
-	prependPathForCurrentProcess('first');
-	assert.equal(process.env.PATH, ['first', 'second', 'third'].join(delimiter), '重复 npm bin 不应重复注入');
-} finally {
-	process.env.PATH = originalPath;
-}
-
-console.log('[PASS] tools-install npm global bin PATH 即时注入');
 
 const home = mkdtempSync(join(tmpdir(), 'ccq-tools-install-path-'));
 const binDir = join(home, 'bin');

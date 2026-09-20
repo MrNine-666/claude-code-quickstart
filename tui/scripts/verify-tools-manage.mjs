@@ -5,7 +5,6 @@ import {join} from 'node:path';
 
 // Phase 11B tools-manage core 门禁：工具管理单一真理源（design TDR-11）。
 // 覆盖：
-// - COMPONENT_DEFINITIONS 12 组件齐备（含 Pi CLI / Pi Web）+ 顺序（11.4/11.6）
 // - detectComponents 返回 12 项且不聚合 Skills/MCP（11.5/11.7）
 // - CcgWorkflow 版本取自 config.toml（复用 update.ts 检测，单一真理源）
 // - installComponent('ClaudeCode') 走 npm install + 检测确认（11.6/11.8，deps.exec 注入 mock）
@@ -46,40 +45,22 @@ writeFileSync(join(home, '.claude', '.ccg', 'config.toml'), 'version = "3.1.6"\n
 const {
 	COMPONENT_DEFINITIONS,
 	COMPONENT_META,
-	TOOL_GROUP_META,
-	TOOL_GROUP_ORDER,
 	detectComponents,
-	installComponent,
 	filterVisibleComponents,
 	groupComponentsByToolGroup,
 	uninstallImpactNotice
 } = await import('../src/core/tools-manage.ts');
 
 // ── COMPONENT_DEFINITIONS 完整性（11.4/11.6）──────────────────────────────────
-const ids = COMPONENT_DEFINITIONS.map(c => c.id);
-assert.deepEqual(
-	ids,
-	['ClaudeCode', 'Ccline', 'PiCli', 'PiWeb', 'CcgWorkflow', 'OpenSpec', 'Trellis', 'CodeGraph', 'GitNexus', 'CodexCli', 'AntigravityCli', 'DeepSeekHarness'],
-	'12 组件齐备且定义顺序固定（含 Pi CLI / Pi Web）'
-);
-for (const def of COMPONENT_DEFINITIONS) {
-	assert.ok(def.name && def.description, `${def.id} 有 name + description`);
-	assert.ok(def.command && def.versionArgs.length > 0, `${def.id} 有检测命令`);
-	assert.ok(def.kind, `${def.id} 有 kind`);
-}
-const claude = COMPONENT_DEFINITIONS.find(c => c.id === 'ClaudeCode');
-assert.equal(claude.npmPackage, '@anthropic-ai/claude-code', 'ClaudeCode npm 包名');
-console.log('[PASS] COMPONENT_DEFINITIONS 12 组件齐备（含 Pi CLI / Pi Web）(11.4/11.6)');
+// [P4b 迁走] 组件完整性（name/description/command/versionArgs/kind）+ ClaudeCode npm 包名
+// → tests/core/tools-manage.test.ts「COMPONENT_DEFINITIONS registry 完整性」
+// [P4c 去重] 12 组件定义顺序已由 tests/core/tools-context.test.ts「静态定义仍保留安装定义原始顺序」
+// 覆盖；本段无独立断言，不再保留 [PASS] 行。
 
 // ── GitNexus registry 事实（R1/AC7）───────────────────────────────────────────
-const gitnexusDef = COMPONENT_DEFINITIONS.find(c => c.id === 'GitNexus');
-assert.ok(gitnexusDef, 'GitNexus 在 COMPONENT_DEFINITIONS 中');
-assert.equal(gitnexusDef.kind, 'npm', 'GitNexus 安装 kind 为 npm');
-assert.equal(gitnexusDef.command, 'gitnexus', 'GitNexus 检测命令为 gitnexus');
-assert.deepEqual(gitnexusDef.versionArgs, ['-V'], 'GitNexus 版本检测参数为 -V');
-assert.equal(gitnexusDef.npmPackage, 'gitnexus', 'GitNexus registry 包名不得带 dist-tag（供 npm outdated/view 复用）');
-assert.equal(gitnexusDef.docsUrl, 'https://github.com/abhigyanpatwari/GitNexus', 'GitNexus 文档指向官方仓库');
-assert.deepEqual(gitnexusDef.cliAliases, ['gitnexus', 'git-nexus'], 'GitNexus CLI 别名固定');
+// [P4b 迁走] gitnexusDef 定义存在 / kind / command / versionArgs / npmPackage / docsUrl / cliAliases
+// → tests/core/tools-manage.test.ts「GitNexus registry 事实」
+// 以下 sharingKind 已由 P1 tests/core/tools-shared-projection.test.ts 覆盖，保留不重复迁移。
 assert.equal(COMPONENT_META.GitNexus.sharingKind, 'fully-shared-no-inject', 'GitNexus 为整体共享类，不提供单侧开关');
 assert.equal(COMPONENT_META.CodeGraph.sharingKind, 'shared-cli-per-agent-inject', 'CodeGraph 保留双侧独立开关');
 console.log('[PASS] GitNexus registry 定义与 sharing kind');
@@ -90,88 +71,19 @@ assert.match(uninstallImpactNotice('CcgWorkflow', {fullUninstall: true}), /将�
 assert.doesNotMatch(uninstallImpactNotice('ClaudeCode'), /所有 Agent/, 'Claude Code 单工具卸载不提示所有 Agent');
 
 // ── 工具管理分组事实源：Agent / 全局伴随工具 / 工作流 / 代码知识图谱 ───────────
-assert.deepEqual(TOOL_GROUP_ORDER, ['agent', 'companion', 'workflow', 'knowledge-graph'], '工具管理分组顺序为 agent → companion → workflow → knowledge-graph');
-assert.equal(TOOL_GROUP_META.agent.label, 'Agent', 'agent 分组 label = Agent');
-assert.equal(TOOL_GROUP_META.companion.label, '全局伴随工具', 'companion 分组 label = 全局伴随工具');
-assert.equal(TOOL_GROUP_META.companion.description, '通过 npm 全局安装的 Agent 伴随工具', 'companion 分组描述使用全局伴随工具契约');
-assert.equal(TOOL_GROUP_META.workflow.label, '工作流', 'workflow 分组 label = 工作流');
-assert.equal(TOOL_GROUP_META['knowledge-graph'].label, '代码知识图谱', 'knowledge-graph 分组 label = 代码知识图谱');
-assert.equal(COMPONENT_META.CodexCli.group, 'agent', 'CodexCli 属于 Agent 组');
-assert.equal(COMPONENT_META.PiCli.group, 'agent', 'PiCli 属于 Agent 组');
-assert.equal(COMPONENT_META.AntigravityCli.group, 'agent', 'AntigravityCli 属于 Agent 组');
-assert.equal(COMPONENT_META.Ccline.group, 'companion', 'Ccline 属于全局伴随工具组');
-assert.equal(COMPONENT_META.PiWeb.group, 'companion', 'PiWeb 属于全局伴随工具组');
-assert.equal(COMPONENT_META.CodeGraph.group, 'knowledge-graph', 'CodeGraph 属于代码知识图谱组');
-assert.equal(COMPONENT_META.GitNexus.group, 'knowledge-graph', 'GitNexus 属于代码知识图谱组');
+// [P4b 迁走] TOOL_GROUP_META 四组 label/description → tests/core/tools-manage.test.ts「工具管理分组元数据」
+// [P4c 去重] TOOL_GROUP_ORDER 与 COMPONENT_META.*.group 归属已由 tests/core/tools-context.test.ts
+// 「分组展示顺序固定」/「COMPONENT_META 的 group 归属」覆盖，不再重复保留。
 const groupedDefinitions = groupComponentsByToolGroup(COMPONENT_DEFINITIONS);
 assert.deepEqual(groupedDefinitions.map(section => section.label), ['Agent', '全局伴随工具', '工作流', '代码知识图谱'], '分组结构输出 label + grid sections');
 assert.deepEqual(groupedDefinitions.flatMap(section => section.components.map(component => component.id)), ['ClaudeCode', 'CodexCli', 'PiCli', 'AntigravityCli', 'DeepSeekHarness', 'Ccline', 'PiWeb', 'OpenSpec', 'Trellis', 'CcgWorkflow', 'CodeGraph', 'GitNexus'], '分组展示顺序按 Agent/全局伴随工具/工作流/代码知识图谱重排');
 console.log('[PASS] 工具管理分组事实源与展示顺序');
 
 // ── 1.1 CodexCli 官方包名与命令（HC-CODEX-OFFICIAL-PACKAGE）──────────────────
-const codexDef = COMPONENT_DEFINITIONS.find(c => c.id === 'CodexCli');
-assert.ok(codexDef, 'CodexCli 在 COMPONENT_DEFINITIONS 中');
-assert.equal(codexDef.npmPackage, '@openai/codex', 'CodexCli npm 包名为 @openai/codex');
-assert.equal(codexDef.command, 'codex', 'CodexCli 检测命令为 codex');
-assert.deepEqual(codexDef.versionArgs, ['--version'], 'CodexCli 版本检测参数为 --version');
-assert.equal(codexDef.kind, 'npm', 'CodexCli 安装 kind 为 npm');
-// update.ts 的 NPM_COMPONENT_MAP / COMMAND_COMPONENTS 派生自 registry（DRY，单一真理源）：
-// 不再硬编码逐条映射，而是从 TOOL_DEFINITIONS 计算，故此处断言其派生表达式而非字面量。
-const updateSource = readFileSync(new URL('../src/core/update.ts', import.meta.url), 'utf8');
-assert.match(updateSource, /NPM_COMPONENT_MAP[^\n]*=\s*Object\.fromEntries\(\s*\n?\s*TOOL_DEFINITIONS\.filter\(def => def\.npmPackage\)/, 'update.ts NPM_COMPONENT_MAP 派生自 registry 的 npmPackage');
-assert.match(
-	updateSource,
-	/COMMAND_COMPONENTS[^\n]*=\s*Object\.fromEntries\(\s*TOOL_DEFINITIONS\.map\(def => \[\s*def\.id,\s*\{\s*command: def\.command,\s*versionArgs: \[\.\.\.def\.versionArgs\]/,
-	'update.ts COMMAND_COMPONENTS 派生自 registry 的 command/versionArgs'
-);
-console.log('[PASS] 1.1 CodexCli 使用 @openai/codex 与 codex --version（maps 派生自 registry）');
+// [P4b 迁走] CodexCli 包名/命令/versionArgs/kind → tests/core/tools-manage.test.ts「CodexCli registry 事实」
+console.log('[PASS] 1.1 CodexCli 使用 @openai/codex 与 codex --version');
 
-// ── r 手动刷新必须绕过 npm 远程版本缓存，避免 latest 卡在旧缓存（如 Claude Code 1.0.199）──
-const toolsViewSource = readFileSync(new URL('../src/views/tools/ToolsView.tsx', import.meta.url), 'utf8');
-const toolsHomeSource = readFileSync(new URL('../src/views/tools/ToolsHomeView.tsx', import.meta.url), 'utf8');
-const toolsActionsSource = readFileSync(new URL('../src/views/tools/tools-view-actions.ts', import.meta.url), 'utf8');
-const toolsManageSource = readFileSync(new URL('../src/core/tools-manage.ts', import.meta.url), 'utf8');
-const viewDetectionSource = readFileSync(new URL('../src/services/view-detection.ts', import.meta.url), 'utf8');
-const detectionCacheSource = readFileSync(new URL('../src/hooks/use-detection-cache.ts', import.meta.url), 'utf8');
-assert.match(toolsViewSource, /cache\.refresh\(\{forceRefresh:\s*true\}\)/, 'ToolsView r 刷新传 forceRefresh');
-assert.match(detectionCacheSource, /if \(services\.refreshDetection\)/, 'useDetectionCache 仅在服务提供 refreshDetection 时消费 refresh options');
-assert.match(detectionCacheSource, /services\.runDetection\(runner\)/, '无 refreshDetection 时不把 options 误传给 runDetection');
-const toolsServicesSource = readFileSync(new URL('../src/views/tools/tools-view-services.ts', import.meta.url), 'utf8');
-assert.match(toolsServicesSource, /refreshDetection:\s*\(runner,\s*options\)\s*=>\s*runToolsDetection\(runner,\s*options\)/, 'Tools service 为手动刷新提供专用 refreshDetection');
-assert.match(viewDetectionSource, /detectComponents\(undefined,\s*options\.forceRefresh === true\)/, 'runToolsDetection 透传 forceRefresh');
-assert.match(toolsManageSource, /getNpmOutdatedGlobal\(forceRefresh\)/, 'detectComponents 强刷 npm outdated 缓存');
-assert.match(updateSource, /resolveNpmViewLatest\(Object\.values\(NPM_COMPONENT_MAP\),\s*forceRefresh\)/, 'checkCliToolUpdates 强刷 npm view 缓存');
-assert.match(toolsHomeSource, /groupToolsForHome\(view\.components\)/, 'ToolsHomeView 按领域分组结构渲染 label + grid');
-assert.match(toolsHomeSource, /<text[\s\S]{0,500}>\s*\{section\.label\}\s*<\/text>/, 'ToolsHomeView 渲染分组 label');
-assert.doesNotMatch(toolsHomeSource, /label:\s*['"]Agent['"]/, 'ToolsHomeView 不硬编码 Agent 分组 label');
-console.log('[PASS] r 手动刷新绕过 npm outdated/npm view 缓存');
 
-// 单项 install/update/uninstall 成功后必须同步 App 层检测缓存，否则切换 Header 时
-// detection.result 会重新下发旧版本号，覆盖 ToolsView 的局部 patch。
-function sourceSection(source, startMarker, endMarker) {
-	const start = source.indexOf(startMarker);
-	const end = source.indexOf(endMarker, start + startMarker.length);
-	assert.notEqual(start, -1, `${startMarker} 存在`);
-	assert.notEqual(end, -1, `${endMarker} 存在`);
-	return source.slice(start, end);
-}
-
-assert.match(
-	sourceSection(toolsActionsSource, 'function installOne', 'function updateOne'),
-	/cache\.refresh\(\)/,
-	'单项安装成功后刷新检测缓存，避免切换 Agent 回退版本/安装态'
-);
-assert.match(
-	sourceSection(toolsActionsSource, 'function updateOne', 'export function updateAll'),
-	/cache\.refresh\(\)/,
-	'单项更新成功后刷新检测缓存，避免切换 Agent 回退到旧版本号'
-);
-assert.match(
-	sourceSection(toolsActionsSource, 'export function runUninstall', 'export function uninstallSuccessPatch'),
-	/cache\.refresh\(\)/,
-	'单项卸载成功后刷新检测缓存，避免切换 Agent 回退安装态'
-);
-console.log('[PASS] 工具单项生命周期成功后同步 App 层检测缓存');
 
 // ── detectComponents 返回 12 项 + 不聚合 Skills/MCP（11.5/11.7）───────────────
 const components = await detectComponents();
@@ -240,92 +152,16 @@ console.log('[PASS] detectComponents 12 项 + 不聚合 Skills/MCP + CcgWorkflow
 }
 console.log('[PASS] Codex Header 工具安装态按 ~/.codex 集成信号修正');
 
-// ── installComponent('ClaudeCode') npm install + 检测确认（11.6/11.8）────────
-const execCalls = [];
-const mockExec = async (cmd, args) => {
-	execCalls.push({cmd, args});
-	if (cmd === 'npm' && args.includes('install')) {
-		return {code: 0, stdout: '', stderr: ''};
-	}
+// [P4b 迁走] installComponent('ClaudeCode') npm install → PATH 刷新 → claude --version 检测确认
+// → tests/core/tools-manage.test.ts「installComponent ClaudeCode 安装路径」
 
-	if (cmd === 'npm' && args[0] === 'prefix') {
-		return {code: 0, stdout: `${home}\n`, stderr: ''};
-	}
-
-	if (cmd === 'claude' && args.includes('--version')) {
-		return {code: 0, stdout: '1.2.3\n', stderr: ''};
-	}
-
-	return {code: 1, stdout: '', stderr: 'mock unknown'};
-};
-const outcome = await installComponent('ClaudeCode', undefined, {exec: mockExec});
-assert.equal(outcome.success, true, 'ClaudeCode 安装成功');
-assert.equal(outcome.id, 'ClaudeCode', '返回 id 为 ClaudeCode');
-assert.ok(
-	execCalls.some(c => c.cmd === 'npm' && c.args.includes('@anthropic-ai/claude-code')),
-	'调起 npm install -g @anthropic-ai/claude-code'
-);
-const npmInstallIndex = execCalls.findIndex(c => c.cmd === 'npm' && c.args.includes('@anthropic-ai/claude-code'));
-const npmPrefixIndex = execCalls.findIndex(c => c.cmd === 'npm' && c.args[0] === 'prefix');
-const claudeVersionIndex = execCalls.findIndex(c => c.cmd === 'claude' && c.args.includes('--version'));
-assert.ok(npmInstallIndex >= 0, '调起 npm install -g @anthropic-ai/claude-code');
-assert.ok(npmPrefixIndex > npmInstallIndex, 'ClaudeCode 安装后刷新 npm global bin PATH');
-assert.ok(claudeVersionIndex > npmPrefixIndex, '刷新 PATH 后检测 claude --version');
-console.log('[PASS] installComponent ClaudeCode npm install + PATH 刷新 + 检测确认 (11.6/11.8)');
-
-// ── installComponent 未知组件拒绝 ─────────────────────────────────────────────
-const unknown = await installComponent('UnknownId');
-assert.equal(unknown.success, false, '未知组件返回失败');
-assert.match(unknown.error, /未知组件/, '未知组件错误信息');
-console.log('[PASS] installComponent 未知组件拒绝');
+// [P4b 迁走] installComponent 未知组件拒绝 → tests/core/tools-manage.test.ts「installComponent 未知组件拒绝」
 
 // ── Phase 11C 卸载门禁（11.10~11.15）──────────────────────────────────────────
 const {uninstallComponent, updateComponents} = await import('../src/core/tools-manage.ts');
 
-// P-13：snapshot 失败 → exec 零调用（11.15 snapshot-before-write 不变量）
-{
-	const execCalls = [];
-	const mockExec = async (cmd, args) => {
-		execCalls.push({cmd, args});
-		return {code: 1, stdout: '', stderr: 'mock'};
-	};
-	const outcome = await uninstallComponent('OpenSpec', undefined, {
-		exec: mockExec,
-		createSnapshotFn: () => {
-			throw new Error('snapshot boom');
-		}
-	});
-	assert.equal(outcome.success, false, 'P-13 快照失败应中止卸载');
-	assert.match(outcome.error, /快照失败/, 'P-13 错误信息含快照失败');
-	assert.equal(execCalls.length, 0, 'P-13 快照失败后 exec 零调用（snapshot-before-write）');
-}
-console.log('[PASS] P-13 snapshot 失败 → exec 零调用 (11.15)');
-
-// P-13 更新路径：updateComponents 注入 createSnapshotFn 抛错 → exec 零调用（applyUpdates snapshot-before-write）
-{
-	const execCalls = [];
-	const mockExec = async (cmd, args) => {
-		execCalls.push({cmd, args});
-		return {code: 0, stdout: '', stderr: ''};
-	};
-	const definition = COMPONENT_DEFINITIONS.find(c => c.id === 'OpenSpec');
-	const updatable = {
-		...definition,
-		installed: true,
-		currentVersion: '1.0.0',
-		latestVersion: '2.0.0',
-		hasUpdate: true
-	};
-	const result = updateComponents([updatable], undefined, {
-		exec: mockExec,
-		createSnapshotFn: () => {
-			throw new Error('snapshot boom');
-		}
-	});
-	await assert.rejects(result, /snapshot boom/, 'P-13 更新快照失败应抛错');
-	assert.equal(execCalls.length, 0, 'P-13 更新快照失败后 exec 零调用（snapshot-before-write）');
-}
-console.log('[PASS] P-13 更新路径 snapshot 失败 → exec 零调用 (applyUpdates)');
+// [P4b 迁走] P-13 卸载/更新路径 snapshot 失败 → exec 零调用
+// → tests/core/tools-manage.test.ts「snapshot-before-write 门禁」
 
 // CodeGraph 更新后按已接入 Agent 重跑 install，并校验 MCP 仍存在
 {

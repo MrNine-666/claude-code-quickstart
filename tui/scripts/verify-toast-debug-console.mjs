@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
-import {existsSync, readFileSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
 
 // 自实现 Toast + 调试控制台门禁：
 // 1) Toast 不得再依赖 @opentui-ui/toast（peer 锁 @opentui/core ^0.1.63，与运行时 0.4.5 的
@@ -19,21 +18,7 @@ assert.equal(
 	'@opentui-ui/toast 必须从 dependencies 移除（peer 与 @opentui/core 0.4.5 不兼容）'
 );
 
-// 全源码扫描 import 语句（注释里保留「为什么自实现」的说明是允许的，只禁真实依赖）。
-const sourceFiles = execFileSync('git', ['ls-files', 'src', 'scripts', 'tests'], {cwd: new URL('..', import.meta.url), encoding: 'utf8'})
-	.split('\n')
-	.filter(path => /\.(ts|tsx|mjs)$/.test(path));
-
-for (const path of sourceFiles) {
-	if (path.endsWith('verify-toast-debug-console.mjs')) continue;
-	if (!existsSync(new URL(`../${path}`, import.meta.url))) continue;
-	const source = read(`../${path}`);
-	assert.doesNotMatch(
-		source,
-		/from ['"]@opentui-ui\/toast['"]/,
-		`${path} 不得再从 @opentui-ui/toast import（该包与 @opentui/core 0.4.5 不兼容）`
-	);
-}
+// 全源码「不得 import @opentui-ui/toast」扫描已迁入 scripts/verify-view-architecture.mjs 的 P1-G1b 段。
 
 // ---- 2. 顶部居中 + 层级 + 全主题色 ----
 const viewport = read('../src/components/toast-viewport.tsx');
@@ -102,14 +87,9 @@ for (const [name, script] of Object.entries(packageJson.scripts)) {
 	assert.match(script, /--no-compile-autoload-dotenv/, `${name} 直接调 bun build，同样必须传 --no-compile-autoload-dotenv`);
 }
 
-// 调试控制台开关：env 驱动，dev 默认开、生产默认关
-const indexSource = read('../src/index.tsx');
-assert.match(indexSource, /process\.env\.CCQ_DEBUG === '1'/, '调试控制台必须由 CCQ_DEBUG 环境变量驱动');
-assert.match(indexSource, /renderer\.console\.show\(\)/, 'CCQ_DEBUG=1 时必须展开 TerminalConsole 覆盖层');
-assert.match(indexSource, /renderer\.console\.toggle\(\)/, '必须提供快捷键切换控制台显隐');
-// macOS 上 F-key 被 Mission Control / 媒体键占用且终端常不转发，必须用 ctrl+<key> 组合键。
-assert.doesNotMatch(indexSource, /key\.name === 'f\d+'/, '控制台快捷键不得用 F-key（macOS 上被系统占用且终端常不转发）');
-assert.match(indexSource, /isAppModifier\(key\)/, '控制台快捷键必须走 isAppModifier（复用项目 ctrl+<key> 平台约定）');
+// 调试控制台开关：env 驱动，dev 默认开、生产默认关。
+// index.tsx 的 CCQ_DEBUG / console.show / console.toggle / 非 F-key 不变量
+// 已迁入 scripts/verify-view-architecture.mjs 的 P1-G1b 段。
 assert.match(read('../.env.development'), /^CCQ_DEBUG=1$/m, '.env.development 必须提供 CCQ_DEBUG=1，使 bun run dev 默认开启控制台');
 assert.match(packageJson.scripts.dev, /NODE_ENV=development/, 'dev 脚本必须显式设 NODE_ENV=development，以确定性加载 .env.development');
 

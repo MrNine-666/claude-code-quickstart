@@ -194,7 +194,7 @@ assert.match(readCodexConfig(), /enabled\s*=\s*false/, 'Codex 禁用写 enabled=
 console.log('[PASS] 13.2 Codex 禁用写 enabled=false 不删块');
 
 // d 全量删除（Section 11.3）：两侧 runtime + vault 定义 + settings permission，需确认。
-assert.equal(removeSharedMcpServer('shared7', false).ok, false, 'd 未确认返回失败（NeedConfirmation）');
+// 未确认时的 NeedConfirmation 边界（不触碰 runtime/vault）已迁 tests/core/mcp-multitool.test.ts。
 const removeResult = removeSharedMcpServer('shared7', true);
 assert.equal(removeResult.ok, true, 'd 确认后全量删除成功');
 assert.equal(sharedRow('shared7'), undefined, 'd 后 shared7 从共享列表消失');

@@ -3,21 +3,23 @@ import {mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:
 import {join, posix, win32} from 'node:path';
 import {tmpdir} from 'node:os';
 
+// [P4b 切分] 纯段（npm PATH 平台语义 / install-update-uninstall 精确 argv、
+// ownership gate、mutation/postflight 失败收敛）已迁：
+//   - tests/core/tools-npm-path.test.ts（Windows Path/PATH 大小写与分隔符）
+//   - tests/core/tools-lifecycle-dsh.test.ts（注入 exec/detect 的操作矩阵）
+// 本脚本保留需要真实落盘 / 真实 shim 的段：detectDshLifecycle 的 npm package/PATH shim/
+// version parity 矩阵，`~/.dsh` snapshot allowlist 与卸载用户数据保留。
+// update.ts 源码文本断言属本批范围外（P4 PRD 声明 0 源码文本断言，此处按原样保留并在对账登记）。
+
 const {
 	DSH_COMMAND,
-	DSH_INSTALL_ARGS,
 	DSH_PACKAGE_NAME,
 	DSH_TOOL_ID,
 	DSH_UNINSTALL_ARGS,
 	DSH_VERSION_ARGS,
-	detectDshLifecycle,
-	installDsh,
-	uninstallDsh,
-	updateDsh
+	detectDshLifecycle
 } = await import('../src/core/dsh-lifecycle.ts');
-const {environmentPath, prependPathForCurrentProcess, withEnvironmentPath} = await import('../src/core/npm-path.ts');
 const {createSnapshot, getSnapshotFiles} = await import('../src/core/update.ts');
-const {applyUpdates} = await import('../src/core/update.ts');
 const {uninstallComponent} = await import('../src/core/tools-manage.ts');
 const updateSource = readFileSync(new URL('../src/core/update.ts', import.meta.url), 'utf8');
 
@@ -120,55 +122,6 @@ function operationExec(prefix, calls, mutationCode = 0) {
 function mutationCalls(calls, verb) {
 	return calls.filter(call => call.command === 'npm' && call.args[0] === verb);
 }
-
-function withFixtureProcessEnv(env, run) {
-	const descriptor = Object.getOwnPropertyDescriptor(process, 'env');
-	assert.ok(descriptor, 'process.env descriptor exists');
-	Object.defineProperty(process, 'env', {...descriptor, value: env});
-	try {
-		run();
-	} finally {
-		Object.defineProperty(process, 'env', descriptor);
-	}
-}
-
-async function withFixtureProcessEnvAsync(env, run) {
-	const descriptor = Object.getOwnPropertyDescriptor(process, 'env');
-	assert.ok(descriptor, 'process.env descriptor exists');
-	Object.defineProperty(process, 'env', {...descriptor, value: env});
-	try {
-		return await run();
-	} finally {
-		Object.defineProperty(process, 'env', descriptor);
-	}
-}
-
-// ── PATH injection: explicit platform delimiter and Windows casing ───────────
-
-withFixtureProcessEnv({Path: 'C:\\existing'}, () => {
-	prependPathForCurrentProcess('C:\\npm-global', 'win32');
-	assert.equal(process.env.Path, 'C:\\npm-global;C:\\existing', 'Windows 仅 Path 时使用分号并保留 Path 形式');
-	assert.equal(Object.hasOwn(process.env, 'PATH'), false, 'Windows 仅 Path 时不凭空创建 PATH');
-});
-
-withFixtureProcessEnv({PATH: 'C:\\existing'}, () => {
-	prependPathForCurrentProcess('C:\\npm-global', 'win32');
-	assert.equal(process.env.PATH, 'C:\\npm-global;C:\\existing', 'Windows 仅 PATH 时使用分号并保留 PATH 形式');
-	assert.equal(Object.hasOwn(process.env, 'Path'), false, 'Windows 仅 PATH 时不凭空创建 Path');
-});
-
-withFixtureProcessEnv({Path: 'C:\\existing', PATH: 'C:\\legacy'}, () => {
-	prependPathForCurrentProcess('C:\\npm-global', 'win32');
-	assert.equal(process.env.Path, 'C:\\npm-global;C:\\existing;C:\\legacy', 'Windows Path 更新保留另一种变量内容');
-	assert.equal(process.env.PATH, process.env.Path, 'Windows 同时存在两种变量形式时同步更新');
-});
-assert.equal(environmentPath({Path: 'C:\\existing'}, 'win32'), 'C:\\existing', 'Windows Path 可作为子进程 PATH 来源');
-assert.deepEqual(
-	withEnvironmentPath({Path: 'C:\\existing'}, 'C:\\npm-global;C:\\existing', 'win32'),
-	{Path: 'C:\\npm-global;C:\\existing'},
-	'Windows Path-only 子进程环境不得额外创建 PATH'
-);
-console.log('[PASS] npm PATH injection handles explicit platform delimiters and Windows Path/PATH casing');
 
 // ── Ownership and command-health matrix ─────────────────────────────────────
 {
@@ -278,268 +231,6 @@ console.log('[PASS] npm PATH injection handles explicit platform delimiters and 
 	assert.equal(unavailable.canUninstall, false, 'npm 缺失禁止卸载');
 	assert.notEqual(unavailable.state, 'verification-unknown', '普通 DSH 检测不产生 mutation 专用 verification-unknown 状态');
 	console.log('[PASS] external, PATH conflict, not-installed, and npm-unavailable are read-only as required');
-}
-
-// ── npm argv, preflight ownership gate, postflight, and prerelease warning ───
-{
-	const prefix = pathApi.join(root, 'operations');
-	const managed = lifecycle('managed', {
-		packageVersion: '1.2.3',
-		commandVersion: '1.2.3',
-		packagePresent: true,
-		commandPresent: true
-	});
-	const notInstalled = lifecycle('not-installed');
-	const external = lifecycle('external', {commandPresent: true});
-
-	const windowsPostflightDetections = [];
-	const windowsPathResult = await withFixtureProcessEnvAsync({Path: 'C:\\process-path'}, async () =>
-		updateDsh(undefined, {
-			platform: 'win32',
-			env: {Path: 'C:\\existing'},
-			exec: async (command, args) => {
-				if (command === 'npm' && args[0] === 'prefix') return {code: 0, stdout: 'C:\\npm-global\n', stderr: ''};
-				return {code: 0, stdout: '', stderr: ''};
-			},
-			detect: async deps => {
-				windowsPostflightDetections.push(deps);
-				return managed;
-			}
-		})
-	);
-	assert.equal(windowsPathResult.success, true, 'Windows Path-only postflight remains operable');
-	assert.equal(windowsPostflightDetections.length, 2, 'Windows update performs preflight and postflight detection');
-	assert.deepEqual(
-		windowsPostflightDetections[1]?.env,
-		{Path: 'C:\\npm-global;C:\\existing'},
-		'Windows postflight preserves Path casing while prefixing npm bin'
-	);
-	assert.equal(
-		Object.hasOwn(windowsPostflightDetections[1]?.env ?? {}, 'PATH'),
-		false,
-		'Windows Path-only postflight does not introduce a conflicting PATH key'
-	);
-
-	const installCalls = [];
-	const installResult = await installDsh(undefined, {
-		exec: operationExec(prefix, installCalls),
-		detect: sequenceDetector([notInstalled, managed])
-	});
-	assert.equal(installResult.success, true, 'not-installed 安装成功');
-	assert.deepEqual(
-		mutationCalls(installCalls, 'install').map(call => call.args),
-		[DSH_INSTALL_ARGS],
-		'安装使用精确 npm argv'
-	);
-	assert.equal(installResult.lifecycle.state, 'managed', '安装成功返回 postflight lifecycle');
-
-	const updateCalls = [];
-	const updateResult = await updateDsh(undefined, {
-		exec: operationExec(prefix, updateCalls),
-		detect: sequenceDetector([managed, managed])
-	});
-	assert.equal(updateResult.success, true, 'managed 更新成功');
-	assert.deepEqual(
-		mutationCalls(updateCalls, 'install').map(call => call.args),
-		[DSH_INSTALL_ARGS],
-		'更新使用精确 npm argv'
-	);
-	assert.equal(updateResult.lifecycle.state, 'managed', '更新成功返回 postflight lifecycle');
-
-	const uninstallCalls = [];
-	const uninstallResult = await uninstallDsh(undefined, {
-		exec: operationExec(prefix, uninstallCalls),
-		detect: sequenceDetector([managed, external])
-	});
-	assert.equal(uninstallResult.success, true, '包移除且外部命令仍存在时卸载成功');
-	assert.deepEqual(
-		mutationCalls(uninstallCalls, 'uninstall').map(call => call.args),
-		[DSH_UNINSTALL_ARGS],
-		'卸载使用精确 npm argv'
-	);
-	assert.equal(uninstallResult.lifecycle.state, 'external', '卸载返回外部 dsh postflight 状态');
-	assert.equal(uninstallResult.warning, external.diagnostic, '卸载后外部 dsh 以 warning 暴露');
-
-	const blockedCalls = [];
-	const blocked = await installDsh(undefined, {
-		exec: operationExec(prefix, blockedCalls),
-		detect: async () => external
-	});
-	assert.equal(blocked.success, false, 'external install 被阻止');
-	assert.equal(mutationCalls(blockedCalls, 'install').length, 0, 'external install 不执行 npm 写命令');
-
-	const failedPostflight = lifecycle('broken', {
-		packageVersion: '1.2.3',
-		packagePresent: true,
-		commandPresent: true,
-		repairRequired: true
-	});
-	const postflightCalls = [];
-	const failed = await installDsh(undefined, {
-		exec: operationExec(prefix, postflightCalls),
-		detect: sequenceDetector([notInstalled, failedPostflight])
-	});
-	assert.equal(failed.success, false, 'postflight 非 managed 必须失败');
-	assert.equal(failed.lifecycle.state, 'broken', 'postflight 失败保留最终 lifecycle');
-	assert.match(failed.error, /postflight/, 'postflight 失败有明确诊断');
-
-	const thrownMutationCalls = [];
-	const thrownMutation = await updateDsh(undefined, {
-		exec: async (command, args) => {
-			thrownMutationCalls.push({command, args: [...args]});
-			if (command === 'npm' && args[0] === 'install') throw new Error('fixture mutation throw');
-			if (command === 'npm' && args[0] === 'prefix') return {code: 0, stdout: `${prefix}\n`, stderr: ''};
-			return {code: 0, stdout: '', stderr: ''};
-		},
-		detect: sequenceDetector([managed, managed])
-	});
-	assert.equal(thrownMutation.success, false, 'mutation throw 必须返回失败');
-	assert.equal(thrownMutation.lifecycle.state, 'managed', 'mutation throw 后 postflight 成功时保留最终 managed lifecycle');
-	assert.match(thrownMutation.error, /fixture mutation throw/, 'mutation throw 诊断被保留');
-	assert.equal(mutationCalls(thrownMutationCalls, 'install').length, 1, 'mutation throw 仍只尝试一次 npm install');
-
-	const nonzeroMutationCalls = [];
-	const nonzeroMutation = await updateDsh(undefined, {
-		exec: operationExec(prefix, nonzeroMutationCalls, 23),
-		detect: sequenceDetector([managed, managed])
-	});
-	assert.equal(nonzeroMutation.success, false, 'mutation 非零退出码必须返回失败');
-	assert.equal(nonzeroMutation.lifecycle.state, 'managed', 'mutation 非零后 postflight 成功时保留最终 managed lifecycle');
-	assert.match(nonzeroMutation.error, /exit 23/, 'mutation 非零退出码诊断被保留');
-
-	let postflightDetectCount = 0;
-	const verificationUnknown = await updateDsh(undefined, {
-		exec: operationExec(prefix, []),
-		detect: async () => {
-			postflightDetectCount += 1;
-			if (postflightDetectCount === 1) return managed;
-			throw new Error('fixture postflight detector failure');
-		}
-	});
-	assert.equal(verificationUnknown.success, false, 'postflight detector throw 必须返回失败');
-	assert.equal(verificationUnknown.state, 'verification-unknown', 'postflight detector throw 使用不可验证最终状态');
-	assert.equal(verificationUnknown.lifecycle.state, 'verification-unknown', 'postflight detector throw 不得复用 mutation 前 lifecycle');
-	assert.equal(verificationUnknown.lifecycle.canInstall, false, 'verification-unknown 禁止 install');
-	assert.equal(verificationUnknown.lifecycle.canUpdate, false, 'verification-unknown 禁止 update');
-	assert.equal(verificationUnknown.lifecycle.canUninstall, false, 'verification-unknown 禁止 uninstall');
-	assert.match(verificationUnknown.error, /postflight.*fixture postflight detector failure/, 'postflight detector 诊断被保留');
-
-	let combinedDetectCount = 0;
-	const combinedFailure = await updateDsh(undefined, {
-		exec: operationExec(prefix, [], 41),
-		detect: async () => {
-			combinedDetectCount += 1;
-			if (combinedDetectCount === 1) return managed;
-			throw new Error('fixture combined postflight failure');
-		}
-	});
-	assert.equal(combinedFailure.lifecycle.state, 'verification-unknown', 'mutation 与 postflight 双失败仍使用不可验证最终状态');
-	assert.match(combinedFailure.error, /exit 41/, 'mutation 失败诊断不可被 postflight 错误覆盖');
-	assert.match(combinedFailure.error, /fixture combined postflight failure/, 'postflight 检测失败诊断不可覆盖 mutation 错误');
-	console.log('[PASS] mutation failures preserve postflight facts; postflight detection failure becomes verification-unknown');
-
-	const mixedCalls = [];
-	let mixedSnapshotCreated = false;
-	const mixedDsh = lifecycle('path-conflict', {packagePresent: true, commandPresent: true});
-	const mixedResult = await applyUpdates(
-		[
-			{
-				id: DSH_TOOL_ID,
-				name: 'DeepSeek Harness',
-				type: 'npm',
-				package: DSH_PACKAGE_NAME,
-				installed: true,
-				currentVersion: '1.2.3',
-				latestVersion: '1.2.4',
-				hasUpdate: true
-			},
-			{
-				id: 'OpenSpec',
-				name: 'OpenSpec CLI',
-				type: 'npm',
-				package: '@fission-ai/openspec',
-				installed: true,
-				currentVersion: '1.0.0',
-				latestVersion: '1.1.0',
-				hasUpdate: true
-			}
-		],
-		undefined,
-		{
-			exec: operationExec(prefix, mixedCalls),
-			createSnapshotFn: () => {
-				mixedSnapshotCreated = true;
-				return pathApi.join(root, 'mixed-snapshot');
-			},
-			dshDetect: async () => mixedDsh
-		}
-	);
-	assert.equal(mixedSnapshotCreated, true, '混合批次仍为其他组件创建 snapshot');
-	assert.equal(
-		mixedResult.updatedItems.some(item => item.startsWith(`failed::${DSH_TOOL_ID}::`)),
-		true,
-		'批量 DSH 门禁失败被隔离'
-	);
-	assert.equal(
-		mixedResult.updatedItems.some(item => item.startsWith('updated::OpenSpec::')),
-		true,
-		'批量 DSH 门禁失败不阻断其他组件'
-	);
-	assert.equal(
-		mutationCalls(mixedCalls, 'install').some(call => call.args.includes(DSH_PACKAGE_NAME)),
-		false,
-		'批量 DSH 被阻止时不执行 npm install'
-	);
-
-	let singleSnapshotCreated = false;
-	const singleBlockedCalls = [];
-	const singleBlockedResult = await applyUpdates(
-		[
-			{
-				id: DSH_TOOL_ID,
-				name: 'DeepSeek Harness',
-				type: 'npm',
-				package: DSH_PACKAGE_NAME,
-				installed: true,
-				currentVersion: '1.2.3',
-				latestVersion: '1.2.4',
-				hasUpdate: true
-			}
-		],
-		undefined,
-		{
-			exec: operationExec(prefix, singleBlockedCalls),
-			createSnapshotFn: () => {
-				singleSnapshotCreated = true;
-				return pathApi.join(root, 'single-blocked-snapshot');
-			},
-			dshDetect: async () => external
-		}
-	);
-	assert.equal(singleBlockedResult.dshLifecycle.state, 'external', '单项 DSH 门禁失败保留最终 lifecycle');
-	assert.equal(
-		singleBlockedResult.updatedItems.some(item => item.startsWith(`failed::${DSH_TOOL_ID}::`)),
-		true,
-		'单项 DSH 门禁返回失败结果'
-	);
-	assert.equal(singleSnapshotCreated, false, '单项 DSH 门禁失败不创建 snapshot');
-	assert.equal(mutationCalls(singleBlockedCalls, 'install').length, 0, '单项 DSH 门禁失败不执行 npm install');
-	console.log('[PASS] 单项更新竞态阻断返回 lifecycle 且不创建 snapshot');
-
-	const prerelease = lifecycle('managed', {
-		packageVersion: '2.0.0-beta.1',
-		commandVersion: '2.0.0-beta.1',
-		packagePresent: true,
-		commandPresent: true,
-		prereleaseWarning: '当前为预发布版本，可能存在 breaking changes。'
-	});
-	const prereleaseResult = await installDsh(undefined, {
-		exec: operationExec(prefix, []),
-		detect: sequenceDetector([notInstalled, prerelease])
-	});
-	assert.equal(prereleaseResult.success, true, '预发布版本仍允许安装');
-	assert.match(prereleaseResult.warning, /预发布版本/, '预发布安装返回风险提示');
-	console.log('[PASS] install/update/uninstall argv, ownership gate, postflight, and prerelease warning');
 }
 
 // ── snapshot boundary and ~/.dsh preservation ────────────────────────────────

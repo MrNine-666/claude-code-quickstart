@@ -1,3 +1,16 @@
+// TUI 质量工具链的最小 CI/门禁契约（仅保留 K1–K6 六类）。
+//
+// K1 门禁完整性：`pkg.scripts.check` 字面量（`verify` 必须仍在链上）
+// K2 测试分层：`pkg.scripts.test` 字面量（渲染测试不得被塞回 `--parallel`）
+// K3 CI 真跑聚合门禁：workflow 含 `run: bun run check`
+// K4 CI 权限边界：`contents: read`，且无 artifact / `contents: write`
+// K5 供应链：`bun install --frozen-lockfile`
+// K6 禁用的测试运行时：无 `vite` / `vitest`
+//
+// 其余断言（依赖版本号锁定、`biome.json` 配置项、format/lint/typecheck/verify
+// 等 scripts 字面量、formatter 实现细节、workflow 触发路径 / runs-on /
+// bun-version / action SHA 遍历）已于 P1 批删除，降级为人工 Review Checklist，
+// 见 .trellis/spec/project/tui/quality-tooling.md §6 与 §3。
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
@@ -6,57 +19,15 @@ const root = join(import.meta.dirname, '..');
 const repoRoot = join(root, '..');
 const read = path => readFileSync(path, 'utf8');
 const pkg = JSON.parse(read(join(root, 'package.json')));
-const biome = JSON.parse(read(join(root, 'biome.json')));
-const formatter = read(join(root, 'scripts', 'biome-format.mjs'));
 const workflow = read(join(repoRoot, '.github', 'workflows', 'tui-quality.yml'));
-const coreTest = read(join(root, 'tests', 'core', 'text-utils.test.ts'));
-const rendererTest = read(join(root, 'tests', 'components', 'status-dot.test.tsx'));
 
-assert.equal(pkg.packageManager, 'bun@1.3.14');
-assert.equal(pkg.devDependencies['@biomejs/biome'], '2.5.4');
-assert.equal(pkg.dependencies['@opentui/core'], '0.4.5');
-assert.equal(pkg.dependencies['@opentui/keymap'], '0.4.5');
-assert.equal(pkg.dependencies['@opentui/react'], '0.4.5');
-assert.equal(pkg.scripts.format, 'bun scripts/biome-format.mjs --write');
-assert.equal(pkg.scripts['format:check'], 'bun scripts/biome-format.mjs');
-assert.equal(pkg.scripts.lint, 'biome lint --diagnostic-level=error src scripts tests');
-assert.equal(pkg.scripts.test, 'bun test tests');
-assert.match(pkg.scripts.verify, /bun scripts\/verify-build-runtime\.mjs/);
+assert.equal(pkg.scripts.test, 'bun test tests/core --parallel && bun test tests/components');
 assert.equal(pkg.scripts.check, 'bun run format:check && bun run lint && bun run typecheck && bun run test && bun run verify');
 assert.equal(JSON.stringify({...pkg.dependencies, ...pkg.devDependencies}).match(/vite|vitest/i), null);
 
-assert.equal(biome.formatter.indentStyle, 'tab');
-assert.equal(biome.javascript.formatter.quoteStyle, 'single');
-assert.equal(biome.linter.rules.recommended, true);
-assert.match(formatter, /CCQ_FORMAT_BASE/);
-assert.match(formatter, /\$\{base\}\.\.\.HEAD/);
-assert.match(formatter, /'--cached'/);
-assert.match(formatter, /'ls-files', '--others', '--exclude-standard'/);
-assert.match(formatter, /'rev-parse', '--show-prefix'/);
-assert.match(formatter, /normalized\.startsWith\(gitPrefix\)/);
-assert.match(formatter, /'src', 'tests'/);
-
-assert.match(workflow, /pull_request:/);
-assert.match(workflow, /push:[\s\S]*branches:[\s\S]*- main/);
 assert.match(workflow, /contents: read/);
-assert.match(workflow, /runs-on: macos-latest/);
-assert.match(
-	workflow,
-	/uses: actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1[\s\S]{0,120}fetch-depth: 0[\s\S]{0,120}persist-credentials: false/
-);
-assert.match(workflow, /uses: oven-sh\/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6/);
-for (const [, action, revision] of workflow.matchAll(/^\s+uses: ([^@\s]+)@([^\s]+)$/gm)) {
-	assert.match(revision, /^[0-9a-f]{40}$/, `${action} 必须固定到不可变 commit SHA`);
-}
-assert.match(workflow, /bun-version: '1\.3\.14'/);
 assert.match(workflow, /bun install --frozen-lockfile/);
-assert.match(workflow, /CCQ_FORMAT_BASE:/);
 assert.match(workflow, /run: bun run check/);
 assert.doesNotMatch(workflow, /upload-artifact|action-gh-release|contents: write/);
 
-assert.match(coreTest, /from 'bun:test'/);
-assert.match(rendererTest, /testRender/);
-assert.match(rendererTest, /finally/);
-assert.match(rendererTest, /renderer\.destroy\(\)/);
-
-console.log('[PASS] TUI quality tooling：Biome/Bun test/aggregate gate/CI contract');
+console.log('[PASS] TUI quality tooling：仅保留 6 条最小 CI/门禁契约（gate 链 / test 分层 / 冻结安装 / CI 权限 / 无 vitest）');

@@ -10,6 +10,11 @@ import {join} from 'node:path';
 //
 // 用 CCQ_HOME 把 ~/.claude 隔离到临时目录，跑真实 core（provider.ts）。
 // 同时用独立锁文件避免污染真实 ~/.tmp。
+//
+// [P5c 迁走] Codex TOML 表单 adapter（buildText / parseText / recordToValues）与 buildCodexForm
+// 字段契约共 12 条进程内纯断言 → tests/core/provider-tui.test.ts。本文件保留真实 settings.json /
+// providers/*.json / CODEX_HOME 落盘字节与 config.toml 同步断言。
+// 主题对账见 .trellis/tasks/09-20-p5-platform-carrier-migration/research-reconciliation-P5c.md。
 
 const home = mkdtempSync(join(tmpdir(), 'ccq-provider-tui-'));
 process.env.CCQ_HOME = home;
@@ -30,94 +35,23 @@ const USER_OWNED = {
 writeFileSync(settingsPath, JSON.stringify({...USER_OWNED, env: {EXISTING: 'keep-me'}}, null, 2), 'utf8');
 
 const {addProvider, editProvider, switchProvider, getDisplayData} = await import('../src/core/provider.ts');
+const {createProviderViewAdapter} = await import('../src/views/provider/provider-view-adapter.ts');
 const {
 	loadCodexProviderDisplay,
 	saveCodexProviderForm,
 	switchActiveCodexProvider,
 	removeCodexProvider,
 	buildCodexForm,
-	codexProviderFormAdapter,
 	loadCodexProviderProfile
 } = await import('../src/services/codex-service.ts');
 
-const providerViewSource = readFileSync(new URL('../src/views/provider/ProviderView.tsx', import.meta.url), 'utf8');
-const providerAdapterSource = readFileSync(new URL('../src/views/provider/provider-view-adapter.ts', import.meta.url), 'utf8');
-const providerHomeSource = readFileSync(new URL('../src/views/provider/ProviderHomeView.tsx', import.meta.url), 'utf8');
-const formLabelSource = readFileSync(new URL('../src/components/form/FormLabel.tsx', import.meta.url), 'utf8');
-const textFieldSource = readFileSync(new URL('../src/components/form/TextField.tsx', import.meta.url), 'utf8');
-const radioFieldSource = readFileSync(new URL('../src/components/form/RadioField.tsx', import.meta.url), 'utf8');
-const selectFieldSource = readFileSync(new URL('../src/components/form/SelectField.tsx', import.meta.url), 'utf8');
-const keyValueFieldSource = readFileSync(new URL('../src/components/form/KeyValueField.tsx', import.meta.url), 'utf8');
-const modelSelectFieldSource = readFileSync(new URL('../src/components/form/ModelSelectField.tsx', import.meta.url), 'utf8');
-assert.match(providerViewSource, /agentContext:\s*AgentContext/, 'ProviderView props 必须接收 agentContext');
-assert.match(providerViewSource, /createProviderViewAdapter\(agentContext\)/, 'ProviderView 必须由 agentContext 构造领域 adapter');
-assert.match(providerAdapterSource, /const isCodex = agentContext === 'cx'/, 'Provider adapter 必须由 agentContext 切换 Codex 模式');
-assert.match(
-	providerAdapterSource,
-	/loadDisplay: isPi \? loadPiProviderDisplayData : isCodex \? loadCodexProviderDisplay : loadProviderDisplay/,
-	'Provider adapter 列表必须按 agentContext 切换数据源'
-);
-assert.match(
-	providerViewSource,
-	/setScreen\(\{kind: 'list'\}\);\r?\n\t\}, \[adapter\]\);/,
-	'切换 agentContext 时必须重置列表屏，避免表单脏状态写入错误目标'
-);
-assert.match(providerViewSource, /adapter=\{codexProviderFormAdapter\}/, 'Codex Provider 表单必须保留真实 TOML textarea adapter');
-assert.match(
-	providerViewSource,
-	/save=\{saveCodexProviderForm\}/,
-	'Codex Provider 新增必须走 Codex service/core，不得复用 Claude provider'
-);
-assert.match(providerViewSource, /currentIsOfficial[\s\S]*不可在表单中编辑|不可在表单中编辑[\s\S]*currentIsOfficial/, 'Codex official 必须在视图层阻止编辑');
-assert.match(providerViewSource, /Codex 官方账号.*codex logout/, 'Codex official 操作必须指向 Codex 原生 logout');
-assert.match(
-	providerAdapterSource,
-	/switchActive: isPi \? switchActivePiProvider : isCodex \? switchActiveCodexProvider : switchActiveProvider/,
-	'设置默认必须按 agentContext 路由'
-);
-assert.match(
-	providerAdapterSource,
-	/remove: isPi \? removePiProvider : isCodex \? removeCodexProvider : removeProvider/,
-	'删除必须按 agentContext 路由'
-);
-assert.match(
-	formLabelSource,
-	/fg=\{focused \? colors\.primary : colors\.muted\}[\s\S]{0,120}selectionBg=\{colors\.selectionBg\}[\s\S]{0,80}selectionFg=\{colors\.selectionFg\}/,
-	'供应商表单 label 必须使用主题化文本选中背景/前景'
-);
-for (const [name, source] of [
-	['TextField', textFieldSource],
-		['RadioField', radioFieldSource],
-		['SelectField', selectFieldSource],
-		['KeyValueField', keyValueFieldSource]
-]) {
-	assert.match(
-		source,
-		/<text(?=[^>]*\bfg=\{colors\.muted\})(?=[^>]*\battributes=\{TextAttributes\.DIM\})(?=[^>]*\bselectionBg=\{colors\.selectionBg\})(?=[^>]*\bselectionFg=\{colors\.selectionFg\})[^>]*>/,
-		`${name} help 文案必须使用主题化文本选中背景/前景`
-	);
-}
-assert.match(
-	modelSelectFieldSource,
-	/attributes=\{TextAttributes\.DIM\}[\s\S]*selectionBg=\{colors\.selectionBg\}[\s\S]*selectionFg=\{colors\.selectionFg\}/,
-	'ModelSelectField help 文案必须使用主题化文本选中背景/前景'
-);
-assert.match(
-	radioFieldSource,
-	/fg=\{selected \? colors\.navSelectedForeground : focused \? colors\.primary : colors\.text\}[\s\S]{0,120}selectionBg=\{colors\.selectionBg\}[\s\S]{0,80}selectionFg=\{colors\.selectionFg\}/,
-	'供应商表单 radio 选项必须使用主题化文本选中背景/前景'
-);
-assert.match(
-	textFieldSource,
-	/fg=\{value \? colors\.text : colors\.muted\}[\s\S]{0,120}selectionBg=\{colors\.selectionBg\}[\s\S]{0,80}selectionFg=\{colors\.selectionFg\}/,
-	'供应商表单 input 失焦值必须使用主题化文本选中背景/前景'
-);
-assert.match(
-	providerHomeSource,
-	/body:\s*\(\s*<text(?=[^>]*\bfg=\{colors\.muted\})(?=[^>]*\bselectionBg=\{colors\.selectionBg\})(?=[^>]*\bselectionFg=\{colors\.selectionFg\})[^>]*>\s*\{row\.summary\}\s*<\/text>\s*\)/,
-	'供应商列表卡片描述必须使用主题化文本选中背景/前景'
-);
-console.log('[PASS] 6.10 ProviderView agentContext 切换 + Codex profile 表单源码不变量');
+// P1-G2 静态断言治理：原 21 条源码正则已分类处置——
+//   A 类（5 条 adapter 数据源/切换/删除路由、卡片不拼模型摘要）迁到
+//   tests/core/provider-view-adapter.test.ts；B 类（16 条视图 agentContext 接线、
+//   Codex official 只读、Pi 卡片无状态圆点、表单主题化选中色）并入
+//   scripts/verify-view-architecture.mjs（P1-G2 段）；C = 0。
+// 详见 .trellis/tasks/09-18-p1-static-assertion-governance/research-reconciliation-G2.md。
+console.log('[PASS] 6.10 ProviderView agentContext 切换 + Codex profile 表单行为不变量（静态合同见 verify-view-architecture.mjs）');
 
 function readSettings() {
 	return JSON.parse(readFileSync(settingsPath, 'utf8'));
@@ -240,31 +174,9 @@ const codexValues = {
 	apiKey: 'sk-codex-secret-never-log',
 	activateAfterSave: true
 };
-const toml = codexProviderFormAdapter.buildText(codexValues);
-assert.match(toml, /experimental_bearer_token\s*=\s*"sk-codex-secret-never-log"/, 'Codex adapter 生成真实 TOML');
-assert.doesNotMatch(toml, /wire_api\s*=/, 'Codex adapter 省略默认 wire_api');
-const parsed = codexProviderFormAdapter.parseText(codexValues, toml);
-assert.equal(parsed.ok, true, 'Codex adapter 可从 TOML 回填字段');
-const preservedValues = codexProviderFormAdapter.recordToValues(
-	{...codexProviderFormAdapter.valuesToRecord({...codexValues, toml}), model: 'deepseek-reasoner', apiKey: ''},
-	{...codexValues, toml: `${toml}\napproval_policy = "on-request"\n`}
-);
-assert.match(
-	preservedValues.toml,
-	/experimental_bearer_token\s*=\s*"sk-codex-secret-never-log"/,
-	'字段变化且 API Key 留空时必须保留 textarea 既有 token'
-);
-assert.match(preservedValues.toml, /approval_policy\s*=\s*"on-request"/, '字段变化必须保留 textarea 未知字段');
-assert.match(preservedValues.toml, /model\s*=\s*"deepseek-reasoner"/, '字段变化应定点更新 model');
-
-// 文件名逐字符输入（1 → 12）时，旧 model_providers.<旧key> 不得残留累加（Codex key = 唯一身份）。
-const keyStepValues = codexProviderFormAdapter.recordToValues(
-	{...codexProviderFormAdapter.valuesToRecord(codexValues), profileKey: '12'},
-	{...codexValues, toml: 'model_provider = "1"\n\n[model_providers.1]\nname = "1"\n'}
-);
-assert.equal(/\[model_providers\.1\]/.test(keyStepValues.toml), false, '文件名变化后旧 model_providers.<旧key> table 必须清除');
-assert.match(keyStepValues.toml, /\[model_providers\.12\]/, '文件名变化后只保留当前 key 的 provider table');
-assert.match(keyStepValues.toml, /model_provider\s*=\s*"12"/, 'model_provider 应指向当前 key');
+// [P5c 迁走] Codex TOML 表单 adapter 纯断言（buildText / parseText / recordToValues 定点更新、
+// 未知字段保留、profileKey 变化清理旧 model_providers table）共 9 条 → tests/core/provider-tui.test.ts。
+// 此处保留 saveCodexProviderForm 的真实 CODEX_HOME 落盘断言。
 
 const saved = saveCodexProviderForm({mode: 'add', providerType: 'custom'}, codexValues);
 assert.equal(saved.ok, true, 'Codex profile 保存应成功');
@@ -287,19 +199,28 @@ assert.equal(
 	'Codex service 不改 Claude settings'
 );
 
-// official login 仍是列表中的虚拟身份，但不再属于 Codex 表单类型。
-const defaultCodexForm = buildCodexForm({mode: 'add'});
-assert.equal(defaultCodexForm.values.providerType, 'custom', 'Codex 默认新增表单使用 API-key custom 类型');
-assert.equal(defaultCodexForm.fields.some(field => field.id === 'authJson'), false, 'Codex 表单不得暴露 auth.json 字段');
-assert.throws(
-	() => buildCodexForm({mode: 'add', providerType: 'officialLogin'}),
-	/官方账号.*Codex 原生管理/,
-	'Codex 表单不得构造 official login 类型'
-);
+// [P5c 迁走] buildCodexForm 字段契约（默认 custom / 不暴露 auth.json / 拒绝 officialLogin）共 3 条
+// → tests/core/provider-tui.test.ts。
 const officialRow = codexDisplay.profiles.find(profile => profile.key === 'official');
 assert.equal(officialRow?.canEdit, false, 'Codex official 列表项不可编辑');
 assert.equal(officialRow?.canDelete, false, 'Codex official 列表项不可删除');
+
+// ── 供应商卡片描述行：只展示凭据事实，不再拼接模型摘要 ──────────────────────
+// [P5e 去重] cc/cx 卡片投影（4 条：cc summary / cc 缺 baseUrl 占位 / cx summary / cx 不拼模型摘要）
+// 已由 P1-G2 载体独占：tests/core/provider-view-adapter.test.ts >
+//   toHomeRow 卡片描述只保留凭据事实，不再拼接模型摘要。本段保留依赖真实 auth.json 的 cx official 文案。
+const codexHomeRows = createProviderViewAdapter('cx');
+assert.equal(
+	codexHomeRows.toHomeRow({...officialRow, maskedApiKey: '未登录'}).summary,
+	'未授权登录',
+	'Codex official 未登录时只展示授权登录文案'
+);
 writeFileSync(join(process.env.CODEX_HOME, 'auth.json'), '{"access_token":"secret"}', 'utf8');
+assert.equal(
+	codexHomeRows.toHomeRow({...officialRow, maskedApiKey: 'codex login'}).summary,
+	'已授权登录',
+	'Codex official 已登录时展示已授权登录'
+);
 const switched = switchActiveCodexProvider('official');
 assert.equal(switched.ok, true, 'Codex official-login set default 应成功');
 assert.equal(loadCodexProviderDisplay().activeKey, 'official', 'official 激活后 display 标记 official 为默认（盲区根治）');
@@ -310,7 +231,9 @@ const remove = removeCodexProvider('official');
 assert.equal(remove.ok, false, 'official 虚拟条目删除必须拒绝');
 assert.match(remove.ok ? '' : remove.error, /codex logout/, 'official 删除拒绝必须指向 Codex 原生 logout');
 assert.equal(existsSync(join(process.env.CODEX_HOME, 'auth.json')), true, '拒绝删除 official 不得清空 auth.json');
-console.log('[PASS] 6.1/6.2/6.3 Codex Provider service 路径隔离 + TOML adapter + official 只读虚拟条目');
+console.log(
+	'[PASS] 6.1/6.2/6.3 Codex Provider service 路径隔离 + official 只读虚拟条目（TOML adapter 见 tests/core/provider-tui.test.ts）'
+);
 
 // ── 编辑活跃 profile 必须同步 config.toml（否则子文件已改、config.toml 停留旧值）──
 const syncBase = buildCodexForm({mode: 'add', providerType: 'custom'});

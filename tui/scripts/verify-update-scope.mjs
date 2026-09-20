@@ -3,6 +3,9 @@ import {chmodSync, mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs'
 import {tmpdir} from 'node:os';
 import {delimiter, join} from 'node:path';
 
+// [P5a 迁走] `工具更新 progress 上报实际执行命令` → tests/core/update-scope.test.ts。
+// 本脚本保留段全部依赖真实临时 HOME 下的检测事实（`claude --version` mock / npm 缓存 /
+// `~/.claude/.ccg/config.toml` 字节），`checkComponentUpdates()` 无注入缝，按 R1 留 verify。
 // task 8.4：Update 检测范围收缩门禁。覆盖：
 // - 无 ClaudeMd/ClaudeConfig 组件（HC-FU-08）
 // - 无 template 类型组件（6.4 已从 UpdateComponentType 移除）
@@ -27,7 +30,13 @@ writeFileSync(join(cacheDir, 'npm-outdated.json'), JSON.stringify({}), 'utf8');
 // 且缺包缓存会走 mock npm 补齐，不回退到真实网络。
 writeFileSync(
 	join(cacheDir, 'npm-view.json'),
-	JSON.stringify({'@anthropic-ai/claude-code': '9.9.9', '@cometix/ccline': '', '@earendil-works/pi-coding-agent': '', '@agegr/pi-web': '', 'ccg-workflow': ''}),
+	JSON.stringify({
+		'@anthropic-ai/claude-code': '9.9.9',
+		'@cometix/ccline': '',
+		'@earendil-works/pi-coding-agent': '',
+		'@agegr/pi-web': '',
+		'ccg-workflow': ''
+	}),
 	'utf8'
 );
 
@@ -36,17 +45,9 @@ writeFileSync(
 const binDir = join(home, 'bin');
 mkdirSync(binDir, {recursive: true});
 const mockClaudePath = join(binDir, process.platform === 'win32' ? 'claude.cmd' : 'claude');
-writeFileSync(
-	mockClaudePath,
-	process.platform === 'win32' ? '@echo off\r\necho 1.0.0\r\n' : '#!/usr/bin/env sh\necho 1.0.0\n',
-	'utf8'
-);
+writeFileSync(mockClaudePath, process.platform === 'win32' ? '@echo off\r\necho 1.0.0\r\n' : '#!/usr/bin/env sh\necho 1.0.0\n', 'utf8');
 const mockNpmPath = join(binDir, process.platform === 'win32' ? 'npm.cmd' : 'npm');
-writeFileSync(
-	mockNpmPath,
-	process.platform === 'win32' ? '@echo off\r\necho.\r\n' : '#!/usr/bin/env sh\necho\n',
-	'utf8'
-);
+writeFileSync(mockNpmPath, process.platform === 'win32' ? '@echo off\r\necho.\r\n' : '#!/usr/bin/env sh\necho\n', 'utf8');
 if (process.platform !== 'win32') {
 	chmodSync(mockClaudePath, 0o755);
 	chmodSync(mockNpmPath, 0o755);
@@ -58,7 +59,7 @@ process.env.PATH = `${binDir}${delimiter}${process.env.PATH ?? ''}`;
 mkdirSync(join(home, '.claude', '.ccg'), {recursive: true});
 writeFileSync(join(home, '.claude', '.ccg', 'config.toml'), 'version = "3.1.6"\n', 'utf8');
 
-const {checkComponentUpdates, applyUpdates} = await import('../src/core/update.ts');
+const {checkComponentUpdates} = await import('../src/core/update.ts');
 
 const components = await checkComponentUpdates();
 const ids = components.map(c => c.id);
@@ -66,7 +67,11 @@ const types = new Set(components.map(c => c.type));
 
 // ── 检测范围收缩 ────────────────────────────────────────────────────────────
 assert.equal(types.has('template'), false, '检测范围不含 template 类型');
-assert.equal(ids.some(id => /ClaudeMd|ClaudeConfig/i.test(id)), false, '不含 ClaudeMd/ClaudeConfig 组件');
+assert.equal(
+	ids.some(id => /ClaudeMd|ClaudeConfig/i.test(id)),
+	false,
+	'不含 ClaudeMd/ClaudeConfig 组件'
+);
 
 // task 8.7：不含 ccg-*.md / rules 类组件
 const hasRulesComponent = components.some(c => /ccg-.*\.md|rules/i.test(`${c.id} ${c.name}`));
@@ -99,56 +104,22 @@ console.log('[PASS] npm view 兜底检测全局 npm 包更新');
 assert.ok(ids.includes('CodexCli'), 'CodexCli 应纳入 CLI 工具检测');
 const codex = components.find(c => c.id === 'CodexCli');
 assert.equal(codex.type, 'npm', 'CodexCli 应为 npm 类型');
-assert.equal(codex.package, '@openai/codex', 'CodexCli 包名必须为官方 @openai/codex，不得为 codex-cli');
+// [P5e 去重] `codex.package === '@openai/codex'` 已由 P4b 载体独占：
+// tests/core/tools-manage.test.ts > CodexCli registry 事实 > CodexCli 使用 @openai/codex 与 codex --version
+// （COMPONENT_DEFINITIONS.CodexCli.npmPackage === '@openai/codex'，与检测结果 `package` 同源）。
 // 检测独立性：CodexCli 与 ClaudeCode 是结果集中两个平级条目，CodexCli.installed 只反映
 // `codex --version`，与 ClaudeCode 是否检出无耦合（未安装环境下两者同为独立 false，互不派生）。
 const claudeComp = components.find(c => c.id === 'ClaudeCode');
 assert.ok(claudeComp, 'ClaudeCode 应为独立条目');
 assert.notEqual(codex, claudeComp, 'CodexCli 与 ClaudeCode 必须是独立组件条目');
 assert.equal(typeof codex.installed, 'boolean', 'CodexCli.installed 由自身 codex --version 决定');
-console.log('[PASS] 1.2 CodexCli 官方包名 + 检测独立于 ClaudeCode');
+console.log('[PASS] 1.2 CodexCli 检测独立于 ClaudeCode（官方包名事实见 tests/core/tools-manage.test.ts）');
 
-// ── snapshot 失败不执行更新命令 ─────────────────────────────────────────────
-let execCalls = 0;
-const failSnapshot = () => {
-	throw new Error('快照创建失败');
-};
-const trackExec = async () => {
-	execCalls++;
-	return {code: 0, stdout: '', stderr: ''};
-};
-const npmComp = {
-	id: 'ClaudeCode',
-	name: 'ClaudeCode',
-	type: 'npm',
-	package: '@anthropic-ai/claude-code',
-	installed: true,
-	currentVersion: '1.0.0',
-	latestVersion: '1.1.0',
-	hasUpdate: true
-};
-let threw = false;
-try {
-	await applyUpdates([npmComp], undefined, {createSnapshotFn: failSnapshot, exec: trackExec});
-} catch (error) {
-	threw = true;
-	assert.match(error.message, /快照/);
-}
-assert.equal(threw, true, 'snapshot 失败应抛错');
-assert.equal(execCalls, 0, 'snapshot 失败不得执行任何更新命令');
-console.log('[PASS] 8.4 snapshot 失败不执行更新命令');
-
-const updateEvents = [];
-await applyUpdates([npmComp], event => updateEvents.push(event), {
-	createSnapshotFn: () => 'snapshot.json',
-	exec: trackExec
-});
-assert.equal(
-	updateEvents.find(event => event.instruction)?.instruction,
-	'npm install -g @anthropic-ai/claude-code@1.1.0',
-	'工具更新 progress 必须上报实际 npm 命令'
-);
-console.log('[PASS] 工具更新 progress 上报实际执行命令');
+// [P5e 去重] `8.4 snapshot 失败不执行更新命令` 已由 P4b 载体独占：
+// tests/core/tools-manage.test.ts > snapshot-before-write 门禁 >
+//   P-13 更新路径快照失败 → exec 零调用（applyUpdates snapshot-before-write）
+// （updateComponents → applyUpdates 注入 createSnapshotFn 抛错 → rejects.toThrow + exec 零调用，
+//   与本段断言同一 snapshot-before-write 不变量）。
 
 rmSync(home, {recursive: true, force: true});
 rmSync(cacheDir, {recursive: true, force: true});

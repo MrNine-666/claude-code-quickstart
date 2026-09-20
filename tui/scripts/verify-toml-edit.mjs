@@ -3,18 +3,14 @@ import {existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync} fr
 import {join, relative} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
-import {
-	atomicWrite,
-	deletePath,
-	formatTomlError,
-	getPath,
-	parse,
-	redactTomlSecrets,
-	setPath,
-	stringify,
-	TomlEditError
-} from '../src/core/toml-edit.ts';
+import {atomicWrite, getPath, parse, setPath} from '../src/core/toml-edit.ts';
 
+// [P5b 迁走] parse/stringify + path get/set/delete 与错误脱敏（23 条静态断言）
+// → tests/core/toml-edit.test.ts。
+// 本文件保留真实 fs 段（atomicWrite 落盘 + 序列化失败保留旧目标）与静态契约段
+// （package.json verify 链自引用 + src 不得直接 import smol-toml 的统一入口不变量）。
+
+// 真实原子写断言所需的最小 TOML document（纯语义断言已迁 tests/core/toml-edit.test.ts）。
 const sample = `
 model = "gpt-5"
 model_provider = "openai"
@@ -31,54 +27,8 @@ args = ["-y", "@upstash/context7-mcp"]
 [hooks]
 enabled = true
 `;
-
 const parsed = parse(sample);
-assert.equal(getPath(parsed, ['model']), 'gpt-5');
-assert.equal(getPath(parsed, ['model_providers', 'openai', 'base_url']), 'https://api.openai.com/v1');
-assert.equal(getPath(parsed, ['missing', 'path']), undefined);
-
-const withProvider = setPath(parsed, ['model_provider'], 'deepseek');
-assert.equal(getPath(withProvider, ['model_provider']), 'deepseek');
-assert.equal(getPath(parsed, ['model_provider']), 'openai', 'setPath 不应原地修改输入对象');
-assert.equal(getPath(withProvider, ['mcp_servers', 'context7', 'command']), 'npx', '无关 MCP table 应保留');
-assert.equal(getPath(withProvider, ['hooks', 'enabled']), true, '无关 hooks table 应保留');
-
-const repeated = setPath(withProvider, ['model_provider'], 'deepseek');
-assert.deepEqual(repeated, withProvider, '相同 path/value 重复 set 应保持结构幂等');
-
 const added = setPath(parsed, ['model_providers', 'deepseek', 'experimental_bearer_token'], 'sk-new-secret');
-assert.equal(getPath(added, ['model_providers', 'deepseek', 'experimental_bearer_token']), 'sk-new-secret');
-assert.equal(getPath(added, ['model_providers', 'openai', 'name']), 'openai', '新增 provider 不应破坏既有 provider table');
-
-const removed = deletePath(added, ['model_providers', 'deepseek', 'experimental_bearer_token']);
-assert.equal(getPath(removed, ['model_providers', 'deepseek', 'experimental_bearer_token']), undefined);
-assert.equal(getPath(removed, ['model_providers', 'openai', 'base_url']), 'https://api.openai.com/v1');
-assert.deepEqual(deletePath(removed, ['not', 'there']), removed, '删除不存在 path 应幂等');
-
-const roundTrip = parse(stringify(added));
-assert.equal(getPath(roundTrip, ['model_providers', 'deepseek', 'experimental_bearer_token']), 'sk-new-secret');
-assert.equal(getPath(roundTrip, ['mcp_servers', 'context7', 'args', '0']), undefined, '数组不应被误当作 path table');
-assert.deepEqual(getPath(roundTrip, ['mcp_servers', 'context7', 'args']), ['-y', '@upstash/context7-mcp']);
-
-assert.throws(
-	() => parse('model = "ok"\nmodel = "duplicate"\n'),
-	(error) => error instanceof TomlEditError && !String(error.message).includes('sk-'),
-	'无效 TOML 必须拒绝解析且错误文本不应泄漏敏感值'
-);
-assert.throws(
-	() => setPath({model: 'gpt-5'}, ['model', 'nested'], true),
-	/非 table 节点/,
-	'禁止在非 table 节点下写入嵌套 path'
-);
-
-const redactedToml = redactTomlSecrets('experimental_bearer_token = "sk-sensitive-123456"\nbase_url = "https://safe.example"');
-assert.ok(!redactedToml.includes('sk-sensitive-123456'));
-assert.ok(redactedToml.includes('[REDACTED]'));
-assert.ok(redactedToml.includes('https://safe.example'));
-
-const formattedError = formatTomlError(new Error('failed with experimental_bearer_token = "sk-sensitive-abcdef123456"'));
-assert.ok(!formattedError.includes('sk-sensitive-abcdef123456'));
-assert.ok(formattedError.includes('[REDACTED]'));
 
 const tempDir = mkdtempSync(join(tmpdir(), 'ccq-toml-edit-'));
 try {
@@ -121,4 +71,4 @@ const directSmolTomlImports = listSourceFiles(join(tuiRoot, 'src'))
 	.map(({relativePath}) => relativePath);
 assert.deepEqual(directSmolTomlImports, [], '生产代码必须通过 core/toml-edit.ts 统一读写 TOML');
 
-console.log('[PASS] TOML 结构化编辑：parse/stringify + path get/set/delete + 原子写 + 错误脱敏 + 统一入口');
+console.log('[PASS] TOML 原子写 + 序列化失败保留旧目标 + 统一入口契约');

@@ -3,6 +3,9 @@ import {mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
+// [P5a 迁走] argv 解析 / help 文本 / 工具 registry 投影 / provider-profile 列表展示 →
+//            tests/core/cli-subcommands.test.ts。
+// 本脚本只保留真实落盘段：`use --tool codex` 写 CODEX_HOME/config.toml 与 `ls --tool pi` 读 ~/.pi 字节。
 // ccq CLI 子命令回归门禁：argv 解析、help、provider/profile 列表展示与管理命令。
 // 重点守住「无参进 TUI」「cc/cx 不再是命令」「--tool 为管理类自有 flag」等不变量。
 
@@ -13,224 +16,10 @@ process.env.CODEX_HOME = join(tempHome, '.codex');
 try {
 	const {parseCli} = await import('../src/cli/argv.ts');
 	const {runCli} = await import('../src/cli/index.ts');
-	const {helpFor, HELP_GENERAL, HELP_LS, HELP_TOOLS, HELP_USE} = await import('../src/cli/help.ts');
-	const {TOOL_DEFINITIONS} = await import('../src/core/tools-install.ts');
-	const {resolveToolId, availableToolIds, runToolsUpdate} = await import('../src/cli/commands/tools.ts');
-	const {listProvidersForDisplay, listCodexProfilesForDisplay, runLs} = await import('../src/cli/commands/ls.ts');
+	const {runLs} = await import('../src/cli/commands/ls.ts');
 	const {runUse} = await import('../src/cli/commands/use.ts');
 	const {saveCodexProfile} = await import('../src/core/codex.ts');
 	const {piAuthJsonPath, piModelsJsonPath, piSettingsPath} = await import('../src/core/paths.ts');
-
-	// ── argv 解析 ───────────────────────────────────────────────────────────────
-	assert.deepEqual(parseCli([]), {kind: 'tui'});
-	assert.deepEqual(parseCli(['--version']), {kind: 'version'});
-	assert.deepEqual(parseCli(['-v']), {kind: 'version'});
-	assert.deepEqual(parseCli(['--help']), {kind: 'help'});
-	assert.deepEqual(parseCli(['help', 'cc']), {kind: 'help', verb: 'cc'});
-	assert.deepEqual(parseCli(['help', 'cx']), {kind: 'help', verb: 'cx'});
-	assert.deepEqual(parseCli(['help', 'nope']), {kind: 'help', verb: 'nope'});
-	assert.deepEqual(parseCli(['ls']), {kind: 'ls', tool: 'claude'});
-	assert.deepEqual(parseCli(['ls', '--tool', 'claude']), {kind: 'ls', tool: 'claude'});
-	assert.deepEqual(parseCli(['ls', '--tool', 'codex']), {kind: 'ls', tool: 'codex'});
-	assert.deepEqual(parseCli(['ls', '--tool', 'pi']), {kind: 'ls', tool: 'pi'});
-	assert.deepEqual(parseCli(['ls', '--tool', 'bad']), {kind: 'unknown', verb: 'ls', args: ['--tool', 'bad']});
-	assert.deepEqual(parseCli(['use', 'glm']), {kind: 'use', name: 'glm', tool: 'claude'});
-	assert.deepEqual(parseCli(['use', 'glm', '--tool', 'claude']), {kind: 'use', name: 'glm', tool: 'claude'});
-	assert.deepEqual(parseCli(['use', 'dev', '--tool', 'codex']), {kind: 'use', name: 'dev', tool: 'codex'});
-	assert.deepEqual(parseCli(['use', 'openai', '--tool', 'pi']), {kind: 'use', name: 'openai', tool: 'pi'});
-	assert.deepEqual(parseCli(['use', 'dev', '--tool', 'bad']), {kind: 'unknown', verb: 'use', args: ['dev', '--tool', 'bad']});
-	assert.deepEqual(parseCli(['update']), {kind: 'update', checkOnly: false});
-	assert.deepEqual(parseCli(['update', '--check']), {kind: 'update', checkOnly: true});
-	assert.deepEqual(parseCli(['tools', 'update']), {kind: 'tools', action: 'update', name: undefined, assumedYes: false});
-	assert.deepEqual(parseCli(['tools', 'update', 'CodeGraph']), {kind: 'tools', action: 'update', name: 'CodeGraph', assumedYes: false});
-	assert.deepEqual(parseCli(['tools', 'uninstall', 'CodeGraph']), {
-		kind: 'tools',
-		action: 'uninstall',
-		name: 'CodeGraph',
-		assumedYes: false
-	});
-	assert.deepEqual(parseCli(['tools', 'uninstall', 'CodeGraph', '--yes']), {
-		kind: 'tools',
-		action: 'uninstall',
-		name: 'CodeGraph',
-		assumedYes: true
-	});
-	assert.deepEqual(parseCli(['tools', 'uninstall', 'CodeGraph', '-y']), {
-		kind: 'tools',
-		action: 'uninstall',
-		name: 'CodeGraph',
-		assumedYes: true
-	});
-	assert.deepEqual(parseCli(['tools', 'uninstall', 'CodeGraph', 'yes']), {
-		kind: 'unknown',
-		verb: 'tools',
-		args: ['uninstall', 'CodeGraph', 'yes']
-	});
-	assert.deepEqual(parseCli(['uninstall']), {kind: 'uninstall', assumedYes: false});
-	assert.deepEqual(parseCli(['uninstall', '--yes']), {kind: 'uninstall', assumedYes: true});
-	assert.deepEqual(parseCli(['uninstall', '-y']), {kind: 'uninstall', assumedYes: true});
-	assert.deepEqual(parseCli(['uninstall', 'yes']), {kind: 'unknown', verb: 'uninstall', args: ['yes']});
-	assert.deepEqual(parseCli(['cc', 'aether']), {kind: 'unknown', verb: 'cc', args: ['aether']});
-	assert.deepEqual(parseCli(['cx']), {kind: 'unknown', verb: 'cx', args: []});
-	assert.deepEqual(parseCli(['unknown']), {kind: 'unknown', verb: 'unknown', args: []});
-	console.log('[PASS] ccq CLI argv 解析');
-
-	// ── help 与已移除命令的错误语义 ──────────────────────────────────────────────
-	assert.equal(helpFor('cc'), null, 'cc 不得再有专用帮助');
-	assert.equal(helpFor('cx'), null, 'cx 不得再有专用帮助');
-	assert.doesNotMatch(HELP_GENERAL, /^\s+(?:cc|cx)\b/m, '通用帮助不得列出 cc/cx');
-	assert.match(HELP_GENERAL, /tool=claude\|codex\|pi/, '通用帮助必须列出 Pi tool target');
-	assert.match(HELP_LS, /ccq ls --tool pi/, 'ls 帮助必须列出 Pi');
-	assert.match(HELP_USE, /ccq use <provider> --tool pi/, 'use 帮助必须使用 provider-level Pi identity');
-	assert.match(HELP_USE, /仅更新 .*defaultProvider.*不维护 defaultModel/s, 'use 帮助必须明确 defaultProvider-only');
-	assert.doesNotMatch(HELP_USE, /<provider\/model>|defaultProvider\/defaultModel/, 'use 帮助不得宣称 provider/model 或 defaultModel 写入');
-
-	const capturedErrors = [];
-	const originalConsoleError = console.error;
-	console.error = (...args) => capturedErrors.push(args.join(' '));
-	try {
-		assert.equal(await runCli(parseCli(['help', 'nope'])), 1, '未知 help 动词必须返回非零');
-		assert.equal(await runCli(parseCli(['help', 'cc'])), 1, 'cc help 必须按未知子命令处理');
-		assert.equal(await runCli(parseCli(['help', 'cx'])), 1, 'cx help 必须按未知子命令处理');
-		assert.equal(await runCli(parseCli(['cc', 'aether'])), 1, 'cc 必须按未知命令处理');
-		assert.equal(await runCli(parseCli(['cx'])), 1, 'cx 必须按未知命令处理');
-	} finally {
-		console.error = originalConsoleError;
-	}
-	assert.equal(
-		capturedErrors.some(line => line.includes('未知子命令: nope')),
-		true
-	);
-	assert.equal(
-		capturedErrors.some(line => line.includes('未知子命令: cc')),
-		true
-	);
-	assert.equal(
-		capturedErrors.some(line => line.includes('未知子命令: cx')),
-		true
-	);
-	assert.equal(
-		capturedErrors.some(line => line.includes('未知命令: cc')),
-		true
-	);
-	assert.equal(
-		capturedErrors.some(line => line.includes('未知命令: cx')),
-		true
-	);
-	assert.equal(
-		capturedErrors.some(line => line.includes('cc 缺少供应商名称')),
-		false
-	);
-	assert.equal(
-		capturedErrors.some(line => line.includes(HELP_GENERAL.split('\n')[0])),
-		true
-	);
-	console.log('[PASS] help 与已移除 cc/cx 命令的错误语义');
-
-	// ── 工具 registry/别名 + 显式更新 force refresh ───────────────────────────────
-	const registryIds = TOOL_DEFINITIONS.map(definition => definition.id);
-	assert.deepEqual(availableToolIds(), registryIds, 'CLI 可用工具必须直接派生自 registry');
-	for (const id of registryIds) {
-		assert.equal(resolveToolId(id), id, `canonical id 应可解析: ${id}`);
-		assert.equal(HELP_TOOLS.includes(id), true, `帮助应列出 registry 工具: ${id}`);
-	}
-	assert.equal(resolveToolId('trellis'), 'Trellis', 'Trellis 别名不得遗漏');
-	assert.equal(resolveToolId('claude-code'), 'ClaudeCode');
-	assert.equal(resolveToolId('code-graph'), 'CodeGraph');
-	assert.equal(resolveToolId('gitnexus'), 'GitNexus', 'GitNexus canonical 小写别名可解析');
-	assert.equal(resolveToolId('git-nexus'), 'GitNexus', 'GitNexus 连字符别名可解析');
-	assert.equal(resolveToolId('dsh'), 'DeepSeekHarness', 'DeepSeek Harness 短别名可解析');
-	assert.equal(resolveToolId('deepseek-harness'), 'DeepSeekHarness', 'DeepSeek Harness 长别名可解析');
-	assert.equal(resolveToolId('pi'), 'PiCli', 'Pi CLI 别名可解析');
-	assert.equal(resolveToolId('pi-agent'), 'PiCli', 'Pi Agent 别名可解析');
-	assert.equal(resolveToolId('pi-web'), 'PiWeb', 'Pi Web 别名可解析');
-
-	let forceRefreshSeen = null;
-	const updateExitCode = await runToolsUpdate(undefined, {
-		detect: async (_onProgress, forceRefresh) => {
-			forceRefreshSeen = forceRefresh;
-			return [];
-		},
-		update: async () => {
-			throw new Error('没有目标时不应执行更新');
-		}
-	});
-	assert.equal(updateExitCode, 0);
-	assert.equal(forceRefreshSeen, true, '显式 tools update 必须绕过远程缓存');
-	const updateErrors = [];
-	const originalUpdateError = console.error;
-	console.error = (...args) => updateErrors.push(args.join(' '));
-	try {
-		const failedDshUpdateExitCode = await runToolsUpdate('dsh', {
-			detect: async () => [
-				{
-					id: 'DeepSeekHarness',
-					name: 'DeepSeek Harness',
-					type: 'npm',
-					package: '@deepseek-ai/dsh',
-					installed: true,
-					currentVersion: '1.2.3',
-					latestVersion: '1.2.4',
-					hasUpdate: true
-				}
-			],
-			update: async () => ({
-				snapshotPath: '',
-				updatedItems: ['failed::DeepSeekHarness::fixture DSH postflight ownership diagnostic']
-			})
-		});
-		assert.equal(failedDshUpdateExitCode, 1, 'DSH 更新失败必须返回非零');
-	} finally {
-		console.error = originalUpdateError;
-	}
-	assert.equal(
-		updateErrors.some(line => line.includes('fixture DSH postflight ownership diagnostic')),
-		true,
-		'CLI 必须输出 DSH 更新失败的保留诊断'
-	);
-	console.log('[PASS] 工具 registry 单一事实源 + 显式更新强制刷新');
-
-	// ── provider/profile 展示 ───────────────────────────────────────────────────
-	const lines = listProvidersForDisplay(
-		[
-			{
-				key: 'glm',
-				baseUrl: 'https://open.bigmodel.cn/api/anthropic',
-				hasManagedModelConfig: true,
-				authToken: 'sk-a',
-				profilePath: '/tmp/glm.json'
-			},
-			{key: 'kimi', baseUrl: '', hasManagedModelConfig: false, authToken: 'sk-b', profilePath: '/tmp/kimi.json'}
-		],
-		'glm'
-	);
-	assert.equal(lines[0].startsWith('* glm'), true);
-	assert.equal(lines[0].includes('https://open.bigmodel.cn/api/anthropic'), true);
-	assert.equal(lines[1].startsWith('  kimi'), true);
-	assert.equal(lines[1].includes('(未配置 BaseUrl)'), true);
-
-	const codexLines = listCodexProfilesForDisplay([
-		{
-			key: 'dev',
-			providerType: 'apiKey',
-			baseUrl: 'https://api.example.com',
-			hasApiKey: true,
-			isDefault: true,
-			profilePath: '/tmp/dev.config.toml'
-		},
-		{
-			key: 'official',
-			providerType: 'officialLogin',
-			baseUrl: '',
-			hasApiKey: false,
-			isDefault: false,
-			profilePath: '/tmp/official.config.toml'
-		}
-	]);
-	assert.equal(codexLines[0].startsWith('* dev'), true);
-	assert.equal(codexLines[0].includes('api key'), true);
-	assert.equal(codexLines[1].includes('official login'), true);
-	console.log('[PASS] provider/profile 列表展示');
 
 	// ── use --tool codex：结构化写 base config，不写 legacy selector ─────────────
 	saveCodexProfile({
@@ -252,27 +41,43 @@ try {
 	assert.equal(/model_provider\s*=/.test(officialConfig), false, 'official 激活清空 model_provider');
 	console.log('[PASS] use --tool codex 默认切换 + official 虚拟条目激活');
 
-	// ── use/ls --tool pi：provider identity + defaultProvider-only 切换 ───────────
+	// ── ls --tool pi 保持只读；use --tool pi 已移除 ────────────────────────────
 	mkdirSync(join(tempHome, '.pi', 'agent'), {recursive: true});
 	writeFileSync(piModelsJsonPath(), JSON.stringify({providers: {openai: {models: ['gpt-4o']}}}, null, 2), 'utf8');
 	writeFileSync(piAuthJsonPath(), JSON.stringify({openai: 'sk-pi-secret'}, null, 2), 'utf8');
 	writeFileSync(piSettingsPath(), JSON.stringify({defaultProvider: 'anthropic', defaultModel: 'claude-sonnet'}, null, 2), 'utf8');
+	const piSettingsBeforeUse = readFileSync(piSettingsPath(), 'utf8');
 	const piOutput = [];
+	const piErrors = [];
 	const originalLog = console.log;
+	const originalPiError = console.error;
 	console.log = (...args) => piOutput.push(args.join(' '));
+	console.error = (...args) => piErrors.push(args.join(' '));
 	try {
 		assert.equal(runLs('pi'), 0, 'ls --tool pi 应成功');
-		assert.equal(runUse('openai', 'pi'), 0, 'use --tool pi 应成功');
+		assert.equal(await runCli(parseCli(['use', 'openai', '--tool', 'pi'])), 1, '实际 CLI 路径必须拒绝 use --tool pi');
+		assert.equal(runUse('openai', 'pi'), 1, 'defensive handler 必须拒绝 use --tool pi');
 	} finally {
 		console.log = originalLog;
+		console.error = originalPiError;
 	}
-	assert.equal(piOutput.some(line => line.includes('openai') && line.includes('models')), true, 'ls --tool pi 应按 provider 展示模型数量');
-	const piSettingsAfterUse = JSON.parse(readFileSync(piSettingsPath(), 'utf8'));
-	assert.equal(piSettingsAfterUse.defaultProvider, 'openai');
-	assert.equal(piSettingsAfterUse.defaultModel, 'claude-sonnet', 'use --tool pi 不得维护 defaultModel');
-	assert.equal(runUse('openai/gpt-4o', 'pi'), 1, 'use --tool pi 不得接受 provider/model identity');
-	assert.equal(runUse('missing', 'pi'), 1, 'use --tool pi 缺少 provider 时失败');
-	console.log('[PASS] use/ls --tool pi provider-level 默认切换 + defaultModel 保留 + pi-web 非 Agent target');
+	assert.equal(
+		piOutput.some(line => line.includes('openai') && line.includes('models')),
+		true,
+		'ls --tool pi 应按 provider 展示模型数量'
+	);
+	assert.equal(
+		piErrors.some(line => line.includes('Pi 配置页') && line.includes('defaultProvider')),
+		true,
+		'实际 CLI 与 defensive handler 都必须指向 Pi Config'
+	);
+	assert.equal(
+		piErrors.some(line => line.includes('用法: ccq use <name> [--tool claude|codex|pi]')),
+		false,
+		'被拒绝的 CLI 用法不得继续宣传 Pi target'
+	);
+	assert.equal(readFileSync(piSettingsPath(), 'utf8'), piSettingsBeforeUse, '被拒绝的 use --tool pi 不得写 settings.json');
+	console.log('[PASS] ls --tool pi 只读展示；use --tool pi 已移除且不写 defaultProvider');
 } finally {
 	rmSync(tempHome, {recursive: true, force: true});
 	delete process.env.CCQ_HOME;

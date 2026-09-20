@@ -300,31 +300,9 @@ console.log('[PASS] Codex TOML 契约 + 损坏 profile 容错 + partial success'
 }
 console.log('[PASS] Provider/Codex 敏感文件安全权限');
 
-const providerViewSource = readFileSync(new URL('../src/views/provider/ProviderView.tsx', import.meta.url), 'utf8');
-assert.match(providerViewSource, /if \(warning\) \{\s*toast\.warning\(warning\);/, 'ProviderView 必须展示 partial-success warning');
-const providerHomeSource = readFileSync(new URL('../src/views/provider/ProviderHomeView.tsx', import.meta.url), 'utf8');
-assert.match(providerHomeSource, /loadFailures\.length > 0[\s\S]*<ErrorPanel/, 'ProviderHomeView 必须展示 Codex profile 加载失败');
-const providerFormSource = readFileSync(new URL('../src/views/provider/ProviderFormView.tsx', import.meta.url), 'utf8');
-assert.match(providerFormSource, /errorKind === 'conflict'[\s\S]*toast\.error\(result\.error\)/, 'ProviderForm 必须用 error toast 展示同名冲突');
-
-const codexUserSurfaceSources = [
-	'../src/core/codex-provider-form.ts',
-	'../src/core/codex.ts',
-	'../src/services/codex-service.ts',
-	'../src/views/provider/ProviderView.tsx',
-	'../src/views/provider/ProviderHomeView.tsx',
-	'../src/views/provider/ProviderFormView.tsx',
-	'../src/cli/help.ts',
-	'../src/cli/index.ts',
-	'../src/cli/commands/ls.ts',
-	'../src/cli/commands/use.ts'
-].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
-assert.doesNotMatch(
-	codexUserSurfaceSources,
-	/['"`][^'"`\r\n]*Codex (?:profiles?|providers?|供应商)[^'"`\r\n]*['"`]/,
-	'Codex 用户可见字符串必须直接使用供应商，不得添加 Codex 前缀或使用 profile/provider'
-);
-assert.match(codexUserSurfaceSources, /['"`][^'"`\r\n]*供应商[^'"`\r\n]*['"`]/, 'Codex 用户界面必须直接展示供应商术语');
-assert.match(codexUserSurfaceSources, /codex --profile/, 'Codex 官方 --profile 技术参数必须保留');
+// P1-G2 静态断言治理：本条脚本的 6 条源码正则（视图内 toast/ErrorPanel 反馈路径与
+// Codex 用户可见文案）已并入 scripts/verify-view-architecture.mjs（P1-G2 段）；
+// 本脚本保留真实落盘字节/进程副作用断言（判据反例，未动）。
+// 详见 .trellis/tasks/09-18-p1-static-assertion-governance/research-reconciliation-G2.md。
 
 console.log('[PASS] TUI 供应商安全与容错回归全部通过');
