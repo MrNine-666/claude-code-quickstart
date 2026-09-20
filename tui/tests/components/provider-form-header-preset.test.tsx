@@ -1,5 +1,6 @@
 import {act} from 'react';
 import {expect, test} from 'bun:test';
+import {KeyEvent, type ParsedKey} from '@opentui/core';
 import {testRender} from '@opentui/react/test-utils';
 
 import type {FormField} from '../../src/components/form/field-types.js';
@@ -12,6 +13,7 @@ import {
 } from '../../src/core/pi-provider.js';
 import {piProviderFormAdapter} from '../../src/services/pi-provider-service.js';
 import type {ProviderFormAdapter} from '../../src/types/provider-form-adapter.js';
+import {shortcutPlatform} from '../../src/utils/keyboard.js';
 import {ProviderFormView, type DiscoveryMatchOutcome} from '../../src/views/provider/ProviderFormView.js';
 
 // 阶段 E 组件断言：预设动作行（←/→ 只移高亮）、Enter 应用与确认弹窗、跨协议提示、
@@ -89,6 +91,34 @@ async function press(setup: Awaited<ReturnType<typeof renderPiForm>>, action: ()
 async function frameOf(setup: Awaited<ReturnType<typeof renderPiForm>>): Promise<string> {
 	await setup.flush();
 	return setup.captureCharFrame();
+}
+
+/**
+ * 编辑态快捷键在 macOS 是 Cmd/Super、其余平台是 Ctrl（见 utils/keyboard.ts）。
+ * mockInput 走终端字节编码，表达不了 super（kittyKeyboard 默认关闭），
+ * 因此与 skills-render.test.tsx 一致直接投递 KeyEvent：断言不绑死平台。
+ */
+async function pressEditingShortcut(setup: Awaited<ReturnType<typeof renderPiForm>>, name: string) {
+	const modifier: Partial<ParsedKey> = shortcutPlatform() === 'darwin' ? {super: true} : {ctrl: true};
+	await press(setup, () => {
+		setup.renderer.keyInput.emit(
+			'keypress',
+			new KeyEvent({
+				name,
+				sequence: name,
+				ctrl: false,
+				shift: false,
+				meta: false,
+				option: false,
+				number: false,
+				raw: name,
+				eventType: 'press',
+				source: 'raw',
+				repeated: false,
+				...modifier
+			})
+		);
+	});
 }
 
 /**
@@ -493,9 +523,9 @@ test('保存只触发一次：表单层与页面层不得同时处理保存快�
 		{width: 150, height: 46}
 	);
 	try {
-		await press(setup, () => setup.mockInput.pressKey('s', {ctrl: true}));
-		expect(saveCount, 'Ctrl+S 应只落盘一次').toBe(1);
-		expect(savedCount, 'Ctrl+S 应只弹一次保存提示').toBe(1);
+		await pressEditingShortcut(setup, 's');
+		expect(saveCount, '编辑态保存快捷键应只落盘一次').toBe(1);
+		expect(savedCount, '编辑态保存快捷键应只弹一次保存提示').toBe(1);
 	} finally {
 		await act(async () => {
 			setup.renderer.destroy();
