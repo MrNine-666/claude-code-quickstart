@@ -35,6 +35,18 @@ try {
 	const claudeConfig = loadContract('claude-config.json');
 	assertObject('claude-config.json', claudeConfig);
 
+	// 内嵌 Map 里的每个契约都必须能被编译模式加载。此前探针只覆盖前三个，
+	// 导致 pi-config / pi-providers / pi-header-presets / codex-config 的内嵌回归会静默漏过。
+	for (const name of ['pi-config.json', 'pi-providers.json', 'pi-header-presets.json']) {
+		assertObject(name, loadContract(name));
+	}
+	if (!('Presets' in (loadContract('pi-header-presets.json') as JsonObject))) {
+		throw new Error('pi-header-presets.json 缺少 Presets');
+	}
+	if (loadTextContract('codex-config.toml').trim() === '') {
+		throw new Error('codex-config.toml 内容为空');
+	}
+
 	assertThrows('ccg-workflow.json', () => loadContract('ccg-workflow.json'));
 	assertThrows('templates/index.json', () => loadContract('templates/index.json'));
 	for (const template of [

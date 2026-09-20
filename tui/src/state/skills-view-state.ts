@@ -69,8 +69,9 @@ export type SourceReplacementItem = {
 	readonly projections: readonly SkillProjection[];
 };
 
-// 安装页默认草稿：两侧都装（cc symlink + cx 本体）。
-const DEFAULT_INSTALL_DRAFT: InstallDraft = {cc: true, cx: true, pi: false};
+// 安装页默认草稿：三个 Agent 目标都装（cc symlink + cx 本体 + Pi 全局 native）。
+// Pi 与 cx 共享 `.agents` canonical，默认勾选不改变 C/X 拓扑，只多物化 `~/.pi/agent/skills` 投影。
+const DEFAULT_INSTALL_DRAFT: InstallDraft = {cc: true, cx: true, pi: true};
 
 export type SkillsHomeLayout = 'flat' | 'grouped';
 
@@ -577,7 +578,7 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				return {...state, errorText: '没有可选的 skill'};
 			}
 
-			// 安装页 Enter → 安装目标 Modal，草稿预置 C/X shared；Pi 可额外选择。
+			// 安装页 Enter → 安装目标 Modal，草稿预置 C/X shared 与 Pi 全局；三者均可取消。
 			return {
 				...state,
 				mode: 'select-install-target',

@@ -111,6 +111,11 @@ export function piModelsJsonPath(): string {
 	return join(piAgentDir(), 'models.json');
 }
 
+/** Pi runtime 刷新的 Provider 模型目录缓存 `~/.pi/agent/models-store.json`；ccq 只读展示用。 */
+export function piModelsStorePath(): string {
+	return join(piAgentDir(), 'models-store.json');
+}
+
 /** Pi MCP adapter 的 CCQ 状态/ownership sidecar；适配器本身不读取此文件。 */
 export function piMcpAdapterOverridesPath(): string {
 	return join(piAgentDir(), 'mcp-adapter-overrides.json');

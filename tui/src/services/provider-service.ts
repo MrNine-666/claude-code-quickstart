@@ -3,7 +3,6 @@ import {
 	deleteProvider,
 	editProvider,
 	getDisplayData,
-	getManagedModelSummary,
 	getProviderList,
 	migrateLegacyProfiles,
 	switchProvider,
@@ -65,10 +64,6 @@ export function loadProviderDisplay(): ProviderDisplayData {
 
 export function loadProviderProfile(profilePath: string): ProviderProfile | null {
 	return readJsonFile<ProviderProfile | null>(profilePath, null);
-}
-
-export function modelSummary(profile: ProviderProfile | null): string {
-	return getManagedModelSummary(profile);
 }
 
 export function buildForm(input: ProviderFormInput): ProviderFormModel {

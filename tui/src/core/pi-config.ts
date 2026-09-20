@@ -8,6 +8,10 @@ type JsonObject = Record<string, unknown>;
 type PiConfigContract = {
 	readonly Defaults?: JsonObject;
 	readonly ProtectedKeys?: readonly string[];
+	readonly Descriptions?: {
+		readonly Overview?: readonly string[];
+		readonly Defaults?: Record<string, string>;
+	};
 };
 
 function isObject(value: unknown): value is JsonObject {
@@ -22,21 +26,22 @@ function contract(): PiConfigContract {
 	}
 }
 
-function stripProtected(source: JsonObject): JsonObject {
+function stripProtected(source: JsonObject, config = contract()): JsonObject {
 	const next = {...source};
-	for (const key of contract().ProtectedKeys ?? []) delete next[key];
+	for (const key of config.ProtectedKeys ?? []) delete next[key];
 	return next;
 }
 
 function mergeWithOriginal(edited: JsonObject, original: JsonObject | null): JsonObject {
+	const config = contract();
 	// Config owns every field except those explicitly listed by another module.
 	// This keeps unknown Pi settings editable and allows new settings to be added.
-	const next = stripProtected(edited);
+	const next = stripProtected(edited, config);
 	if (!original) return next;
 
 	// Protected fields are never accepted from the editor; preserve their original
 	// values, including the case where the editor typed a new protected field.
-	for (const key of contract().ProtectedKeys ?? []) {
+	for (const key of config.ProtectedKeys ?? []) {
 		if (key in original) next[key] = original[key];
 		else delete next[key];
 	}
@@ -63,7 +68,35 @@ export function piProjectSettingsExists(): boolean {
 }
 
 export function piConfigRecommendation(): string {
-	return JSON.stringify(contract().Defaults ?? {}, null, 2);
+	const config = contract();
+	const defaults = stripProtected(config.Defaults ?? {}, config);
+	const descriptions = config.Descriptions?.Defaults ?? {};
+	const members = Object.entries(defaults).map(([key, value]) => annotateMember(key, value, descriptions[key], '  '));
+	const overview = (config.Descriptions?.Overview ?? []).flatMap(commentLines).map(line => `  // ${line}`);
+
+	if (members.length === 0) {
+		return overview.length > 0 ? `{
+${overview.join('\n')}
+}` : '{}';
+	}
+
+	const body = overview.length > 0 ? [...overview, members.join(',\n')].join('\n') : members.join(',\n');
+	return `{
+${body}
+}`;
+}
+
+function commentLines(comment: string): string[] {
+	return String(comment).split(/\r?\n/u).map(line => line.trim());
+}
+
+function annotateMember(key: string, value: unknown, description: string | undefined, indent: string): string {
+	const valueJson = JSON.stringify(value, null, 2);
+	const valueIndented = valueJson.includes('\n') ? valueJson.replace(/\n/g, `\n${indent}`) : valueJson;
+	const comments = description
+		? commentLines(description).map(line => `${indent}// ${line}`).join('\n') + '\n'
+		: '';
+	return `${comments}${indent}"${key}": ${valueIndented}`;
 }
 
 export function applyPiConfigFillMissing(text: string): {ok: true; text: string; changed: number} | {ok: false; error: string} {
@@ -74,9 +107,10 @@ export function applyPiConfigFillMissing(text: string): {ok: true; text: string;
 		return {ok: false, error: `JSON 格式错误: ${error instanceof Error ? error.message : String(error)}`};
 	}
 	if (!isObject(parsed)) return {ok: false, error: 'Pi settings 必须是 JSON 对象'};
-	const next = stripProtected(parsed);
+	const config = contract();
+	const next = stripProtected(parsed, config);
 	let changed = 0;
-	for (const [key, value] of Object.entries(contract().Defaults ?? {})) {
+	for (const [key, value] of Object.entries(stripProtected(config.Defaults ?? {}, config))) {
 		if (next[key] === undefined) {
 			next[key] = value;
 			changed += 1;

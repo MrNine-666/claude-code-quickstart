@@ -29,11 +29,12 @@ export function createConfigDocumentAdapter(target: ConfigTarget): ManagedDocume
 	const isPi = target === 'pi';
 	const configPath = getConfigPath(target);
 	const recommendationContent = loadRecommendationAnnotated(target) ?? '';
+	const excludedDomains = isCodex ? '已排除供应商/MCP配置' : isPi ? '已排除凭据/模型/MCP/Skills/Extensions配置' : '已排除供应商配置';
 
 	return {
 		key: target,
 		title: '配置文件管理',
-		subtitle: `${configPath}` + ' ' + (isCodex ? '已排除供应商/MCP配置' : isPi ? '已排除供应商/Extensions配置' : '已排除供应商配置'),
+		subtitle: `${configPath}` + ' ' + excludedDomains,
 		emptyMessage: '尚无配置文件',
 		emptyHintLabel: `新建 ${configPath}`,
 		editorTitle: '当前配置',
@@ -47,7 +48,7 @@ export function createConfigDocumentAdapter(target: ConfigTarget): ManagedDocume
 		saveSuccessMessage: isCodex
 			? `已保存到 ${configPath}`
 			: isPi
-				? `已保存到 ${configPath}（供应商/MCP/Skills/Extensions 配置已原样保留）`
+				? `已保存到 ${configPath}（凭据/模型/MCP/Skills/Extensions 配置已原样保留）`
 				: `已保存到 ${configPath}（供应商配置已原样保留）`,
 		openSuccessMessage: `已在外部应用中打开 ${configPath}`,
 		load: () => loadConfigSnapshot(target),

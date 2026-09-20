@@ -17,7 +17,7 @@ export const HELP_GENERAL = `${USAGE_HEADER}
 子命令:
   ls [--tool <tool>]      列出供应商并标记当前默认（tool=claude|codex|pi，默认 claude）
   use <name> [--tool <tool>]
-                          设默认供应商（默认 tool=claude）
+                          设默认供应商（tool=claude|codex，默认 claude）
   update [--check]        检查或更新 ccq 可执行文件
   tools update [name]     更新全部可更新工具，或更新指定工具
   tools uninstall <name> [--yes|-y]
@@ -56,14 +56,13 @@ export const HELP_USE = `ccq use — 设默认供应商
   ccq use <name>
   ccq use <name> --tool claude
   ccq use <name> --tool codex
-  ccq use <provider> --tool pi
 
 行为:
   - 默认等价 ccq use <name> --tool claude
   - claude：将 <name> 的 env 合并写入 ~/.claude/settings.json（持久生效）
   - codex：读取 ~/.codex/<name>.config.toml，并结构化写入 ~/.codex/config.toml
   - codex 不写 profile = "<name>" 或 [profiles.<name>]
-  - pi：仅更新 ~/.pi/agent/settings.json 的 defaultProvider；不维护 defaultModel，也不写入 Claude/Codex profile
+  - Pi 默认 Provider 请在 Pi 配置页编辑 settings.json 的 defaultProvider
 `;
 
 export const HELP_UPDATE = `ccq update — 更新 ccq 可执行文件

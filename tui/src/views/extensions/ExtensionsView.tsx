@@ -64,7 +64,7 @@ export function ExtensionsView({active, agentContext, contentWidth, onSubModeCha
 				const detail = errorMessage(reason);
 				console.error(`[extensions] ${query ? '搜索' : '读取已安装包'}失败`, detail);
 				dispatch({type: query ? 'search-failed' : 'installed-failed', error: detail});
-				toast.error(`${query ? '扩展搜索' : '扩展读取'}失败，请查看控制台`);
+				toast.error(`${query ? '扩展搜索' : '扩展读取'}失败`);
 			}
 		},
 		[service]
@@ -88,7 +88,7 @@ export function ExtensionsView({active, agentContext, contentWidth, onSubModeCha
 					const detail = errorMessage(reason);
 					console.error('[extensions] 搜索失败', detail);
 					dispatch({type: 'search-failed', error: detail});
-					toast.error('扩展搜索失败，请查看控制台');
+					toast.error('扩展搜索失败');
 				}
 			);
 		},
@@ -138,11 +138,11 @@ export function ExtensionsView({active, agentContext, contentWidth, onSubModeCha
 								return;
 							}
 							console.error(`[extensions] 打开详情失败 ${url}`, result.error);
-							toast.error('打开扩展详情失败，请查看控制台');
+							toast.error('打开扩展详情失败');
 						})
 						.catch(reason => {
 							console.error(`[extensions] 打开详情失败 ${url}`, reason);
-							toast.error('打开扩展详情失败，请查看控制台');
+							toast.error('打开扩展详情失败');
 						});
 				},
 				onOpenConfirm: action => dispatch({type: 'open-confirm', action}),
@@ -332,7 +332,7 @@ function ExtensionConfirmModal({view}: {readonly view: ExtensionsViewState}) {
 			tone={action.kind === 'remove' ? 'danger' : 'default'}
 			width={68}
 		>
-			<text fg={colors.text}>{`即将执行 ${command}`}</text>
+			<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`即将执行 ${command}`}</text>
 		</Modal>
 	);
 }
@@ -370,7 +370,7 @@ async function runConfirmed(
 		const message = errorMessage(reason);
 		console.error(`[extensions] ${extensionDiagnosticSubject(action)} 失败`, message);
 		dispatch({type: 'mutation-failed', error: message});
-		toast.error(`${extensionToastSubject(action)} ${extensionActionLabel(action)}失败，请查看控制台`);
+		toast.error(`${extensionToastSubject(action)} ${extensionActionLabel(action)}失败`);
 	}
 }
 
@@ -393,7 +393,7 @@ function extensionCommand(action: PendingExtensionAction): string {
 		? `pi install ${source}`
 		: action.kind === 'update'
 			? `pi update --extension ${action.source}`
-			: `pi remove ${action.source.replace(/^npm:/, '')}`;
+			: `pi remove ${source}`;
 }
 
 function extensionSuccessMessage(action: PendingExtensionAction): string {

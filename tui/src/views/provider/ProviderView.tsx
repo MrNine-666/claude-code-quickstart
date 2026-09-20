@@ -15,6 +15,7 @@ import {
 	buildPiForm,
 	discoverPiProviderModels,
 	loadPiProviderProfileByRef,
+	matchPiProviderModel,
 	replacePiProviderModels,
 	piProviderFormAdapter,
 	savePiProviderForm
@@ -35,6 +36,21 @@ type ProviderScreen =
 	| {readonly kind: 'edit'; readonly key: string}
 	| {readonly kind: 'confirm-delete'; readonly key: string};
 
+/**
+ * 只读供应商提示：Codex official 与 Pi auth.json 数据源（/login 创建）均由各自 CLI 原生管理，
+ * ccq 只能编辑/删除 models.json 中定义的 Provider。
+ */
+function providerReadOnlyMessage(isCodex: boolean, action: 'edit' | 'delete'): string {
+	if (isCodex) {
+		return action === 'edit'
+			? 'Codex 官方账号由 Codex 原生管理，不可在表单中编辑；请运行 codex login 或 codex logout。'
+			: 'Codex 官方账号由 Codex 原生管理，不可在表单中编辑；请运行 codex logout。';
+	}
+	return action === 'edit'
+		? '该供应商由 Pi 原生 /login 管理，ccq 仅能编辑 models.json 中定义的 Provider；请打开 pi 输入 /login 或 /logout。'
+		: '该供应商由 Pi 原生 /login 管理，ccq 仅能删除 models.json 中定义的 Provider；请打开 pi 输入 /logout。';
+}
+
 export type ProviderViewProps = {
 	readonly agentContext: AgentContext;
 	readonly active: boolean;
@@ -53,6 +69,9 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 	const current = profiles[safeSelected] ?? null;
 	const currentIsOfficial = adapter.isOfficial(current);
 	const currentIsReadOnly = currentIsOfficial || current?.canEdit === false;
+	// Pi 内置 / `/login` Provider 可编辑传输层覆盖（仅 headers / authHeader），与凭据侧 canEdit 正交。
+	const currentEditBlocked =
+		currentIsOfficial || (adapter.isPi ? current?.canEditTransport !== true : current?.canEdit === false);
 
 	useEffect(() => {
 		setDisplay(adapter.loadDisplay());
@@ -63,19 +82,16 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 	useEffect(() => {
 		if (!active) return;
 		if (screen.kind === 'add' || screen.kind === 'edit') return;
-		const subMode = screen.kind === 'list' && profiles.length === 0 ? 'empty' : screen.kind;
+		const subMode =
+			screen.kind === 'list' && profiles.length === 0 ? 'empty' : screen.kind === 'list' && adapter.isPi ? 'list-pi' : screen.kind;
 		onSubModeChange?.(subMode);
-	}, [active, onSubModeChange, profiles.length, screen.kind]);
+	}, [active, adapter.isPi, onSubModeChange, profiles.length, screen.kind]);
 
 	useEffect(() => {
-		if (!active || screen.kind !== 'edit' || !currentIsReadOnly) return;
-		toast.info(
-			adapter.isCodex
-				? 'Codex 官方账号由 Codex 原生管理，不可在表单中编辑；请运行 codex login 或 codex logout。'
-				: 'OAuth/订阅供应商由 Pi 原生管理，请打开 pi 输入 /login 或 /logout。'
-		);
+		if (!active || screen.kind !== 'edit' || !currentEditBlocked) return;
+		toast.info(providerReadOnlyMessage(adapter.isCodex, 'edit'));
 		setScreen({kind: 'list'});
-	}, [active, adapter.isCodex, currentIsReadOnly, screen.kind]);
+	}, [active, adapter.isCodex, currentEditBlocked, screen.kind]);
 
 	function refresh(): void {
 		const next = adapter.loadDisplay();
@@ -107,6 +123,7 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 					adapter={piProviderFormAdapter}
 					onDiscover={discoverPiProviderModels}
 					onApplyDiscovered={replacePiProviderModels}
+					onMatchCandidate={matchPiProviderModel}
 					onCancel={() => setScreen({kind: 'list'})}
 					onSaved={handleSaved}
 				/>
@@ -151,7 +168,7 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 		);
 	}
 
-	if (screen.kind === 'edit' && currentIsReadOnly) {
+	if (screen.kind === 'edit' && currentEditBlocked) {
 		return null;
 	}
 
@@ -159,6 +176,8 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 		if (adapter.isPi) {
 			const profile = loadPiProviderProfileByRef(current.profilePath);
 			const model = buildPiForm({mode: 'edit', profileKey: current.key, profile});
+			// transport-only 变体没有自定义端点，不提供模型发现。
+			const transportOnly = model.values.variant === 'transport-only';
 			return (
 				<ProviderFormView
 					model={model}
@@ -168,8 +187,9 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 					save={(input, values) => savePiProviderForm({...input, profileKey: current.key, profile}, values)}
 					validate={values => validatePiProviderForm('edit', values)}
 					adapter={piProviderFormAdapter}
-					onDiscover={discoverPiProviderModels}
-					onApplyDiscovered={replacePiProviderModels}
+					onDiscover={transportOnly ? undefined : discoverPiProviderModels}
+					onApplyDiscovered={transportOnly ? undefined : replacePiProviderModels}
+					onMatchCandidate={transportOnly ? undefined : matchPiProviderModel}
 					onCancel={() => setScreen({kind: 'list'})}
 					onSaved={handleSaved}
 				/>
@@ -228,17 +248,15 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 			loadFailures={display.loadFailures ?? []}
 			currentKey={current?.key}
 			currentIsActive={current?.isActive ?? false}
+			switchEnabled={adapter.switchActive !== undefined}
 			confirmingDelete={screen.kind === 'confirm-delete'}
 			onMove={delta => setSelected(previous => clampMove(previous, delta, profiles.length))}
 			onSwitch={() => {
-				if (!current) return;
-				if (adapter.isPi && current.canSwitch === false) {
-					toast.error(`Pi Provider ${current.key} 当前不可切换。`);
-					return;
-				}
+				const switchActive = adapter.switchActive;
+				if (!current || !switchActive) return;
 				if (currentIsOfficial && !adapter.isOfficialLoggedIn())
 					toast.warning('official login 未登录，请先运行 codex login 完成官方账号登录');
-				const result = adapter.switchActive(current.key);
+				const result = switchActive(current.key);
 				if (result.ok) {
 					refresh();
 					toast.success(`已切换为活跃供应商：${result.data.providerName}`);
@@ -246,23 +264,19 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 			}}
 			onAdd={() => setScreen({kind: 'add'})}
 			onEdit={() => {
-				if (currentIsReadOnly) {
-					toast.info(
-						adapter.isCodex
-							? 'Codex 官方账号由 Codex 原生管理，不可在表单中编辑；请运行 codex login 或 codex logout。'
-							: 'OAuth/订阅供应商由 Pi 原生管理，请打开 pi 输入 /login 或 /logout。'
-					);
+				if (currentEditBlocked) {
+					toast.info(providerReadOnlyMessage(adapter.isCodex, 'edit'));
 					return;
 				}
 				if (current) setScreen({kind: 'edit', key: current.key});
 			}}
 			onDelete={() => {
+				if (adapter.isPi && current?.isActive) {
+					toast.info(`无法删除当前默认 Pi Provider ${current.key}；请先在 Pi 配置页修改 defaultProvider。`);
+					return;
+				}
 				if (currentIsReadOnly || (adapter.isPi && current?.canDelete === false)) {
-					toast.info(
-						adapter.isCodex
-							? 'Codex 官方账号由 Codex 原生管理，不可在表单中编辑；请运行 codex logout。'
-							: 'OAuth/订阅供应商由 Pi 原生管理，请打开 pi 输入 /logout。'
-					);
+					toast.info(providerReadOnlyMessage(adapter.isCodex, 'delete'));
 					return;
 				}
 				if (current) setScreen({kind: 'confirm-delete', key: current.key});
@@ -276,16 +290,16 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 					return;
 				}
 				if (currentIsReadOnly) {
-					toast.info(
-						adapter.isCodex
-							? 'Codex 官方账号由 Codex 原生管理，不可在表单中编辑；请运行 codex logout。'
-							: 'OAuth/订阅供应商由 Pi 原生管理，请打开 pi 输入 /logout。'
-					);
+					toast.info(providerReadOnlyMessage(adapter.isCodex, 'delete'));
 					setScreen({kind: 'list'});
 					return;
 				}
 				if (current.isActive) {
-					toast.error(`无法删除当前活跃供应商 ${current.key}，请先切换到其他供应商。`);
+					toast.error(
+						adapter.isPi
+							? `无法删除当前默认 Pi Provider ${current.key}；请先在 Pi 配置页修改 defaultProvider。`
+							: `无法删除当前活跃供应商 ${current.key}，请先切换到其他供应商。`
+					);
 					setScreen({kind: 'list'});
 					return;
 				}

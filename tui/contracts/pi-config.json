@@ -1,20 +1,47 @@
 {
-  "Defaults": {
-    "theme": "dark",
-    "quietStartup": false,
-    "collapseChangelog": false,
-    "enableMouse": true,
-    "terminalTitle": true
-  },
-  "ProtectedKeys": [
-    "defaultProvider",
-    "defaultModel",
-    "defaultThinkingLevel",
-    "auth",
-    "models",
-    "mcp",
-    "skills",
-    "packages",
-    "extensions"
-  ]
+	"Defaults": {
+		"defaultTools": ["read", "powershell", "edit", "write"],
+		"theme": "light",
+		"hideThinkingBlock": true,
+		"showCacheMissNotices": false,
+		"quietStartup": true,
+		"tuiMode": "regular",
+		"fullscreenExitOutput": "transcript",
+		"markdown": {
+			"mermaid": "final"
+		}
+	},
+	"ProtectedKeys": [
+		"defaultModel",
+		"defaultThinkingLevel",
+		"modelThinkingLevels",
+		"enabledModels",
+		"auth",
+		"models",
+		"mcp",
+		"skills",
+		"packages",
+		"extensions",
+		"prompts",
+		"themes",
+		"enableSkillCommands",
+		"npmCommand"
+	],
+	"Descriptions": {
+		"Overview": [
+			"这里只推荐 Pi Config 管辖的通用运行配置。",
+			"defaultProvider 与其它通用运行配置可在此编辑；供应商凭据、模型定义及 packages、extensions、skills、prompts、themes 等资源字段由对应模块管理。",
+			"lastChangelogVersion 是 Pi 的运行时版本状态，httpProxy 依赖本机网络环境，均不写入可共享的推荐配置。"
+		],
+		"Defaults": {
+			"defaultTools": "默认提供给 Pi Agent 的内置工具集合；扩展提供的工具不在此处管理",
+			"theme": "Pi 使用的主题名称",
+			"hideThinkingBlock": "是否隐藏助手消息中的思考块",
+			"showCacheMissNotices": "是否显示缓存未命中提示",
+			"quietStartup": "是否安静启动，减少欢迎信息与变更日志提示",
+			"tuiMode": "交互界面模式；regular 表示普通终端布局",
+			"fullscreenExitOutput": "退出全屏 TUI 后的输出方式；transcript 保留会话转录",
+			"markdown": "Markdown 渲染设置；mermaid=final 表示只在最终消息中渲染 Mermaid"
+		}
+	}
 }

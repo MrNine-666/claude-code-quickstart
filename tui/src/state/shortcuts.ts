@@ -168,15 +168,30 @@ function providerShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 
 	if (subMode === 'form-pi') {
 		return buildShortcuts([
-			{command: PROVIDER_COMMANDS.FORM_UP, label: '字段'},
-			{command: PROVIDER_COMMANDS.FORM_DOWN, label: '字段'},
+			{command: PROVIDER_COMMANDS.FORM_UP, label: '字段/模型'},
+			{command: PROVIDER_COMMANDS.FORM_DOWN, label: '字段/模型'},
 			{command: PROVIDER_COMMANDS.FORM_OPTION_PREV, label: '选项'},
 			{command: PROVIDER_COMMANDS.FORM_OPTION_NEXT, label: '选项'},
-			{command: PROVIDER_COMMANDS.FORM_MULTI_SELECT_TOGGLE, label: '切换选择'},
+			{command: PROVIDER_COMMANDS.FORM_MULTI_SELECT_TOGGLE, label: '选中/取消/来源'},
 			{command: PROVIDER_COMMANDS.FORM_DISCOVER, label: '获取上游模型'},
 			{command: PROVIDER_COMMANDS.FORM_SAVE, label: '保存'},
 			{command: PROVIDER_COMMANDS.FORM_CANCEL, label: '取消'}
 		]);
+	}
+
+	if (subMode === 'form-pi-source') {
+		return [
+			...buildShortcuts([
+				{command: PROVIDER_COMMANDS.FORM_UP, label: '来源'},
+				{command: PROVIDER_COMMANDS.FORM_DOWN, label: '来源'},
+				{command: PROVIDER_COMMANDS.FORM_SOURCE_VIEW, label: '摘要/JSON'},
+				{command: PROVIDER_COMMANDS.FORM_SAVE, label: '保存'}
+			]),
+			...manualShortcuts([
+				{key: 'Enter', label: '确认来源'},
+				{key: 'Esc', label: '返回'}
+			])
+		];
 	}
 
 	if (subMode === 'form-model') {
@@ -206,6 +221,18 @@ function providerShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 	if (subMode === 'empty') {
 		return buildShortcuts([
 			{command: PROVIDER_COMMANDS.ADD, label: '添加供应商'},
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
+			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
+		]);
+	}
+
+	if (subMode === 'list-pi') {
+		return buildShortcuts([
+			{command: PROVIDER_COMMANDS.LIST_UP, label: '选择'},
+			{command: PROVIDER_COMMANDS.LIST_DOWN, label: '选择'},
+			{command: PROVIDER_COMMANDS.ADD, label: '添加'},
+			{command: PROVIDER_COMMANDS.EDIT, label: '编辑'},
+			{command: PROVIDER_COMMANDS.DELETE, label: '删除'},
 			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
 			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
 		]);

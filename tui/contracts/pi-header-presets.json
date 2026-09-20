@@ -1,0 +1,40 @@
+{
+  "SchemaVersion": 1,
+  "Source": "Pi request header presets",
+  "Presets": {
+    "claude-code": {
+      "Label": "Claude Code",
+      "Description": "以 Claude Code 客户端身份请求。UA 版本对齐当前 Claude Code 发行版（需随上游发版更新）。",
+      "Apis": ["anthropic-messages"],
+      "Headers": {
+        "User-Agent": "claude-cli/2.1.278 (external, cli)",
+        "x-app": "cli"
+      },
+      "OptionalHeaders": [
+        {
+          "HeaderName": "anthropic-beta",
+          "DefaultValue": "claude-code-20250219,interleaved-thinking-2025-05-14",
+          "Reason": "仅在确认中转强制校验 beta 时启用。一旦设置，Pi 不再自动追加 beta，必须把 reasoning 所需的 interleaved-thinking 一并列出，否则思考链会退化。"
+        }
+      ]
+    },
+    "codex": {
+      "Label": "Codex CLI",
+      "Description": "以 Codex CLI 客户端身份请求。Codex CLI 只说 Responses 协议，因此仅 openai-responses 为受控协议；openai-codex-responses 由 Pi 强制覆盖且要求 JWT，预设无效。真实 Codex 的 UA 还带终端段（实测：codex_cli_rs/0.155.0 (Windows 10.0.19045; x86_64) Orca/1.4.205 (codex_cli_rs; 0.155.0)）；中转若做整串匹配，请按本机实际值补齐。",
+      "Apis": ["openai-responses"],
+      "Headers": {
+        "originator": "codex_cli_rs",
+        "version": "0.155.1",
+        "User-Agent": "codex_cli_rs/0.155.1 ({os}; {arch})"
+      }
+    },
+    "gemini-cli": {
+      "Label": "Gemini CLI",
+      "Description": "以 Gemini CLI 客户端身份请求。只需覆盖 User-Agent：x-goog-api-client 由 google-genai SDK 默认发出，与真实 Gemini CLI 一致。版本与模型段应对齐当前 Gemini CLI 发行版与本机实际调用的模型。",
+      "Apis": ["google-generative-ai"],
+      "Headers": {
+        "User-Agent": "GeminiCLI/0.60.0/gemini-3.1-pro-preview ({platform}; {arch}; cli)"
+      }
+    }
+  }
+}

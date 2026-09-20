@@ -15,6 +15,7 @@ export type ProviderHomeViewProps = {
 	readonly loadFailures: readonly {readonly key: string; readonly reason: string}[];
 	readonly currentKey?: string;
 	readonly currentIsActive: boolean;
+	readonly switchEnabled: boolean;
 	readonly confirmingDelete: boolean;
 	readonly onMove: (delta: number) => void;
 	readonly onSwitch: () => void;
@@ -37,6 +38,7 @@ export function ProviderHomeView({
 	loadFailures,
 	currentKey,
 	currentIsActive,
+	switchEnabled,
 	confirmingDelete,
 	onMove,
 	onSwitch,
@@ -51,7 +53,8 @@ export function ProviderHomeView({
 	const items: ScrollListItem[] = rows.map(row => ({
 		key: row.key,
 		title: row.title ?? row.key,
-		leading: row.isActive ? <StatusDot kind="latest" /> : <text fg={colors.muted}>●</text>,
+		// Pi 供应商列表卡片不展示状态圆点；Claude/Codex 保留活跃标记。
+		leading: isPi ? undefined : row.isActive ? <StatusDot kind="latest" /> : <text fg={colors.muted}>●</text>,
 		body: (
 			<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 				{row.summary}
@@ -101,7 +104,9 @@ export function ProviderHomeView({
 				>
 					<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 						{currentIsActive
-							? `${currentKey} 是当前活跃供应商，删除前请先切换到其他供应商。`
+							? isPi
+								? `${currentKey} 是当前默认 Pi Provider，删除前请先在 Pi 配置页修改 defaultProvider。`
+								: `${currentKey} 是当前活跃供应商，删除前请先切换到其他供应商。`
 							: `即将删除供应商 ${currentKey}，此操作不可撤销。`}
 					</text>
 				</Modal>
@@ -109,6 +114,7 @@ export function ProviderHomeView({
 			<ProviderListInput
 				active={active && !confirmingDelete}
 				hasCurrent={currentKey !== undefined}
+				switchEnabled={switchEnabled}
 				atTop={selectedIndex === 0}
 				onMove={onMove}
 				onSwitch={onSwitch}
@@ -126,6 +132,7 @@ export function ProviderHomeView({
 function ProviderListInput({
 	active,
 	hasCurrent,
+	switchEnabled,
 	atTop,
 	onMove,
 	onSwitch,
@@ -137,6 +144,7 @@ function ProviderListInput({
 }: {
 	readonly active: boolean;
 	readonly hasCurrent: boolean;
+	readonly switchEnabled: boolean;
 	readonly atTop: boolean;
 	readonly onMove: (delta: number) => void;
 	readonly onSwitch: () => void;
@@ -165,7 +173,7 @@ function ProviderListInput({
 				break;
 			case 'enter':
 			case 'return':
-				if (hasCurrent) onSwitch();
+				if (hasCurrent && switchEnabled) onSwitch();
 				break;
 			case 'a':
 				onAdd();

@@ -14,6 +14,8 @@ export type ProviderFormSubmitResult =
 
 export type ProviderFormAdapter<TInput, TValues, TModel extends ProviderFormModelBase<TValues>> = {
 	readonly textLabel: string | ((values: TValues) => string);
+	/** 共享 textarea 下方的说明文案（例如 Pi 请求头的 JSON / $ENV 语义）。 */
+	readonly textHelpText?: string | ((values: TValues) => string);
 	readonly title: (model: TModel) => string;
 	readonly savedMessage: (model: TModel, values: TValues) => string;
 	readonly valuesToRecord: (values: TValues) => Record<string, string>;

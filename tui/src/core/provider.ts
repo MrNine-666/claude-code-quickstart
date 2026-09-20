@@ -43,6 +43,12 @@ export type ProviderDisplayProfile = {
 	readonly canDelete?: boolean;
 	readonly canSwitch?: boolean;
 	readonly isMissing?: boolean;
+	/** Pi only: 已配置的请求头条目数；Claude/Codex 不设置。 */
+	readonly headerCount?: number;
+	/** Pi only: 是否启用了 `authHeader: true`。 */
+	readonly authHeader?: boolean;
+	/** Pi only: 是否可编辑传输层覆盖（仅 headers / authHeader）。 */
+	readonly canEditTransport?: boolean;
 };
 
 export type ProviderLoadFailure = {
@@ -336,25 +342,6 @@ function mergeEnvIntoProfile(profile: ProviderProfile, env: Record<string, strin
 
 		profile.env[k] = String(v);
 	}
-}
-
-/** 生成人类可读的模型配置摘要。 */
-export function getManagedModelSummary(profile: ProviderProfile | null): string {
-	const modelEnv = getManagedModelEnv(profile);
-	if (Object.keys(modelEnv).length === 0) {
-		return '未配置';
-	}
-
-	const labels = cfg().modelEnvLabels;
-	const orderedKeys = ['ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL'];
-	const parts: string[] = [];
-	for (const key of orderedKeys) {
-		if (modelEnv[key]) {
-			parts.push(`${labels[key] ?? key}=${modelEnv[key]}`);
-		}
-	}
-
-	return parts.join(', ');
 }
 
 // ── 数据层（Profile 扫描 / 活跃身份匹配 / 展示数据） ─────────────────────────

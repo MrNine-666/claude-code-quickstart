@@ -1,26 +1,12 @@
 import {truncateToWidth} from '../../core/text-utils.js';
+import {getMigrationResult, loadProviderDisplay, removeProvider, switchActiveProvider} from '../../services/provider-service.js';
 import {
-	getMigrationResult,
-	loadProviderDisplay,
-	loadProviderProfile,
-	modelSummary,
-	removeProvider,
-	switchActiveProvider
-} from '../../services/provider-service.js';
-import {
-	codexModelSummary,
 	isCodexOfficialLoggedIn,
 	loadCodexProviderDisplay,
-	loadCodexProviderProfile,
 	removeCodexProvider,
 	switchActiveCodexProvider
 } from '../../services/codex-service.js';
-import {
-	loadPiProviderDisplayData,
-	loadPiProviderProfileByRef,
-	removePiProvider,
-	switchActivePiProvider
-} from '../../services/pi-provider-service.js';
+import {loadPiProviderDisplayData, loadPiProviderProfileByRef, removePiProvider} from '../../services/pi-provider-service.js';
 import {isOfficialLoginKey} from '../../core/codex.js';
 import type {ProviderDisplayData, ProviderDisplayProfile} from '../../core/provider.js';
 import type {AgentContext} from '../../state/manage-state.js';
@@ -44,7 +30,7 @@ export type ProviderViewAdapter = {
 	readonly toHomeRow: (profile: ProviderDisplayProfile) => ProviderHomeRow;
 	readonly isOfficial: (profile: ProviderDisplayProfile | null) => boolean;
 	readonly isOfficialLoggedIn: () => boolean;
-	readonly switchActive: (key: string) => ProviderServiceResult<{readonly providerName: string}>;
+	readonly switchActive?: (key: string) => ProviderServiceResult<{readonly providerName: string}>;
 	readonly remove: (key: string) => ProviderServiceResult<{
 		readonly clearedSettings?: boolean;
 		readonly deleted?: boolean;
@@ -52,6 +38,44 @@ export type ProviderViewAdapter = {
 		readonly removedAuth?: boolean;
 	}>;
 };
+
+/**
+ * 授权登录行（Codex official / Pi OAuth）只展示登录状态文案，不再拼 URL、密钥或模型。
+ * 已登录与凭据不完整必须可区分，否则凭据损坏会被误读为可用。
+ */
+function loginSummary(status: ProviderDisplayProfile['authStatus']): string {
+	return status === 'configured' ? '已授权登录' : '授权凭据不完整，请通过 /login 修复';
+}
+
+/**
+ * Pi 凭据类型：仅 models.json 自定义 Provider 记为「自定义」，内置/内置覆盖/仅 auth 来源记为「官方」。
+ */
+function piCredentialTypeLabel(source: ProviderDisplayProfile['source']): string {
+	return source === 'custom' ? '自定义' : '官方';
+}
+
+/**
+ * 供应商卡片描述行：Claude Code / Codex / Pi 分别只展示各自必需的凭据事实，不再拼接模型摘要。
+ */
+function providerHomeSummary(
+	profile: ProviderDisplayProfile,
+	context: {readonly isPi: boolean; readonly isCodex: boolean; readonly official: boolean}
+): string {
+	const credential = `${profile.baseUrl || '未配置 Base URL'} · ${profile.maskedApiKey}`;
+	if (context.isPi) {
+		const base =
+			profile.authKind === 'oauth' ? loginSummary(profile.authStatus) : `${credential} · ${piCredentialTypeLabel(profile.source)}`;
+		// 请求头状态用于辨识哪些 Provider 配置了请求头；未配置时不追加任何文字。
+		const headerBits: string[] = [];
+		if ((profile.headerCount ?? 0) > 0) headerBits.push(`请求头 ${profile.headerCount} 项`);
+		if (profile.authHeader) headerBits.push('Bearer');
+		return headerBits.length > 0 ? `${base} · ${headerBits.join(' · ')}` : base;
+	}
+	if (context.isCodex && context.official) {
+		return isCodexOfficialLoggedIn() ? '已授权登录' : '未授权登录';
+	}
+	return credential;
+}
 
 export function createProviderViewAdapter(agentContext: AgentContext): ProviderViewAdapter {
 	const isCodex = agentContext === 'cx';
@@ -77,19 +101,13 @@ export function createProviderViewAdapter(agentContext: AgentContext): ProviderV
 			maskedApiKey: profile.maskedApiKey,
 			isActive: profile.isActive,
 			summary: truncateToWidth(
-				`${profile.baseUrl || '未配置 Base URL'} · ${profile.maskedApiKey} · ${
-					isPi
-						? `${profile.modelCount ?? 0} 个模型 · ${profile.source ?? 'unknown'}`
-						: isCodex
-							? codexModelSummary(loadCodexProviderProfile(profile.profilePath))
-							: modelSummary(loadProviderProfile(profile.profilePath))
-				}`,
+				providerHomeSummary(profile, {isPi, isCodex, official: isCodex && isOfficialLoginKey(profile.key)}),
 				64
 			)
 		}),
 		isOfficial: profile => (isCodex && profile ? isOfficialLoginKey(profile.key) : false),
 		isOfficialLoggedIn: () => isCodex && isCodexOfficialLoggedIn(),
-		switchActive: isPi ? switchActivePiProvider : isCodex ? switchActiveCodexProvider : switchActiveProvider,
+		...(isPi ? {} : {switchActive: isCodex ? switchActiveCodexProvider : switchActiveProvider}),
 		remove: isPi ? removePiProvider : isCodex ? removeCodexProvider : removeProvider
 	};
 }

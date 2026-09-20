@@ -74,6 +74,8 @@ export const PROVIDER_COMMANDS = {
 	FORM_SAVE: 'provider:form-save',
 	FORM_CANCEL: 'provider:form-cancel',
 	FORM_DISCOVER: 'provider:form-discover',
+	FORM_CONFIRM: 'provider:form-confirm',
+	FORM_SOURCE_VIEW: 'provider:form-source-view',
 	FORM_OPTION_PREV: 'provider:form-option-prev',
 	FORM_OPTION_NEXT: 'provider:form-option-next',
 	FORM_MULTI_SELECT_TOGGLE: 'provider:form-multi-select-toggle'
@@ -92,6 +94,8 @@ export const providerBindings: Binding[] = commandBindings({
 	[PROVIDER_COMMANDS.FORM_SAVE]: editingShortcutKey('s'),
 	[PROVIDER_COMMANDS.FORM_CANCEL]: 'escape',
 	[PROVIDER_COMMANDS.FORM_DISCOVER]: appShortcutKey('d'),
+	[PROVIDER_COMMANDS.FORM_CONFIRM]: 'enter',
+	[PROVIDER_COMMANDS.FORM_SOURCE_VIEW]: 'tab',
 	[PROVIDER_COMMANDS.FORM_OPTION_PREV]: 'left',
 	[PROVIDER_COMMANDS.FORM_OPTION_NEXT]: 'right',
 	[PROVIDER_COMMANDS.FORM_MULTI_SELECT_TOGGLE]: 'space'

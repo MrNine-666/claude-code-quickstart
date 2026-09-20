@@ -12,6 +12,7 @@ import claudeConfigJson from '../../contracts/claude-config.json' with {type: 't
 import codexConfigToml from '../../contracts/codex-config.toml' with {type: 'text'};
 import piConfigJson from '../../contracts/pi-config.json' with {type: 'text'};
 import piProvidersJson from '../../contracts/pi-providers.json' with {type: 'text'};
+import piHeaderPresetsJson from '../../contracts/pi-header-presets.json' with {type: 'text'};
 
 function fileAsset(value: unknown): string {
 	return value as string;
@@ -26,7 +27,8 @@ export const EMBEDDED_CONTRACTS = new Map<string, string>([
 	['claude-config.json', fileAsset(claudeConfigJson)],
 	['codex-config.toml', fileAsset(codexConfigToml)],
 	['pi-config.json', fileAsset(piConfigJson)],
-	['pi-providers.json', fileAsset(piProvidersJson)]
+	['pi-providers.json', fileAsset(piProvidersJson)],
+	['pi-header-presets.json', fileAsset(piHeaderPresetsJson)]
 ]);
 
 /**

@@ -11,7 +11,7 @@ export type DiscoveredModel = {
 
 export type ModelDiscoveryErrorKind = 'unsupported' | 'cancelled' | 'timeout' | 'network' | 'http' | 'invalid';
 
-export type ModelDiscoveryAuth = 'bearer' | 'x-api-key';
+export type ModelDiscoveryAuth = 'bearer' | 'x-api-key' | 'x-goog-api-key';
 
 export type ModelDiscoveryPathMode = 'absolute' | 'append';
 
@@ -23,6 +23,12 @@ export type ModelDiscoveryOptions = {
 	readonly pathMode?: ModelDiscoveryPathMode;
 	readonly auth?: ModelDiscoveryAuth;
 	readonly apiKey?: string;
+	/** Extra static request headers (for example Anthropic's `anthropic-version`). */
+	readonly headers?: Readonly<Record<string, string>>;
+	/** 用户配置的请求头；在 `headers` 之后合并，因而可覆盖协议静态头与派生的认证头。 */
+	readonly customHeaders?: Readonly<Record<string, string>>;
+	/** 为 true 时强制使用 `Authorization: Bearer`（Pi `authHeader` 语义）。 */
+	readonly authHeader?: boolean;
 	readonly signal?: AbortSignal;
 	readonly timeoutMs?: number;
 	readonly maxResponseBytes?: number;
@@ -161,9 +167,9 @@ export function normalizeDiscoveredModels(payload: unknown): readonly Discovered
 	return [...unique.values()].sort((left, right) => left.id.localeCompare(right.id));
 }
 
-class ResponseTooLargeError extends Error {}
+export class ResponseTooLargeError extends Error {}
 
-async function readResponseText(response: Response, maxResponseBytes: number): Promise<string> {
+export async function readResponseText(response: Response, maxResponseBytes: number): Promise<string> {
 	const contentLength = Number(response.headers.get('content-length') ?? '0');
 	if (Number.isFinite(contentLength) && contentLength > maxResponseBytes) throw new ResponseTooLargeError();
 
@@ -219,11 +225,21 @@ export async function discoverModels(input: ModelDiscoveryOptions): Promise<Mode
 	input.signal?.addEventListener('abort', abort, {once: true});
 
 	try {
-		const headers: Record<string, string> = {Accept: 'application/json'};
+		const headers: Record<string, string> = {Accept: 'application/json', ...input.headers, ...input.customHeaders};
 		const apiKey = input.apiKey?.trim();
 		if (apiKey) {
-			if (input.auth === 'x-api-key') headers['x-api-key'] = apiKey;
-			else headers.Authorization = `Bearer ${apiKey}`;
+			// 认证头在自定义头之后按需补缺：用户显式写的同名头优先（与 Pi 的 defaultHeaders 合并语义一致）。
+			const nativeAuthName =
+				input.auth === 'x-api-key' ? 'x-api-key' : input.auth === 'x-goog-api-key' ? 'x-goog-api-key' : 'Authorization';
+			const setIfAbsent = (name: string): void => {
+				if (Object.keys(headers).some(existing => existing.toLowerCase() === name.toLowerCase())) return;
+				headers[name] = name === 'Authorization' ? `Bearer ${apiKey}` : apiKey;
+			};
+			setIfAbsent(nativeAuthName);
+			// `authHeader: true` 是「额外追加」而非替换（与 Pi 的 withConfiguredAuth 一致，也与字段文案一致）。
+			// 真实请求会同时带 x-api-key 与 Authorization，发现请求必须同形；否则只认原生头的端点
+			// 会呈现「发现失败但调用成功」的难排查错配。
+			if (input.authHeader === true) setIfAbsent('Authorization');
 		}
 		const response = await (input.fetchImpl ?? fetch)(endpoint, {headers, signal: controller.signal});
 

@@ -57,10 +57,16 @@ export function Card({
 
 	const finalTitleColor = titleColor ?? (focused ? colors.primary : colors.text);
 
-	// 左右两栏布局：左 leading 标记 + 右内容栏（title 行 + body 行）
+	// 左右两栏布局：左 leading 标记 + 右内容栏（title 行 + body 行）。
+	// 两种布局的根节点同为 <box>，React 会跨分支复用同一批 host node：纵向分支里 body 节点带
+	// height={1}，切回横向分支时该节点变成内容列，渲染器不会清除已移除的 height，内容列被压成
+	// 1 行 → body 行被裁掉、卡片少一行；反向切换时 leading 盒的 width={3} 残留并截断标题。
+	// 表现为“同一视图内切 Agent 后卡片变矮，离开菜单重进就恢复”。用互斥 key 强制 remount，
+	// 让新布局拿到干净节点，而不是依赖渲染器清理旧布局属性。
 	if (leading !== undefined) {
 		return (
 			<box
+				key="card-horizontal"
 				flexDirection="row"
 				borderStyle={bordered ? 'rounded' : undefined}
 				borderColor={bordered ? (focused ? borderColors.active : borderColors.inactive) : undefined}
@@ -108,9 +114,10 @@ export function Card({
 		);
 	}
 
-	// 纵向布局：title 行（左 title + 右 titleRight）+ body 行
+	// 纵向布局：title 行（左 title + 右 titleRight）+ body 行。key 必须与横向分支互斥，原因见上。
 	return (
 		<box
+			key="card-vertical"
 			flexDirection="column"
 			borderStyle={bordered ? 'rounded' : undefined}
 			borderColor={bordered ? (focused ? borderColors.active : borderColors.inactive) : undefined}

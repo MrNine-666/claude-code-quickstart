@@ -14,7 +14,6 @@ import {
 import {testProviderKey} from '../../core/text-utils.js';
 import {listProvidersForDisplay} from './ls.js';
 import type {ToolTarget} from '../argv.js';
-import {loadPiProviderDisplay, parsePiProviderKey, switchPiProvider} from '../../core/pi-provider.js';
 
 function runClaudeUse(name: string): number {
 	if (!testProviderKey(name)) {
@@ -92,30 +91,12 @@ function runCodexUse(name: string): number {
 	}
 }
 
-function runPiUse(name: string): number {
-	const normalized = name.trim();
-	if (!parsePiProviderKey(normalized)) {
-		console.error(`无效 Pi Provider ID: ${name}`);
-		console.error('格式应为 provider ID，或使用 ccq ls --tool pi 查看可用供应商。');
-		return 1;
-	}
-	const display = loadPiProviderDisplay();
-	if (!display.profiles.some(profile => profile.key === normalized && profile.canSwitch !== false)) {
-		console.error(`未找到可切换的 Pi Provider: ${name}`);
-		return 1;
-	}
-	try {
-		const result = switchPiProvider(normalized);
-		console.log(`已设置 Pi 默认 Provider: ${result.providerName}`);
-		console.log('后续 pi 调用将读取 ~/.pi/agent/settings.json。');
-		return 0;
-	} catch (error) {
-		console.error(`设置 Pi 默认 Provider 失败: ${error instanceof Error ? error.message : String(error)}`);
-		return 1;
-	}
+function runPiUse(): number {
+	console.error('ccq 不再切换 Pi Provider；请在 Pi 配置页编辑 settings.json 的 defaultProvider。');
+	return 1;
 }
 
 /** 执行 use 子命令。返回退出码。 */
 export function runUse(name: string, tool: ToolTarget = 'claude'): number {
-	return tool === 'codex' ? runCodexUse(name) : tool === 'pi' ? runPiUse(name) : runClaudeUse(name);
+	return tool === 'codex' ? runCodexUse(name) : tool === 'pi' ? runPiUse() : runClaudeUse(name);
 }

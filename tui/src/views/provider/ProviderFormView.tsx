@@ -2,17 +2,56 @@ import {useEffect, useRef, useState} from 'react';
 import {TextAttributes, type KeyEvent, type ScrollBoxRenderable, type TextareaRenderable} from '@opentui/core';
 import {useKeyboard, useRenderer} from '@opentui/react';
 import {toast} from '../../components/toast.js';
-import {Checkbox, ListLoadingState, ScrollList, type ScrollListItem} from '../../components/index.js';
 import {FormPanel, firstEditableIndex, nextEditableIndex} from '../../components/form/FormPanel.js';
-import {FormControlFrame} from '../../components/form/FormControlFrame.js';
-import {FormLabel} from '../../components/form/FormLabel.js';
+import {Modal} from '../../components/modal.js';
 import {ThemedScrollbox} from '../../components/themed-scrollbox.js';
 import {handleTextareaEditKeys, handleTextareaIndentKey} from '../../components/editor/textarea-edit-keys.js';
 import type {FormField} from '../../components/form/field-types.js';
 import {borderColors, colors} from '../../theme/index.js';
+import {scrollTargetIntoView} from '../../utils/scroll-into-view.js';
 import type {ProviderFormAdapter, ProviderFormModelBase, ProviderFormSubmitResult} from '../../types/provider-form-adapter.js';
 import {PROVIDER_COMMANDS, providerBindings} from '../../config/keybindings.js';
 import {isEditingModifier, matchesKeyBinding} from '../../utils/keyboard.js';
+import type {PiModelCandidate, PiModelDefinition} from '../../core/pi-provider.js';
+import {headerPresetNeedsConfirm, headerPresetText, piHeaderPreset, resolveHeaderPresetSelection} from '../../core/pi-header-preset.js';
+import {
+	addPiManualCandidate,
+	applyPiCandidateMatch,
+	applyPiDiscovery,
+	beginPiCandidateMatch,
+	cancelPiSourceMode,
+	confirmPiSourceMode,
+	deselectPiCandidate,
+	failPiCandidateMatch,
+	failPiSelectionLoading,
+	findPiSelectionBlocker,
+	movePiSourceCursor,
+	openPiSourceMode,
+	piCandidateFor,
+	piEmptySelection,
+	piModelSelectionFromValues,
+	piResolvedDefinition,
+	selectPiCandidate,
+	setPiManualValue,
+	setPiSelectionCursor,
+	startPiSelectionLoading,
+	togglePiSourceView,
+	type PiModelSelectionState
+} from '../../state/pi-model-selection-state.js';
+import {PiModelSelectionPanel, PiSourceSelectionPanel, filterPiCandidates} from './pi-model-selection-panel.js';
+
+/** 上游发现候选：旧式纯 ID 或携带完整字段的 Pi 模型定义。 */
+export type DiscoveryModelCandidate = string | PiModelDefinition;
+
+/** 保存时交给 adapter 的已解析模型定义。 */
+export type DiscoverySelectedModel = {
+	readonly id: string;
+	readonly definition: PiModelDefinition;
+};
+
+export type DiscoveryMatchOutcome =
+	| {readonly ok: true; readonly candidate: PiModelCandidate; readonly warning?: string}
+	| {readonly ok: false; readonly error: string};
 
 /** 从字段列表派生初始实时值。 */
 function deriveValues(fields: readonly FormField[]): Record<string, string> {
@@ -56,9 +95,11 @@ export type ProviderFormProps<TInput, TValues, TModel extends ProviderFormModelB
 	readonly save: (input: TInput, values: TValues) => ProviderFormSubmitResult;
 	readonly validate: (values: TValues) => string[];
 	readonly adapter: ProviderFormAdapter<TInput, TValues, TModel>;
-	/** Optional async upstream model discovery. */
-	readonly onDiscover?: (values: TValues, signal?: AbortSignal) => Promise<readonly string[]>;
-	readonly onApplyDiscovered?: (values: TValues, modelIds: readonly string[]) => TValues;
+	/** Optional async upstream model discovery. `string` entries keep the legacy ID-only path. */
+	readonly onDiscover?: (values: TValues, signal?: AbortSignal) => Promise<readonly DiscoveryModelCandidate[]>;
+	readonly onApplyDiscovered?: (values: TValues, models: readonly DiscoverySelectedModel[]) => TValues;
+	/** Pi-only: lazily resolve one candidate against the official Pi catalog (called on first selection intent). */
+	readonly onMatchCandidate?: (values: TValues, candidate: PiModelDefinition, signal?: AbortSignal) => Promise<DiscoveryMatchOutcome>;
 	/** CC/CX model fields use the candidate list as a single-select field. */
 	readonly modelSelectFieldIds?: readonly string[];
 };
@@ -86,6 +127,35 @@ function normalizeModelIds(value: unknown): readonly string[] {
 				.filter(Boolean)
 		)
 	];
+}
+
+function isPiModelDefinition(value: unknown): value is PiModelDefinition {
+	return typeof value === 'object' && value !== null && typeof (value as {readonly id?: unknown}).id === 'string';
+}
+
+/** 从共享表单草稿中提取 Pi 的 ID 集合与已解析定义快照。 */
+function piFormValues(values: unknown): {readonly models: string; readonly modelDefinitions?: readonly PiModelDefinition[]} {
+	const candidate = (values ?? {}) as {readonly models?: unknown; readonly modelDefinitions?: unknown};
+	const definitions = Array.isArray(candidate.modelDefinitions)
+		? candidate.modelDefinitions.filter((item): item is PiModelDefinition => isPiModelDefinition(item))
+		: [];
+	return {models: typeof candidate.models === 'string' ? candidate.models : '', modelDefinitions: definitions};
+}
+
+/** 上游发现结果归一化：`string` 保持旧式仅 ID 语义，对象保留完整定义字段。 */
+function normalizeDiscoveryCandidates(candidates: readonly DiscoveryModelCandidate[]): readonly PiModelDefinition[] {
+	const byId = new Map<string, PiModelDefinition>();
+	for (const candidate of candidates) {
+		if (typeof candidate === 'string') {
+			const id = candidate.trim();
+			if (id) byId.set(id, {id});
+			continue;
+		}
+		if (!isPiModelDefinition(candidate)) continue;
+		const id = candidate.id.trim();
+		if (id) byId.set(id, {...candidate, id});
+	}
+	return [...byId.values()];
 }
 
 function filterModelCandidates(candidates: readonly string[], query: string): readonly string[] {
@@ -123,10 +193,11 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 	adapter,
 	onDiscover,
 	onApplyDiscovered,
+	onMatchCandidate,
 	modelSelectFieldIds = []
 }: ProviderFormProps<TInput, TValues, TModel>) {
 	const formAdapter = adapter;
-	const piModelDiscovery = Boolean(onDiscover && onApplyDiscovered);
+	const piModelDiscovery = Boolean(onDiscover && onApplyDiscovered && onMatchCandidate);
 	const [fields, setFields] = useState(model.fields);
 	const discoverableModelFieldIds =
 		modelSelectFieldIds.length > 0 ? modelSelectFieldIds : fields.filter(field => field.type === 'model-select').map(field => field.id);
@@ -146,26 +217,55 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 	const discoveryInFlight = useRef(false);
 	const discoveryAbort = useRef<AbortController | null>(null);
 	const discoveryCacheKey = useRef<string | null>(null);
-	const discoverySourceKey = useRef<string | null>(null);
+	// 初始化为挂载时的发现依赖键：只有 baseUrl / api / apiKey 变化才重置发现，
+	// 请求头 textarea 每次输入都命中同一个键而提前返回（design.md §8.3）。
+	const discoverySourceKey = useRef<string | null>(discoveryContextKey(model.values));
 	const discoveryShortcutQueued = useRef(false);
-	const [discovery, setDiscovery] = useState<ModelDiscoveryState>(() =>
-		initialModelDiscoveryState(piModelDiscovery ? (model.values as {readonly models?: unknown}).models : undefined)
+	const [discovery, setDiscovery] = useState<ModelDiscoveryState>(() => initialModelDiscoveryState(undefined));
+	const [piSelection, setPiSelection] = useState<PiModelSelectionState>(() =>
+		piModelDiscovery ? piModelSelectionFromValues(piFormValues(model.values)) : piEmptySelection()
 	);
+	// 事件处理器需要最新状态但又不能重建闭包；此 ref 只作只读快照。
+	const piSelectionRef = useRef(piSelection);
+	piSelectionRef.current = piSelection;
+	const piMatchRequest = useRef(0);
+	const piMatchAbort = useRef<AbortController | null>(null);
 	const [modelFocus, setModelFocus] = useState<ModelFocus>(null);
+	// 请求头预设的待确认项：非 null 时确认弹窗独占按键，确认才覆盖编辑区。
+	const [pendingPreset, setPendingPreset] = useState<string | null>(null);
 	const [singleModelFocus, setSingleModelFocus] = useState<string | null>(null);
 	const [singleModelCursor, setSingleModelCursor] = useState(0);
 	const hasTextEditor = formAdapter.showTextEditor !== false;
 	const filteredCandidates = filterModelCandidates(discovery.candidates, discovery.manualValue);
 	const selectedModel = discovery.candidates[discovery.cursor];
 	const filteredCursor = selectedModel ? Math.max(0, filteredCandidates.indexOf(selectedModel)) : 0;
+	const piFilteredCandidates = filterPiCandidates(piSelection.candidates, piSelection.manualValue);
+	const piCursorId = piSelection.candidates[piSelection.cursor]?.id;
+	const piFilteredCursor = piCursorId
+		? Math.max(
+				0,
+				piFilteredCandidates.findIndex(candidate => candidate.id === piCursorId)
+			)
+		: 0;
+	const piSourceCandidate = piSelection.sourceMode ? piCandidateFor(piSelection, piSelection.sourceMode.modelId) : null;
 	const singleModelCandidatesFor = (fieldId: string | null | undefined): readonly string[] =>
 		fieldId ? filterModelCandidates(discovery.candidates, values[fieldId] ?? '') : [];
 	const focusedSingleModelCandidates = singleModelCandidatesFor(singleModelFocus);
 
 	useEffect(() => {
 		if (!active || !onSubModeChange) return;
-		onSubModeChange(piModelDiscovery ? 'form-pi' : singleModelSelect ? 'form-model' : 'form');
-	}, [active, onSubModeChange, piModelDiscovery, singleModelSelect]);
+		const subMode =
+			pendingPreset !== null
+				? 'form-pi-header-confirm'
+				: piModelDiscovery
+					? piSelection.sourceMode
+						? 'form-pi-source'
+						: 'form-pi'
+					: singleModelSelect
+						? 'form-model'
+						: 'form';
+		onSubModeChange(subMode);
+	}, [active, onSubModeChange, pendingPreset, piModelDiscovery, piSelection.sourceMode, singleModelSelect]);
 
 	const textFocused = hasTextEditor && focusedIndex === fields.length;
 	const fieldFocused = modelFocus === null && !textFocused;
@@ -179,8 +279,9 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 					: `form-field-${focusedIndex}-${fields[focusedIndex]?.id ?? 'unknown'}`;
 
 	function discoveryContextKey(valuesToInspect: TValues): string {
-		const candidate = valuesToInspect as {readonly baseUrl?: unknown; readonly apiKey?: unknown};
+		const candidate = valuesToInspect as {readonly baseUrl?: unknown; readonly apiKey?: unknown; readonly api?: unknown};
 		const baseUrl = typeof candidate.baseUrl === 'string' ? candidate.baseUrl.trim() : '';
+		const api = typeof candidate.api === 'string' ? candidate.api.trim() : '';
 		const apiKey = typeof candidate.apiKey === 'string' ? candidate.apiKey : '';
 		let hash = 2166136261;
 		for (const char of apiKey) {
@@ -188,7 +289,7 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 			hash = Math.imul(hash, 16777619);
 		}
 		const mode = piModelDiscovery ? 'pi' : singleModelSelect ? 'single' : 'none';
-		return `${mode}\u0000${baseUrl}\u0000${apiKey.length}:${hash >>> 0}`;
+		return `${mode}\u0000${baseUrl}\u0000${api}\u0000${apiKey.length}:${hash >>> 0}`;
 	}
 
 	function resetDiscoveryForValues(nextValues: TValues): void {
@@ -202,7 +303,16 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 		modelDiscoveryRequest.current += 1;
 		discoveryAbort.current?.abort();
 		discoveryAbort.current = null;
-		setDiscovery(initialModelDiscoveryState(piModelDiscovery ? (nextValues as {readonly models?: unknown}).models : undefined));
+		piMatchRequest.current += 1;
+		piMatchAbort.current?.abort();
+		piMatchAbort.current = null;
+		if (piModelDiscovery) {
+			// Base URL / API / API Key 变化都会重建上游候选，因而清除已解析的目录来源。
+			setPiSelection(piModelSelectionFromValues(piFormValues(nextValues)));
+		}
+		// 变化会 abort 进行中的发现；共享 discovery 的 loading 门禁必须一起退出，
+		// 否则 abort 后的早退分支会把 status 永久留在 loading，再次按键全被静默吞掉。
+		setDiscovery(initialModelDiscoveryState(undefined));
 		setSingleModelFocus(null);
 		setSingleModelCursor(0);
 	}
@@ -212,7 +322,7 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 			return;
 		}
 
-		scrollRef.current.scrollChildIntoView(focusedFieldId);
+		scrollTargetIntoView(scrollRef.current, focusedFieldId);
 	}, [focusedFieldId]);
 
 	useEffect(() => {
@@ -273,46 +383,72 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 	const handleMoveFocus = (direction: 1 | -1) => {
 		if (piModelDiscovery) {
 			const lastFieldIndex = nextEditableIndex(fields, fields.length, -1);
+
+			// 请求头编辑区：↓ 进模型列表（无候选则手动输入），↑ 回最后一个字段。
+			// 必须同时把 focusedIndex 移出 fields.length，否则 textFocused 仍为真，textarea 会与模型区抢焦点。
+			if (textFocused) {
+				setFocusedIndex(lastFieldIndex);
+				if (direction > 0) {
+					if (piSelection.candidates.length > 0 || piSelection.status === 'loading') setModelFocus('list');
+					else setModelFocus('manual');
+				}
+				return;
+			}
+
 			if (modelFocus === 'list') {
 				if (direction > 0) {
-					const nextModel = filteredCandidates[filteredCursor + 1];
+					const nextModel = piFilteredCandidates[piFilteredCursor + 1];
 					if (nextModel) {
-						setDiscovery(current => ({...current, cursor: current.candidates.indexOf(nextModel)}));
+						setPiSelection(current =>
+							setPiSelectionCursor(
+								current,
+								current.candidates.findIndex(candidate => candidate.id === nextModel.id)
+							)
+						);
 					} else {
-						setModelFocus(null);
-						setFocusedIndex(firstEditableIndex(fields));
+						// 模型列表末行 ↓ 进手动输入。
+						setModelFocus('manual');
 					}
 				} else {
-					const previousModel = filteredCandidates[filteredCursor - 1];
+					const previousModel = piFilteredCandidates[piFilteredCursor - 1];
 					if (!previousModel) {
-						setModelFocus('manual');
+						// 首行 ↑ 回请求头编辑区。
+						setModelFocus(null);
+						setFocusedIndex(fields.length);
 						return;
 					}
-					setDiscovery(current => ({...current, cursor: current.candidates.indexOf(previousModel)}));
+					setPiSelection(current =>
+						setPiSelectionCursor(
+							current,
+							current.candidates.findIndex(candidate => candidate.id === previousModel.id)
+						)
+					);
 				}
 				return;
 			}
 
 			if (modelFocus === 'manual') {
 				if (direction < 0) {
-					setModelFocus(null);
-					setFocusedIndex(lastFieldIndex);
-				} else {
 					// 即使当前列表为空，也要允许手工输入和模型列表之间切换，
 					// 这样用户可以按 Enter 添加第一个自定义模型。
 					setModelFocus('list');
+				} else {
+					// 手动输入 ↓ 循环回请求头编辑区。
+					setModelFocus(null);
+					setFocusedIndex(fields.length);
 				}
 				return;
 			}
 
 			const next = nextEditableIndex(fields, focusedIndex, direction);
 			if (direction > 0 && next <= focusedIndex) {
-				setModelFocus('manual');
+				// 最后一个字段 ↓ 进请求头编辑区。
+				setFocusedIndex(fields.length);
 				return;
 			}
 			if (direction < 0 && next >= focusedIndex) {
-				if (discovery.candidates.length > 0 || discovery.status === 'loading') setModelFocus('list');
-				else setModelFocus('manual');
+				// 第一个字段 ↑ 循环回请求头编辑区。
+				setFocusedIndex(fields.length);
 				return;
 			}
 			setFocusedIndex(next);
@@ -358,17 +494,26 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 
 	const handleFieldChange = (id: string, value: string) => {
 		const nextRecord = {...values, [id]: value};
+		if (id === 'api') {
+			// 协议切换后高亮项可能不在新的可用集内：回落到首个可用预设，
+			// 否则 Enter 会应用动作行并未列出的预设（受控模式不得出现其它协议的预设）。
+			nextRecord.headerPreset = resolveHeaderPresetSelection(value, nextRecord.headerPreset ?? '');
+		}
 		setValues(nextRecord);
 		const nextFormValues = formAdapter.recordToValues(nextRecord, baseValues);
 		setBaseValues(nextFormValues);
 		if (formAdapter.syncFields) {
 			setFields(currentFields => [...formAdapter.syncFields!(nextFormValues, currentFields)]);
 		}
+		if (id === 'headerPreset') {
+			// 预设动作行只记录高亮：绝不触碰编辑区文本，也不触发发现重置（←/→ 不得改变请求头）。
+			return;
+		}
 		setText(formAdapter.buildText(nextFormValues));
 		setErrors([]);
-		if (id === 'baseUrl' || id === 'apiKey' || id === 'providerType') {
-			resetDiscoveryForValues(nextFormValues);
-		}
+		// 发现依赖键由 resetDiscoveryForValues 统一比较：只有 baseUrl / api / apiKey 变化才重置，
+		// authHeader / headers 变化直接命中同一键提前返回。
+		resetDiscoveryForValues(nextFormValues);
 	};
 
 	const handleSingleModelFocus = (fieldId: string) => {
@@ -420,7 +565,18 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 		resetDiscoveryForValues(parsed.values);
 	};
 
+	/** 应用预设 = 把预设文本写进编辑区，复用既有文本同步链（含 pendingTextareaSync 回声防护）。 */
+	const applyHeaderPresetText = (presetKey: string) => {
+		const presetText = headerPresetText(presetKey);
+		if (presetText === null) return;
+		handleTextChange(presetText);
+	};
+
 	const handleManualModelChange = (value: string) => {
+		if (piModelDiscovery) {
+			setPiSelection(current => setPiManualValue(current, value));
+			return;
+		}
 		setDiscovery(current => {
 			const nextCandidates = filterModelCandidates(current.candidates, value);
 			const currentModel = current.candidates[current.cursor];
@@ -459,14 +615,76 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 		}
 	};
 
-	const modelIdsForSubmit = (): readonly string[] => {
-		const selected = discovery.candidates.filter(model => discovery.selected.has(model));
-		const manual = discovery.manualValue.trim();
-		return [...new Set(manual ? [...selected, manual] : selected)];
+	const piSelectionForSubmit = (): readonly DiscoverySelectedModel[] =>
+		piSelectionRef.current.candidates
+			.filter(candidate => piSelectionRef.current.selected.has(candidate.id))
+			.map(candidate => ({id: candidate.id, definition: piResolvedDefinition(candidate)}));
+
+	/** 首次选择 intent 时才请求 Pi 官方目录；唯一/多来源/无来源均由 core 判定。 */
+	const beginPiSelectionMatch = async (id: string, upstreamDefinition?: PiModelDefinition) => {
+		if (!onMatchCandidate) return;
+		const candidate = piCandidateFor(piSelectionRef.current, id);
+		const definition = upstreamDefinition ?? candidate?.upstreamDefinition ?? {id};
+		const parsed = readCurrentValues();
+		if (!parsed.ok) {
+			toast.error(parsed.error);
+			return;
+		}
+		const requestId = ++piMatchRequest.current;
+		const controller = new AbortController();
+		piMatchAbort.current?.abort();
+		piMatchAbort.current = controller;
+		setPiSelection(current => beginPiCandidateMatch(current, id));
+		try {
+			const outcome = await onMatchCandidate(parsed.values, definition, controller.signal);
+			if (requestId !== piMatchRequest.current) return;
+			if (!outcome.ok) {
+				setPiSelection(current => failPiCandidateMatch(current, id, outcome.error));
+				toast.error(outcome.error);
+				return;
+			}
+			setPiSelection(current => applyPiCandidateMatch(current, outcome.candidate, outcome.warning));
+			if (outcome.warning) toast.warning(outcome.warning);
+		} catch (error) {
+			if (requestId !== piMatchRequest.current) return;
+			const message = error instanceof Error ? error.message : String(error);
+			setPiSelection(current => failPiCandidateMatch(current, id, message));
+			toast.error(message || '模型来源匹配失败');
+		} finally {
+			if (piMatchAbort.current === controller) piMatchAbort.current = null;
+		}
+	};
+
+	const handlePiSelectionIntent = (id: string, intent: 'toggle' | 'confirm') => {
+		const state = piSelectionRef.current;
+		const candidate = piCandidateFor(state, id);
+		if (!candidate) return;
+		if (state.selected.has(id)) {
+			if (intent === 'confirm') {
+				if (candidate.sources.length > 0) setPiSelection(current => openPiSourceMode(current, id));
+				else toast.info('该模型没有可选的 Pi 官方目录来源');
+			} else {
+				setPiSelection(current => deselectPiCandidate(current, id));
+			}
+			return;
+		}
+		const resolution = candidate.resolution;
+		if (resolution.kind === 'conflict') {
+			setPiSelection(current => openPiSourceMode(current, id));
+			return;
+		}
+		if (resolution.kind === 'matching') return;
+		if (resolution.kind === 'automatic' || resolution.kind === 'chosen' || resolution.kind === 'upstream-only') {
+			if (resolution.kind === 'upstream-only') toast.warning(`模型 ${id} 没有 Pi 官方目录匹配，将以仅上游/仅 ID 保存`);
+			setPiSelection(current => selectPiCandidate(current, id));
+			return;
+		}
+		void beginPiSelectionMatch(id);
 	};
 
 	const handleDiscover = async (requestedFieldId?: string, forceRefresh = false) => {
-		if (!onDiscover || discoveryInFlight.current || discovery.status === 'loading') return;
+		if (!onDiscover || discoveryInFlight.current || discovery.status === 'loading' || piSelectionRef.current.status === 'loading')
+			return;
 		const focusedModelFieldId = fields[focusedIndex]?.id;
 		const targetFieldId = requestedFieldId ?? focusedModelFieldId;
 		const singleModelTargetFieldId = targetFieldId && discoverableModelFieldIds.includes(targetFieldId) ? targetFieldId : undefined;
@@ -507,52 +725,57 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 		discoveryInFlight.current = true;
 		setErrors([]);
 		setDiscovery({status: 'loading', ...previous});
+		if (piModelDiscovery) setPiSelection(current => startPiSelectionLoading(current));
 		if (singleModelSelect) setSingleModelFocus(singleModelTargetFieldId ?? null);
 		else setModelFocus('list');
+		// Pi 的候选与来源状态由 piSelection 拥有，共享 discovery.status 只是表单的加载门禁。
+		// Pi 分支的三个出口（成功/空结果/异常）都必须复位它：否则 discovery.status 永久停在
+		// loading，handleModelFocusKey 会静默吞掉 Space/Enter，重新获取上游模型也会被
+		// 重入守卫挡成 no-op。
+		const finishPiLoading = () => setDiscovery(current => ({...current, status: 'idle'}));
 		try {
-			const candidates = [
-				...new Set((await onDiscover(parsed.values, controller.signal)).map(model => model.trim()).filter(Boolean))
-			];
+			const candidates = normalizeDiscoveryCandidates(await onDiscover(parsed.values, controller.signal));
 			if (requestId !== modelDiscoveryRequest.current) {
 				discoveryInFlight.current = false;
 				return;
 			}
 			if (candidates.length === 0) {
 				discoveryInFlight.current = false;
-				setDiscovery({status: singleModelSelect ? 'idle' : 'manual', ...previous, manualValue: ''});
-				if (singleModelSelect) setSingleModelFocus(singleModelTargetFieldId ?? null);
-				else setModelFocus('manual');
+				if (piModelDiscovery) {
+					finishPiLoading();
+					setPiSelection(current => failPiSelectionLoading(current));
+					setModelFocus('manual');
+				} else {
+					setDiscovery({status: singleModelSelect ? 'idle' : 'manual', ...previous, manualValue: ''});
+					if (singleModelSelect) setSingleModelFocus(singleModelTargetFieldId ?? null);
+					else setModelFocus('manual');
+				}
 				toast.warning('上游未返回可用模型，请手工添加模型');
 				return;
 			}
 			if (singleModelSelect) {
+				const modelIds = candidates.map(candidate => candidate.id);
 				discoveryInFlight.current = false;
 				discoveryCacheKey.current = contextKey;
 				setDiscovery({
 					status: 'selecting',
-					candidates,
-					selected: new Set(candidates),
-					cursor: Math.min(singleModelCursor, Math.max(0, candidates.length - 1)),
+					candidates: modelIds,
+					selected: new Set(modelIds),
+					cursor: Math.min(singleModelCursor, Math.max(0, modelIds.length - 1)),
 					manualValue: ''
 				});
 				setSingleModelFocus(singleModelTargetFieldId ?? null);
 				const visibleCandidates = singleModelTargetFieldId
-					? filterModelCandidates(candidates, values[singleModelTargetFieldId] ?? '')
+					? filterModelCandidates(modelIds, values[singleModelTargetFieldId] ?? '')
 					: [];
 				setSingleModelCursor(current => Math.min(current, Math.max(0, visibleCandidates.length - 1)));
 				toast.success(`已获取 ${candidates.length} 个上游模型`);
 				return;
 			}
-			const mergedCandidates = [...new Set([...previous.candidates, ...candidates])];
 			discoveryInFlight.current = false;
 			discoveryCacheKey.current = contextKey;
-			setDiscovery({
-				status: 'selecting',
-				candidates: mergedCandidates,
-				selected: new Set(previous.selected),
-				cursor: Math.min(previous.cursor, Math.max(0, mergedCandidates.length - 1)),
-				manualValue: previous.manualValue
-			});
+			finishPiLoading();
+			setPiSelection(current => applyPiDiscovery(current, candidates));
 			setModelFocus('list');
 			toast.success(`已获取 ${candidates.length} 个上游模型`);
 		} catch (error) {
@@ -562,9 +785,15 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 			}
 			discoveryInFlight.current = false;
 			const reason = error instanceof Error ? error.message : String(error);
-			setDiscovery({status: singleModelSelect ? 'idle' : 'manual', ...previous, manualValue: ''});
-			if (singleModelSelect) setSingleModelFocus(singleModelTargetFieldId ?? null);
-			else setModelFocus('manual');
+			if (piModelDiscovery) {
+				finishPiLoading();
+				setPiSelection(current => failPiSelectionLoading(current));
+				setModelFocus('manual');
+			} else {
+				setDiscovery({status: singleModelSelect ? 'idle' : 'manual', ...previous, manualValue: ''});
+				if (singleModelSelect) setSingleModelFocus(singleModelTargetFieldId ?? null);
+				else setModelFocus('manual');
+			}
 			toast.error(reason || '模型发现失败');
 		} finally {
 			if (discoveryAbort.current === controller) discoveryAbort.current = null;
@@ -582,6 +811,20 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 	};
 
 	const addManualModel = (rawValue?: string) => {
+		if (piModelDiscovery) {
+			if (piSelectionRef.current.status === 'loading') return;
+			const model = (rawValue ?? piSelectionRef.current.manualValue).trim();
+			if (!model) {
+				toast.warning('模型不能为空');
+				return;
+			}
+			setErrors([]);
+			setPiSelection(current => addPiManualCandidate(current, model, null));
+			setModelFocus('list');
+			// 手工输入与上游发现走同一套惰性匹配入口。
+			void beginPiSelectionMatch(model, {id: model});
+			return;
+		}
 		if (discovery.status === 'loading') return;
 		const model = (rawValue ?? discovery.manualValue).trim();
 		if (!model) {
@@ -603,11 +846,43 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 		addManualModel(typeof value === 'string' ? value : undefined);
 	};
 
+	const handlePiSourceModeKey = (keyEvent: KeyEvent): boolean => {
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_CANCEL)) {
+			keyEvent.preventDefault();
+			setPiSelection(current => cancelPiSourceMode(current));
+			return true;
+		}
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_SOURCE_VIEW)) {
+			keyEvent.preventDefault();
+			setPiSelection(current => togglePiSourceView(current));
+			return true;
+		}
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_UP)) {
+			keyEvent.preventDefault();
+			setPiSelection(current => movePiSourceCursor(current, -1));
+			return true;
+		}
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_DOWN)) {
+			keyEvent.preventDefault();
+			setPiSelection(current => movePiSourceCursor(current, 1));
+			return true;
+		}
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_CONFIRM)) {
+			keyEvent.preventDefault();
+			setPiSelection(current => confirmPiSourceMode(current));
+			return true;
+		}
+		return true;
+	};
+
 	const handleModelFocusKey = (keyEvent: KeyEvent): boolean => {
 		if (modelFocus === null) return false;
+		if (piModelDiscovery && piSelectionRef.current.sourceMode) return handlePiSourceModeKey(keyEvent);
 		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_CANCEL)) {
 			keyEvent.preventDefault();
 			if (discovery.status === 'loading') modelDiscoveryRequest.current += 1;
+			piMatchRequest.current += 1;
+			piMatchAbort.current?.abort();
 			discoveryAbort.current?.abort();
 			onCancel();
 			return true;
@@ -627,10 +902,22 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 			handleMoveFocus(1);
 			return true;
 		}
-		if (discovery.status === 'loading') return true;
+		if (discovery.status === 'loading' || piSelectionRef.current.status === 'loading') return true;
 		if (modelFocus === 'manual') {
 			// 字符输入与 Enter 提交由 OpenTUI input 自己处理，避免页面监听与 input submit 双触发。
 			return false;
+		}
+		if (piModelDiscovery) {
+			const focused = piFilteredCandidates[piFilteredCursor];
+			if (!focused) return true;
+			if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_MULTI_SELECT_TOGGLE)) {
+				keyEvent.preventDefault();
+				// 模型列表行只由 Space 承载选择：已勾选取消并清除来源，未勾选才获取来源并勾选。
+				// Enter 落到分支末尾被消费为 no-op，避免泄漏到表单层触发保存/提交。
+				handlePiSelectionIntent(focused.id, piSelectionRef.current.selected.has(focused.id) ? 'toggle' : 'confirm');
+				return true;
+			}
+			return true;
 		}
 		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_MULTI_SELECT_TOGGLE)) {
 			keyEvent.preventDefault();
@@ -645,7 +932,6 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 			}
 			return true;
 		}
-		// Enter on Pi's list does not apply a separate draft; Ctrl+S submits the list with the form.
 		return true;
 	};
 
@@ -696,6 +982,30 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 	};
 
 	const handleFormKey = (keyEvent: KeyEvent): boolean => {
+		if (pendingPreset !== null) {
+			// 确认弹窗打开时独占按键：Enter 覆盖、Esc 零改动，其余按键一律吞掉。
+			if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_CONFIRM)) {
+				keyEvent.preventDefault();
+				applyHeaderPresetText(pendingPreset);
+				setPendingPreset(null);
+				return true;
+			}
+			if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_CANCEL)) {
+				keyEvent.preventDefault();
+				setPendingPreset(null);
+				return true;
+			}
+			return true;
+		}
+		// 预设动作行：←/→ 只移动高亮（由 FormPanel 的 radio 分支处理），Enter 才应用。
+		if (fields[focusedIndex]?.id === 'headerPreset' && matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_CONFIRM)) {
+			keyEvent.preventDefault();
+			const preset = piHeaderPreset(values.headerPreset ?? '');
+			if (!preset) return true;
+			if (headerPresetNeedsConfirm(text, preset.key)) setPendingPreset(preset.key);
+			else applyHeaderPresetText(preset.key);
+			return true;
+		}
 		if (singleModelSelect && onDiscover && matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_DISCOVER)) {
 			keyEvent.preventDefault();
 			triggerDiscover(undefined, singleModelFocus !== null);
@@ -714,6 +1024,9 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 
 	useKeyboard(keyEvent => {
 		if (!active) return;
+		// 请求头预设确认弹窗打开时独占按键：一律交给 FormPanel 的 onKeyEvent（handleFormKey）处理，
+		// 否则页面级的保存 / 发现快捷键会在弹窗期间泄漏，绕过二次确认。
+		if (pendingPreset !== null) return;
 		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_SAVE)) {
 			handleSubmit();
 			return;
@@ -760,7 +1073,19 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 	});
 
 	const handleSubmit = () => {
-		if (discovery.status === 'loading') {
+		if (piModelDiscovery) {
+			const blocker = findPiSelectionBlocker(piSelectionRef.current);
+			if (blocker) {
+				// 防御性门禁：已勾选但来源未解决的候选不得写入文件，先打开来源选择。
+				toast.error(`模型 ${blocker} 的来源尚未确认，请先选择来源`);
+				setPiSelection(current => openPiSourceMode(current, blocker));
+				return;
+			}
+			if (piSelectionRef.current.status === 'loading') {
+				toast.warning('正在获取上游模型，请稍候');
+				return;
+			}
+		} else if (discovery.status === 'loading') {
 			toast.warning('正在获取上游模型，请稍候');
 			return;
 		}
@@ -771,8 +1096,8 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 			return;
 		}
 
-		const modelIds = onApplyDiscovered ? modelIdsForSubmit() : [];
-		const formValues = onApplyDiscovered ? onApplyDiscovered(parsed.values, modelIds) : parsed.values;
+		const selectedModels = piModelDiscovery ? piSelectionForSubmit() : [];
+		const formValues = piModelDiscovery && onApplyDiscovered ? onApplyDiscovered(parsed.values, selectedModels) : parsed.values;
 		const validationErrors = validate(formValues);
 		if (validationErrors.length > 0) {
 			setErrors(validationErrors);
@@ -797,6 +1122,84 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 
 	const title = formAdapter.title(model);
 	const textLabel = typeof formAdapter.textLabel === 'function' ? formAdapter.textLabel(baseValues) : formAdapter.textLabel;
+	const textHelpText = typeof formAdapter.textHelpText === 'function' ? formAdapter.textHelpText(baseValues) : formAdapter.textHelpText;
+	const pendingPresetLabel = pendingPreset ? (piHeaderPreset(pendingPreset)?.label ?? pendingPreset) : '';
+
+	// textarea 与页面自有内容共用 FormPanel.custom，且 textarea 排在前面：
+	// 这样「字段 → 请求头编辑区 → 模型列表」的焦点顺序与视觉顺序一致（design.md §8.4）。
+	// CC/Codex 的 pageCustom 为 undefined，组合结果与改造前等价。
+	const textareaBlock = hasTextEditor ? (
+		<box id={JSON_FIELD_ID} marginTop={1} flexDirection="column" flexShrink={0}>
+			<text
+				fg={textFocused ? colors.primary : colors.text}
+				attributes={textFocused ? TextAttributes.BOLD : 0}
+				selectionBg={colors.selectionBg}
+				selectionFg={colors.selectionFg}
+			>
+				{textFocused ? '› ' : '  '}
+				{textLabel}
+			</text>
+			{/* 刻意例外：本页字段区 + textarea 同在一个 scrollbox 内一起滚动（用户约束②），
+			    且供应商字段多、textarea 若参与 flex 分配会被挤没（用户约束①），故 textarea
+			    用静态常量高度 TEXTAREA_HEIGHT（非动态算高，不违反「禁止 height 算式」核心诉求）；
+			    滚动内容内 textarea 必须有确定高度，否则会塌成 0 高。 */}
+			<box
+				height={TEXTAREA_HEIGHT}
+				borderStyle="rounded"
+				borderColor={textFocused ? borderColors.active : borderColors.inactive}
+			>
+				<textarea
+					ref={textareaRef}
+					initialValue={text}
+					focused={active && textFocused}
+					wrapMode="word"
+					style={{flexGrow: 1}}
+					textColor={colors.inputText}
+					focusedTextColor={colors.inputFocusedText}
+					cursorColor={colors.inputCursor}
+					selectionBg={colors.selectionBg}
+					selectionFg={colors.selectionFg}
+					onKeyDown={handleTextareaKey}
+					onContentChange={() => handleTextChange(textareaRef.current?.plainText ?? text)}
+				/>
+			</box>
+			{textHelpText ? (
+				<box marginTop={1}>
+					<text
+						fg={colors.muted}
+						attributes={TextAttributes.DIM}
+						selectionBg={colors.selectionBg}
+						selectionFg={colors.selectionFg}
+					>
+						{textHelpText}
+					</text>
+				</box>
+			) : null}
+		</box>
+	) : null;
+	const pageCustom = piModelDiscovery ? (
+		piSelection.sourceMode && piSourceCandidate ? (
+			<PiSourceSelectionPanel
+				candidate={piSourceCandidate}
+				cursor={piSelection.sourceMode.cursor}
+				view={piSelection.sourceMode.view}
+				active={active && modelFocus !== null}
+			/>
+		) : (
+			<PiModelSelectionPanel
+				state={piSelection}
+				focused={modelFocus !== null}
+				active={active}
+				listFocused={modelFocus === 'list'}
+				inputFocused={modelFocus === 'manual'}
+				candidates={piFilteredCandidates}
+				cursor={piFilteredCursor}
+				onManualModelChange={handleManualModelChange}
+				onManualModelSubmit={handleManualModelSubmit}
+				onManualModelFocus={() => setModelFocus('manual')}
+			/>
+		)
+	) : null;
 
 	return (
 		<box flexDirection="column" flexGrow={1} minHeight={0}>
@@ -830,59 +1233,12 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 							: undefined
 					}
 					custom={
-						piModelDiscovery ? (
-							<ProviderModelDiscoveryPanel
-								discovery={discovery}
-								modelFocus={modelFocus}
-								focused={modelFocus !== null}
-								active={active}
-								candidates={filteredCandidates}
-								cursor={filteredCursor}
-								onManualModelChange={handleManualModelChange}
-								onManualModelSubmit={handleManualModelSubmit}
-								onManualModelFocus={() => setModelFocus('manual')}
-							/>
-						) : null
+						<>
+							{textareaBlock}
+							{pageCustom}
+						</>
 					}
 				/>
-
-				{hasTextEditor ? (
-					<box id={JSON_FIELD_ID} marginTop={1} flexDirection="column" flexShrink={0}>
-						<text
-							fg={textFocused ? colors.primary : colors.text}
-							attributes={textFocused ? TextAttributes.BOLD : 0}
-							selectionBg={colors.selectionBg}
-							selectionFg={colors.selectionFg}
-						>
-							{textFocused ? '› ' : '  '}
-							{textLabel}
-						</text>
-						{/* 刻意例外：本页字段区 + textarea 同在一个 scrollbox 内一起滚动（用户约束②），
-						    且供应商字段多、textarea 若参与 flex 分配会被挤没（用户约束①），故 textarea
-						    用静态常量高度 TEXTAREA_HEIGHT（非动态算高，不违反「禁止 height 算式」核心诉求）；
-						    滚动内容内 textarea 必须有确定高度，否则会塌成 0 高。 */}
-						<box
-							height={TEXTAREA_HEIGHT}
-							borderStyle="rounded"
-							borderColor={textFocused ? borderColors.active : borderColors.inactive}
-						>
-							<textarea
-								ref={textareaRef}
-								initialValue={text}
-								focused={active && textFocused}
-								wrapMode="word"
-								style={{flexGrow: 1}}
-								textColor={colors.inputText}
-								focusedTextColor={colors.inputFocusedText}
-								cursorColor={colors.inputCursor}
-								selectionBg={colors.selectionBg}
-								selectionFg={colors.selectionFg}
-								onKeyDown={handleTextareaKey}
-								onContentChange={() => handleTextChange(textareaRef.current?.plainText ?? text)}
-							/>
-						</box>
-					</box>
-				) : null}
 			</ThemedScrollbox>
 
 			{errors.length > 0 ? (
@@ -892,89 +1248,17 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 					</text>
 				</box>
 			) : null}
-		</box>
-	);
-}
 
-const MODEL_DISCOVERY_LIST_HEIGHT = 10;
-
-function ProviderModelDiscoveryPanel({
-	discovery,
-	modelFocus,
-	candidates,
-	cursor,
-	focused,
-	active,
-	onManualModelChange,
-	onManualModelSubmit,
-	onManualModelFocus
-}: {
-	readonly discovery: ModelDiscoveryState;
-	readonly modelFocus: ModelFocus;
-	readonly candidates: readonly string[];
-	readonly cursor: number;
-	readonly focused: boolean;
-	readonly active: boolean;
-	readonly onManualModelChange: (value: string) => void;
-	readonly onManualModelSubmit: (value: unknown) => void;
-	readonly onManualModelFocus: () => void;
-}) {
-	const listFocused = active && modelFocus === 'list';
-	const inputFocused = active && modelFocus === 'manual';
-	const items: ScrollListItem[] = candidates.map(model => ({
-		key: model,
-		title: model,
-		bordered: false,
-		leading: <Checkbox checked={discovery.selected.has(model)} focused={listFocused && candidates[cursor] === model} />
-	}));
-	return (
-		<box id="provider-model-selection" marginBottom={1} flexDirection="row" alignItems="flex-start" flexShrink={0}>
-			<FormLabel label="模型列表" focused={focused} />
-			<box flexDirection="column" flexGrow={1} minWidth={0} paddingX={1} borderStyle="rounded" borderColor={borderColors.active}>
-				<box id="provider-model-input" flexDirection="row" alignItems="center" flexShrink={0}>
-					<text
-						fg={inputFocused ? colors.primary : colors.muted}
-						attributes={inputFocused ? TextAttributes.BOLD : 0}
-						selectionBg={colors.selectionBg}
-						selectionFg={colors.selectionFg}
-					>
-						添加自定义模型
-					</text>
-					<FormControlFrame>
-						{inputFocused ? (
-							<input
-								value={discovery.manualValue}
-								placeholder="输入模型名称筛选，按Enter添加"
-								onInput={onManualModelChange}
-								onSubmit={onManualModelSubmit}
-								onMouseDown={onManualModelFocus}
-								focused
-								textColor={colors.inputFocusedText}
-								cursorColor={colors.inputCursor}
-								selectionBg={colors.selectionBg}
-								selectionFg={colors.selectionFg}
-							/>
-						) : (
-							<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-								{discovery.manualValue}
-							</text>
-						)}
-					</FormControlFrame>
-				</box>
-				<box id="provider-model-list" marginTop={1} height={MODEL_DISCOVERY_LIST_HEIGHT} minHeight={0} flexShrink={0}>
-					{discovery.status === 'loading' ? (
-						<ListLoadingState message="正在获取上游模型" />
-					) : (
-						<ScrollList
-							items={items}
-							cursor={cursor}
-							active={listFocused}
-							focusIndicator="card"
-							emptyText={discovery.manualValue.trim() ? '没有匹配的模型' : '暂无模型，请获取上游模型或输入模型名称'}
-						/>
-					)}
-				</box>
-			</box>
+			<Modal
+				active={pendingPreset !== null}
+				title="覆盖请求头？"
+				hint="Enter 确认 · Esc 取消"
+				tone="warning"
+			>
+				<text selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+					{`即将用「${pendingPresetLabel}」预设覆盖当前请求头。`}
+				</text>
+			</Modal>
 		</box>
 	);
 }

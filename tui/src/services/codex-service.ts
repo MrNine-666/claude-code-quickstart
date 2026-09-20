@@ -119,18 +119,6 @@ export function loadCodexProviderProfile(profilePath: string): CodexProfile | nu
 	}
 }
 
-export function codexModelSummary(profile: CodexProfile | null): string {
-	if (!profile) {
-		return '供应商';
-	}
-
-	const parts: string[] = [profile.providerType];
-	if (profile.model) {
-		parts.push(profile.model);
-	}
-	return parts.join(' · ');
-}
-
 export function buildCodexForm(input: CodexProviderFormInput): CodexProviderFormModel {
 	return buildCodexProviderFormModel(input);
 }

@@ -544,7 +544,7 @@ export async function updatePiPackage(name: string, deps: ExtensionCommandDeps =
 
 export async function removePiPackage(name: string, deps: ExtensionCommandDeps = {}, onProgress?: ProgressCallback): Promise<ExecResult> {
 	const exec = deps.exec ?? execCommand;
-	const result = await runPiCommand(['remove', name.replace(/^npm:/, '')], name, deps, onProgress);
+	const result = await runPiCommand(['remove', name], name, deps, onProgress);
 	await reconcilePiPackage(name, false, exec);
 	return result;
 }

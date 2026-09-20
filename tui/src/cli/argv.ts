@@ -4,7 +4,7 @@
 //
 // 设计要点：
 // - process.argv 前两项是 bun 路径与脚本路径，调用方传入 argv.slice(2)。
-// - `ls`/`use` 是管理类：`--tool claude|codex|pi` 是 ccq 自有 flag，不透传。
+// - `ls` 接受 `--tool claude|codex|pi`；`use` 仅接受 claude|codex，均为 ccq 自有 flag，不透传。
 // - 管理类命令（update/tools/uninstall）不使用 `--` 透传；卸载类使用 --yes / -y 跳过 y/n 确认。
 // - 无参 → kind:'tui'，由入口落现有 TUI 路径（零破坏）。
 
@@ -109,7 +109,7 @@ function parseUse(rest: string[]): CliIntent {
 	}
 
 	const tool = parseToolFlag(rest.slice(1), 'use');
-	if (!tool) {
+	if (!tool || tool === 'pi') {
 		return {kind: 'unknown', verb: 'use', args: rest};
 	}
 

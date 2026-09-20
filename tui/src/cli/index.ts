@@ -3,12 +3,12 @@
 // 新增子命令：在 argv.ts 注册动词 + 在 help.ts 加帮助 + 在此 switch 一支。
 
 import type {CliIntent} from './argv.js';
-import {helpFor, HELP_GENERAL} from './help.js';
 import {runLs} from './commands/ls.js';
 import {runTools} from './commands/tools.js';
 import {runUninstall} from './commands/uninstall.js';
 import {runUpdate} from './commands/update.js';
 import {runUse} from './commands/use.js';
+import {HELP_GENERAL, helpFor} from './help.js';
 
 /** 执行已解析的 CliIntent，返回退出码。仅处理非 tui 意图。 */
 export async function runCli(intent: CliIntent): Promise<number> {
@@ -62,7 +62,8 @@ export async function runCli(intent: CliIntent): Promise<number> {
 
 			if (intent.verb === 'use') {
 				console.error('use 缺少供应商名称，或 --tool 参数无效。');
-				console.error('用法: ccq use <name> [--tool claude|codex|pi]');
+				console.error('用法: ccq use <name> [--tool claude|codex]');
+				console.error('Pi 默认 Provider 请在 Pi 配置页编辑 settings.json 的 defaultProvider。');
 				return 1;
 			}
 

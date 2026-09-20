@@ -62,7 +62,7 @@ export function openCurrentDocsAction(view: ToolsViewState): void {
 		if (result.ok) toast.success(`已打开 ${component.name} 文档`);
 		else {
 			console.error(`[tools] ${component.name} 文档打开失败`, result.error);
-			toast.error(`${component.name} 文档打开失败，请查看控制台`);
+			toast.error(`${component.name} 文档打开失败`);
 		}
 	});
 }
@@ -93,7 +93,7 @@ export function runPrimaryAction(
 			return;
 		case 'blocked':
 			if (component.lifecycle?.diagnostic) console.error(`[tools] ${component.name} 当前不可操作`, component.lifecycle.diagnostic);
-			toast.error(`${component.name} 当前不可操作，请查看控制台`);
+			toast.error(`${component.name} 当前不可操作`);
 			return;
 		case 'latest':
 			toast.success(`${component.name} 已是最新`);
@@ -166,7 +166,7 @@ export function applyInjectDraft(
 			if (result.error) {
 				console.error(`[tools] ${component.name} 设置部分失败`, result.error);
 				dispatch({type: 'item-failed', id: component.id, error: result.error});
-				toast.warning(`${component.name} 设置部分完成，请查看控制台`);
+				toast.warning(`${component.name} 设置部分完成`);
 			} else {
 				toast.success(`${component.name} 设置已更新`);
 			}
@@ -176,7 +176,7 @@ export function applyInjectDraft(
 			if (signal.aborted) return;
 			const detail = errorMessage(error);
 			console.error(`[tools] ${component.name} 设置失败`, detail);
-			toast.error(`${component.name} 设置失败，请查看控制台`);
+			toast.error(`${component.name} 设置失败`);
 			dispatch({type: 'item-failed', id: component.id, error: detail});
 			cache.refresh();
 		})
@@ -276,7 +276,7 @@ function installOne(
 			} else {
 				const detail = outcome.error ?? `${component.name} 安装失败`;
 				console.error(`[tools] ${component.name} 安装失败`, detail);
-				toast.error(`${component.name} 安装失败，请查看控制台`);
+				toast.error(`${component.name} 安装失败`);
 				dispatch({
 					type: 'item-failed',
 					id: component.id,
@@ -290,7 +290,7 @@ function installOne(
 			if (signal.aborted) return;
 			const detail = errorMessage(error);
 			console.error(`[tools] ${component.name} 安装失败`, detail);
-			toast.error(`${component.name} 安装失败，请查看控制台`);
+			toast.error(`${component.name} 安装失败`);
 			dispatch({type: 'item-failed', id: component.id, error: detail});
 			cache.refresh();
 		})
@@ -336,7 +336,7 @@ function updateOne(
 			if (failed) {
 				const detail = updateFailureMessage(result.updatedItems, component.id, '未返回失败详情');
 				console.error(`[tools] ${component.name} 更新失败`, detail);
-				toast.error(`${component.name} 更新失败，请查看控制台`);
+				toast.error(`${component.name} 更新失败`);
 				dispatch({
 					type: 'item-failed',
 					id: component.id,
@@ -353,7 +353,7 @@ function updateOne(
 			if (signal.aborted) return;
 			const detail = errorMessage(error);
 			console.error(`[tools] ${component.name} 更新失败`, detail);
-			toast.error(`${component.name} 更新失败，请查看控制台`);
+			toast.error(`${component.name} 更新失败`);
 			dispatch({type: 'item-failed', id: component.id, error: detail});
 			cache.refresh();
 		})
@@ -467,7 +467,7 @@ export function updateAll(
 			const summary =
 				failedIds.size === 0
 					? `已更新 ${targets.length} 个组件`
-					: `${updatedCount}/${targets.length} 成功，部分更新失败，请查看控制台`;
+					: `${updatedCount}/${targets.length} 成功，部分更新失败`;
 			if (failedIds.size === 0) {
 				toast.success(summary);
 				dispatch({type: 'batch-done', components});
@@ -481,7 +481,7 @@ export function updateAll(
 			if (signal.aborted) return;
 			const detail = errorMessage(error);
 			console.error('[tools] 批量更新失败', detail);
-			toast.error('批量更新失败，请查看控制台');
+			toast.error('批量更新失败');
 			dispatch({type: 'batch-failed', error: detail});
 			cache.refresh();
 		})
@@ -520,7 +520,7 @@ export function runUninstall(
 					? `${outcome.error ?? '卸载失败'}\n${outcome.manualHint}`
 					: (outcome.error ?? `${component.name} 卸载失败`);
 				console.error(`[tools] ${component.name} 卸载失败`, detail);
-				toast.error(`${component.name} 卸载失败，请查看控制台`);
+				toast.error(`${component.name} 卸载失败`);
 				dispatch({
 					type: 'item-failed',
 					id: component.id,
@@ -534,7 +534,7 @@ export function runUninstall(
 			if (signal.aborted) return;
 			const detail = errorMessage(error);
 			console.error(`[tools] ${component.name} 卸载失败`, detail);
-			toast.error(`${component.name} 卸载失败，请查看控制台`);
+			toast.error(`${component.name} 卸载失败`);
 			dispatch({type: 'item-failed', id: component.id, error: detail});
 			cache.refresh();
 		})
