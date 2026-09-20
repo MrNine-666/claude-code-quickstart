@@ -206,10 +206,6 @@ export type PiProviderRecord = {
 	readonly isMissing: boolean;
 	readonly canEdit: boolean;
 	readonly canDelete: boolean;
-	/** 已配置的请求头条目数；0 表示未配置。 */
-	readonly headerCount: number;
-	/** 是否启用了 `authHeader: true`（Authorization: Bearer）。 */
-	readonly authHeader: boolean;
 	/** 是否可编辑传输层覆盖（仅 headers / authHeader），与凭据侧 `canEdit` 正交。 */
 	readonly canEditTransport: boolean;
 };
@@ -536,7 +532,6 @@ export function normalizePiProviderRecords(documents: PiDocuments): readonly PiP
 			auth.kind !== 'unknown' && !isMissing && (hasDefinition || metadata !== undefined || catalogEntry !== undefined);
 		// 与 canEdit 同样要求 models.json 定义：auth.json 数据源（含 /login 创建）由 Pi 原生管理。
 		const canDelete = hasDefinition && !isActive && !isOAuth && !isMissing && (auth.kind === 'api_key' || source === 'custom');
-		const headers = headerRecord(entry?.headers);
 		records.push({
 			providerId,
 			displayName: metadata?.displayName ?? providerId,
@@ -550,8 +545,6 @@ export function normalizePiProviderRecords(documents: PiDocuments): readonly PiP
 			isMissing,
 			canEdit,
 			canDelete,
-			headerCount: Object.keys(headers).length,
-			authHeader: entry?.authHeader === true,
 			canEditTransport
 		});
 	}
@@ -588,8 +581,6 @@ function toDisplayProfile(record: PiProviderRecord, authValue: unknown): Provide
 		canEdit: record.canEdit,
 		canDelete: record.canDelete,
 		isMissing: record.isMissing,
-		headerCount: record.headerCount,
-		authHeader: record.authHeader,
 		canEditTransport: record.canEditTransport
 	};
 }
@@ -1156,20 +1147,18 @@ function initialHeaderPreset(headers: Readonly<Record<string, string>>, api: str
 /** §10.2 优先级表：自由模式 > 跨协议提示 > 协议层建议 > 默认说明。 */
 function piHeaderPresetHelpText(api: string, headersText: string): string {
 	if (!isControlledHeaderPresetApi(api)) {
-		return '当前 API 协议没有对应预设；下列预设均非本协议客户端，仅在确认中转确实按该客户端判定时使用。左右键选择，Enter 应用。';
+		return '当前 API 协议没有对应预设；下列预设均非本协议客户端，仅在确认中转确实按该客户端判定时使用。左右键选择预设，Enter 应用到下方请求头（会覆盖现有内容）。';
 	}
 	const parsed = parseHeaderJson(headersText);
 	const matched = parsed.ok ? matchedHeaderPreset(parsed.headers) : null;
 	if (matched && !headerPresetMatchesApi(matched, api)) {
 		const label = piHeaderPreset(matched)?.label ?? matched;
-		return `当前请求头与「${label}」一致，但该预设不适用于当前 API 协议。左右键选择，Enter 应用。`;
+		return `当前请求头与「${label}」一致，但该预设不适用于当前 API 协议。左右键选择预设，Enter 应用到下方请求头（会覆盖现有内容）。`;
 	}
 	const suggestion = suggestHeaderPreset(api);
-	if (suggestion) {
-		const label = piHeaderPreset(suggestion.key)?.label ?? suggestion.key;
-		return `左右键选择预设，Enter 应用到下方请求头（会覆盖现有内容）。当前协议通常需要配置为 ${label} 客户端身份。`;
-	}
-	return '左右键选择预设，Enter 应用到下方请求头（会覆盖现有内容）。';
+	// 受控协议必然存在建议预设（两个判定同源），因此建议文案只是基础说明的后缀，不另立分支。
+	const hint = suggestion ? `当前协议通常需要配置为 ${piHeaderPreset(suggestion.key)?.label ?? suggestion.key} 客户端身份。` : '';
+	return `左右键选择预设，Enter 应用到下方请求头（会覆盖现有内容）。${hint}`;
 }
 
 export function buildPiProviderFormFields(values: PiProviderFormValues, mode: PiProviderFormMode): readonly FormField[] {

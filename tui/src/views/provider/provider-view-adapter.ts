@@ -63,13 +63,10 @@ function providerHomeSummary(
 ): string {
 	const credential = `${profile.baseUrl || '未配置 Base URL'} · ${profile.maskedApiKey}`;
 	if (context.isPi) {
-		const base =
-			profile.authKind === 'oauth' ? loginSummary(profile.authStatus) : `${credential} · ${piCredentialTypeLabel(profile.source)}`;
-		// 请求头状态用于辨识哪些 Provider 配置了请求头；未配置时不追加任何文字。
-		const headerBits: string[] = [];
-		if ((profile.headerCount ?? 0) > 0) headerBits.push(`请求头 ${profile.headerCount} 项`);
-		if (profile.authHeader) headerBits.push('Bearer');
-		return headerBits.length > 0 ? `${base} · ${headerBits.join(' · ')}` : base;
+		// 卡片只展示凭据事实（`baseUrl · 掩码凭据 · 类型` / 登录状态），不拼请求头状态。
+		return profile.authKind === 'oauth'
+			? loginSummary(profile.authStatus)
+			: `${credential} · ${piCredentialTypeLabel(profile.source)}`;
 	}
 	if (context.isCodex && context.official) {
 		return isCodexOfficialLoggedIn() ? '已授权登录' : '未授权登录';

@@ -217,6 +217,9 @@ export const piProviderFormAdapter: ProviderFormAdapter<PiProviderFormInput, PiP
 	textLabel: '请求头',
 	textHelpText: 'JSON 对象，留空即不配置请求头。值为 Pi 配置语法：$ENV 插值、!command 执行、$$ 表示字面 $。可用 $VAR 引用 auth.json 凭据 env 中的值，避免把密钥写进本文件。',
 	showTextEditor: true,
+	// 「请求头」是普通字段：编辑区按 `label │ 编辑区` 一行渲染，与其它字段对齐。
+	// CC/Codex 的 textarea 是整份文档编辑器（label 超出 FormLabel 固定宽度），保持全宽方块。
+	textFieldRow: true,
 	title: model => (model.mode === 'edit' ? '编辑 Pi Provider' : '添加 Pi Provider'),
 	savedMessage: (model, values) =>
 		values.variant === 'transport-only'

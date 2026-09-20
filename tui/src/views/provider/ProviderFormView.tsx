@@ -3,6 +3,7 @@ import {TextAttributes, type KeyEvent, type ScrollBoxRenderable, type TextareaRe
 import {useKeyboard, useRenderer} from '@opentui/react';
 import {toast} from '../../components/toast.js';
 import {FormPanel, firstEditableIndex, nextEditableIndex} from '../../components/form/FormPanel.js';
+import {FormLabel} from '../../components/form/FormLabel.js';
 import {Modal} from '../../components/modal.js';
 import {ThemedScrollbox} from '../../components/themed-scrollbox.js';
 import {handleTextareaEditKeys, handleTextareaIndentKey} from '../../components/editor/textarea-edit-keys.js';
@@ -72,8 +73,10 @@ const JSON_FIELD_ID = 'provider-form-textarea';
 // textarea 固定高度（含边框）。刻意例外：供应商字段多，textarea 若参与外层 scrollbox 的 flex 分配
 // 会被字段挤没；且滚动内容内的 textarea 必须有确定高度，否则 min-content 塌成 0。此处用静态常量
 // （非动态算高），不违反本次「禁止 height 算式」的核心诉求；整体字段区 + textarea 仍同在一个
-// scrollbox 内一起滚动。窄终端下若过高吃字段可视空间可微调此值。
-const TEXTAREA_HEIGHT = 12;
+// scrollbox 内一起滚动。
+// Pi 表单的请求头编辑区按普通字段行渲染（`label │ 编辑区`），见 adapter.textFieldRow。
+// 编辑区不再独占整行高度，因此比原先的全宽方块调小。
+const TEXTAREA_HEIGHT = 8;
 
 function providerBinding(command: string): string | undefined {
 	const binding = providerBindings.find(item => item.cmd === command);
@@ -383,15 +386,12 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 	const handleMoveFocus = (direction: 1 | -1) => {
 		if (piModelDiscovery) {
 			const lastFieldIndex = nextEditableIndex(fields, fields.length, -1);
-
-			// 请求头编辑区：↓ 进模型列表（无候选则手动输入），↑ 回最后一个字段。
-			// 必须同时把 focusedIndex 移出 fields.length，否则 textFocused 仍为真，textarea 会与模型区抢焦点。
+			// 请求头编辑区：面板把「添加自定义模型」渲染在列表上方，所以视觉上它下面是手动输入，
+			// 因此 ↓ 进手动输入、↑ 回最后一个字段。必须同时把 focusedIndex 移出 fields.length，
+			// 否则 textFocused 仍为真，textarea 会与模型区抢焦点。
 			if (textFocused) {
 				setFocusedIndex(lastFieldIndex);
-				if (direction > 0) {
-					if (piSelection.candidates.length > 0 || piSelection.status === 'loading') setModelFocus('list');
-					else setModelFocus('manual');
-				}
+				if (direction > 0) setModelFocus('manual');
 				return;
 			}
 
@@ -406,15 +406,15 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 							)
 						);
 					} else {
-						// 模型列表末行 ↓ 进手动输入。
-						setModelFocus('manual');
+						// 列表末行是视觉序列的末端：↓ 环绕回表单第一个字段。
+						setModelFocus(null);
+						setFocusedIndex(firstEditableIndex(fields));
 					}
 				} else {
 					const previousModel = piFilteredCandidates[piFilteredCursor - 1];
 					if (!previousModel) {
-						// 首行 ↑ 回请求头编辑区。
-						setModelFocus(null);
-						setFocusedIndex(fields.length);
+						// 列表首行 ↑ 回上方的「添加自定义模型」。
+						setModelFocus('manual');
 						return;
 					}
 					setPiSelection(current =>
@@ -429,13 +429,12 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 
 			if (modelFocus === 'manual') {
 				if (direction < 0) {
-					// 即使当前列表为空，也要允许手工输入和模型列表之间切换，
-					// 这样用户可以按 Enter 添加第一个自定义模型。
-					setModelFocus('list');
-				} else {
-					// 手动输入 ↓ 循环回请求头编辑区。
+					// ↑ 回上方的请求头编辑区。
 					setModelFocus(null);
 					setFocusedIndex(fields.length);
+				} else {
+					// ↓ 进下方的模型列表；列表为空时它会立即把焦点交回第一个字段。
+					setModelFocus('list');
 				}
 				return;
 			}
@@ -447,8 +446,11 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 				return;
 			}
 			if (direction < 0 && next >= focusedIndex) {
-				// 第一个字段 ↑ 循环回请求头编辑区。
-				setFocusedIndex(fields.length);
+				// 第一个字段 ↑ 环绕到视觉序列末端：有候选时进模型列表并落在末行，否则到手动输入。
+				if (piSelection.candidates.length > 0 || piSelection.status === 'loading') {
+					setPiSelection(current => setPiSelectionCursor(current, Math.max(0, current.candidates.length - 1)));
+					setModelFocus('list');
+				} else setModelFocus('manual');
 				return;
 			}
 			setFocusedIndex(next);
@@ -982,6 +984,10 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 	};
 
 	const handleFormKey = (keyEvent: KeyEvent): boolean => {
+		// 保存快捷键由页面层独占（本组件的 useKeyboard 已处理 FORM_SAVE）。
+		// 这里声明「已消费」，避免 FormPanel 的通用保存分支再调一次 onSubmit，
+		// 导致重复落盘与重复保存 toast。MCP 表单没有自己的保存处理，仍由 FormPanel 负责。
+		if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_SAVE)) return true;
 		if (pendingPreset !== null) {
 			// 确认弹窗打开时独占按键：Enter 覆盖、Esc 零改动，其余按键一律吞掉。
 			if (matchesProviderCommand(keyEvent, PROVIDER_COMMANDS.FORM_CONFIRM)) {
@@ -1124,21 +1130,10 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 	const textLabel = typeof formAdapter.textLabel === 'function' ? formAdapter.textLabel(baseValues) : formAdapter.textLabel;
 	const textHelpText = typeof formAdapter.textHelpText === 'function' ? formAdapter.textHelpText(baseValues) : formAdapter.textHelpText;
 	const pendingPresetLabel = pendingPreset ? (piHeaderPreset(pendingPreset)?.label ?? pendingPreset) : '';
-
-	// textarea 与页面自有内容共用 FormPanel.custom，且 textarea 排在前面：
-	// 这样「字段 → 请求头编辑区 → 模型列表」的焦点顺序与视觉顺序一致（design.md §8.4）。
-	// CC/Codex 的 pageCustom 为 undefined，组合结果与改造前等价。
-	const textareaBlock = hasTextEditor ? (
-		<box id={JSON_FIELD_ID} marginTop={1} flexDirection="column" flexShrink={0}>
-			<text
-				fg={textFocused ? colors.primary : colors.text}
-				attributes={textFocused ? TextAttributes.BOLD : 0}
-				selectionBg={colors.selectionBg}
-				selectionFg={colors.selectionFg}
-			>
-				{textFocused ? '› ' : '  '}
-				{textLabel}
-			</text>
+	// 请求头是普通字段：`textFieldRow` 的表单把编辑区渲染成 `label │ 编辑区` 一行（与其它字段对齐）；
+	// CC/Codex 的 textarea 是整份文档编辑器（label 超出 FormLabel 固定宽度），保持全宽方块。
+	const textareaControl = (
+		<>
 			{/* 刻意例外：本页字段区 + textarea 同在一个 scrollbox 内一起滚动（用户约束②），
 			    且供应商字段多、textarea 若参与 flex 分配会被挤没（用户约束①），故 textarea
 			    用静态常量高度 TEXTAREA_HEIGHT（非动态算高，不违反「禁止 height 算式」核心诉求）；
@@ -1175,8 +1170,33 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 					</text>
 				</box>
 			) : null}
-		</box>
+		</>
+	);
+
+	const textareaBlock = hasTextEditor ? (
+		formAdapter.textFieldRow ? (
+			<box id={JSON_FIELD_ID} flexDirection="row" alignItems="flex-start" flexShrink={0} marginBottom={1}>
+				<FormLabel label={textLabel} focused={textFocused} />
+				<box flexDirection="column" flexGrow={1} minWidth={0}>
+					{textareaControl}
+				</box>
+			</box>
+		) : (
+			<box id={JSON_FIELD_ID} marginTop={1} flexDirection="column" flexShrink={0}>
+				<text
+					fg={textFocused ? colors.primary : colors.text}
+					attributes={textFocused ? TextAttributes.BOLD : 0}
+					selectionBg={colors.selectionBg}
+					selectionFg={colors.selectionFg}
+				>
+					{textFocused ? '› ' : '  '}
+					{textLabel}
+				</text>
+				{textareaControl}
+			</box>
+		)
 	) : null;
+
 	const pageCustom = piModelDiscovery ? (
 		piSelection.sourceMode && piSourceCandidate ? (
 			<PiSourceSelectionPanel
@@ -1255,7 +1275,7 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 				hint="Enter 确认 · Esc 取消"
 				tone="warning"
 			>
-				<text selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+				<text fg={colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
 					{`即将用「${pendingPresetLabel}」预设覆盖当前请求头。`}
 				</text>
 			</Modal>

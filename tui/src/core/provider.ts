@@ -43,10 +43,6 @@ export type ProviderDisplayProfile = {
 	readonly canDelete?: boolean;
 	readonly canSwitch?: boolean;
 	readonly isMissing?: boolean;
-	/** Pi only: 已配置的请求头条目数；Claude/Codex 不设置。 */
-	readonly headerCount?: number;
-	/** Pi only: 是否启用了 `authHeader: true`。 */
-	readonly authHeader?: boolean;
 	/** Pi only: 是否可编辑传输层覆盖（仅 headers / authHeader）。 */
 	readonly canEditTransport?: boolean;
 };

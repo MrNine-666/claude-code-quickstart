@@ -215,7 +215,7 @@ describe('transport-only 变体持久化', () => {
 		expect(home.path.length).toBeGreaterThan(0);
 	});
 
-	test('传输层覆盖保存不改动 settings.json 且记录投影带 headerCount / canEditTransport', () => {
+	test('传输层覆盖保存不改动 settings.json 且记录投影带 canEditTransport', () => {
 		setupHome({
 			models: {providers: {anthropic: {headers: {'x-app': 'cli'}}}},
 			auth: {anthropic: {type: 'api_key', key: 'sk-live-secret'}}
@@ -225,8 +225,6 @@ describe('transport-only 变体持久化', () => {
 			auth: {anthropic: {type: 'api_key', key: 'sk-live-secret'}},
 			settings: {}
 		}).find(item => item.providerId === 'anthropic');
-		expect(record?.headerCount).toBe(1);
-		expect(record?.authHeader).toBe(false);
 		expect(record?.canEditTransport).toBe(true);
 	});
 });
@@ -299,8 +297,8 @@ describe('模型发现请求头', () => {
 	});
 });
 
-describe('Pi 卡片请求头摘要', () => {
-	test('追加请求头条目数与 Bearer 标记，未配置时不追加', () => {
+describe('Pi 卡片描述行', () => {
+	test('只展示凭据事实，不拼请求头状态', () => {
 		const pi = createProviderViewAdapter('pi');
 		const base = {
 			key: 'anthropic',
@@ -310,15 +308,12 @@ describe('Pi 卡片请求头摘要', () => {
 			isActive: false,
 			maskedApiKey: 'sk-x',
 			authKind: 'api_key' as const,
-			source: 'builtin' as const,
-			headerCount: 1,
-			authHeader: true
+			source: 'builtin' as const
 		};
-		expect(pi.toHomeRow(base).summary).toContain('请求头 1 项');
-		expect(pi.toHomeRow(base).summary).toContain('Bearer');
-		const empty = pi.toHomeRow({...base, headerCount: 0, authHeader: false}).summary;
-		expect(empty).not.toContain('请求头');
-		expect(empty).not.toContain('Bearer');
+		const summary = pi.toHomeRow(base).summary;
+		expect(summary).toContain('https://a.io · sk-x · 官方');
+		expect(summary, '列表不得展示请求头').not.toContain('请求头');
+		expect(summary, '列表不得展示请求头').not.toContain('Bearer');
 	});
 });
 
@@ -377,5 +372,41 @@ describe('AC13：预设文本经保存落到 models.json', () => {
 		expect(text).not.toBeNull();
 		savePiProvider(fullValues({headers: text ?? ''}), {mode: 'add'});
 		expect(readModels().providers['custom-acme'].headers).toEqual(piHeaderPreset('claude-code')?.headers);
+	});
+});
+
+// 说明文案在 core 层断精确字符串：组件层两列布局会把长文案折行、右列边框字符插进折行处，
+// 按子串断言必然脆弱（见组件测试里的说明）。
+describe('AC10 / AC21：headerPreset 说明文案按优先级表生成', () => {
+	const helpTextFor = (api: string, headers = ''): string => {
+		const field = buildPiProviderFormFields(fullValues({api, headers}), 'add').find(item => item.id === 'headerPreset');
+		return field && field.type === 'radio' ? (field.helpText ?? '') : '';
+	};
+
+	test('自由模式：声明没有对应预设且预设均非本协议客户端', () => {
+		for (const api of ['openai-completions', 'openai-codex-responses', 'google-vertex']) {
+			const text = helpTextFor(api);
+			expect(text, `${api} 应为自由模式文案`).toContain('没有对应预设');
+			expect(text).toContain('均非本协议客户端');
+		}
+	});
+
+	test('受控模式：给出与协议对应的建议预设', () => {
+		expect(helpTextFor('anthropic-messages')).toContain('通常需要配置为 Claude Code');
+		expect(helpTextFor('openai-responses')).toContain('通常需要配置为 Codex CLI');
+		expect(helpTextFor('google-generative-ai')).toContain('通常需要配置为 Gemini CLI');
+	});
+
+	test('跨协议残留头：提示该预设不适用于当前协议', () => {
+		const codexHeaders = JSON.stringify(piHeaderPreset('codex')?.headers ?? {});
+		const text = helpTextFor('anthropic-messages', codexHeaders);
+		expect(text).toContain('不适用于当前 API 协议');
+		expect(text).toContain('Codex CLI');
+	});
+
+	test('基础说明始终存在（文案不再有不可达分支）', () => {
+		for (const api of ['anthropic-messages', 'openai-completions', 'openai-responses', 'google-generative-ai']) {
+			expect(helpTextFor(api), `${api} 缺基础说明`).toContain('左右键选择预设');
+		}
 	});
 });
