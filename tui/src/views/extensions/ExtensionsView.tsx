@@ -34,33 +34,50 @@ export type ExtensionsViewProps = {
 	readonly active: boolean;
 	readonly agentContext: AgentContext;
 	readonly contentWidth: number;
+	/** 测试注入点；默认使用真实 Pi package 服务。 */
+	readonly service?: ExtensionsService;
 	readonly onSubModeChange?: (subMode: string) => void;
 	readonly onBusyStateChange: (state: BusyOverlayState | null) => void;
 	readonly onExitToNav: () => void;
 };
 
-export function ExtensionsView({active, agentContext, contentWidth, onSubModeChange, onBusyStateChange, onExitToNav}: ExtensionsViewProps) {
-	const service = useMemo(() => createExtensionsService(), []);
+export function ExtensionsView({
+	active,
+	agentContext,
+	contentWidth,
+	service: injectedService,
+	onSubModeChange,
+	onBusyStateChange,
+	onExitToNav
+}: ExtensionsViewProps) {
+	const service = useMemo(() => injectedService ?? createExtensionsService(), [injectedService]);
 	const isPi = agentContext === 'pi';
 	const [view, dispatch] = useReducer(reduceExtensionsViewState, undefined, createInitialExtensionsViewState);
+	// 搜索请求与安装列表加载必须各用一条序号：共用会让加载中的一次搜索把安装列表结果判成过期，
+	// installed-loaded 永不派发，loading 卡在 true。
 	const requestId = useRef(0);
+	const installedRequestId = useRef(0);
 	const taskCancellation = useTaskCancellation();
 
 	const reloadInstalled = useCallback(
 		async (query: string, page: number): Promise<void> => {
-			const currentRequest = ++requestId.current;
+			const installedRequest = ++installedRequestId.current;
+			let searchRequest = 0;
+			const stale = (): boolean =>
+				installedRequest !== installedRequestId.current || (searchRequest !== 0 && searchRequest !== requestId.current);
 			try {
 				const installed = await service.loadInstalled();
-				if (currentRequest !== requestId.current) return;
+				if (stale()) return;
 				dispatch({type: 'installed-loaded', items: installed});
 				if (!query) return;
 
+				searchRequest = ++requestId.current;
 				dispatch({type: 'search-start', page});
 				const result = await service.search(query, page);
-				if (currentRequest !== requestId.current) return;
+				if (stale()) return;
 				dispatch({type: 'search-done', result});
 			} catch (reason) {
-				if (currentRequest !== requestId.current) return;
+				if (stale()) return;
 				const detail = errorMessage(reason);
 				console.error(`[extensions] ${query ? '搜索' : '读取已安装包'}失败`, detail);
 				dispatch({type: query ? 'search-failed' : 'installed-failed', error: detail});
@@ -103,6 +120,7 @@ export function ExtensionsView({active, agentContext, contentWidth, onSubModeCha
 			taskCancellation.cancel();
 			onBusyStateChange(null);
 			requestId.current += 1;
+			installedRequestId.current += 1;
 			return;
 		}
 		void reloadInstalled('', 0);
@@ -185,34 +203,40 @@ export function ExtensionsView({active, agentContext, contentWidth, onSubModeCha
 	return (
 		<box flexDirection="column" flexGrow={1} minHeight={0}>
 			<ViewHeader title="扩展管理" subtitle="仅管理 Pi 扩展；搜索框 Enter 后查询官方 Pi package 商店" />
-			<SingleLineInput
-				label="搜索"
-				value={view.query}
-				focused={active && view.focus === 'search' && view.mode !== 'confirm'}
-				placeholder="输入关键词，按 Enter 搜索 Pi 官方扩展商店"
-				onChange={value => dispatch({type: 'query-input', value})}
-				onFocus={focusSearch}
-				onSubmit={value => {
-					dispatch({type: 'query-input', value});
-					search(0, value);
-				}}
-			/>
-			{view.loading ? <ListLoadingState message="正在读取已安装的 Pi 扩展..." /> : null}
-			{!view.loading && view.searching ? <ListLoadingState message="正在查询 Pi 官方扩展商店..." /> : null}
-			{!view.loading && !view.searching && items.length > 0 ? (
-				<ExtensionGrid
-					items={items}
-					installed={view.installed}
-					cursor={view.cursor}
-					active={active && view.focus === 'grid' && view.mode !== 'confirm'}
-					cardWidth={cardWidth}
-					page={view.query.trim() ? view.page : undefined}
-					total={view.query.trim() ? view.total : undefined}
-				/>
-			) : null}
-			{!view.loading && !view.searching && items.length === 0 ? (
-				<ListEmptyState message={view.query.trim() ? '未找到包含 Pi extension 的 package' : '暂无已安装的 Pi 扩展'} />
-			) : null}
+			{/* 加载中不渲染搜索框：否则用户可在安装列表未就绪时提交搜索，抢走安装列表的请求。 */}
+			{view.loading ? (
+				<ListLoadingState message="正在读取已安装的 Pi 扩展..." />
+			) : (
+				<>
+					<SingleLineInput
+						label="搜索"
+						value={view.query}
+						focused={active && view.focus === 'search' && view.mode !== 'confirm'}
+						placeholder="输入关键词，按 Enter 搜索 Pi 官方扩展商店"
+						onChange={value => dispatch({type: 'query-input', value})}
+						onFocus={focusSearch}
+						onSubmit={value => {
+							dispatch({type: 'query-input', value});
+							search(0, value);
+						}}
+					/>
+					{view.searching ? <ListLoadingState message="正在查询 Pi 官方扩展商店..." /> : null}
+					{!view.searching && items.length > 0 ? (
+						<ExtensionGrid
+							items={items}
+							installed={view.installed}
+							cursor={view.cursor}
+							active={active && view.focus === 'grid' && view.mode !== 'confirm'}
+							cardWidth={cardWidth}
+							page={view.query.trim() ? view.page : undefined}
+							total={view.query.trim() ? view.total : undefined}
+						/>
+					) : null}
+					{!view.searching && items.length === 0 ? (
+						<ListEmptyState message={view.query.trim() ? '未找到包含 Pi extension 的 package' : '暂无已安装的 Pi 扩展'} />
+					) : null}
+				</>
+			)}
 			{view.mode === 'confirm' && view.pendingAction && !view.mutating ? <ExtensionConfirmModal view={view} /> : null}
 		</box>
 	);
