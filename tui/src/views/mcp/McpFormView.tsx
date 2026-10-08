@@ -5,11 +5,8 @@ import {FormPanel, firstEditableIndex, nextEditableIndex} from '../../components
 import {handleTextareaEditKeys, handleTextareaIndentKey} from '../../components/editor/textarea-edit-keys.js';
 import type {FormField} from '../../components/form/field-types.js';
 import {borderColors, colors} from '../../theme/index.js';
-import type {
-	McpFormModel,
-	McpFormSubmitInput,
-	McpViewActionResult
-} from './mcp-view-actions.js';
+import {toast} from '../../components/toast.js';
+import type {McpFormModel, McpFormSubmitInput, McpViewActionResult} from './mcp-view-actions.js';
 
 // McpFormView：MCP 表单屏（配置即真源范式，复用 FormPanel 与供应商表单同构）
 // - add：模板（radio，←/→ 或 Tab 切换；选内置即带出配置 + Server ID + 凭据提示）+ Server ID（可填）+ 配置编辑区
@@ -36,7 +33,10 @@ export type McpFormViewProps = {
 export function McpFormView({model, active, validateJson, onSubmit, onSaved, onCancel}: McpFormViewProps) {
 	const {mode, serverId, initialJson} = model;
 	// 模板选项：自定义（空白）+ 内置 MCP 列表。useRef 固定一次构造，避免重渲染重建。
-	const templateOptions = useRef([{value: CUSTOM_TEMPLATE, label: '自定义'}, ...model.templates.map(({value, label}) => ({value, label}))]).current;
+	const templateOptions = useRef([
+		{value: CUSTOM_TEMPLATE, label: '自定义'},
+		...model.templates.map(({value, label}) => ({value, label}))
+	]).current;
 
 	const isAdd = mode === 'add';
 
@@ -199,7 +199,8 @@ export function McpFormView({model, active, validateJson, onSubmit, onSaved, onC
 		const id = (isAdd ? serverIdText : serverId).trim();
 		const result = onSubmit({mode, serverId: id, jsonText});
 		if (!result.ok) {
-			setErrors([result.error]);
+			setErrors([]);
+			toast.error(result.error);
 			return;
 		}
 

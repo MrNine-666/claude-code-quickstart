@@ -1,5 +1,6 @@
 import {describe, expect, test} from 'bun:test';
 import {toCodexMcpConfig} from '../../src/core/mcp-codex-schema.js';
+import type {McpConfigEntry} from '../../src/core/mcp-config-builder.js';
 import {configToJson, getMcpTemplateJson, listBuiltinMcpOptions, parseMcpFormInput, parseMcpJsonFormat} from '../../src/core/mcp-form.js';
 
 // A 类改写（P1-G3）：MCP 表单 core（JSON 即真源）行为入口。
@@ -54,6 +55,43 @@ describe('MCP 表单 core', () => {
 
 		expect(parseMcpFormInput('bad id', '{"command":"npx"}').ok).toBe(false);
 		expect(parseMcpFormInput('my-http', '{"url":""}').ok).toBe(false);
+	});
+});
+
+describe('Pi native 表单边界', () => {
+	test('raw SSE/坏 args/env 在 Claude 规整前拒绝，其他 Agent 保留既有规整行为', () => {
+		for (const config of [
+			{type: 'sse', url: 'https://example.com/sse'},
+			{command: 'npx', args: [1]},
+			{command: 'npx', env: {KEY: 1}},
+			{command: 'npx', headers: {Key: null}}
+		])
+			expect(parseMcpFormInput('server', JSON.stringify(config), true).ok).toBe(false);
+		const native = parseMcpFormInput(
+			'server',
+			JSON.stringify({type: 'streamable-http', url: 'https://example.com/mcp', oauth: {clientId: 'id'}}),
+			true
+		);
+		expect(native.ok && native.payload.config.type).toBe('streamable-http');
+		expect(parseMcpFormInput('server', '{"command":"npx","args":[1]}').ok).toBe(true);
+		const sse = parseMcpFormInput('server', '{"type":"sse","url":"https://example.com/sse"}');
+		expect(sse.ok && sse.payload.config.type).toBe('sse');
+	});
+	test('原生合法空字段保持原值；空 Authorization 不得被删除而启用 OAuth', () => {
+		const configs: readonly McpConfigEntry[] = [
+			{url: 'https://example.com/mcp', headers: {Authorization: ''}, env: {}, custom: {keep: true}},
+			{command: 'npx', args: [], env: {EMPTY: ''}, timeout: 12, exposure: 'hidden'}
+		];
+		for (const config of configs) {
+			const parsed = parseMcpFormInput('server', JSON.stringify(config), true);
+			expect(parsed.ok).toBe(true);
+			if (parsed.ok) expect(parsed.payload.config).toEqual(config);
+		}
+	});
+	test('JSON syntax diagnostics never expose OAuth/clientSecret or raw source', () => {
+		const result = parseMcpJsonFormat('{"oauth":{"clientSecret":"SENTINEL-OAUTH"},broken');
+		expect(result.ok).toBe(false);
+		expect(JSON.stringify(result)).not.toContain('SENTINEL-OAUTH');
 	});
 });
 

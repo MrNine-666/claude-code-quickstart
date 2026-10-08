@@ -3,300 +3,224 @@ import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync}
 import {tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
 
-const home = mkdtempSync(join(tmpdir(), 'ccq-mcp-pi-'));
+// Historical gate name retained. Native version/schema pure checks live in tests/core/mcp-pi-adapter.test.ts.
+const home = mkdtempSync(join(tmpdir(), 'ccq-mcp-pi-native-'));
 process.env.CCQ_HOME = home;
-process.env.HOME = home;
-
+const {currentPiMcpNativeFact, detectPiMcpNative, resetPiMcpNativeFact, readPiMcpAdapterOverride, removePiMcpOverrideRecord} = await import(
+	'../src/core/pi-mcp-adapter.ts'
+);
 const {
-	detectPiMcpAdapter,
-	readLocalPiMcpAdapterFact,
-	readPiMcpAdapterOverride,
-	resetPiMcpAdapterFact
-} = await import('../src/core/pi-mcp-adapter.ts');
-const {computeSharedStatus, computeSharedStatusAsync, enableServer, disableServer, getServerDetail, removeSharedServer, syncSharedDefinition} =
-	await import('../src/core/mcp.ts');
+	computeSharedStatus,
+	computeSharedStatusAsync,
+	enableServer,
+	disableServer,
+	getServerDetail,
+	removeSharedServer,
+	syncSharedDefinition,
+	persistSharedDefinition
+} = await import('../src/core/mcp.ts');
+const {saveEditedMcpServer, saveMcpServer} = await import('../src/services/mcp-service.ts');
 const {claudeJsonPath, piAgentDir, piMcpAdapterOverridesPath, piMcpConfigPath, settingsPath, vaultPath, codexConfigPath} = await import(
 	'../src/core/paths.ts'
 );
-
+const exec = async (command, args) => {
+	assert.deepEqual([command, ...args], ['pi', '--version'], 'MCP detection must never list packages/connect servers');
+	return {code: 0, stdout: '1.0.0', stderr: ''};
+};
 function writeJson(path, value) {
 	mkdirSync(dirname(path), {recursive: true});
-	writeFileSync(path, JSON.stringify(value, null, 2), 'utf8');
+	writeFileSync(path, JSON.stringify(value, null, 2));
 }
-
-function writeText(path, value) {
+function writeText(path, text) {
 	mkdirSync(dirname(path), {recursive: true});
-	writeFileSync(path, value, 'utf8');
+	writeFileSync(path, text);
+}
+function read(path) {
+	return readFileSync(path, 'utf8');
+}
+function json(path) {
+	return JSON.parse(read(path));
+}
+function row(id) {
+	return computeSharedStatus().find(item => item.Id === id);
 }
 
 try {
-	// 包名解析（parsePiPackageNames / hasPiMcpAdapterPackage）已迁
-	// tests/core/mcp-pi-adapter.test.ts；检测、投影与真实 ~/.pi 断言保留在本脚本。
-	resetPiMcpAdapterFact();
-	assert.equal(readLocalPiMcpAdapterFact().reason, 'pi-not-installed', '没有 Pi agent 目录时必须显示 Pi 未安装');
+	assert.equal(piMcpConfigPath(), join(piAgentDir(), 'mcp.json'));
+	resetPiMcpNativeFact();
+	assert.equal(currentPiMcpNativeFact().reason, 'pi-not-detected');
+	await detectPiMcpNative(exec);
+	assert.equal(currentPiMcpNativeFact().supported, true, 'No adapter or agent dir prerequisite');
 
-	mkdirSync(piAgentDir(), {recursive: true});
-	resetPiMcpAdapterFact();
-	assert.equal(readLocalPiMcpAdapterFact().reason, 'adapter-not-installed', '没有 adapter marker 时必须显示 adapter 未安装');
+	const oldAdapter = join(piAgentDir(), 'mcp-adapter.json');
+	const auth = join(piAgentDir(), 'mcp-auth.json');
+	const project = join(home, '.pi', 'mcp.json');
+	writeText(oldAdapter, '{"mcpServers":{"adapter_only":{"command":"old","disabled":true}}}');
+	writeText(auth, '{"token":"AUTH-SENTINEL"}');
+	writeText(project, '{"mcpServers":{"project_only":{"command":"project"}}}');
+	const protectedPaths = [oldAdapter, auth, project];
+	const protectedBefore = protectedPaths.map(read);
 
-	mkdirSync(join(piAgentDir(), 'extensions'), {recursive: true});
-	writeFileSync(join(piAgentDir(), 'extensions', 'pi-mcp-adapter'), 'marker', 'utf8');
-	resetPiMcpAdapterFact();
-	assert.equal(readLocalPiMcpAdapterFact().supported, true, 'Pi 与 adapter 都存在时应支持投影');
-
-	const detectedCalls = [];
-	const detected = await detectPiMcpAdapter(async (command, args) => {
-		if (command === 'pi' && args[0] === '--version') return {code: 0, stdout: '0.1.0', stderr: ''};
-		if (command === 'pi' && args[0] === 'list') {
-			detectedCalls.push([...args]);
-			return {
-				code: 0,
-				stdout: 'User packages:\n  npm:pi-mcp-adapter@1.2.3\n    C:\\Users\\test\\.pi\\agent\\npm\\node_modules\\pi-mcp-adapter\n',
-				stderr: ''
-			};
-		}
-		return {code: 1, stdout: '', stderr: 'unexpected command'};
-	});
-	assert.deepEqual(detectedCalls, [['list', '--no-approve']], 'Pi adapter 异步检测必须使用当前 Pi 支持的 list 参数');
-	assert.deepEqual(
-		{piInstalled: detected.piInstalled, adapterInstalled: detected.adapterInstalled, supported: detected.supported},
-		{piInstalled: true, adapterInstalled: true, supported: true},
-		'Pi adapter 异步检测必须以 pi --version + pi list --no-approve 事实为准'
-	);
-	resetPiMcpAdapterFact();
-
+	const nativeEntry = {
+		command: 'native-pi-server',
+		args: ['--keep'],
+		env: {PI_KEY: '${TOKEN}'},
+		headers: {'x-native-token': '${HEADER_TOKEN}'},
+		customField: 'preserve',
+		timeout: 12,
+		exposure: 'direct',
+		toolExposure: {'get_*': 'hidden'}
+	};
 	writeJson(piMcpConfigPath(), {
-		mcpServers: {
-			'pi-native': {
-				command: 'native-pi-server',
-				args: ['--keep'],
-				env: {PI_NATIVE_KEY: 'native-secret'},
-				headers: {'x-native-token': 'header-secret'},
-				customField: 'preserve'
-			}
-		}
+		autoEnableCodemode: false,
+		userRoot: 'preserve',
+		mcpServers: {native: nativeEntry, external: {command: 'external', enabled: false}}
 	});
-	const nativeOnlyRow = computeSharedStatus().find(item => item.Id === 'pi-native');
-	assert.ok(nativeOnlyRow, '共享 MCP 列表必须包含 Pi 原生 MCP');
-	assert.equal(nativeOnlyRow?.hasDefinition, true, 'Pi 原生 MCP 必须回灌为共享 vault 定义');
-	assert.equal(nativeOnlyRow?.McpType, 'stdio', 'Pi 原生 command MCP 必须推导为 stdio 类型');
-	assert.equal(nativeOnlyRow?.HasCredentials, true, 'Pi 原生 env 凭据必须只显示存在性');
-	assert.equal(nativeOnlyRow?.injectByAgent.cc.active, false, 'Pi 原生独有 MCP 不得伪装成 Claude 已开启');
-	assert.equal(nativeOnlyRow?.injectByAgent.cx.active, false, 'Pi 原生独有 MCP 不得伪装成 Codex 已开启');
-	assert.equal(nativeOnlyRow?.injectByAgent.pi.active, true, 'Pi 原生独有 MCP 必须反映 native mcp.json 的开启状态');
-	const nativeOnlyVault = JSON.parse(readFileSync(vaultPath(), 'utf8')).servers['pi-native'];
-	assert.deepEqual(
-		nativeOnlyVault?.config,
-		{
-			command: 'native-pi-server',
-			args: ['--keep'],
-			env: {PI_NATIVE_KEY: 'native-secret'},
-			headers: {'x-native-token': 'header-secret'},
-			customField: 'preserve'
-		},
-		'Pi 原生配置必须完整回灌 vault 定义'
-	);
-	assert.deepEqual(
-		nativeOnlyVault?.credentials,
-		{values: {PI_NATIVE_KEY: 'native-secret', 'x-native-token': 'header-secret'}},
-		'Pi 原生 env/headers 凭据必须同步到 vault credentials'
-	);
-	assert.equal(getServerDetail('pi-native').config?.command, 'native-pi-server', '编辑 Pi 原生独有 MCP 时必须回显 native 配置');
-
-	writeJson(piMcpConfigPath(), {
-		mcpServers: {
-			'pi-native': {...nativeOnlyVault.config, disabled: true}
-		}
-	});
-	resetPiMcpAdapterFact();
-	const manuallyDisabledNative = computeSharedStatus().find(item => item.Id === 'pi-native');
-	assert.equal(manuallyDisabledNative?.injectByAgent.pi.active, false, 'Pi native disabled=true 必须同步后仍保持禁用事实');
-	const disabledNativeVault = JSON.parse(readFileSync(vaultPath(), 'utf8')).servers['pi-native'];
-	assert.equal(disabledNativeVault?.config?.disabled, undefined, 'Pi disabled 状态不得污染 vault 共享定义');
-
-	writeJson(piMcpConfigPath(), {mcpServers: {'pi-native': nativeOnlyVault.config}});
-	resetPiMcpAdapterFact();
-
-	const nativeOnlyDisabled = disableServer('pi-native', 'pi');
-	assert.equal(nativeOnlyDisabled.Success, true, 'Pi 原生独有 MCP 应可单侧禁用');
-	const nativeOnlyAfterDisable = JSON.parse(readFileSync(piMcpConfigPath(), 'utf8')).mcpServers['pi-native'];
-	assert.deepEqual(
-		nativeOnlyAfterDisable,
-		{
-			command: 'native-pi-server',
-			args: ['--keep'],
-			env: {PI_NATIVE_KEY: 'native-secret'},
-			headers: {'x-native-token': 'header-secret'},
-			customField: 'preserve',
-			disabled: true
-		},
-		'Pi 原生独有 MCP 禁用时必须保留用户字段和凭据'
-	);
-	const nativeOnlyEnabled = enableServer('pi-native', 'pi');
-	assert.equal(nativeOnlyEnabled.Success, true, 'Pi 原生独有 MCP 应可单侧重新启用');
-	const nativeOnlyAfterEnable = JSON.parse(readFileSync(piMcpConfigPath(), 'utf8')).mcpServers['pi-native'];
-	assert.deepEqual(
-		nativeOnlyAfterEnable,
-		{
-			command: 'native-pi-server',
-			args: ['--keep'],
-			env: {PI_NATIVE_KEY: 'native-secret'},
-			headers: {'x-native-token': 'header-secret'},
-			customField: 'preserve'
-		},
-		'Pi 原生独有 MCP 重新启用时必须清理 disabled 且保留用户字段'
-	);
-
-	writeJson(piMcpConfigPath(), {
-		mcpServers: {
-			'pi-native': nativeOnlyAfterEnable,
-			'pi-external': {command: 'external-pi-server', customField: 'do-not-delete'}
-		}
-	});
-	resetPiMcpAdapterFact();
-	const removedUnowned = removeSharedServer('pi-external', true);
-	assert.equal(removedUnowned.Success, true, '共享删除应完成 CCQ 侧清理');
-	const nativeConfigAfterUnownedRemove = JSON.parse(readFileSync(piMcpConfigPath(), 'utf8'));
-	assert.deepEqual(
-		nativeConfigAfterUnownedRemove.mcpServers['pi-external'],
-		{command: 'external-pi-server', customField: 'do-not-delete'},
-		'共享删除不得误删未被 CCQ 接管的 Pi 原生 MCP'
-	);
-
-	writeJson(vaultPath(), {
-		schemaVersion: 1,
-		createdAt: '2026-09-07T00:00:00.000Z',
-		updatedAt: '2026-09-07T00:00:00.000Z',
-		servers: {'pi-test': {config: {command: 'pi-test'}, credentials: {values: {API_KEY: 'secret-value'}}}}
-	});
-	writeJson(claudeJsonPath(), {mcpServers: {'pi-test': {command: 'claude-runtime'}}});
-	writeText(codexConfigPath(), '[mcp_servers.pi-test]\ncommand = "codex-runtime"\n');
-	writeJson(settingsPath(), {permissions: {allow: ['mcp__pi-test', 'Bash']}});
-
-	const claudeBefore = readFileSync(claudeJsonPath(), 'utf8');
-	const codexBefore = readFileSync(codexConfigPath(), 'utf8');
-	const enabled = enableServer('pi-test', 'pi');
-	assert.equal(enabled.Success, true, 'Pi enable 应成功');
-	const overrideAfterEnable = readPiMcpAdapterOverride();
-	assert.equal(overrideAfterEnable.ok, true);
-	if (overrideAfterEnable.ok) assert.equal(overrideAfterEnable.document.servers['pi-test']?.enabled, true);
-	const piMcpConfigFile = piMcpConfigPath();
-	assert.equal(existsSync(piMcpConfigFile), true, 'Pi enable 必须写入 adapter 读取的标准 mcp.json');
-	const nativeConfigAfterEnable = JSON.parse(readFileSync(piMcpConfigFile, 'utf8'));
-	assert.deepEqual(
-		nativeConfigAfterEnable.mcpServers['pi-test'],
-		{command: 'pi-test', env: {API_KEY: 'secret-value'}},
-		'Pi 标准配置必须包含共享定义和 vault 凭据'
-	);
-	assert.equal(readFileSync(claudeJsonPath(), 'utf8'), claudeBefore, 'Pi enable 不得改写 Claude runtime');
-	assert.equal(readFileSync(codexConfigPath(), 'utf8'), codexBefore, 'Pi enable 不得改写 Codex runtime');
-	assert.doesNotMatch(readFileSync(piMcpAdapterOverridesPath(), 'utf8'), /do-not-copy|API_KEY/, 'Pi override 不得复制 MCP 凭据');
-
-	const disabled = disableServer('pi-test', 'pi');
-	assert.equal(disabled.Success, true, 'Pi disable 应成功');
-	const overrideAfterDisable = readPiMcpAdapterOverride();
-	assert.equal(overrideAfterDisable.ok, true);
-	if (overrideAfterDisable.ok) assert.equal(overrideAfterDisable.document.servers['pi-test']?.enabled, false);
-	const nativeConfigAfterDisable = JSON.parse(readFileSync(piMcpConfigFile, 'utf8'));
-	assert.equal(nativeConfigAfterDisable.mcpServers['pi-test']?.disabled, true, 'Pi disable 必须写入标准 disabled 标记');
-
-	const reenabled = enableServer('pi-test', 'pi');
-	assert.equal(reenabled.Success, true, 'Pi re-enable 应成功');
-	const nativeConfigAfterReenable = JSON.parse(readFileSync(piMcpConfigFile, 'utf8'));
-	assert.equal(nativeConfigAfterReenable.mcpServers['pi-test']?.disabled, undefined, 'Pi re-enable 必须清理标准 disabled 标记');
-
-	writeJson(piMcpAdapterOverridesPath(), {schemaVersion: 1, servers: {}});
-	writeJson(piMcpConfigFile, {mcpServers: {'pi-test': {command: 'pi-test', disabled: true}}});
-	resetPiMcpAdapterFact();
-	const manuallyDisabled = computeSharedStatus().find(item => item.Id === 'pi-test');
-	assert.equal(manuallyDisabled?.injectByAgent.pi.active, false, 'Pi 状态必须识别 native mcp.json 的 disabled=true');
-
-	writeJson(piMcpAdapterOverridesPath(), {schemaVersion: 1, servers: {'pi-test': {enabled: true}}, managedServers: ['pi-test']});
-	writeJson(piMcpConfigFile, {mcpServers: {'pi-test': {command: 'pi-test'}}});
-	resetPiMcpAdapterFact();
-	const edited = syncSharedDefinition('pi-test', {command: 'pi-test-updated'}, {API_KEY: 'secret-value'}, '');
-	assert.equal(edited.Success, true, 'Pi active MCP 编辑应成功');
-	const nativeConfigAfterEdit = JSON.parse(readFileSync(piMcpConfigFile, 'utf8'));
-	assert.equal(nativeConfigAfterEdit.mcpServers['pi-test']?.command, 'pi-test-updated', 'Pi active MCP 编辑必须同步标准配置');
-
-	writeFileSync(piMcpAdapterOverridesPath(), '{broken override', 'utf8');
-	resetPiMcpAdapterFact();
-	assert.equal(readLocalPiMcpAdapterFact().reason, 'override-read-failed', '损坏 override 必须显示读取失败');
-	const blocked = enableServer('pi-test', 'pi');
-	assert.equal(blocked.Success, false, '损坏 override 时不得报告 Pi enable 成功');
-	assert.match(blocked.Status, /Unsupported/);
-
+	// Old adapter ownership must not authorize deletion/adoption of a native same-id entry.
 	writeJson(piMcpAdapterOverridesPath(), {
 		schemaVersion: 1,
-		userField: 'preserve',
-		servers: {
-			'pi-test': {enabled: false, removed: true},
-			'other-server': {enabled: true}
-		}
+		userField: 'keep',
+		managedServers: ['external'],
+		servers: {external: {enabled: true}}
 	});
-	writeJson(piMcpConfigFile, {
-		mcpServers: {
-			'pi-test': {command: 'pi-test', env: {API_KEY: 'secret-value'}, disabled: true},
-			'other-server': {command: 'keep'}
-		},
-		userField: 'preserve'
+	persistSharedDefinition('vault_only', {command: 'vault'}, {}, '');
+	const beforeRefresh = read(piMcpConfigPath());
+	const sidecarBefore = read(piMcpAdapterOverridesPath());
+	const rows = await computeSharedStatusAsync(exec);
+	assert.ok(rows.find(item => item.Id === 'native'));
+	assert.equal(row('native').hasDefinition, true);
+	assert.equal(row('native').McpType, 'stdio');
+	assert.equal(row('native').HasCredentials, true);
+	assert.equal(row('native').injectByAgent.pi.active, true);
+	assert.equal(row('native').injectByAgent.cc.active, false);
+	assert.equal(row('native').injectByAgent.cx.active, false);
+	assert.equal(row('external').injectByAgent.pi.active, false, 'Native false beats old sidecar true');
+	assert.equal(row('vault_only').injectByAgent.pi.active, false);
+	assert.equal(row('adapter_only'), undefined, 'Do not discover/auto-migrate old adapter config');
+	assert.equal(read(piMcpConfigPath()), beforeRefresh, 'Async refresh never materializes vault or adopts native entries');
+	assert.equal(read(piMcpAdapterOverridesPath()), sidecarBefore);
+	assert.equal(json(piMcpConfigPath()).mcpServers.vault_only.enabled, false, 'Missing native entry materializes disabled');
+	assert.deepEqual(json(vaultPath()).servers.native.config, nativeEntry);
+	assert.deepEqual(json(vaultPath()).servers.native.credentials, {values: {PI_KEY: '${TOKEN}', 'x-native-token': '${HEADER_TOKEN}'}});
+	assert.equal(json(vaultPath()).servers.external.config.enabled, undefined);
+	assert.equal(getServerDetail('native').config.command, nativeEntry.command);
+	assert.equal(removeSharedServer('external', true).Success, true);
+	assert.equal(json(piMcpConfigPath()).mcpServers.external, undefined, 'Full deletion includes external native entry');
+	assert.equal(row('external'), undefined, 'Deleted external entry does not revive');
+	// Restore unrelated fixture for subsequent single-agent preservation checks.
+	writeJson(piMcpConfigPath(), {
+		...json(piMcpConfigPath()),
+		mcpServers: {...json(piMcpConfigPath()).mcpServers, external: {command: 'external', enabled: false}}
 	});
-	writeJson(claudeJsonPath(), {mcpServers: {'pi-test': {command: 'claude-runtime'}, 'other-server': {command: 'keep'}}});
-	writeText(codexConfigPath(), '[mcp_servers.pi-test]\ncommand = "codex-runtime"\n\n[mcp_servers.other-server]\ncommand = "keep"\n');
-	writeJson(settingsPath(), {permissions: {allow: ['mcp__pi-test', 'mcp__other-server']}});
+	assert.equal(removePiMcpOverrideRecord('native').Success, true, 'Refresh alone does not grant implicit deletion authority');
+	assert.deepEqual(json(piMcpConfigPath()).mcpServers.native, nativeEntry);
+	assert.equal(removeSharedServer('native', true).Success, true, 'Confirmed full deletion includes unowned native entries');
+	assert.equal(json(piMcpConfigPath()).mcpServers.native, undefined);
+	assert.equal(row('native'), undefined, 'Deleted native entry must not revive on refresh');
+	writeJson(piMcpConfigPath(), {...json(piMcpConfigPath()), mcpServers: {...json(piMcpConfigPath()).mcpServers, native: nativeEntry}});
 
-	const removed = removeSharedServer('pi-test', true);
-	assert.equal(removed.Success, true, '共享全量删除应成功');
-	const overrideAfterRemove = readPiMcpAdapterOverride();
-	assert.equal(overrideAfterRemove.ok, true);
-	if (overrideAfterRemove.ok) {
-		assert.equal(overrideAfterRemove.document.servers['pi-test'], undefined, '共享删除必须清理 Pi override 记录');
-		assert.equal(overrideAfterRemove.document.servers['other-server']?.enabled, true, '共享删除不得影响其他 Pi override');
-		assert.equal(overrideAfterRemove.document.userField, 'preserve', 'Pi override 未知字段必须保留');
-	}
-	const nativeConfigAfterRemove = JSON.parse(readFileSync(piMcpConfigFile, 'utf8'));
-	assert.equal(nativeConfigAfterRemove.mcpServers['pi-test'], undefined, '共享删除必须清理 Pi 标准配置');
-	assert.deepEqual(nativeConfigAfterRemove.mcpServers['other-server'], {command: 'keep'}, '共享删除不得影响其他 Pi MCP');
-	assert.equal(nativeConfigAfterRemove.userField, 'preserve', 'Pi 标准配置未知字段必须保留');
-	assert.doesNotMatch(readFileSync(claudeJsonPath(), 'utf8'), /pi-test/, '共享删除必须清理 Claude runtime');
-	assert.doesNotMatch(readFileSync(codexConfigPath(), 'utf8'), /mcp_servers\.pi-test/, '共享删除必须清理 Codex runtime');
-	assert.doesNotMatch(readFileSync(settingsPath(), 'utf8'), /mcp__pi-test/, '共享删除必须清理 MCP permission');
-	assert.doesNotMatch(readFileSync(vaultPath(), 'utf8'), /pi-test/, '共享删除必须清理 vault 定义');
-
-	writeFileSync(piMcpConfigFile, '{broken native config', 'utf8');
-	resetPiMcpAdapterFact();
-	assert.equal(readLocalPiMcpAdapterFact().reason, 'config-read-failed', '损坏标准 mcp.json 必须显示读取失败');
-	writeJson(piMcpConfigFile, {mcpServers: {'other-server': {command: 'keep'}}, userField: 'preserve'});
-
-	writeJson(vaultPath(), {
-		schemaVersion: 1,
-		createdAt: '2026-09-07T00:00:00.000Z',
-		updatedAt: '2026-09-07T00:00:00.000Z',
-		servers: {'pi-existing': {config: {command: 'pi-existing'}, credentials: {values: {PI_KEY: 'existing-secret'}}}}
-	});
-	await computeSharedStatusAsync(async (command, args) => {
-		if (command === 'pi' && args[0] === '--version') return {code: 0, stdout: '0.1.0', stderr: ''};
-		if (command === 'pi' && args[0] === 'list') {
-			return {code: 0, stdout: 'User packages:\n  npm:pi-mcp-adapter@2.32.1\n', stderr: ''};
-		}
-		return {code: 1, stdout: '', stderr: 'unexpected command'};
-	});
-	const nativeConfigAfterDiscovery = JSON.parse(readFileSync(piMcpConfigFile, 'utf8'));
+	assert.equal(disableServer('native', 'pi').Success, true);
+	assert.deepEqual(json(piMcpConfigPath()).mcpServers.native, {...nativeEntry, enabled: false});
+	assert.equal(readPiMcpAdapterOverride().document.dialect, 'pi-native');
 	assert.deepEqual(
-		nativeConfigAfterDiscovery.mcpServers['pi-existing'],
-		{command: 'pi-existing', env: {PI_KEY: 'existing-secret'}, disabled: true},
-		'Pi adapter 安装后刷新共享列表必须自动投影既有 vault MCP'
+		json(piMcpAdapterOverridesPath()).managedServers,
+		['vault_only', 'native'],
+		'Preserve explicit native ownership; do not relabel old adapter ownership'
 	);
-	const piExistingRow = (await computeSharedStatusAsync(async (command, args) => {
-		if (command === 'pi' && args[0] === '--version') return {code: 0, stdout: '0.1.0', stderr: ''};
-		if (command === 'pi' && args[0] === 'list') return {code: 0, stdout: 'User packages:\n  npm:pi-mcp-adapter@2.32.1\n', stderr: ''};
-		return {code: 1, stdout: '', stderr: 'unexpected command'};
-	})).find(item => item.Id === 'pi-existing');
-	assert.equal(piExistingRow?.injectByAgent.pi.active, false, 'Pi vault-only MCP 不得默认变成 Active');
+	assert.equal(enableServer('native', 'pi').Success, true);
+	assert.deepEqual(json(piMcpConfigPath()).mcpServers.native, nativeEntry);
+	assert.equal(json(piMcpConfigPath()).autoEnableCodemode, false);
+	assert.equal(json(piMcpConfigPath()).userRoot, 'preserve');
+	assert.doesNotMatch(read(piMcpAdapterOverridesPath()), /PI_KEY|TOKEN/);
+	const formBefore = read(piMcpConfigPath());
+	for (const config of [
+		{type: 'sse', url: 'https://example.com/sse'},
+		{command: 'npx', args: [1]},
+		{command: 'npx', env: {KEY: 1}},
+		{command: 'npx', headers: {Key: null}}
+	]) {
+		assert.equal(
+			saveEditedMcpServer('native', JSON.stringify(config)).ok,
+			false,
+			'Native active edit validates raw form before shared normalization'
+		);
+		assert.equal(read(piMcpConfigPath()), formBefore);
+	}
+	assert.equal(
+		saveMcpServer(
+			'http_native',
+			JSON.stringify({type: 'streamable-http', url: 'https://example.com/mcp', oauth: {clientId: 'id', clientSecret: '${SECRET}'}}),
+			'pi'
+		).ok,
+		true
+	);
+	assert.equal(json(piMcpConfigPath()).mcpServers.http_native.type, 'streamable-http');
+	assert.deepEqual(json(piMcpConfigPath()).mcpServers.http_native.oauth, {clientId: 'id', clientSecret: '${SECRET}'});
+	assert.equal(row('http_native').HasCredentials, true, 'OAuth secret presence must not be hidden');
 
-	console.log('[PASS] Pi MCP Adapter：检测、标准配置投影、unsupported、override 边界、凭据隔离、单侧启停与共享全量删除门禁全部通过');
+	persistSharedDefinition('shared', {command: 'pi-shared'}, {API_KEY: 'secret-value'}, '');
+	writeJson(claudeJsonPath(), {mcpServers: {shared: {command: 'claude-runtime'}}});
+	writeText(codexConfigPath(), '[mcp_servers.shared]\ncommand = "codex-runtime"\n');
+	writeJson(settingsPath(), {permissions: {allow: ['mcp__shared', 'Bash']}});
+	const otherBefore = [claudeJsonPath(), codexConfigPath(), settingsPath()].map(read);
+	assert.equal(enableServer('shared', 'pi').Success, true);
+	assert.deepEqual(json(piMcpConfigPath()).mcpServers.shared, {command: 'pi-shared', env: {API_KEY: 'secret-value'}});
+	assert.deepEqual([claudeJsonPath(), codexConfigPath(), settingsPath()].map(read), otherBefore);
+	assert.equal(disableServer('shared', 'pi').Success, true);
+	assert.equal(json(piMcpConfigPath()).mcpServers.shared.enabled, false);
+	assert.equal(enableServer('shared', 'pi').Success, true);
+	assert.equal(json(piMcpConfigPath()).mcpServers.shared.enabled, undefined);
+	assert.equal(syncSharedDefinition('shared', {command: 'updated'}, {API_KEY: 'new-secret'}, '').Success, true);
+	assert.equal(json(piMcpConfigPath()).mcpServers.shared.command, 'updated');
+	assert.equal(removeSharedServer('shared', true).Success, true);
+	assert.equal(json(piMcpConfigPath()).mcpServers.shared, undefined);
+	assert.equal(json(piMcpAdapterOverridesPath()).servers.shared, undefined);
+	assert.equal(json(piMcpAdapterOverridesPath()).userField, 'keep');
+	assert.doesNotMatch(read(claudeJsonPath()), /shared/);
+	assert.doesNotMatch(read(codexConfigPath()), /mcp_servers.shared/);
+	assert.doesNotMatch(read(settingsPath()), /mcp__shared/);
+	assert.equal(json(vaultPath()).servers.shared, undefined);
+	assert.deepEqual(json(piMcpConfigPath()).mcpServers.external, {command: 'external', enabled: false});
+
+	// Ignored legacy flags/SSE/id/schema must not become false success, nor mutate bytes.
+	for (const [id, config] of [
+		['legacy', {command: 'old', disabled: true}],
+		['bad.id', {command: 'bad'}],
+		['sse', {type: 'sse', url: 'https://example.com/sse'}],
+		['bad_args', {command: 'npx', args: [1]}],
+		['alias_url', {httpUrl: 'https://example.com/mcp'}],
+		['alias_headers', {url: 'https://example.com/mcp', http_headers: {Authorization: 'SENTINEL-OLD-HEADER'}}]
+	]) {
+		writeJson(piMcpConfigPath(), {mcpServers: {[id]: config}});
+		const before = read(piMcpConfigPath());
+		assert.equal(row(id).injectByAgent.pi.supported, false, `Unsupported schema must remain rejected: ${id}`);
+		assert.equal(enableServer(id, 'pi').Success, false);
+		assert.equal(disableServer(id, 'pi').Success, false);
+		assert.equal(read(piMcpConfigPath()), before);
+	}
+	for (const bad of [
+		'{broken SENTINEL-SECRET',
+		'{"mcp-servers":{"old":{"command":"npx"}}}',
+		'{"mcpServers":null}',
+		'{"autoEnableCodemode":"false"}'
+	]) {
+		writeText(piMcpConfigPath(), bad);
+		assert.equal(currentPiMcpNativeFact().reason, 'config-read-failed');
+		assert.equal(enableServer('native', 'pi').Success, false);
+		assert.equal(read(piMcpConfigPath()), bad);
+	}
+	writeJson(piMcpConfigPath(), {mcpServers: {native: nativeEntry}});
+	writeText(piMcpAdapterOverridesPath(), '{broken override');
+	assert.equal(currentPiMcpNativeFact().reason, 'override-read-failed');
+	assert.equal(enableServer('native', 'pi').Success, false);
+	assert.equal(read(piMcpAdapterOverridesPath()), '{broken override');
+	assert.deepEqual(protectedPaths.map(read), protectedBefore, 'Adapter/project/OAuth bytes never touched');
+	assert.equal(existsSync(join(piAgentDir(), 'extensions')), false, 'No extensions installed/uninstalled');
+	console.log(
+		'[PASS] Pi native MCP: version-only detection, enabled/schema, ownership, read-only async refresh, single-agent writes, secrets, shared deletion, corruption and protected files'
+	);
 } finally {
+	resetPiMcpNativeFact();
 	delete process.env.CCQ_HOME;
-	delete process.env.HOME;
 	rmSync(home, {recursive: true, force: true});
 }

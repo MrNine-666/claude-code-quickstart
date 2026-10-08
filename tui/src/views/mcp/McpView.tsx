@@ -16,7 +16,8 @@ import {
 	validateMcpJsonAction,
 	type McpFormModel,
 	type McpToggleDraft,
-	type McpViewActionResult
+	type McpViewActionResult,
+	type McpViewRow
 } from './mcp-view-actions.js';
 
 export type McpViewProps = {
@@ -32,7 +33,8 @@ type McpScreen =
 	| {readonly kind: 'confirm-remove'; readonly serverId: string};
 
 export default function McpView({active, onSubModeChange, onExitToNav}: McpViewProps) {
-	const [rows, setRows] = useState(loadMcpRowsAction);
+	const [loading, setLoading] = useState(true);
+	const [rows, setRows] = useState<readonly McpViewRow[]>([]);
 	const [selected, setSelected] = useState(0);
 	const [screen, setScreen] = useState<McpScreen>({kind: 'list'});
 	const [toggleDraft, setToggleDraft] = useState<McpToggleDraft>({cc: false, cx: false, pi: false});
@@ -48,7 +50,7 @@ export default function McpView({active, onSubModeChange, onExitToNav}: McpViewP
 	}, [active, onSubModeChange, rows.length, screen.kind]);
 
 	useEffect(() => {
-		if (!active) return;
+		// 菜单预览挂载即加载；active 只控制键盘输入与子模式上报。
 		let cancelled = false;
 		void loadMcpRowsActionAsync()
 			.then(next => {
@@ -57,12 +59,15 @@ export default function McpView({active, onSubModeChange, onExitToNav}: McpViewP
 				setSelected(previous => Math.min(previous, Math.max(0, next.length - 1)));
 			})
 			.catch(() => {
-				// 同步保守投影已经可用；Pi adapter 检测失败由 unsupported 状态承载。
+				// 同步保守投影已经可用；Pi 原生 CLI/版本检测失败由 unsupported 状态承载。
+			})
+			.finally(() => {
+				if (!cancelled) setLoading(false);
 			});
 		return () => {
 			cancelled = true;
 		};
-	}, [active]);
+	}, []);
 
 	function refresh(): void {
 		const next = loadMcpRowsAction();
@@ -103,6 +108,7 @@ export default function McpView({active, onSubModeChange, onExitToNav}: McpViewP
 			current={current}
 			mode={screen.kind}
 			active={active}
+			loading={loading}
 			toggleDraft={toggleDraft}
 			toggleIndex={toggleIndex}
 			onMove={delta => setSelected(previous => moveMcpGridCursor(previous, rows.length, delta < 0 ? 'up' : 'down'))}

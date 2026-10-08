@@ -1,5 +1,6 @@
 import {loadMcpContract, type McpServerDefinition} from './mcp-contract.js';
 import {validateServerId, type McpConfigEntry} from './mcp-config-builder.js';
+import {validatePiMcpServer} from './pi-mcp-adapter.js';
 
 // MCP 表单 core（JSON 即真源范式）：模板生成、config↔JSON、保存校验。
 // 取代旧字段集/字段↔JSON 联动——表单直接编辑最终 config JSON，落盘前由 parseMcpFormInput 校验。
@@ -208,8 +209,9 @@ export function parseMcpJsonFormat(json: string): McpJsonFormatResult {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(json);
-	} catch (error) {
-		return {ok: false, error: `JSON 格式错误: ${error instanceof Error ? error.message : String(error)}`};
+	} catch {
+		// Native OAuth/clientSecret and other MCP values must not appear in parser diagnostics.
+		return {ok: false, error: 'JSON 格式错误，请检查配置语法'};
 	}
 
 	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -237,9 +239,10 @@ function buildConfigFromRaw(raw: Record<string, unknown>): ConfigFromRawResult {
 			return {ok: false, error: 'http 类型 MCP 必须提供 url'};
 		}
 
-		// 透传全部键，再对已知需规整的字段覆盖：type 固定 http（.claude.json 语义），
+		// Preserve explicit transport: never turn SSE into native streamable HTTP.
 		// headers 过滤空值（占位留空=匿名使用），env 剔除 null/undefined。
-		const config: McpConfigEntry = {...raw, type: 'http', url: raw.url};
+		const config: McpConfigEntry = {...raw, url: raw.url};
+		if (raw.type === undefined) config.type = 'http';
 		applyBucketOrDelete(config, 'headers', normalizeHeaders(raw.headers));
 		applyBucketOrDelete(config, 'env', normalizeEnv(raw.env));
 		return {ok: true, config};
@@ -273,7 +276,7 @@ function applyBucketOrDelete(config: McpConfigEntry, key: string, value: unknown
  * - http URL 若含 `{NAME}` 占位符：优先用 env[NAME] 做 encodeURIComponent 替换（兼容旧模板），
  *   成功后剥离对应 env；仍有未替换占位符则报错
  */
-export function parseMcpFormInput(serverId: string, json: string): McpFormParseResult {
+export function parseMcpFormInput(serverId: string, json: string, piNative = false): McpFormParseResult {
 	const trimmedId = serverId.trim();
 	const idError = validateServerId(trimmedId);
 	if (idError) {
@@ -285,7 +288,15 @@ export function parseMcpFormInput(serverId: string, json: string): McpFormParseR
 		return {ok: false, error: format.error};
 	}
 
-	const result = buildConfigFromRaw(format.value);
+	// Validate native input BEFORE generic Claude normalization can hide SSE or coerce bad env/args.
+	if (piNative) {
+		const error = validatePiMcpServer(trimmedId, format.value);
+		if (error) return {ok: false, error: `Pi 原生 MCP: ${error}`};
+	}
+	// Native empty Authorization changes OAuth selection; valid fields must not undergo Claude normalization.
+	const result: ConfigFromRawResult = piNative
+		? {ok: true, config: {...format.value} as McpConfigEntry}
+		: buildConfigFromRaw(format.value);
 	if (!result.ok) {
 		return {ok: false, error: result.error};
 	}

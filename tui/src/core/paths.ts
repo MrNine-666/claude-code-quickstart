@@ -40,6 +40,11 @@ export function selfUpdateCacheDir(): string {
 	return join(ccqDir(), 'self-update');
 }
 
+/** CCQ 自身系统设置文件 `~/.ccq/system-settings.json`（只拥有 CCQ 偏好，不写 Agent 配置）。 */
+export function ccqSystemSettingsPath(): string {
+	return join(ccqDir(), 'system-settings.json');
+}
+
 export function vaultPath(): string {
 	return join(ccqDir(), 'mcp-meta.json');
 }
@@ -116,12 +121,12 @@ export function piModelsStorePath(): string {
 	return join(piAgentDir(), 'models-store.json');
 }
 
-/** Pi MCP adapter 的 CCQ 状态/ownership sidecar；适配器本身不读取此文件。 */
+/** CCQ MCP ownership sidecar（保留历史文件名）；Pi 不读取此文件。 */
 export function piMcpAdapterOverridesPath(): string {
 	return join(piAgentDir(), 'mcp-adapter-overrides.json');
 }
 
-/** Pi MCP adapter 实际读取的 Pi 全局标准 MCP 配置，包含 mcpServers 定义。 */
+/** Pi 1.0.0 原生全局 MCP 配置；不读取或迁移 mcp-adapter.json。 */
 export function piMcpConfigPath(): string {
 	return join(piAgentDir(), 'mcp.json');
 }
@@ -134,6 +139,11 @@ export function piAgentsPath(): string {
 /** Pi 全局 Skills 目录 `~/.pi/agent/skills`。 */
 export function piGlobalSkillsDir(): string {
 	return join(piAgentDir(), 'skills');
+}
+
+/** Pi 全局 Extensions 目录 `~/.pi/agent/extensions`（调用时解析，供导入导出实际内容快照）。 */
+export function piExtensionsDir(): string {
+	return join(piAgentDir(), 'extensions');
 }
 
 /** 当前项目 Pi settings（只读探测，配置页不会写入）。 */

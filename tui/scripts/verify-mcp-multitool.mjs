@@ -12,12 +12,7 @@ import {
 	persistMcpServer,
 	removeServer
 } from '../src/core/mcp.ts';
-import {
-	addSharedMcpServer,
-	applyMcpToggleTargets,
-	removeSharedMcpServer,
-	saveEditedMcpServer
-} from '../src/services/mcp-service.ts';
+import {addSharedMcpServer, applyMcpToggleTargets, removeSharedMcpServer, saveEditedMcpServer} from '../src/services/mcp-service.ts';
 import {loadVault} from '../src/core/mcp-vault.ts';
 
 // MCP 双 Agent 文件事实源。
@@ -69,7 +64,11 @@ assert.equal(row(codexRows, 'ctx7').Status, 'Disabled', 'Codex：vault-only 会�
 let codexToml = readCodexConfig();
 assert.match(codexToml, /url\s*=\s*"https:\/\/ctx7\.example"/, 'Codex vault-only 配置补写到 config.toml');
 assert.match(codexToml, /enabled\s*=\s*false/, 'Codex vault-only 补回时写 enabled=false');
-assert.equal(codexRows.some(item => item.Status === 'Missing'), false, 'MCP 列表不再由内置契约生成 Missing 项');
+assert.equal(
+	codexRows.some(item => item.Status === 'Missing'),
+	false,
+	'MCP 列表不再由内置契约生成 Missing 项'
+);
 console.log('[PASS] 7.2 Codex vault/config.toml 双向补齐（vault → config disabled）');
 
 // Codex persist 写入 config.toml [mcp_servers.<id>]，不写 .claude.json permissions，并同步 vault。
@@ -77,7 +76,9 @@ persistMcpServer('ctx7', {type: 'http', url: 'https://codex.example'}, {}, '', '
 codexToml = readCodexConfig();
 assert.match(codexToml, /\[mcp_servers\.ctx7\]/, 'Codex persist 写 [mcp_servers.ctx7]');
 assert.match(codexToml, /url\s*=\s*"https:\/\/codex\.example"/, 'Codex persist 写入 URL');
-assert.equal(row(computeStatus('cx'), 'ctx7').Status, 'Active', 'Codex：table 存在为 Active');
+assert.equal(row(computeStatus('cx'), 'ctx7').Status, 'Disabled', 'Codex 保存不启用原本禁用的 table');
+assert.equal(enableServer('ctx7', 'cx').Success, true, '仅显式开启改变 activation');
+assert.equal(row(computeStatus('cx'), 'ctx7').Status, 'Active');
 assert.equal(loadVault().servers.ctx7.config.url, 'https://codex.example', 'Codex persist 同步 vault');
 assert.equal(readFileSync(settingsPath, 'utf8').includes('mcp__ctx7'), true, 'Codex persist 不删除既有 Claude permission');
 console.log('[PASS] 7.2/7.3 Codex MCP TOML persist + Active 状态');
@@ -98,7 +99,11 @@ assert.equal(row(computeStatus('cx'), 'ctx7').Status, 'Active', 'Codex enable �
 console.log('[PASS] 7.3 Codex enable 恢复 Active');
 
 // 用户手工在 Codex config 中新增/禁用 MCP，会同步回 vault。
-writeFileSync(join(codexHome, 'config.toml'), '[mcp_servers.manual]\ntype = "http"\nurl = "https://manual.example"\nenabled = false\n', 'utf8');
+writeFileSync(
+	join(codexHome, 'config.toml'),
+	'[mcp_servers.manual]\ntype = "http"\nurl = "https://manual.example"\nenabled = false\n',
+	'utf8'
+);
 codexRows = computeStatus('cx');
 assert.equal(row(codexRows, 'manual').Status, 'Disabled', 'Codex 手动 enabled=false 为 Disabled');
 assert.equal(loadVault().servers.manual.config.url, 'https://manual.example', 'Codex 手动配置会同步到 vault');
@@ -119,7 +124,11 @@ console.log('[PASS] 7.4/7.7 Codex remove = config/vault 双删，且与 Claude �
 
 // Claude disable/remove 仍操作 .claude.json；disable 保留 vault 备份用于重新启用，remove 才删除 vault。
 assert.equal(disableServer('ctx7', 'cc').Success, true, 'Claude disable 成功');
-assert.equal(row(computeStatus('cc'), 'ctx7').Status, 'Disabled', 'Claude disable 移除 .claude.json 后由 vault 备份展示 Disabled，便于重新启用');
+assert.equal(
+	row(computeStatus('cc'), 'ctx7').Status,
+	'Disabled',
+	'Claude disable 移除 .claude.json 后由 vault 备份展示 Disabled，便于重新启用'
+);
 assert.equal(loadVault().servers.ctx7.disabled, undefined, 'Claude disable 不写 vault.disabled');
 assert.equal(getServerDetail('ctx7', 'cc').config.url, 'https://ctx7.example', '禁用后编辑详情可从 vault 备份回显 config');
 assert.equal(enableServer('ctx7', 'cc').Success, true, 'Claude enable 从 vault 恢复');
@@ -176,7 +185,11 @@ console.log('[PASS] 13.2 Enter 双侧 checkbox 批量提交（未变侧不写，
 const editResult = saveEditedMcpServer('shared7', JSON.stringify({type: 'http', url: 'https://shared7-v2.example'}), 'cc');
 assert.equal(editResult.ok, true, 'saveEditedMcpServer 成功');
 assert.equal(loadVault().servers.shared7.config.url, 'https://shared7-v2.example', 'edit 更新 vault 共享定义');
-assert.equal(JSON.parse(readFileSync(claudeJsonPath, 'utf8')).mcpServers.shared7.url, 'https://shared7-v2.example', 'edit 同步已开启的 cc 侧');
+assert.equal(
+	JSON.parse(readFileSync(claudeJsonPath, 'utf8')).mcpServers.shared7.url,
+	'https://shared7-v2.example',
+	'edit 同步已开启的 cc 侧'
+);
 assert.match(readCodexConfig(), /url\s*=\s*"https:\/\/shared7-v2\.example"/, 'edit 同步已开启的 cx 侧');
 console.log('[PASS] 13.2 edit 写 vault + 同步所有已开启侧');
 

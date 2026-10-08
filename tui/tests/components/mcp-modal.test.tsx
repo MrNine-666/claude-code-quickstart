@@ -27,7 +27,7 @@ const ROWS: readonly McpSharedRow[] = ['alpha', 'beta', 'gamma', 'delta', 'epsil
 	injectByAgent: {
 		cc: inject({active: Id === 'alpha'}),
 		cx: inject({active: Id === 'beta'}),
-		pi: inject({supported: false, reason: 'adapter-not-installed'})
+		pi: inject({supported: false, reason: 'Pi 原生 MCP 能力尚未检测'})
 	}
 }));
 
@@ -60,6 +60,7 @@ function McpHarness({mode, initialIndex = 0}: {readonly mode: McpHomeMode; reado
 			current={ROWS[selected] ?? null}
 			mode={mode}
 			active
+			loading={false}
 			toggleDraft={{cc: false, cx: false, pi: false}}
 			toggleIndex={toggleIndex}
 			onMove={delta => setSelected(previous => moveMcpGridCursor(previous, ROWS.length, delta < 0 ? 'up' : 'down'))}

@@ -61,7 +61,7 @@ function renameWithWindowsRetry(tempPath: string, filePath: string): void {
  * 未关闭句柄导致 renameSync 报 EPERM（对齐旧 manage.js atomicWrite 行为）；
  * 目标文件被 Windows 外部进程短暂占用时，renameWithWindowsRetry 会重试替换。
  */
-export function atomicWrite(filePath: string, content: string, options: AtomicWriteOptions = {}): void {
+export function atomicWrite(filePath: string, content: string | Buffer, options: AtomicWriteOptions = {}): void {
 	const dir = dirname(filePath);
 	if (!existsSync(dir)) {
 		mkdirSync(dir, {recursive: true});
@@ -77,6 +77,7 @@ export function atomicWrite(filePath: string, content: string, options: AtomicWr
 
 	const tempPath = `${filePath}.tmp.${Date.now()}.${process.pid}`;
 	try {
+		// Buffer 内容按原始字节写入（`encoding` 对 Buffer 无效）；字符串保持既有 utf8 语义。
 		writeFileSync(tempPath, content, {encoding: 'utf8', mode: effectiveMode});
 		renameWithWindowsRetry(tempPath, filePath);
 		if (effectiveMode !== undefined && process.platform !== 'win32') {

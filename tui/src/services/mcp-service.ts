@@ -4,13 +4,13 @@ import {
 	computeSharedStatus,
 	computeSharedStatusAsync,
 	computeStatus,
+	createSharedDefinition,
 	disableServer,
 	disableServerAsync,
 	enableServer,
 	enableServerAsync,
 	getServerDetail,
 	persistMcpServer,
-	persistSharedDefinition,
 	removeServer,
 	removeSharedServer,
 	syncCredentials,
@@ -23,6 +23,7 @@ import {
 import {definitionHash} from '../core/mcp-vault.js';
 import {type McpConfigEntry} from '../core/mcp-config-builder.js';
 import {parseMcpFormInput} from '../core/mcp-form.js';
+import {readPiMcpConfig} from '../core/pi-mcp-adapter.js';
 import {loadMcpContract, type McpServerDefinition} from '../core/mcp-contract.js';
 
 // MCP service：TUI 视图唯一入口。enable/disable/remove 后统一落盘（HC-MCP-RULES-OFF：不再同步 rules 文件）。
@@ -91,7 +92,7 @@ export function removeMcpServer(serverId: string, confirmed: boolean, agentConte
  * agentContext 仅决定落盘侧（cc 写 .claude.json，cx 经 toCodexMcpConfig 降级写 config.toml）。
  */
 export function saveMcpServer(serverId: string, text: string, agentContext: AgentContext = 'cc'): McpServiceResult {
-	const parsed = parseMcpFormInput(serverId, text);
+	const parsed = parseMcpFormInput(serverId, text, agentContext === 'pi');
 	if (!parsed.ok) {
 		return {ok: false, error: parsed.error};
 	}
@@ -126,7 +127,7 @@ export function loadSharedMcpStatus(): readonly McpSharedRow[] {
 	return computeSharedStatus();
 }
 
-/** 异步读取 Pi adapter/package 事实后再投影；同步入口保守显示 unsupported。 */
+/** 检测 Pi 原生 CLI/版本后投影；刷新不写 runtime 或接管用户条目。 */
 export async function loadSharedMcpStatusAsync(exec: typeof execCommand = execCommand): Promise<readonly McpSharedRow[]> {
 	return computeSharedStatusAsync(exec);
 }
@@ -209,23 +210,26 @@ export async function applyMcpToggleTargetsAsync(
  * 统一 JSON 方言解析（c 语义：type + headers），落盘只进 vault。
  */
 export function addSharedMcpServer(serverId: string, text: string): McpServiceResult {
-	return persistParsed(serverId, text, persistSharedDefinition);
+	return persistParsed(serverId, text, createSharedDefinition);
 }
 
 /**
  * edit 保存（Section 9.3）：写 vault 共享定义 + 同步所有当前已开启侧；未开启侧不开启。
  */
 export function saveEditedMcpServer(serverId: string, text: string): McpServiceResult {
-	return persistParsed(serverId, text, syncSharedDefinition);
+	return persistParsed(serverId, text, syncSharedDefinition, true);
 }
 
 /** 解析表单文本（统一 JSON）→ 调用给定落盘函数（persistSharedDefinition / syncSharedDefinition）。 */
 function persistParsed(
 	serverId: string,
 	text: string,
-	persist: (id: string, config: Record<string, unknown>, credentials: Record<string, string>, hash: string) => McpActionResult
+	persist: (id: string, config: Record<string, unknown>, credentials: Record<string, string>, hash: string) => McpActionResult,
+	validateActivePi = false
 ): McpServiceResult {
-	const parsed = parseMcpFormInput(serverId, text);
+	const native = validateActivePi ? readPiMcpConfig() : null;
+	const piConfig = native?.ok ? native.document.mcpServers[serverId] : undefined;
+	const parsed = parseMcpFormInput(serverId, text, Boolean(piConfig) && piConfig?.enabled !== false);
 	if (!parsed.ok) {
 		return {ok: false, error: parsed.error};
 	}

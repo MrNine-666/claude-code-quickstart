@@ -8,7 +8,7 @@ import {McpHomeView, type McpHomeMode, type McpHomeViewProps} from '../../src/vi
 // A 类改写（P1-G3）：verify-mcp-shared-projection.mjs 源码正则段
 //   132 unsupported badge 只展示 Agent 名称
 //   133 卡片不得把 Pi 扩展原因挤进内容
-//   134 MCP Enter 弹窗提示先安装 Pi adapter 扩展
+//   134 MCP Enter 弹窗提示 Pi 原生 CLI 版本与 reload
 //   135/140 列表与目标 Modal 的输入处理器只在对应模式生效
 
 function key(name: string, modifiers: Partial<ParsedKey> = {}): KeyEvent {
@@ -37,7 +37,7 @@ const row: McpSharedRow = {
 	injectByAgent: {
 		cc: {active: true, disabled: false, supported: true},
 		cx: {active: false, disabled: false, supported: true},
-		pi: {active: false, disabled: false, supported: false, reason: 'adapter-not-installed'}
+		pi: {active: false, disabled: false, supported: false, reason: '需 Pi >=1.0.0 正式版'}
 	}
 };
 
@@ -49,6 +49,7 @@ function renderHome(mode: McpHomeMode, handlers: Partial<McpHomeViewProps> = {})
 			current={row}
 			mode={mode}
 			active
+			loading={false}
 			toggleDraft={{cc: true, cx: false, pi: false}}
 			toggleIndex={0}
 			onMove={handlers.onMove ?? (() => {})}
@@ -74,7 +75,7 @@ describe('McpHomeView unsupported badge 与输入隔离', () => {
 		try {
 			const frame = await setup.waitForFrame(output => output.includes('alpha'));
 			expect(frame).toContain('⊘ Pi');
-			expect(frame).not.toContain('adapter-not-installed');
+			expect(frame).not.toContain('1.0.0');
 			expect(frame).not.toContain('需先安装');
 		} finally {
 			await act(async () => {
@@ -83,11 +84,13 @@ describe('McpHomeView unsupported badge 与输入隔离', () => {
 		}
 	});
 
-	test('目标 Modal 提示先安装 Pi adapter 扩展', async () => {
+	test('目标 Modal 提示 Pi 原生最低版本与 reload，不要求 adapter 扩展', async () => {
 		const setup = await renderHome('select-toggle-target');
 		try {
 			const frame = await setup.waitForFrame(output => output.includes('管理开关'));
-			expect(frame).toContain('需先安装 pi-mcp-adapter 扩展');
+			expect(frame).toContain('需 Pi >=1.0.0 正式版');
+			expect(frame).toContain('/reload');
+			expect(frame).not.toContain('需先安装 pi-mcp-adapter');
 		} finally {
 			await act(async () => {
 				setup.renderer.destroy();

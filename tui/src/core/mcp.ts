@@ -7,18 +7,17 @@ import {atomicWrite as writeTomlAtomic, deletePath, getPath, parse as parseToml,
 import {loadMcpContract, resolveEffectiveDefinition, type McpServerDefinition} from './mcp-contract.js';
 import {toCodexMcpConfig} from './mcp-codex-schema.js';
 import {
-	currentPiMcpAdapterFact,
-	detectPiMcpAdapter,
+	currentPiMcpNativeFact,
+	detectPiMcpNative,
 	piMcpDisplayReason,
-	piMcpOverrideEnabled,
+	piMcpMergeBase,
 	piMcpUnsupportedReason,
 	readPiMcpConfig,
 	removePiMcpOverride,
 	removePiMcpOverrideRecord,
-	syncPiMcpConfig,
 	writePiMcpOverride,
-	type PiMcpAdapterFact,
-	type PiMcpServerProjection
+	validatePiMcpServer,
+	type PiMcpNativeFact
 } from './pi-mcp-adapter.js';
 import {definitionHash, loadVault, saveVault, withVaultLock, type McpVault, type McpVaultServerEntry} from './mcp-vault.js';
 
@@ -200,13 +199,18 @@ function normalizeCredentials(entry: McpVaultServerEntry | undefined): Record<st
 	return {};
 }
 
+/** 导入导出 seam：只读归一化 vault entry 的凭据值（两种历史存法 → 扁平 record）。 */
+export function normalizeVaultCredentials(entry: McpVaultServerEntry | undefined): Record<string, string> {
+	return normalizeCredentials(entry);
+}
+
 function readPiRuntimeServers(): Record<string, Record<string, unknown>> {
 	const result = readPiMcpConfig();
 	return result.ok ? {...result.document.mcpServers} : {};
 }
 
 function isPiServerDisabled(config: Record<string, unknown> | undefined): boolean {
-	return config?.disabled === true;
+	return config?.enabled === false;
 }
 
 function mcpTypeFromConfig(config: Record<string, unknown> | undefined): string {
@@ -219,47 +223,12 @@ function mcpTypeFromConfig(config: Record<string, unknown> | undefined): string 
 
 function hasRuntimeCredentials(config: Record<string, unknown> | undefined): boolean {
 	if (!config) return false;
+	const oauth = config.oauth;
+	if (oauth && typeof oauth === 'object' && 'clientSecret' in oauth && typeof oauth.clientSecret === 'string') return true;
 	return ['env', 'headers', 'http_headers'].some(key => {
 		const values = config[key];
 		return Boolean(values && typeof values === 'object' && !Array.isArray(values) && Object.keys(values).length > 0);
 	});
-}
-
-function buildPiMcpProjections(): readonly PiMcpServerProjection[] {
-	const contractServers = loadMcpContract().servers;
-	const vault = loadVault();
-	const piRuntimeServers = readPiRuntimeServers();
-	const projections: PiMcpServerProjection[] = [];
-
-	for (const [serverId, entry] of Object.entries(vault.servers ?? {})) {
-		const config = entry?.config;
-		if (!config || typeof config !== 'object' || Array.isArray(config)) continue;
-
-		const baseDefinition = contractServers[serverId];
-		const definition = baseDefinition ? resolveEffectiveDefinition(baseDefinition, 'pi') : null;
-		const expressible = Boolean(
-			definition?.Command || definition?.Url || definition?.UrlTemplate || config.command || config.url || config.httpUrl
-		);
-		if (!expressible) continue;
-
-		const nativeConfig = piRuntimeServers[serverId];
-		const override = piMcpOverrideEnabled(serverId);
-		projections.push({
-			serverId,
-			definition,
-			config,
-			credentials: normalizeCredentials(entry),
-			enabled: nativeConfig ? !isPiServerDisabled(nativeConfig) : override === true
-		});
-	}
-
-	return projections;
-}
-
-function syncPiMcpConfigFromVault(): void {
-	if (!currentPiMcpAdapterFact().supported) return;
-	const result = syncPiMcpConfig(buildPiMcpProjections());
-	if (!result.Success) throw new Error(`Pi MCP 标准配置同步失败: ${result.Status}`);
 }
 
 /** 计算所有 MCP Server 状态（Custom/Active/Disabled/Missing/Unknown，按优先级排序）。 */
@@ -357,6 +326,7 @@ export function computeSharedStatus(): readonly McpSharedRow[] {
 	const claudeServers = readClaudeJson().mcpServers ?? {};
 	const codexServers = readCodexMcpServers();
 	const piServers = readPiRuntimeServers();
+	const piFact = currentPiMcpNativeFact();
 	const contractServers = loadMcpContract().servers;
 
 	// 三侧现有 runtime 配置备份进 vault（共享定义源），不反向物化 vault → runtime。
@@ -395,8 +365,13 @@ export function computeSharedStatus(): readonly McpSharedRow[] {
 			: Boolean(metaEntry?.credentials) || hasRuntimeCredentials(piConfig);
 		const hasDefinition = Boolean(metaEntry?.config);
 		const piDefinition = def ? resolveEffectiveDefinition(def, 'pi') : null;
-		const piFact = currentPiMcpAdapterFact();
-		const piReason = piMcpUnsupportedReason(piFact, piDefinition, piConfig ?? metaEntry?.config ?? null);
+		const piReason = piMcpUnsupportedReason(
+			piFact,
+			piDefinition,
+			piConfig ?? metaEntry?.config ?? null,
+			id,
+			piConfig ? 'pi-native' : 'shared'
+		);
 		const pi: McpAgentInjectState = piReason
 			? {active: false, disabled: false, supported: false, reason: piMcpDisplayReason(piReason)}
 			: {
@@ -426,7 +401,7 @@ export function computeSharedStatus(): readonly McpSharedRow[] {
 /**
  * 把 Claude/Codex/Pi 现有 runtime 配置备份进 vault 作共享定义源（纯备份，不反向物化）。
  * - 存前剥离 `enabled`/`disabled`：vault 存纯定义体，开关态由 runtime 派生（与 persistSharedDefinition 对齐；
- *   否则 Codex 的 `enabled:false` 或 Pi 的 `disabled:true` 会随跨侧恢复原样泄漏）。
+ *   否则 Codex 的 `enabled:false` 或 Pi 的 `enabled:false` 会随跨侧恢复原样泄漏）。
  * - 同 ID 多侧都存在时 **Claude 优先，其次 Codex，最后 Pi**：cc 方言更规范（保留 type/headers，可经 toCodexMcpConfig 降级到
  *   Codex；反向无法从 Codex 形状恢复 type/headers），故用 cc 定义体作共享源。
  */
@@ -822,8 +797,10 @@ function piServerInputs(serverId: string): {
 	const base = loadMcpContract().servers[serverId];
 	const definition = base ? resolveEffectiveDefinition(base, 'pi') : null;
 	const entry = loadVault().servers[serverId];
-	const config = entry?.config ?? readPiRuntimeServers()[serverId] ?? null;
-	return {definition, config, credentials: normalizeCredentials(entry)};
+	const native = readPiRuntimeServers()[serverId];
+	// Native endpoint/credentials win over another Agent's same-id vault backup.
+	const config = native ?? entry?.config ?? null;
+	return {definition, config, credentials: native ? {} : normalizeCredentials(entry)};
 }
 
 function writePiServerOverride(serverId: string, enabled: boolean): McpActionResult {
@@ -836,15 +813,28 @@ function removePiServerOverride(serverId: string): McpActionResult {
 	return removePiMcpOverride(serverId, definition, config, credentials);
 }
 
-export async function detectPiMcpStatus(exec: typeof execCommand = execCommand): Promise<PiMcpAdapterFact> {
-	return detectPiMcpAdapter(exec);
+export async function detectPiMcpStatus(exec: typeof execCommand = execCommand): Promise<PiMcpNativeFact> {
+	return detectPiMcpNative(exec);
+}
+
+function ensurePiNativeMcpEntries(): void {
+	const native = readPiRuntimeServers();
+	for (const [serverId, entry] of Object.entries(loadVault().servers ?? {})) {
+		if (Object.hasOwn(native, serverId)) continue;
+		const definition = loadMcpContract().servers[serverId];
+		writePiMcpOverride(
+			serverId,
+			false,
+			definition ? resolveEffectiveDefinition(definition, 'pi') : null,
+			entry.config ?? null,
+			normalizeCredentials(entry)
+		);
+	}
 }
 
 export async function computeSharedStatusAsync(exec: typeof execCommand = execCommand): Promise<readonly McpSharedRow[]> {
-	await detectPiMcpAdapter(exec);
-	// 先读取/备份其它 Agent 的 runtime，再投影 Pi，最后重新读取 native 状态作为最终事实。
-	computeSharedStatus();
-	syncPiMcpConfigFromVault();
+	await detectPiMcpNative(exec);
+	ensurePiNativeMcpEntries();
 	return computeSharedStatus();
 }
 
@@ -854,7 +844,7 @@ export async function enableServerAsync(
 	exec: typeof execCommand = execCommand
 ): Promise<McpActionResult> {
 	if (agentContext !== 'pi') return enableServer(serverId, agentContext);
-	await detectPiMcpAdapter(exec);
+	await detectPiMcpNative(exec);
 	return enableServer(serverId, agentContext);
 }
 
@@ -864,7 +854,7 @@ export async function disableServerAsync(
 	exec: typeof execCommand = execCommand
 ): Promise<McpActionResult> {
 	if (agentContext !== 'pi') return disableServer(serverId, agentContext);
-	await detectPiMcpAdapter(exec);
+	await detectPiMcpNative(exec);
 	return disableServer(serverId, agentContext);
 }
 
@@ -876,7 +866,7 @@ export async function removeServerAsync(
 ): Promise<McpActionResult> {
 	if (agentContext !== 'pi') return removeServer(serverId, confirmed, agentContext);
 	if (!confirmed) return removeServer(serverId, false, agentContext);
-	await detectPiMcpAdapter(exec);
+	await detectPiMcpNative(exec);
 	return removeServer(serverId, true, agentContext);
 }
 
@@ -938,6 +928,17 @@ export function persistMcpServer(
 	definitionHashValue: string,
 	agentContext: AgentContext = 'cc'
 ): McpActionResult {
+	if (agentContext === 'pi') {
+		const base = loadMcpContract().servers[serverId];
+		const definition = base ? resolveEffectiveDefinition(base, 'pi') : null;
+		const local = readPiMcpConfig();
+		if (!local.ok) return {Success: false, ServerId: serverId, Status: `Unsupported: ${local.detail}`};
+		const existing = local.document.mcpServers[serverId];
+		const active = Boolean(existing) && !isPiServerDisabled(existing);
+		const result = writePiMcpOverride(serverId, active, definition, config, credentials);
+		if (result.Success) persistSharedDefinition(serverId, config, credentials, definitionHashValue);
+		return result;
+	}
 	return agentContext === 'cx'
 		? persistCodexMcpServer(serverId, config, credentials, definitionHashValue)
 		: persistClaudeMcpServer(serverId, config, credentials, definitionHashValue);
@@ -952,13 +953,15 @@ function persistCodexMcpServer(
 	return withVaultLock(() => {
 		const {enabled: _enabled, ...nextConfig} = config;
 		void _enabled;
-		writeCodexMcpServer(serverId, nextConfig);
+		const existing = readCodexMcpServers()[serverId];
+		const active = Boolean(existing) && !isCodexServerDisabled(existing);
+		writeCodexMcpServer(serverId, active ? nextConfig : {...nextConfig, enabled: false});
 
 		const meta = loadVault();
 		backupMcpToVault(meta, serverId, nextConfig, credentials, [], definitionHashValue);
 		saveVault(meta);
 
-		return {Success: true, ServerId: serverId, Status: 'Active'};
+		return {Success: true, ServerId: serverId, Status: active ? 'Active' : 'Disabled'};
 	});
 }
 
@@ -998,18 +1001,54 @@ function persistClaudeMcpServer(
  * 只写 vault 共享定义体，不物化到任何 runtime（Section 9.3 add 路径）。
  * config 归一化去掉 Codex 的 enabled 标记（vault 存纯定义体，开关态由 runtime 派生）。
  */
-export function persistSharedDefinition(
+/** 新增必须在 vault 锁内检查四源 identity，不能复用编辑的覆盖语义。 */
+export function createSharedDefinition(
 	serverId: string,
 	config: Record<string, unknown>,
 	credentials: Record<string, string>,
 	definitionHashValue: string
 ): McpActionResult {
+	return persistSharedDefinition(serverId, config, credentials, definitionHashValue, true);
+}
+
+export function persistSharedDefinition(
+	serverId: string,
+	config: Record<string, unknown>,
+	credentials: Record<string, string>,
+	definitionHashValue: string,
+	createOnly = false
+): McpActionResult {
 	return withVaultLock(() => {
-		const {enabled: _enabled, ...nextConfig} = config;
+		if (createOnly) {
+			const pi = readPiMcpConfig();
+			if (!pi.ok) return {Success: false, ServerId: serverId, Status: `Unsupported: ${pi.detail}`};
+			if (
+				Object.hasOwn(loadVault().servers, serverId) ||
+				Object.hasOwn(readClaudeJson().mcpServers ?? {}, serverId) ||
+				Object.hasOwn(readCodexMcpServers(), serverId) ||
+				Object.hasOwn(pi.document.mcpServers, serverId)
+			) {
+				return {Success: false, ServerId: serverId, Status: 'Server ID 已存在，请使用编辑'};
+			}
+		}
+		const {enabled: _enabled, disabled: _disabled, ...nextConfig} = config;
 		void _enabled;
+		void _disabled;
 		const meta = loadVault();
 		backupMcpToVault(meta, serverId, nextConfig, credentials, meta.servers[serverId]?.permissions ?? [], definitionHashValue);
 		saveVault(meta);
+		const piServers = readPiRuntimeServers();
+		if (!Object.hasOwn(piServers, serverId) && currentPiMcpNativeFact().supported) {
+			const piDefinition = loadMcpContract().servers[serverId];
+			const piResult = writePiMcpOverride(
+				serverId,
+				false,
+				piDefinition ? resolveEffectiveDefinition(piDefinition, 'pi') : null,
+				nextConfig,
+				credentials
+			);
+			if (!piResult.Success) return piResult;
+		}
 		return {Success: true, ServerId: serverId, Status: 'Saved'};
 	});
 }
@@ -1018,7 +1057,7 @@ export function persistSharedDefinition(
  * 编辑保存（Section 9.3）：写 vault 共享定义 + 同步到所有**当前已开启**侧。
  * - cc 已开启（.claude.json 存在）→ 覆盖写 .claude.json；未开启不碰。
  * - cx 已开启（config.toml 存在且非 enabled=false）→ 覆盖写 config.toml；禁用/不存在不碰。
- * - pi 已开启（Pi native mcp.json 存在且 disabled!==true）→ 同步 Pi 标准配置；未开启不碰。
+ * - pi 已开启（原生 `mcp.json` 存在且 enabled!==false）→ 同步 Pi 配置；未开启不碰。
  * - 均未开启：只写 vault。
  * 未开启侧一律不开启（对齐 spec「edit SHALL NOT enable a side that was not previously 开启」）。
  */
@@ -1029,11 +1068,13 @@ export function syncSharedDefinition(
 	definitionHashValue: string
 ): McpActionResult {
 	const piConfig = readPiRuntimeServers()[serverId];
+	const piConfigured = Object.hasOwn(readPiRuntimeServers(), serverId);
 	const piActive = Boolean(piConfig) && !isPiServerDisabled(piConfig);
+	const baseDefinition = loadMcpContract().servers[serverId];
+	const piDefinition = baseDefinition ? resolveEffectiveDefinition(baseDefinition, 'pi') : null;
+	const nextPiConfig = {...piMcpMergeBase(piConfig ?? {}, config), ...config};
 	if (piActive) {
-		const baseDefinition = loadMcpContract().servers[serverId];
-		const piDefinition = baseDefinition ? resolveEffectiveDefinition(baseDefinition, 'pi') : null;
-		const piReason = piMcpUnsupportedReason(currentPiMcpAdapterFact(), piDefinition, config);
+		const piReason = piMcpUnsupportedReason(currentPiMcpNativeFact(), piDefinition, nextPiConfig, serverId);
 		if (piReason) {
 			return {Success: false, ServerId: serverId, Status: `Unsupported: ${piMcpDisplayReason(piReason)}`};
 		}
@@ -1053,8 +1094,8 @@ export function syncSharedDefinition(
 		persistCodexMcpServer(serverId, config, credentials, definitionHashValue);
 	}
 
-	if (piActive) {
-		const piResult = writePiServerOverride(serverId, true);
+	if (piConfigured) {
+		const piResult = writePiMcpOverride(serverId, piActive, piDefinition, nextPiConfig, credentials);
 		if (!piResult.Success) return piResult;
 	}
 
@@ -1071,8 +1112,8 @@ export function removeSharedServer(serverId: string, confirmed = false): McpActi
 	}
 
 	return withVaultLock(() => {
-		// Pi：先清理 adapter-owned override 记录；文件损坏时停止，避免其他侧已删而 Pi 残留。
-		const piCleanup = removePiMcpOverrideRecord(serverId);
+		// 显式确认全量删除授权清理同名 Pi 原生条目，不受 CCQ ownership 限制。
+		const piCleanup = removePiMcpOverrideRecord(serverId, true);
 		if (!piCleanup.Success) return piCleanup;
 
 		// Claude：移除 .claude.json + settings permission。

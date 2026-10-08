@@ -1,8 +1,7 @@
 import React, {useEffect, useRef} from 'react';
 import {TextAttributes, type ScrollBoxRenderable} from '@opentui/core';
 import {useKeyboard} from '@opentui/react';
-import {Card, ListEmptyState, Modal, ThemedScrollbox, ViewHeader} from '../../components/index.js';
-import {PI_MCP_ADAPTER_ID} from '../../core/pi-mcp-adapter.js';
+import {Card, ListEmptyState, ListLoadingState, Modal, ThemedScrollbox, ViewHeader} from '../../components/index.js';
 import {AGENT_CONTEXT_LABELS, AGENT_CONTEXT_ORDER, type AgentContext} from '../../state/manage-state.js';
 import {colors} from '../../theme/index.js';
 import {MCP_GRID_COLUMNS, type McpGridDirection, type McpToggleDraft, type McpViewRow} from './mcp-view-actions.js';
@@ -17,6 +16,7 @@ export type McpHomeViewProps = {
 	readonly current: McpViewRow | null;
 	readonly mode: McpHomeMode;
 	readonly active: boolean;
+	readonly loading: boolean;
 	readonly toggleDraft: McpToggleDraft;
 	readonly toggleIndex: number;
 	readonly onMove: (delta: number) => void;
@@ -39,6 +39,7 @@ export function McpHomeView({
 	current,
 	mode,
 	active,
+	loading,
 	toggleDraft,
 	toggleIndex,
 	onMove,
@@ -57,7 +58,9 @@ export function McpHomeView({
 	return (
 		<box flexDirection="column" flexGrow={1} minHeight={0}>
 			<ViewHeader title="MCP Server 管理" subtitle="维护各 agent 的 MCP Server 连接" />
-			{rows.length === 0 ? (
+			{loading ? (
+				<ListLoadingState message="正在读取 MCP 配置..." />
+			) : rows.length === 0 ? (
 				<ListEmptyState message="暂无 MCP Server" />
 			) : (
 				<McpGrid rows={rows} cursor={selectedIndex} active={active && mode === 'list'} />
@@ -71,11 +74,11 @@ export function McpHomeView({
 						fg={colors.text}
 						selectionBg={colors.selectionBg}
 						selectionFg={colors.selectionFg}
-					>{`即将删除 ${current.Id}：移除 CCQ 管理的 agent 配置；未由 CCQ 接管的 Pi 原生配置会保留。`}</text>
+					>{`即将删除 ${current.Id}：移除 Claude Code、Codex、Pi 的同名配置及共享定义，包括未由 CCQ 创建的配置。`}</text>
 				</Modal>
 			) : null}
 			<McpListInput
-				active={active && mode === 'list'}
+				active={active && !loading && mode === 'list'}
 				hasCurrent={current !== null}
 				atFirst={selectedIndex === 0}
 				onMove={onMove}
@@ -231,6 +234,7 @@ function ToggleTargetModal({
 						</box>
 					);
 				})}
+				<text fg={colors.muted}>Pi 配置变更后 /reload 或重开会话；登录由 pi mcp login 管理。冲突扩展需手动处理。</text>
 			</box>
 		</Modal>
 	);
@@ -238,9 +242,6 @@ function ToggleTargetModal({
 
 function mcpUnsupportedHint(reason?: string): string {
 	if (!reason) return '不支持';
-	if (reason === 'adapter-not-installed' || /pi-mcp-adapter.*未安装/i.test(reason)) {
-		return `需先安装 ${PI_MCP_ADAPTER_ID} 扩展`;
-	}
 	if (reason === 'pi-not-installed' || /Pi Agent CLI.*未安装/i.test(reason)) {
 		return '需先安装 Pi Agent CLI';
 	}
