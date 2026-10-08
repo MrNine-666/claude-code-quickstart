@@ -693,12 +693,18 @@ jobs:
             安装完成后，在新终端中运行 `ccq` 进入管理控制台（TUI）：
 
             - 供应商管理（Claude Code / Codex / Pi 多 provider 切换）
-            - MCP Server 管理（Claude Code / Codex / Pi）
+            - MCP Server 管理（Claude Code / Codex / Pi；Pi 使用正式版 >=1.0.0 原生 MCP，无需 adapter 扩展）
             - Skills 管理（Claude Code / Codex / Pi）
-            - 全局规则管理
-            - 配置文件管理
+            - 全局规则预览（O 使用系统默认应用打开编辑）
+            - 配置文件预览（O 使用系统默认应用打开编辑，不再提供推荐配置入口）
             - 工具管理（Claude Code / Codex / Pi CLI / Pi Web / Ccline / CcgWorkflow / OpenSpec / Trellis / CodeGraph / GitNexus / AntigravityCli）
             - 扩展管理（Pi package 安装 / 更新 / 卸载）
+            - 系统设置（按分类导入 / 导出配置、可选加密、自动更新偏好）
+
+            Pi MCP 配置变更后需 `/reload` 或重开会话；OAuth 登录使用 `pi mcp login`。
+            导入默认合并；分类覆盖目前仅支持全局规则与 CCQ 自动更新偏好，执行前需再次确认。
+            备份默认包含所选分类的 API Key 等文件型凭据，未开启加密时为明文，请勿公开分享。
+            本机保存的备份密码以明文存放在 `~/.ccq/system-settings.json`，不随配置迁移；OAuth 登录态与设备标识也不迁移。
 
             ---
 
