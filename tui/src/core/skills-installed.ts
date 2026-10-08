@@ -123,6 +123,10 @@ export function normalizeSkillSourceIdentity(rawSource: string | undefined): str
 		return undefined;
 	}
 
+	// 显式本地路径不能被两段 GitHub shorthand（如 /tmp/skill）误识别。
+	if (/^(?:[\\/]|\.{1,2}[\\/]|~[\\/]|[A-Za-z]:[\\/]|file:)/i.test(trimmed)) {
+		return `raw:${trimmed}`;
+	}
 	const slug = githubRepoSlug(trimmed);
 	return slug ? `github:${slug}` : `raw:${trimmed}`;
 }

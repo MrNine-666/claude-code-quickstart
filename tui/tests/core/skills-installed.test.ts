@@ -119,6 +119,29 @@ describe('Skills 已安装逻辑实例投影（core/skills-installed.ts）', () 
 		expect(onlySource.provenance.sourceUrl).toBe(undefined);
 	});
 
+	test('官方 list 的显式本地来源保持 raw identity，不被当作远端来源', () => {
+		for (const source of [
+			'/tmp/ccq-skill-stage-local',
+			'C:\\Temp\\ccq-skill-stage-local',
+			'C:/Temp/ccq-skill-stage-local',
+			'\\\\server\\share\\skill',
+			'./owner/repo',
+			'../owner/repo',
+			'~/skill',
+			'file:///tmp/skill'
+		]) {
+			const item = required(groupInstalledSkillItems([record({source, sourceUrl: source})])[0], 'local source');
+			expect(item.provenance).toEqual({
+				kind: 'known',
+				identity: `raw:${source}`,
+				source,
+				sourceUrl: source,
+				installSource: source
+			});
+			expect(item.capabilities).toEqual({update: true, manageAgents: true, migrate: true, delete: true});
+		}
+	});
+
 	// ── 3) known 同源合并 / 异源拆分 / unknown 按 path 隔离 ──────────────────────
 	test('A-3 同源合并 / 异源拆分 / unknown 路径隔离', () => {
 		// 同名同源多记录（.agents 本体 + .claude 投影）合并为一个 Item。

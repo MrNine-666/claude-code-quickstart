@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import {mkdir, mkdtemp, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {isAbsolute, join, relative} from 'node:path';
 import {execCommand} from '../src/core/exec.ts';
 import {createSkillsChildEnv, runSkillsAdd} from '../src/core/skills-actions.ts';
-import {detectInstalledSkillItems} from '../src/core/skills-installed.ts';
+import {detectInstalledSkillItems, parseSkillsListJson} from '../src/core/skills-installed.ts';
 import {inspectSkillStorage, readSkillManifest} from '../src/core/skills-storage.ts';
 import {transitionSkillTopology} from '../src/services/skills-adoption.ts';
 
@@ -46,13 +46,10 @@ function scopedExec(homeDir) {
 // 的 claudeValid/canonicalValid 还原 Item，不重新枚举目录。fixture 均为受管根
 //（.claude/.agents），不含 .codex，故 needsManagedMigration 恒不触发收编分支。
 //
-// 注意：row() 用 known provenance 只是给迁移事务提供可证明来源；真实 CLI list 对
-// 本地 path 安装通常不返回 source/sourceUrl，检测链会把它们归为 unknown（见下方断言）。
+// row() 用 known provenance 给迁移事务提供可证明来源。实际检测必须以官方 list
+// 的 source/sourceUrl 为准：新版 CLI 会返回本地来源，不能再假定它们始终缺失。
 function row(name, storage) {
-	const agents = [
-		...(storage.claudeValid ? ['Claude Code'] : []),
-		...(storage.canonicalValid ? ['Codex'] : [])
-	];
+	const agents = [...(storage.claudeValid ? ['Claude Code'] : []), ...(storage.canonicalValid ? ['Codex'] : [])];
 	const projections = [];
 	if (storage.canonicalValid) {
 		projections.push({path: storage.canonicalPath, root: 'agents', scope: 'global', agents});
@@ -84,27 +81,48 @@ try {
 		const fixture = await createFixture(`${current}-to-${target}`, current);
 		const before = await inspectSkillStorage(fixture.name, {homeDir: fixture.homeDir});
 		assert.equal(before.kind, current === 'codex-only' ? 'canonical-only' : current === 'shared' ? 'shared-symlink' : 'claude-only');
-		const beforeManifest = await readSkillManifest(
-			current === 'claude-only' ? before.claudePath : before.canonicalPath,
-			fixture.name
-		);
+		const beforeManifest = await readSkillManifest(current === 'claude-only' ? before.claudePath : before.canonicalPath, fixture.name);
 		const result = await transitionSkillTopology(row(fixture.name, before), target, undefined, undefined, fixture);
 		assert.equal(result.outcome, 'complete', `${current} -> ${target}: ${result.error ?? ''}`);
 		const after = await inspectSkillStorage(fixture.name, {homeDir: fixture.homeDir});
 		assert.equal(after.kind, expectedKind);
-		const afterManifest = await readSkillManifest(
-			target === 'claude-only' ? after.claudePath : after.canonicalPath,
-			fixture.name
-		);
+		const afterManifest = await readSkillManifest(target === 'claude-only' ? after.claudePath : after.canonicalPath, fixture.name);
 		assert.deepEqual(afterManifest, beforeManifest, `${current} -> ${target} must preserve content`);
-		// 本地来源不得被当成远端 provenance（design §10 / R5）：检测链只解释官方 list JSON，
-		// 不再读 `.skill-lock.json`。真实 CLI 对本地 path 安装通常不返回 source/sourceUrl，
-		// 经严格解析后 provenance 为 unknown，UI 不会暴露单项远端更新。
-		const detection = await detectInstalledSkillItems(scopedExec(fixture.homeDir));
+		// 用同一次官方 list 响应核对 provenance；本地元数据不能被推断为远端来源。
+		let listPayload;
+		const exec = scopedExec(fixture.homeDir);
+		const detection = await detectInstalledSkillItems(async (command, args, options) => {
+			const result = await exec(command, args, options);
+			if (result.code === 0) listPayload = JSON.parse(result.stdout);
+			return result;
+		});
+		const parsed = parseSkillsListJson(listPayload);
+		assert.ok(parsed.ok, 'official list must return valid records');
+		const records = parsed.records.filter(item => item.name === fixture.name);
+		assert.ok(records.length > 0, 'official list must retain the fixture');
 		const smokeItem = detection.find(item => item.name === fixture.name);
 		assert.ok(smokeItem, `${current} -> ${target}: list must still report ${fixture.name}`);
-		assert.equal(smokeItem.provenance.kind, 'unknown', 'local source must not surface remote provenance');
-		assert.equal(smokeItem.capabilities.update, false, 'local source must not expose single-item remote update');
+		const installSource = records[0].sourceUrl ?? records[0].source;
+		if (installSource) {
+			for (const record of records) {
+				assert.equal(record.sourceUrl ?? record.source, installSource, 'fixture projections must report the same source');
+				for (const source of [record.source, record.sourceUrl].filter(Boolean)) {
+					assert.ok(isAbsolute(source), 'local source must remain an absolute filesystem path');
+					const path = relative(root, source);
+					assert.ok(
+						path && path !== '..' && !path.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && !isAbsolute(path),
+						'local source must stay inside the isolated fixture'
+					);
+				}
+			}
+			assert.equal(smokeItem.provenance.kind, 'known', 'explicit official source must remain known');
+			assert.equal(smokeItem.provenance.installSource, installSource, 'operation source must match official metadata');
+			assert.equal(smokeItem.provenance.identity, `raw:${installSource}`, 'local path must not become a remote identity');
+			assert.equal(smokeItem.capabilities.update, true, 'known-source capability must follow the domain contract');
+		} else {
+			assert.equal(smokeItem.provenance.kind, 'unknown', 'missing official source must remain unknown');
+			assert.equal(smokeItem.capabilities.update, false, 'unknown source must not expose update');
+		}
 		if (target === 'shared') {
 			assert.equal(after.canonicalValid && after.claudeValid, true);
 		}
@@ -114,10 +132,16 @@ try {
 		const fixture = await createFixture(`noop-${topology}`, topology);
 		const before = await inspectSkillStorage(fixture.name, {homeDir: fixture.homeDir});
 		let spawned = false;
-		const result = await transitionSkillTopology(row(fixture.name, before), topology, undefined, async () => {
-			spawned = true;
-			return {code: 0, stdout: '', stderr: ''};
-		}, fixture);
+		const result = await transitionSkillTopology(
+			row(fixture.name, before),
+			topology,
+			undefined,
+			async () => {
+				spawned = true;
+				return {code: 0, stdout: '', stderr: ''};
+			},
+			fixture
+		);
 		assert.equal(result.mutated, false);
 		assert.equal(spawned, false);
 	}
