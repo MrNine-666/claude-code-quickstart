@@ -57,8 +57,8 @@ test('全局规则不加载也不导入推荐模板', () => {
 	withHome(() => {
 		for (const target of TARGETS) {
 			const adapter = createPromptsDocumentAdapter(target);
-			expect(adapter.recommendationContent).toBeUndefined();
-			expect(adapter.importInto).toBeUndefined();
+			expect('recommendationContent' in adapter).toBe(false);
+			expect('importInto' in adapter).toBe(false);
 		}
 	});
 });
@@ -88,6 +88,6 @@ test('全局规则不得注册推荐边栏/导入/焦点切换命令与 footer �
 			const labels = viewShortcuts('prompts', subMode).map(shortcut => shortcut.label);
 			expect(labels.some(label => /推荐|补全/.test(label))).toBe(false);
 		}
-		expect(viewShortcuts('prompts', 'edit').map(shortcut => shortcut.label)).toEqual(['保存', '取消']);
+		expect(viewShortcuts('prompts', 'edit').map(shortcut => shortcut.label)).toEqual(['返回菜单']);
 	});
 });

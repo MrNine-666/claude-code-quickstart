@@ -1,6 +1,6 @@
 export type FocusMode = 'nav' | 'header' | 'view' | 'form' | 'modal';
 
-export type ManageModuleId = 'provider' | 'mcp' | 'skills' | 'prompts' | 'config' | 'tools' | 'extensions' | 'update';
+export type ManageModuleId = 'provider' | 'mcp' | 'skills' | 'prompts' | 'config' | 'tools' | 'extensions' | 'system-settings' | 'update';
 
 // 当前 Agent 上下文：内部键用短名，界面 Header 只展示全称（AGENT_CONTEXT_LABELS）。
 export type AgentContext = 'cc' | 'cx' | 'pi';
@@ -25,11 +25,16 @@ export type ManageState = {
 export const menuItems: readonly ManageMenuItem[] = [
 	{id: 'tools', label: '工具管理', description: '管理 Claude Code、Codex 与 Pi 运行时及全局伴随工具（安装 / 更新 / 卸载）'},
 	{id: 'provider', label: '供应商', description: '管理 API 供应商、密钥与模型环境变量'},
-	{id: 'config', label: '配置文件', description: '查看推荐 settings.json 配置、按缺失项补全或外部编辑器编辑'},
+	{id: 'config', label: '配置文件', description: '查看、编辑和保存 settings.json 配置'},
 	{id: 'prompts', label: '全局规则', description: '查看和编辑全局规则文件'},
 	{id: 'mcp', label: 'MCP', description: '查看、启用、禁用和维护 MCP Server'},
 	{id: 'skills', label: 'Skills', description: '搜索、安装、更新和卸载 Claude Code、Codex 与 Pi Skills'},
-	{id: 'extensions', label: '扩展管理', description: '搜索和管理 Pi package 扩展及 pi-mcp-adapter'}
+	{id: 'extensions', label: '扩展管理', description: '搜索和管理 Pi package 扩展及 pi-mcp-adapter'},
+	{
+		id: 'system-settings',
+		label: '系统设置',
+		description: '配置 CCQ 自动更新，以及导出/导入 CCQ、Claude Code、Codex 与 Pi 全局配置'
+	}
 ];
 
 // 侧边栏底部固定的「检查更新」按钮（不在 menuItems 列表内，占第 menuItems.length 个导航位）。

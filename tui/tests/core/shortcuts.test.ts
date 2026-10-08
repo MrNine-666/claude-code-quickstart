@@ -2,6 +2,7 @@ import {describe, expect, test} from 'bun:test';
 import {singleLineInputKeyBindings} from '../../src/components/single-line-input.js';
 import {
 	CONFIG_COMMANDS,
+	SYSTEM_SETTINGS_COMMANDS,
 	EXTENSIONS_COMMANDS,
 	MCP_COMMANDS,
 	PROMPTS_COMMANDS,
@@ -9,6 +10,7 @@ import {
 	SKILLS_COMMANDS,
 	TOOLS_COMMANDS,
 	configBindings,
+	systemSettingsBindings,
 	extensionsBindings,
 	mcpBindings,
 	promptsBindings,
@@ -64,25 +66,13 @@ describe('modifier helper：编辑语义 Command-first，应用功能 Control-fi
 	});
 });
 
-describe('keybindings：全局规则仅保留编辑操作，Config 推荐/补全保持独立功能', () => {
-	test('保存走编辑语义，打开文件走 o，推荐/补全保持独立功能', () => {
-		expect(keyFor(promptsBindings, PROMPTS_COMMANDS.EDITOR_SAVE), 'Prompts 保存应按平台编辑语义绑定').toBe(expectedSaveKey);
-		expect(keyFor(configBindings, CONFIG_COMMANDS.EDITOR_SAVE), 'Config 保存应按平台编辑语义绑定').toBe(expectedSaveKey);
-		expect(keyFor(promptsBindings, PROMPTS_COMMANDS.OPEN_FILE), 'Prompts 应使用 o 打开全局规则文件').toBe('o');
-		expect(keyFor(configBindings, CONFIG_COMMANDS.OPEN_FILE), 'Config 应使用 o 打开配置文件').toBe('o');
+describe('keybindings：配置与全局规则只保留预览快捷键', () => {
+	test('编辑/打开/保存快捷键均移除，MCP 表单保持编辑语义', () => {
+		expect(keyFor(promptsBindings, PROMPTS_COMMANDS.EDITOR_SAVE)).toBeUndefined();
+		expect(keyFor(configBindings, CONFIG_COMMANDS.EDITOR_SAVE)).toBeUndefined();
+		expect(keyFor(promptsBindings, PROMPTS_COMMANDS.OPEN_FILE)).toBe('o');
+		expect(keyFor(configBindings, CONFIG_COMMANDS.OPEN_FILE)).toBe('o');
 		expect(keyFor(mcpBindings, MCP_COMMANDS.FORM_SAVE), 'MCP 表单保存应按平台编辑语义绑定').toBe(expectedSaveKey);
-		expect(
-			promptsBindings.some(binding => binding.key === 'ctrl+t'),
-			'Prompts 不应绑定推荐边栏 Ctrl+T'
-		).toBe(false);
-		expect(
-			promptsBindings.some(binding => binding.key === 'ctrl+o'),
-			'Prompts 不应绑定推荐导入 Ctrl+O'
-		).toBe(false);
-		expect(keyFor(configBindings, CONFIG_COMMANDS.TOGGLE_PANEL), 'Config 推荐边栏保持 Ctrl+T').toBe('ctrl+t');
-		expect(keyFor(configBindings, CONFIG_COMMANDS.IMPORT), 'Config 补全保持 Ctrl+O').toBe('ctrl+o');
-		expect(byLabel(viewShortcuts('prompts', 'view-render'))['打开文件'], 'Prompts footer 应展示 O 打开全局规则文件').toBe('O');
-		expect(byLabel(viewShortcuts('config', 'view-render'))['打开文件'], 'Config footer 应展示 O 打开配置文件').toBe('O');
 	});
 });
 
@@ -132,18 +122,14 @@ describe('Pi Provider 模型列表快捷键与 footer 来自统一 registry', ()
 	});
 });
 
-describe('footer：平台化符号展示来自单一 binding source', () => {
-	test('config edit footer 按平台展示保存/推荐/补全', () => {
-		const shortcutByLabel = byLabel(viewShortcuts('config', 'edit'));
-		if (process.platform === 'darwin') {
-			expect(shortcutByLabel['保存'], 'macOS footer 保存应显示 ⌘S').toBe('⌘S');
-			expect(shortcutByLabel['推荐边栏'], 'macOS footer 推荐边栏应显示 ⌃T').toBe('⌃T');
-			expect(shortcutByLabel['补全推荐'], 'macOS footer 补全应显示 ⌃O').toBe('⌃O');
-		} else {
-			expect(shortcutByLabel['保存'], '非 macOS footer 保存应显示 Ctrl+S').toBe('Ctrl+S');
-			expect(shortcutByLabel['推荐边栏'], '非 macOS footer 推荐边栏应显示 Ctrl+T').toBe('Ctrl+T');
-			expect(shortcutByLabel['补全推荐'], '非 macOS footer 补全应显示 Ctrl+O').toBe('Ctrl+O');
-		}
+describe('footer：配置与全局规则只显示返回和滚动', () => {
+	test('edit subMode 不暴露编辑快捷键', () => {
+		const promptLabels = byLabel(viewShortcuts('prompts', 'edit'));
+		const configLabels = byLabel(viewShortcuts('config', 'edit'));
+		expect(promptLabels['保存']).toBeUndefined();
+		expect(configLabels['保存']).toBeUndefined();
+		expect(promptLabels['返回菜单']).toBe('Esc/←');
+		expect(configLabels['返回菜单']).toBe('Esc/←');
 	});
 });
 
@@ -323,5 +309,51 @@ describe('卸载文案：统一使用简洁动作名，不在 footer 重复强�
 			),
 			'TUI footer 不应再显示“全量卸载”'
 		).toBe(false);
+	});
+});
+
+describe('系统设置 footer：两个树形弹窗与页面焦点', () => {
+	test('system-settings bindings 与 subMode footer 投影一致', () => {
+		expect(keyFor(systemSettingsBindings, SYSTEM_SETTINGS_COMMANDS.EXPORT), '导出应绑定 Ctrl+O').toBe('ctrl+o');
+		expect(keyFor(systemSettingsBindings, SYSTEM_SETTINGS_COMMANDS.IMPORT), '导入应绑定 Ctrl+I').toBe('ctrl+i');
+		expect(keyFor(systemSettingsBindings, SYSTEM_SETTINGS_COMMANDS.FOLD), '折叠应绑定 ←').toBe('left');
+		expect(keyFor(systemSettingsBindings, SYSTEM_SETTINGS_COMMANDS.EXPAND), '展开应绑定 →').toBe('right');
+		expect(keyFor(systemSettingsBindings, SYSTEM_SETTINGS_COMMANDS.CYCLE_FOCUS), '卡片通过方向键导航').toBe('down');
+		expect(keyFor(systemSettingsBindings, SYSTEM_SETTINGS_COMMANDS.BACK), '返回应绑定 Esc').toBe('escape');
+		expect(keyFor(systemSettingsBindings, SYSTEM_SETTINGS_COMMANDS.SAVE), '系统设置必须显式保存').toBe('ctrl+s');
+
+		const page = byLabel(viewShortcuts('system-settings', 'page'));
+		expect(page['导出'], 'footer 必须显示导出').toBe(formatShortcutKey('ctrl+o', platform));
+		expect(page['导入'], 'footer 必须显示导入').toBe(formatShortcutKey('ctrl+i', platform));
+		expect(page['保存']).toBe(formatShortcutKey('ctrl+s', platform));
+		expect(page['展开/折叠'], '主页无配置清单').toBeUndefined();
+		expect(page['字段/卡片']).toBe('↑/↓');
+
+		const autoUpdate = byLabel(viewShortcuts('system-settings', 'page-auto-update'));
+		expect(autoUpdate['切换'], '自动更新焦点 footer 应展示 ←/→/Enter 切换').toBe('←/→/Enter');
+		const encryption = byLabel(viewShortcuts('system-settings', 'page-encryption'));
+		expect(encryption['切换'], '加密焦点 footer 应展示 ←/→/Enter 切换').toBe('←/→/Enter');
+		const enabledEncryption = byLabel(viewShortcuts('system-settings', 'page-encryption-enabled'));
+		expect(enabledEncryption['字段/卡片']).toBe('↑/↓');
+		const password = byLabel(viewShortcuts('system-settings', 'page-password'));
+		expect(password['导出'], '密码焦点仍可 Ctrl+O 导出').toBe(formatShortcutKey('ctrl+o', platform));
+		expect(password['保存']).toBe(formatShortcutKey('ctrl+s', platform));
+		expect(password['字段/卡片']).toBe('↑/↓');
+		expect(password['切换卡片']).toBeUndefined();
+
+		const exportModal = byLabel(viewShortcuts('system-settings', 'export-modal'));
+		expect(exportModal['勾选'], '导出弹窗 footer 应展示 Space 勾选').toBe('Space');
+		expect(exportModal['导出'], '导出弹窗 footer 应展示 Enter 导出').toBe('Enter');
+
+		const importPassword = byLabel(viewShortcuts('system-settings', 'import-password'));
+		expect(importPassword['解析密码'], '导入密码 footer 应展示 Enter 解析密码').toBe('Enter');
+		expect(importPassword['取消导入'], '导入密码 footer 应展示 Esc 取消导入').toBe('Esc');
+
+		const preview = byLabel(viewShortcuts('system-settings', 'import-preview'));
+		expect(preview['合并/覆盖/跳过'], '导入明细 footer 应展示 Space 合并/覆盖/跳过').toBe('Space');
+		expect(preview['执行导入'], '导入明细 footer 应展示 Enter 直接执行导入').toBe('Enter');
+
+		expect(byLabel(viewShortcuts('system-settings', 'discard-confirm'))).toEqual({放弃修改: 'Enter', 继续编辑: 'Esc'});
+		expect(viewShortcuts('system-settings', 'busy')[0]?.label, 'busy footer 应只展示等待状态').toBe('执行中');
 	});
 });

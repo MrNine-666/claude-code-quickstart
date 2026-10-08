@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useRef } from 'react';
-import type { ScrollBoxRenderable } from '@opentui/core';
-import { Card } from './card.js';
-import { colors } from '../theme/index.js';
-import { ThemedScrollbox } from './themed-scrollbox.js';
+import React, {useEffect, useMemo, useRef} from 'react';
+import type {ScrollBoxRenderable} from '@opentui/core';
+import {Card} from './card.js';
+import {colors} from '../theme/index.js';
+import {ThemedScrollbox} from './themed-scrollbox.js';
 
 // 卡片纵向列表 + 焦点驱动滚动（OpenTUI 适配）：列表项全部交给官方
 // <scrollbox viewportCulling> 管理可视裁剪，光标移动时用 scrollChildIntoView
@@ -37,6 +37,8 @@ export type ScrollListProps = {
 	readonly active?: boolean;
 	// 焦点由卡片承载，或由 item.leading 自行承载（如 Skills Checkbox）。
 	readonly focusIndicator?: 'card' | 'leading';
+	// 摘要已提供计数时可隐藏位置行，避免受限高度下遮挡末行内容。
+	readonly showPosition?: boolean;
 };
 
 function itemId(item: ScrollListItem, index: number): string {
@@ -49,15 +51,13 @@ export function ScrollList({
 	emptyText = '暂无数据',
 	header,
 	active = true,
-	focusIndicator = 'card'
+	focusIndicator = 'card',
+	showPosition = true
 }: ScrollListProps) {
 	const ref = useRef<ScrollBoxRenderable>(null);
 	const safeCursor = items.length === 0 ? 0 : Math.min(Math.max(cursor, 0), items.length - 1);
 	const activeItemId = items[safeCursor] ? itemId(items[safeCursor], safeCursor) : null;
-	const renderedItems = useMemo(
-		() => items.map((item, index) => ({item, index, id: itemId(item, index)})),
-		[items]
-	);
+	const renderedItems = useMemo(() => items.map((item, index) => ({item, index, id: itemId(item, index)})), [items]);
 
 	useEffect(() => {
 		if (!ref.current || !activeItemId) {
@@ -68,19 +68,17 @@ export function ScrollList({
 	}, [activeItemId]);
 
 	if (items.length === 0) {
-		return <text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{emptyText}</text>;
+		return (
+			<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+				{emptyText}
+			</text>
+		);
 	}
 
 	return (
 		<box flexDirection="column" flexGrow={1} minHeight={0}>
 			{header}
-			<ThemedScrollbox
-				ref={ref}
-				style={{flexGrow: 1, minHeight: 0}}
-				viewportCulling
-				scrollY
-				scrollX={false}
-			>
+			<ThemedScrollbox ref={ref} style={{flexGrow: 1, minHeight: 0}} viewportCulling scrollY scrollX={false}>
 				{renderedItems.map(({item, index, id}) => (
 					<box key={item.key} id={id} flexDirection="column" flexShrink={0}>
 						<Card
@@ -90,16 +88,20 @@ export function ScrollList({
 							titleRight={item.titleRight}
 							leading={item.leading}
 							focused={focusIndicator === 'card' && active && index === safeCursor}
-								selected={item.selected}
-								multiLine={item.multiLine}
-								bordered={item.bordered}
+							selected={item.selected}
+							multiLine={item.multiLine}
+							bordered={item.bordered}
 						>
 							{item.body}
 						</Card>
 					</box>
 				))}
 			</ThemedScrollbox>
-			<text flexShrink={0} fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>{`(${safeCursor + 1}/${items.length})`}</text>
+			{showPosition ? (
+				<text flexShrink={0} fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+					{`(${safeCursor + 1}/${items.length})`}
+				</text>
+			) : null}
 		</box>
 	);
 }

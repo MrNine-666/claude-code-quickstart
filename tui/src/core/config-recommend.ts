@@ -172,8 +172,7 @@ export function assembleRecommendationAnnotated(): string | null {
 	}
 
 	// env 节（内部项缩进 4 空格，每项 description 标注于上方）
-	const envMembers = Object.entries(contract.ClaudeConfigEnvDefaults ?? {})
-		.map(([k, v]) => annotateMember(k, v, envDesc[k], '    '));
+	const envMembers = Object.entries(contract.ClaudeConfigEnvDefaults ?? {}).map(([k, v]) => annotateMember(k, v, envDesc[k], '    '));
 	if (envMembers.length > 0) {
 		members.push(`  "env": {\n${envMembers.join(',\n')}\n  }`);
 	}
@@ -206,9 +205,7 @@ export function assembleRecommendationAnnotated(): string | null {
 function annotateMember(key: string, value: unknown, description: string | undefined, indent: string): string {
 	// JSON.stringify(…, 2) 本身已含 2 空格内部缩进，换行后只补 indent 即可（再 +2 会叠加错位）。
 	const valueJson = JSON.stringify(value, null, 2);
-	const valueIndented = valueJson.includes('\n')
-		? valueJson.replace(/\n/g, `\n${indent}`)
-		: valueJson;
+	const valueIndented = valueJson.includes('\n') ? valueJson.replace(/\n/g, `\n${indent}`) : valueJson;
 	const comment = description ? `${indent}// ${description}\n` : '';
 	return `${comment}${indent}"${key}": ${valueIndented}`;
 }
@@ -302,9 +299,9 @@ export function applyFillMissing(contract: ConfigContract, source: JsonObject): 
  * 供推荐边栏 Ctrl+O 灌缓冲：合并结果写回编辑器文本，可 Ctrl+Z 撤销，不直接落盘。
  * 文本非法 JSON 时返回错误（不抛）；非对象（数组/原始值）视为空配置从零补全。
  */
-export function applyFillMissingToText(jsonText: string):
-	| {readonly ok: true; readonly text: string; readonly changed: number}
-	| {readonly ok: false; readonly error: string} {
+export function applyFillMissingToText(
+	jsonText: string
+): {readonly ok: true; readonly text: string; readonly changed: number} | {readonly ok: false; readonly error: string} {
 	const contract = loadConfigContract();
 	if (!contract) {
 		return {ok: false, error: '推荐配置契约不可用（contracts/claude-config.json 缺失）'};
@@ -362,9 +359,12 @@ function stripUnmanagedSettings(settings: JsonObject): JsonObject {
  * 注：mcpServers 不在 settings.json（MCP 视图写 ~/.claude.json），即便误入也不剥离。
  * 文本非 JSON 对象时返回 {ok:false}，调用方可回退展示原文。
  */
-export function stripProviderEnvFromText(jsonText: string):
-	| {readonly ok: true; readonly text: string}
-	| {readonly ok: false; readonly error: string} {
+export function stripProviderEnvFromDocument(settings: JsonObject): JsonObject {
+	return stripUnmanagedSettings(settings);
+}
+export function stripProviderEnvFromText(
+	jsonText: string
+): {readonly ok: true; readonly text: string} | {readonly ok: false; readonly error: string} {
 	try {
 		const parsed = JSON.parse(jsonText) as unknown;
 		if (!isObject(parsed)) {
@@ -382,9 +382,10 @@ export function stripProviderEnvFromText(jsonText: string):
  * hooks/statusLine/outputStyle 等孤儿字段由编辑器持有（已在本页放开直编），随 edited 落盘。
  * original 缺失或解析失败时按清理后的 edited 写入（首次新建场景）。
  */
-export function mergeProviderEnvOnSave(editedText: string, originalText: string | null):
-	| {readonly ok: true; readonly text: string}
-	| {readonly ok: false; readonly error: string} {
+export function mergeProviderEnvOnSave(
+	editedText: string,
+	originalText: string | null
+): {readonly ok: true; readonly text: string} | {readonly ok: false; readonly error: string} {
 	let edited: JsonObject;
 	try {
 		const parsed = JSON.parse(editedText) as unknown;
@@ -414,10 +415,8 @@ export function mergeProviderEnvOnSave(editedText: string, originalText: string 
 			}
 		}
 
-		const originalEnv = isObject(original['env']) ? original['env'] as JsonObject : null;
-		const preservedEnv = originalEnv
-			? Object.fromEntries(Object.entries(originalEnv).filter(([key]) => forbiddenEnv.has(key)))
-			: {};
+		const originalEnv = isObject(original['env']) ? (original['env'] as JsonObject) : null;
+		const preservedEnv = originalEnv ? Object.fromEntries(Object.entries(originalEnv).filter(([key]) => forbiddenEnv.has(key))) : {};
 		const editedEnv = isObject(merged['env']) ? {...(merged['env'] as JsonObject)} : {};
 		for (const key of forbiddenEnv) {
 			delete editedEnv[key];
@@ -453,7 +452,10 @@ export function importFillMissing(): ImportResult {
 			const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
 			source = isObject(parsed) ? parsed : {};
 		} catch (error) {
-			return {ok: false, error: `无法解析现有 settings.json，已停止以避免覆盖用户配置：${error instanceof Error ? error.message : String(error)}`};
+			return {
+				ok: false,
+				error: `无法解析现有 settings.json，已停止以避免覆盖用户配置：${error instanceof Error ? error.message : String(error)}`
+			};
 		}
 	}
 

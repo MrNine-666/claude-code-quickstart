@@ -143,6 +143,24 @@ try {
 	assert.match(appSource, /<UpdateProgressBar[^>]*progress=\{screen\.progress\}/, '更新 Modal 必须渲染下载进度条');
 	assert.match(appSource, /applyUpdate\(transaction, \{restartAfterApply: false\}\)/, 'TUI 应用更新必须禁止 Windows helper 自动重启');
 	assert.doesNotMatch(appSource, /restartExecutable/, 'TUI 更新流程不得再启动新的 ccq 进程');
+	assert.match(
+		appSource,
+		/const requestExitWithStagedUpdate[\s\S]{0,240}exitCoordinator\.requestExit\(\)/,
+		'q 与更新弹窗退出必须读取唯一已验证更新事务'
+	);
+	assert.match(appSource, /onReadyExit=\{requestExitWithStagedUpdate\}/, '更新就绪弹窗 Enter 必须走统一退出入口');
+	assert.doesNotMatch(
+		appSource,
+		/renderer\?\.destroy\(\);\s*process\.exit\(0\)/,
+		'TUI 不得保留绕过入口控制器的直接退出路径（Windows helper 也不能提前退出）'
+	);
+	assert.match(appSource, /readCcqSystemSettings/, '自动更新偏好必须由 CCQ 系统设置 owner 读取');
+	assert.match(appSource, /canAutoUpdateInPlace/, '自动更新必须区分官方安装位与 dev/构建产物运行');
+	assert.match(
+		appSource,
+		/autoUpdateRef\.current && autoUpdateSupported\)\s*\{\s*void runSilentUpdate/,
+		'自动更新=是仅在官方安装位就地运行时静默下载（dev 不重复下载/覆盖）'
+	);
 	const fetchBinary = async () => new Response(binary, {status: 200});
 	const first = await downloadUpdate(plan, undefined, {fetch: fetchBinary, targetPath, platform: 'darwin'});
 	const second = await downloadUpdate(plan, undefined, {fetch: fetchBinary, targetPath, platform: 'darwin'});

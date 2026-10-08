@@ -1,7 +1,14 @@
 import {existsSync} from 'node:fs';
-import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {useRenderer} from '@opentui/react';
-import {TextAttributes, getTreeSitterClient, SyntaxStyle, RGBA, type ThemeMode as OpenTuiThemeMode} from '@opentui/core';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {useKeyboard, useRenderer} from '@opentui/react';
+import {
+	EditBufferRenderable,
+	TextAttributes,
+	getTreeSitterClient,
+	SyntaxStyle,
+	RGBA,
+	type ThemeMode as OpenTuiThemeMode
+} from '@opentui/core';
 import {useManageInput} from './hooks/use-manage-input.js';
 import {useDetectionCache, type DetectionCache} from './hooks/use-detection-cache.js';
 import {
@@ -41,6 +48,7 @@ import {CCQ_LOGO} from './theme/logo.js';
 import {CCQ_VERSION} from './version.js';
 import {
 	applyUpdate,
+	canAutoUpdateInPlace,
 	checkLatestVersion,
 	cleanupTempUpdate,
 	downloadUpdate,
@@ -56,6 +64,8 @@ import {
 	type SelfUpdateRetry,
 	type SelfUpdateScreen
 } from './state/self-update-state.js';
+import {readCcqSystemSettings} from './core/system-settings.js';
+import {createStagedUpdateExit} from './core/staged-update-exit.js';
 // 导入 7 个视图组件
 import {ProviderView} from './views/provider/ProviderView.js';
 import McpView from './views/mcp/McpView.js';
@@ -64,6 +74,7 @@ import {PromptsView} from './views/prompts/PromptsView.js';
 import {ConfigView} from './views/config/ConfigView.js';
 import {ToolsView} from './views/tools/ToolsView.js';
 import {ExtensionsView} from './views/extensions/ExtensionsView.js';
+import {SystemSettingsView} from './views/system-settings/SystemSettingsView.js';
 
 // 导入视图 services
 import {createSkillsViewServices} from './views/skills/skills-view-services.js';
@@ -73,8 +84,8 @@ import {createToolsViewServices} from './views/tools/tools-view-services.js';
 const SIDEBAR_WIDTH = 24;
 
 // 隐藏 Agent Header 的模块（shared-resource-injection-ui D3/M3）：Tools 与 MCP 用共享双侧列表，
-// 不按 Header 单一 agentContext 过滤，故进入这两个模块隐藏 Header；其余模块 Header 常显。
-const AGENT_HEADER_HIDDEN_MODULES = new Set<ManageModuleId>(['tools', 'mcp', 'skills']);
+// 不按 Header 单一 agentContext 过滤，故进入这两个模块隐藏 Header；导入导出跨四个工具，同样隐藏。
+const AGENT_HEADER_HIDDEN_MODULES = new Set<ManageModuleId>(['tools', 'mcp', 'skills', 'system-settings']);
 
 // 是否运行在 Bun --compile 单文件可执行产物中。
 // 源码模式下 import.meta.dirname 是真实磁盘目录（existsSync=true）；
@@ -134,6 +145,25 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 	const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
 	const [updateScreen, setUpdateScreen] = useState<SelfUpdateScreen>({kind: 'checking'});
 	const updateAbortRef = useRef<AbortController | null>(null);
+	// 自动更新运行态由 App 持有；系统设置页 Ctrl+S 持久化后同步到此处。
+	const [autoUpdate, setAutoUpdate] = useState(false);
+	const [autoUpdateError, setAutoUpdateError] = useState<string | null>(null);
+	const autoUpdateRef = useRef(false);
+	const checkInFlightRef = useRef(false);
+	// 官方安装位就地运行才允许自动更新；源码/dev/构建产物只保留显式手动更新，避免误覆盖。
+	const autoUpdateSupported = useMemo(() => canAutoUpdateInPlace(), []);
+	// 统一退出生命周期：唯一 staged 事务 + 一次性退出闩锁（可单测的纯协调器，见 core/staged-update-exit.ts）。
+	const runUpdateApplyRef = useRef<(transaction: DownloadedSelfUpdate) => Promise<boolean>>(async () => false);
+	const onExitRef = useRef(onExit);
+	onExitRef.current = onExit;
+	const exitCoordinatorRef = useRef<ReturnType<typeof createStagedUpdateExit> | null>(null);
+	const exitCoordinator =
+		exitCoordinatorRef.current ??
+		createStagedUpdateExit({
+			apply: transaction => runUpdateApplyRef.current(transaction),
+			onExit: () => onExitRef.current()
+		});
+	exitCoordinatorRef.current = exitCoordinator;
 	// 右侧内容区当前显示的菜单 id：selectedIndex 在菜单范围内时跟随，停在底部按钮位时保持上一个（按钮不切视图，回车只开浮窗）
 	const [displayMenuId, setDisplayMenuId] = useState<ManageModuleId>(menuItems[0]!.id);
 	const renderer = useRenderer();
@@ -200,29 +230,95 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 	// 右侧内容区可用宽度 = 总宽 - 左侧栏(SIDEBAR_WIDTH) - 右栏边框(2) - paddingX(2)，驱动工具管理网格列数。
 	const contentWidth = Math.max(0, terminalWidth - SIDEBAR_WIDTH - 4);
 
-	useEffect(() => {
-		if (state.shouldExit) {
-			onExit();
+	const refreshImportedSettings = useCallback((): void => {
+		const current = readCcqSystemSettings();
+		if (current.status === 'invalid') {
+			autoUpdateRef.current = false;
+			setAutoUpdate(false);
+			setAutoUpdateError(current.error);
+			return;
 		}
-	}, [onExit, state.shouldExit]);
+		autoUpdateRef.current = current.value.autoUpdate;
+		setAutoUpdate(current.value.autoUpdate);
+		setAutoUpdateError(null);
+	}, []);
 
-	const runUpdateCheck = async (): Promise<void> => {
-		setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'checkStarted'}));
-		const info = await checkLatestVersion();
-		if (!info.ok) {
+	// 系统设置视图先原子保存三项偏好，再通知 App 更新自动更新运行态；此处不重复写盘。
+	const handleAutoUpdateChange = useCallback((value: boolean): void => {
+		autoUpdateRef.current = value;
+		setAutoUpdate(value);
+		setAutoUpdateError(null);
+	}, []);
+
+	// 静默下载（自动更新=是）：不弹窗、不 toast；只有完整校验的 transaction 才进入 staged。
+	const runSilentUpdate = async (plan: SelfUpdatePlan): Promise<void> => {
+		if (updateAbortRef.current || exitCoordinator.hasStaged()) {
+			return;
+		}
+
+		const abortController = new AbortController();
+		updateAbortRef.current = abortController;
+		setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'downloadStarted', plan}));
+		const downloaded = await downloadUpdate(plan, abortController.signal, {
+			onProgress: progress => {
+				setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'downloadProgress', progress}));
+			}
+		});
+		if (updateAbortRef.current === abortController) {
+			updateAbortRef.current = null;
+		}
+
+		if (abortController.signal.aborted) {
+			if (downloaded.ok) await cleanupTempUpdate(downloaded.transaction);
+			return;
+		}
+
+		if (!downloaded.ok) {
+			// 静默下载失败不弹窗、不抢焦点；底部按钮显示失败并可经旧入口重试。
 			setUpdateScreen(current =>
 				reduceSelfUpdateScreen(current, {
 					type: 'failed',
-					message: formatSelfUpdateError(info.error),
-					retry: {stage: 'check'}
+					message: formatSelfUpdateError(downloaded.error),
+					retry: {stage: 'download', plan}
 				})
 			);
 			return;
 		}
 
-		setUpdateScreen(current =>
-			reduceSelfUpdateScreen(current, info.hasUpdate ? {type: 'updateAvailable', plan: info.plan} : {type: 'latestConfirmed'})
-		);
+		exitCoordinator.setStaged(downloaded.transaction);
+		setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'downloadReady', transaction: downloaded.transaction}));
+	};
+
+	const runUpdateCheck = async (): Promise<void> => {
+		if (checkInFlightRef.current) {
+			return;
+		}
+
+		checkInFlightRef.current = true;
+		try {
+			setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'checkStarted'}));
+			const info = await checkLatestVersion();
+			if (!info.ok) {
+				setUpdateScreen(current =>
+					reduceSelfUpdateScreen(current, {
+						type: 'failed',
+						message: formatSelfUpdateError(info.error),
+						retry: {stage: 'check'}
+					})
+				);
+				return;
+			}
+
+			setUpdateScreen(current =>
+				reduceSelfUpdateScreen(current, info.hasUpdate ? {type: 'updateAvailable', plan: info.plan} : {type: 'latestConfirmed'})
+			);
+			// 非官方安装位运行（如 bun run dev）不静默下载，防止每次启动下载并在退出时覆盖安装位。
+			if (info.hasUpdate && autoUpdateRef.current && autoUpdateSupported) {
+				void runSilentUpdate(info.plan);
+			}
+		} finally {
+			checkInFlightRef.current = false;
+		}
 	};
 
 	const cancelUpdate = (): void => {
@@ -236,6 +332,10 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 	};
 
 	const runUpdate = async (plan: SelfUpdatePlan): Promise<void> => {
+		if (updateAbortRef.current || exitCoordinator.hasStaged()) {
+			return;
+		}
+
 		const abortController = new AbortController();
 		updateAbortRef.current = abortController;
 		setUpdateDialogOpen(true);
@@ -246,7 +346,9 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 				setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'downloadProgress', progress}));
 			}
 		});
-		updateAbortRef.current = null;
+		if (updateAbortRef.current === abortController) {
+			updateAbortRef.current = null;
+		}
 		if (abortController.signal.aborted) {
 			if (downloaded.ok) await cleanupTempUpdate(downloaded.transaction);
 			setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'updateAvailable', plan}));
@@ -260,6 +362,7 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 			return;
 		}
 
+		exitCoordinator.setStaged(downloaded.transaction);
 		setUpdateScreen(current =>
 			reduceSelfUpdateScreen(current, {
 				type: 'downloadReady',
@@ -268,31 +371,30 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 		);
 	};
 
-	const applyDownloadedUpdate = async (transaction: DownloadedSelfUpdate): Promise<void> => {
+	// 唯一应用入口：验证过的 staged transaction → 安全覆盖 → 退出；失败保留在 TUI 并可重试。
+	const runUpdateApply = useCallback(async (transaction: DownloadedSelfUpdate): Promise<boolean> => {
+		setUpdateDialogOpen(true);
 		setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'applyStarted', transaction}));
-		// 更新完成后退出当前 TUI，由用户在原终端中重新运行 ccq；Windows helper 不得再启动新 cmd。
 		const applied = await applyUpdate(transaction, {restartAfterApply: false});
-		if (!applied.ok) {
-			const message = formatSelfUpdateError(applied.error);
-			toast.error(message);
-			const retry: SelfUpdateRetry =
-				applied.error.retryStage === 'download' ? {stage: 'download', plan: transaction.plan} : {stage: 'apply', transaction};
-			setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'failed', message, retry}));
-			return;
+		if (applied.ok) {
+			return true;
 		}
 
-		if (applied.state === 'scheduled') {
-			renderer?.destroy();
-			process.exit(0);
-		}
+		const message = formatSelfUpdateError(applied.error);
+		const retry: SelfUpdateRetry =
+			applied.error.retryStage === 'download' ? {stage: 'download', plan: transaction.plan} : {stage: 'apply', transaction};
+		setUpdateScreen(current => reduceSelfUpdateScreen(current, {type: 'failed', message, retry}));
+		return false;
+	}, []);
+	runUpdateApplyRef.current = runUpdateApply;
 
-		setUpdateScreen(current =>
-			reduceSelfUpdateScreen(current, {
-				type: 'applyCompleted',
-				version: transaction.plan.version
-			})
-		);
-	};
+	// 统一退出生命周期：q 与更新弹窗退出都经此入口；有已验证下载则先应用再退出。
+	const requestExitWithStagedUpdate = useCallback((): void => {
+		// 冻结新的检查/下载：退出后不再产生新的更新事务。
+		updateAbortRef.current?.abort();
+		updateAbortRef.current = null;
+		exitCoordinator.requestExit();
+	}, [exitCoordinator]);
 
 	// 失败态重试：按失败阶段重跑对应流程，浮窗保持打开以便继续观察进度/再次失败。
 	const retryUpdate = (retry: SelfUpdateRetry): void => {
@@ -304,16 +406,47 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 				void runUpdate(retry.plan);
 				return;
 			case 'apply':
-				void applyDownloadedUpdate(retry.transaction);
+				// 重新领取失败事务走同一应用后退出入口。
+				exitCoordinator.setStaged(retry.transaction);
+				requestExitWithStagedUpdate();
 				return;
 		}
 	};
 
 	useEffect(() => {
-		// 启动时自动检查更新
+		// 启动时读取 CCQ 系统设置：损坏文件 fail closed，不自动下载。
+		const preferences = readCcqSystemSettings();
+		autoUpdateRef.current = preferences.value.autoUpdate;
+		setAutoUpdate(preferences.value.autoUpdate);
+		setAutoUpdateError(preferences.error);
 		void runUpdateCheck();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
+
+	// 任何正常退出（q / 更新弹窗）都经统一入口：存在已验证下载则先应用再退出。
+	useEffect(() => {
+		if (state.shouldExit) {
+			requestExitWithStagedUpdate();
+		}
+	}, [requestExitWithStagedUpdate, state.shouldExit]);
+
+	// 全局 q 退出：非编辑焦点下任何视图/焦点都走统一退出生命周期；文本输入中的 q 仍作为字符。
+	useKeyboard(keyEvent => {
+		if (keyEvent.name.toLowerCase() !== 'q' || keyEvent.ctrl === true || keyEvent.meta === true) {
+			return;
+		}
+
+		if (busyOverlay !== null || updateDialogOpen) {
+			return;
+		}
+
+		if (renderer?.currentFocusedRenderable instanceof EditBufferRenderable) {
+			return;
+		}
+
+		keyEvent.preventDefault?.();
+		requestExitWithStagedUpdate();
+	});
 
 	// 全局键盘分发：nav 焦点始终激活；进入 view 后，凡是自带键盘处理的视图
 	// 都让位给视图自身处理，避免双重响应；浮窗打开时也让位给浮窗自身处理。
@@ -448,6 +581,10 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 								skillsCache={skillsCache}
 								toolsViewServices={toolsViewServices}
 								toolsCache={toolsCache}
+								autoUpdate={autoUpdate}
+								autoUpdateError={autoUpdateError}
+								onAutoUpdateChange={handleAutoUpdateChange}
+								onSettingsImported={refreshImportedSettings}
 								onSubModeChange={setViewSubMode}
 								onBusyStateChange={setBusyOverlay}
 								syntaxStyle={syntaxStyle}
@@ -475,9 +612,9 @@ export default function App({initialThemeMode, onExit}: AppProps) {
 				screen={updateScreen}
 				onClose={() => setUpdateDialogOpen(false)}
 				onUpdate={plan => void runUpdate(plan)}
-				onApplyUpdate={transaction => void applyDownloadedUpdate(transaction)}
+				onReadyExit={requestExitWithStagedUpdate}
 				onCancelUpdate={cancelUpdate}
-				onExit={onExit}
+				onExit={requestExitWithStagedUpdate}
 				onRetry={retryUpdate}
 			/>
 			{busyOverlay ? (
@@ -627,7 +764,7 @@ function updateButtonLabel(status: UpdateStatus): string {
 		case 'latest':
 			return '已是最新';
 		case 'readyToRestart':
-			return '等待应用';
+			return '更新就绪';
 		case 'updated':
 			return '更新完成';
 		case 'error':
@@ -640,7 +777,7 @@ export function UpdateDialog({
 	screen,
 	onClose,
 	onUpdate,
-	onApplyUpdate,
+	onReadyExit,
 	onCancelUpdate,
 	onExit,
 	onRetry
@@ -649,7 +786,7 @@ export function UpdateDialog({
 	readonly screen: SelfUpdateScreen;
 	readonly onClose: () => void;
 	readonly onUpdate: (plan: SelfUpdatePlan) => void;
-	readonly onApplyUpdate: (transaction: DownloadedSelfUpdate) => void;
+	readonly onReadyExit: () => void;
 	readonly onCancelUpdate: () => void;
 	readonly onExit: () => void;
 	readonly onRetry: (retry: SelfUpdateRetry) => void;
@@ -670,7 +807,7 @@ export function UpdateDialog({
 		}
 
 		if (screen.kind === 'readyToRestart') {
-			if (isEnter) onApplyUpdate(screen.transaction);
+			if (isEnter) onReadyExit();
 			else if (isEsc) onClose();
 			return;
 		}
@@ -776,20 +913,20 @@ function updateDialogContent(screen: SelfUpdateScreen): {readonly title: string;
 		}
 		case 'readyToRestart':
 			return {
-				title: '下载完成',
+				title: '更新就绪',
 				body: (
 					<box flexDirection="column">
 						<text fg={colors.success} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-							更新已下载完成
+							更新已下载并校验，退出 TUI 后将自动应用
 						</text>
 						<text
 							fg={colors.muted}
 							selectionBg={colors.selectionBg}
 							selectionFg={colors.selectionFg}
-						>{`  应用新版本后退出，重新运行 ccq 即可生效`}</text>
+						>{`  按 Enter 退出并应用；Windows 在进程结束后完成替换，之后重新运行 ccq 生效`}</text>
 					</box>
 				),
-				hint: 'Enter 应用并退出  Esc 稍后处理'
+				hint: 'Enter 退出并更新  Esc 稍后处理'
 			};
 		case 'updated':
 			return {
@@ -917,6 +1054,10 @@ function ModuleContent({
 	skillsCache,
 	toolsViewServices,
 	toolsCache,
+	autoUpdate,
+	autoUpdateError,
+	onAutoUpdateChange,
+	onSettingsImported,
 	onSubModeChange,
 	onBusyStateChange,
 	onExitToNav,
@@ -931,6 +1072,10 @@ function ModuleContent({
 	readonly skillsCache: DetectionCache<any>;
 	readonly toolsViewServices: ReturnType<typeof createToolsViewServices>;
 	readonly toolsCache: DetectionCache<any>;
+	readonly autoUpdate: boolean;
+	readonly autoUpdateError: string | null;
+	readonly onAutoUpdateChange: (value: boolean) => void;
+	readonly onSettingsImported: () => void;
 	readonly onSubModeChange: (subMode: string) => void;
 	readonly onBusyStateChange: (state: BusyOverlayState | null) => void;
 	readonly onExitToNav: () => void;
@@ -1005,6 +1150,19 @@ function ModuleContent({
 					agentContext={agentContext}
 					active={active}
 					contentWidth={contentWidth}
+					onSubModeChange={onSubModeChange}
+					onBusyStateChange={onBusyStateChange}
+					onExitToNav={onExitToNav}
+				/>
+			);
+		case 'system-settings':
+			return (
+				<SystemSettingsView
+					active={active}
+					autoUpdate={autoUpdate}
+					autoUpdateError={autoUpdateError}
+					onAutoUpdateChange={onAutoUpdateChange}
+					onSettingsImported={onSettingsImported}
 					onSubModeChange={onSubModeChange}
 					onBusyStateChange={onBusyStateChange}
 					onExitToNav={onExitToNav}

@@ -10,11 +10,13 @@ import {
 	PROMPTS_COMMANDS,
 	PROVIDER_COMMANDS,
 	SKILLS_COMMANDS,
+	SYSTEM_SETTINGS_COMMANDS,
 	TOOLS_COMMANDS,
 	VIEW_COMMON_COMMANDS,
 	configBindings,
 	extensionsBindings,
 	headerBindings,
+	systemSettingsBindings,
 	mcpBindings,
 	navBindings,
 	promptsBindings,
@@ -48,7 +50,8 @@ for (const binding of [
 	...promptsBindings,
 	...configBindings,
 	...toolsBindings,
-	...extensionsBindings
+	...extensionsBindings,
+	...systemSettingsBindings
 ]) {
 	if (typeof binding.cmd !== 'string') continue;
 	const bindings = bindingLookup.get(binding.cmd) ?? [];
@@ -110,9 +113,96 @@ export function viewShortcuts(menuId: ManageModuleId, subMode: ViewSubMode): rea
 			return toolsShortcuts(subMode);
 		case 'extensions':
 			return extensionsShortcuts(subMode);
+		case 'system-settings':
+			return systemSettingsShortcuts(subMode);
 		default:
 			return [];
 	}
+}
+
+function systemSettingsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
+	if (subMode === 'discard-confirm') {
+		return manualShortcuts([
+			{key: 'Enter', label: '放弃修改'},
+			{key: 'Esc', label: '继续编辑'}
+		]);
+	}
+	if (subMode === 'busy') {
+		return manualShortcuts([{key: '请稍候', label: '执行中'}]);
+	}
+
+	const exportShortcut: ShortcutSpec = {command: SYSTEM_SETTINGS_COMMANDS.EXPORT, label: '导出'};
+	const importShortcut: ShortcutSpec = {command: SYSTEM_SETTINGS_COMMANDS.IMPORT, label: '导入'};
+	const saveShortcut: ShortcutSpec = {command: SYSTEM_SETTINGS_COMMANDS.SAVE, label: '保存'};
+	const backShortcut = (label: string): ShortcutSpec => ({command: SYSTEM_SETTINGS_COMMANDS.BACK, label});
+
+	// 导出/导入明细弹窗：树多选 + Enter 主操作，背景页面失活。
+	if (subMode === 'export-modal') {
+		return buildShortcuts([
+			{command: SYSTEM_SETTINGS_COMMANDS.UP, label: '选择'},
+			{command: SYSTEM_SETTINGS_COMMANDS.DOWN, label: '选择'},
+			{command: SYSTEM_SETTINGS_COMMANDS.TOGGLE, label: '勾选'},
+			{command: SYSTEM_SETTINGS_COMMANDS.FOLD, label: '折叠/展开'},
+			{command: SYSTEM_SETTINGS_COMMANDS.EXPAND, label: '折叠/展开'},
+			{command: SYSTEM_SETTINGS_COMMANDS.PRIMARY, label: '导出'},
+			backShortcut('取消')
+		]);
+	}
+
+	if (subMode === 'import-password') {
+		return buildShortcuts([{command: SYSTEM_SETTINGS_COMMANDS.PRIMARY, label: '解析密码'}, backShortcut('取消导入')]);
+	}
+
+	if (subMode === 'import-confirm') {
+		return manualShortcuts([
+			{key: 'Enter', label: '确认覆盖并导入'},
+			{key: 'Esc', label: '返回明细'}
+		]);
+	}
+
+	if (subMode === 'import-preview') {
+		return buildShortcuts([
+			{command: SYSTEM_SETTINGS_COMMANDS.UP, label: '选择'},
+			{command: SYSTEM_SETTINGS_COMMANDS.DOWN, label: '选择'},
+			{command: SYSTEM_SETTINGS_COMMANDS.TOGGLE, label: '合并/覆盖/跳过'},
+			{command: SYSTEM_SETTINGS_COMMANDS.FOLD, label: '折叠/展开'},
+			{command: SYSTEM_SETTINGS_COMMANDS.EXPAND, label: '折叠/展开'},
+			{command: SYSTEM_SETTINGS_COMMANDS.PRIMARY, label: '执行导入'},
+			backShortcut('取消导入')
+		]);
+	}
+
+	// 密码输入焦点：输入框自己消费字符，footer 只提示焦点切换、文件对话框与返回。
+	if (subMode === 'page-password') {
+		return buildShortcuts([
+			{command: SYSTEM_SETTINGS_COMMANDS.UP, label: '字段/卡片'},
+			{command: SYSTEM_SETTINGS_COMMANDS.DOWN, label: '字段/卡片'},
+			{command: SYSTEM_SETTINGS_COMMANDS.CLEAR_PASSWORD, label: '清除密码'},
+			saveShortcut,
+			exportShortcut,
+			importShortcut,
+			backShortcut('返回菜单')
+		]);
+	}
+
+	const pageShortcuts: ShortcutSpec[] = [];
+	if (subMode === 'page-auto-update' || subMode === 'page-encryption' || subMode === 'page-encryption-enabled') {
+		pageShortcuts.push(
+			{command: SYSTEM_SETTINGS_COMMANDS.OPTION_PREV, label: '切换'},
+			{command: SYSTEM_SETTINGS_COMMANDS.OPTION_NEXT, label: '切换'},
+			{command: SYSTEM_SETTINGS_COMMANDS.PRIMARY, label: '切换'}
+		);
+	}
+
+	return buildShortcuts([
+		...pageShortcuts,
+		saveShortcut,
+		exportShortcut,
+		importShortcut,
+		{command: SYSTEM_SETTINGS_COMMANDS.UP, label: '字段/卡片'},
+		{command: SYSTEM_SETTINGS_COMMANDS.DOWN, label: '字段/卡片'},
+		backShortcut('返回菜单')
+	]);
 }
 
 function extensionsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
@@ -382,95 +472,35 @@ function skillsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 }
 
 function promptsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
-	// view 态：只读渲染展示（本地 md 有内容；已有内容不展示「新建」避免误覆盖）
 	if (subMode === 'view-render') {
 		return buildShortcuts([
-			{command: PROMPTS_COMMANDS.EDIT_ENTRY, label: '编辑'},
-			{command: PROMPTS_COMMANDS.OPEN_FILE, label: '打开文件'},
 			{command: PROMPTS_COMMANDS.PREVIEW_UP, label: '滚动'},
 			{command: PROMPTS_COMMANDS.PREVIEW_DOWN, label: '滚动'},
+			{command: PROMPTS_COMMANDS.OPEN_FILE, label: '打开文件'},
 			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
 			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
 		]);
 	}
-
-	// view 态：空状态（本地 md 不存在/空，仅此时 a 新建）
-	if (subMode === 'view-empty') {
-		return buildShortcuts([
-			{command: PROMPTS_COMMANDS.ADD, label: '新建'},
-			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
-			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
-		]);
-	}
-
-	// edit 态：纯编辑器（默认）
-	if (subMode === 'edit') {
-		return buildShortcuts([
-			{command: PROMPTS_COMMANDS.EDITOR_SAVE, label: '保存'},
-			{command: PROMPTS_COMMANDS.EDITOR_CANCEL, label: '取消'}
-		]);
-	}
-
-	return [];
+	return buildShortcuts([
+		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
+		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
+	]);
 }
 
 function configShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
-	// view 态：只读渲染展示当前 settings.json
 	if (subMode === 'view-render') {
 		return buildShortcuts([
-			{command: CONFIG_COMMANDS.EDIT_ENTRY, label: '编辑'},
+			{command: CONFIG_COMMANDS.PREVIEW_UP, label: '滚动'},
+			{command: CONFIG_COMMANDS.PREVIEW_DOWN, label: '滚动'},
 			{command: CONFIG_COMMANDS.OPEN_FILE, label: '打开文件'},
-			{command: CONFIG_COMMANDS.PREVIEW_UP, label: '滚动'},
-			{command: CONFIG_COMMANDS.PREVIEW_DOWN, label: '滚动'},
 			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
 			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
 		]);
 	}
-
-	// view 态：空状态（settings.json 不存在/空，仅此时 a 新建）
-	if (subMode === 'view-empty') {
-		return buildShortcuts([
-			{command: CONFIG_COMMANDS.ADD, label: '新建'},
-			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
-			{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
-		]);
-	}
-
-	// edit 态：纯编辑器（默认）
-	if (subMode === 'edit') {
-		return buildShortcuts([
-			{command: CONFIG_COMMANDS.TOGGLE_PANEL, label: '推荐边栏'},
-			{command: CONFIG_COMMANDS.EDITOR_SAVE, label: '保存'},
-			{command: CONFIG_COMMANDS.IMPORT, label: '补全推荐'},
-			{command: CONFIG_COMMANDS.EDITOR_CANCEL, label: '取消'}
-		]);
-	}
-
-	// edit 态：双栏 · 焦点在编辑器
-	if (subMode === 'edit-split-editor') {
-		return buildShortcuts([
-			{command: CONFIG_COMMANDS.FOCUS_CYCLE, label: '切边栏'},
-			{command: CONFIG_COMMANDS.TOGGLE_PANEL, label: '收边栏'},
-			{command: CONFIG_COMMANDS.EDITOR_SAVE, label: '保存'},
-			{command: CONFIG_COMMANDS.IMPORT, label: '补全推荐'},
-			{command: CONFIG_COMMANDS.EDITOR_CANCEL, label: '取消'}
-		]);
-	}
-
-	// edit 态：双栏 · 焦点在推荐边栏（↑/↓ 滚动）
-	if (subMode === 'edit-split-recommend') {
-		return buildShortcuts([
-			{command: CONFIG_COMMANDS.PREVIEW_UP, label: '滚动'},
-			{command: CONFIG_COMMANDS.PREVIEW_DOWN, label: '滚动'},
-			{command: CONFIG_COMMANDS.FOCUS_CYCLE, label: '切编辑器'},
-			{command: CONFIG_COMMANDS.TOGGLE_PANEL, label: '收边栏'},
-			{command: CONFIG_COMMANDS.EDITOR_SAVE, label: '保存'},
-			{command: CONFIG_COMMANDS.IMPORT, label: '补全推荐'},
-			{command: CONFIG_COMMANDS.EDITOR_CANCEL, label: '取消'}
-		]);
-	}
-
-	return [];
+	return buildShortcuts([
+		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV, label: '返回菜单'},
+		{command: VIEW_COMMON_COMMANDS.EXIT_TO_NAV_LEFT, label: '返回菜单'}
+	]);
 }
 
 function toolsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {

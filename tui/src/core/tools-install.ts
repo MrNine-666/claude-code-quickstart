@@ -27,7 +27,7 @@ import {DSH_TOOL_ID, detectDshLifecycle, installDsh, type DshDetectionDeps, type
 //   GitNexus     npm install -g gitnexus@latest + gitnexus setup --coding-agent claude,codex
 //   AntigravityCli     平台 shell 脚本（Win irm|iex / mac curl|bash）
 // Update 检测已收缩（HC-FU-08）：CcgWorkflow 不再写指纹种子，仅以命令可用性判定安装状态。
-// CcgWorkflow env 推荐项已迁移至 ClaudeConfig 推荐配置（contracts/claude-config.json），本模块不再写 env。
+// CcgWorkflow env 项已由 Claude Config owner 处理，本模块不写 env。
 
 type JsonObject = Record<string, unknown>;
 
@@ -458,7 +458,7 @@ async function postInstallGitNexus(onProgress?: ProgressCallback, exec: typeof e
 
 /** Ccline 后置：写 statusLine（仅补缺失，保护用户配置）。 */
 async function postInstallCcline(onProgress?: ProgressCallback): Promise<void> {
-	// settings.json statusLine（fill-missing：已有 statusLine 则不覆盖，保护用户配置）
+	// settings.json statusLine：已有值时不覆盖，保护用户配置。
 	const path = settingsPath();
 	let settings: JsonObject = {};
 	if (existsSync(path)) {

@@ -122,7 +122,11 @@ async function validateSkillMetadata(skillPath: string, expectedName: string): P
 		return 'SKILL.md 缺失或不是普通文件';
 	}
 
-	const text = await readFile(metadataPath, 'utf8');
+	return validateSkillMetadataText(await readFile(metadataPath, 'utf8'), expectedName);
+}
+
+/** 供导入导出边界复用的 SKILL.md 文本校验（不读盘）。 */
+export function validateSkillMetadataText(text: string, expectedName: string): string | undefined {
 	const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
 	if (!match) {
 		return 'SKILL.md 缺少有效 frontmatter';

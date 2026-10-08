@@ -140,10 +140,13 @@ export function FormPanel({
 			return;
 		}
 
-		// radio/select 选项切换：←/→ 与 Tab/Shift+Tab（上下键已让给字段切换）。
+		// radio 左右键由表单处理；select 的左右键交给原生 tab-select，Tab 仍支持切换选项。
 		if (field?.type === 'select' || field?.type === 'radio') {
-			const prev = name === 'left' || name === 'arrowleft' || name === 'shift-tab' || (name === 'tab' && keyEvent.shift);
-			const next = name === 'right' || name === 'arrowright' || (name === 'tab' && !keyEvent.shift);
+			const prev =
+				(field.type === 'radio' && (name === 'left' || name === 'arrowleft')) ||
+				name === 'shift-tab' ||
+				(name === 'tab' && keyEvent.shift);
+			const next = (field.type === 'radio' && (name === 'right' || name === 'arrowright')) || (name === 'tab' && !keyEvent.shift);
 			if (prev) {
 				onSelectChange(field.id, -1);
 				return;
@@ -203,7 +206,7 @@ export function FormPanel({
 					value={live || field.value}
 					options={field.options}
 					helpText={field.helpText}
-					focused={focused}
+					focused={focused && active && !field.disabled}
 					onChange={value => onFieldChange(field.id, value)}
 				/>
 			);

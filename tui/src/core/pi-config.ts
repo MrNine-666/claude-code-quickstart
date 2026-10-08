@@ -48,6 +48,9 @@ function mergeWithOriginal(edited: JsonObject, original: JsonObject | null): Jso
 	return next;
 }
 
+export function stripPiConfigProtectedFields(source: JsonObject): JsonObject {
+	return stripProtected(source);
+}
 export function readPiConfigText(): string {
 	if (!existsSync(piSettingsPath())) return '';
 	try {

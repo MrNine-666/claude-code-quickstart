@@ -619,3 +619,69 @@ export async function transitionSkillAgents(
 	if (piSnapshot) await cleanupSkillSnapshot(piSnapshot);
 	return {success: true, outcome: 'complete', mutated, inspection: finalInspection};
 }
+
+/**
+ * 导入导出 seam（Phase 2）：把 bundle 中的 Skill 内容快照物化为指定 Agent 目标拓扑。
+ * 复用与 transitionSkillAgents 相同的官方 CLI add 原语与文件事实对账；
+ * 只新增/覆盖包内 Skill，绝不删除包中未出现的本机 Skill 或 Projection。
+ *
+ * 拓扑映射（与 transitionSkillAgents 一致）：cc+cx / cc+pi -> shared；仅 cc -> claude-only；
+ * 仅 cx / 仅 pi -> codex-only（Pi 再叠加 ~/.pi/agent/skills symlink）。
+ */
+export async function materializeSkillTargetsFromSnapshot(
+	name: string,
+	snapshot: SkillSnapshot,
+	targets: SkillAgentTargets,
+	onProgress?: ProgressCallback,
+	exec?: SkillsExecFn,
+	options: SkillStorageOptions = {}
+): Promise<SkillsAdoptionResult> {
+	const targetCx = targets.pi ? (targets.cc ? 'shared' : 'codex-only') : targetTopologyOfDraft({cc: targets.cc, cx: targets.cx});
+	let mutated = false;
+
+	if (targetCx !== 'empty') {
+		const action = await addFromSnapshot(name, snapshot, targetCx, onProgress, exec, options);
+		mutated = action.spawned;
+		const postflight = await inspectSkillStorage(name, options);
+		if (!topologyMaterialized(postflight, targetCx)) {
+			return {
+				success: false,
+				outcome: action.spawned ? 'partial' : 'failed',
+				mutated,
+				inspection: postflight,
+				error: commandError(action, postflight.error ?? 'Skill 内容写入后文件系统对账失败'),
+				recoveryPath: snapshot.skillPath
+			};
+		}
+	}
+
+	if (targets.pi) {
+		const action = await addPiFromSnapshot(name, snapshot, onProgress, exec, options);
+		mutated ||= action.spawned;
+		if (!(await piGlobalTargetMaterialized(name, options))) {
+			return {
+				success: false,
+				outcome: action.spawned ? 'partial' : 'failed',
+				mutated,
+				inspection: await inspectSkillStorage(name, options),
+				error: commandError(action, 'Pi global target 物化失败'),
+				recoveryPath: snapshot.skillPath
+			};
+		}
+	}
+
+	const finalInspection = await inspectSkillStorage(name, options);
+	if ((await piGlobalTargetMaterialized(name, options)) !== targets.pi) {
+		return {
+			success: false,
+			outcome: 'partial',
+			mutated,
+			inspection: finalInspection,
+			error: '最终检测未确认 Pi global target',
+			recoveryPath: snapshot.skillPath
+		};
+	}
+
+	await cleanupSkillSnapshot(snapshot);
+	return {success: true, outcome: 'complete', mutated, inspection: finalInspection};
+}

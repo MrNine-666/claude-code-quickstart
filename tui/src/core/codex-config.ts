@@ -1,6 +1,17 @@
 import {existsSync, readFileSync} from 'node:fs';
+import {isAbsolute, win32} from 'node:path';
 import {codexConfigPath} from './paths.js';
-import {atomicWrite, deletePath, getPath, parse, redactTomlSecrets, setPath, stringify, type TomlDocument, type TomlPath} from './toml-edit.js';
+import {
+	atomicWrite,
+	deletePath,
+	getPath,
+	parse,
+	redactTomlSecrets,
+	setPath,
+	stringify,
+	type TomlDocument,
+	type TomlPath
+} from './toml-edit.js';
 import {loadTextContract} from './contracts.js';
 
 // Codex 推荐配置 + fill-missing（design D10 / HC-CONFIG-RULES-REUSE）。
@@ -131,9 +142,9 @@ export function readCodexConfigDocument(): TomlDocument | null {
 }
 
 /** 对编辑缓冲 TOML 文本执行 fill-missing 合并（仅补 ccq 管辖的顶层缺失键，保留用户其它字段）。 */
-export function applyCodexFillMissingToText(tomlText: string):
-	| {readonly ok: true; readonly text: string; readonly changed: number}
-	| {readonly ok: false; readonly error: string} {
+export function applyCodexFillMissingToText(
+	tomlText: string
+): {readonly ok: true; readonly text: string; readonly changed: number} | {readonly ok: false; readonly error: string} {
 	const recommended = loadRecommendedDocument();
 	if (!recommended) {
 		return {ok: false, error: 'Codex 推荐配置契约不可用（contracts/codex-config.toml 缺失）'};
@@ -144,7 +155,10 @@ export function applyCodexFillMissingToText(tomlText: string):
 		const parsed = parse(tomlText);
 		current = parsed;
 	} catch (error) {
-		return {ok: false, error: `当前编辑内容不是合法 TOML：${redactTomlSecrets(error instanceof Error ? error.message : String(error))}`};
+		return {
+			ok: false,
+			error: `当前编辑内容不是合法 TOML：${redactTomlSecrets(error instanceof Error ? error.message : String(error))}`
+		};
 	}
 
 	const {document: next, changed} = fillMissingRecommended(stripCodexUnmanagedKeys(current), recommended);
@@ -164,7 +178,10 @@ export function importCodexFillMissing(): {ok: boolean; changed?: number; error?
 		try {
 			current = parse(readFileSync(path, 'utf8'));
 		} catch (error) {
-			return {ok: false, error: `无法解析现有 config.toml，已停止以避免覆盖用户配置：${redactTomlSecrets(error instanceof Error ? error.message : String(error))}`};
+			return {
+				ok: false,
+				error: `无法解析现有 config.toml，已停止以避免覆盖用户配置：${redactTomlSecrets(error instanceof Error ? error.message : String(error))}`
+			};
 		}
 	}
 
@@ -210,7 +227,104 @@ export function saveCodexConfigToml(tomlContent: string): {ok: boolean; error?: 
 	}
 }
 
-/** 损坏 config.toml 拒绝覆盖（对齐 Install-ClaudeConfig 安全策略，供 verify 断言）。 */
+// Transfer portability is independent of Config view ownership: provider/model and
+// MCP remain available for their owners to project; only machine-bound state is removed.
+const CODEX_NON_PORTABLE_PATHS: readonly TomlPath[] = [
+	['projects'],
+	['notice'],
+	['windows_wsl_setup_acknowledged'],
+	['sqlite_home'],
+	['log_dir'],
+	['model_catalog_json'],
+	['model_instructions_file'],
+	['experimental_compact_prompt_file'],
+	['tui', 'model_availability_nux'],
+	['tui', 'resume_cwd'],
+	['skills', 'config'],
+	['desktop', 'custom_file_handlers'],
+	['sandbox_workspace_write', 'writable_roots']
+];
+
+function isTomlTable(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isMachineAbsolutePath(value: unknown): value is string {
+	return typeof value === 'string' && (isAbsolute(value) || win32.isAbsolute(value));
+}
+
+/** Removing only command/cwd would silently change a dynamic entry's semantics. */
+function hasMachineBoundCommand(value: unknown): boolean {
+	if (Array.isArray(value)) return value.some(hasMachineBoundCommand);
+	if (!isTomlTable(value)) return false;
+	return Object.entries(value).some(
+		([key, field]) => (['command', 'cwd'].includes(key) && isMachineAbsolutePath(field)) || hasMachineBoundCommand(field)
+	);
+}
+
+export function portableCodexConfig(document: TomlDocument): {
+	readonly config: TomlDocument;
+	readonly excluded: readonly {readonly key: string}[];
+} {
+	const excluded: {key: string}[] = [];
+	let config = structuredClone(document);
+	function exclude(path: TomlPath): void {
+		if (getPath(config, path) === undefined) return;
+		config = deletePath(config, path);
+		excluded.push({key: path.join('.')});
+	}
+
+	for (const path of CODEX_NON_PORTABLE_PATHS) exclude(path);
+	const agents = getPath(config, ['agents']);
+	if (isTomlTable(agents)) {
+		for (const id of Object.keys(agents)) exclude(['agents', id, 'config_file']);
+	}
+	const permissions = getPath(config, ['permissions']);
+	if (isTomlTable(permissions)) {
+		for (const id of Object.keys(permissions)) {
+			exclude(['permissions', id, 'workspace_roots']);
+			const path = ['permissions', id, 'filesystem'];
+			const filesystem = getPath(config, path);
+			if (!isTomlTable(filesystem)) continue;
+			const portable = Object.fromEntries(Object.entries(filesystem).filter(([key]) => !isMachineAbsolutePath(key)));
+			if (Object.keys(portable).length !== Object.keys(filesystem).length) {
+				config = setPath(config, path, portable);
+				// Do not expose absolute filesystem keys in summaries.
+				excluded.push({key: path.join('.')});
+			}
+		}
+	}
+	const marketplaces = getPath(config, ['marketplaces']);
+	if (isTomlTable(marketplaces)) {
+		for (const [id, entry] of Object.entries(marketplaces)) {
+			if (isTomlTable(entry) && entry.source_type === 'local') exclude(['marketplaces', id]);
+		}
+	}
+	for (const table of ['mcp_servers', 'model_providers']) {
+		const entries = getPath(config, [table]);
+		if (!isTomlTable(entries)) continue;
+		for (const [id, entry] of Object.entries(entries)) {
+			if (hasMachineBoundCommand(entry)) exclude([table, id]);
+		}
+	}
+	return {config, excluded};
+}
+
+export function readCodexConfigDocumentStrict():
+	| {readonly status: 'missing'}
+	| {readonly status: 'invalid'; readonly error: string}
+	| {readonly status: 'valid'; readonly value: TomlDocument} {
+	const raw = readCodexConfigRawText();
+	if (raw === null) return {status: 'missing'};
+	try {
+		return {status: 'valid', value: parse(raw)};
+	} catch (error) {
+		return {status: 'invalid', error: error instanceof Error ? error.message : String(error)};
+	}
+}
+
+export {stripCodexUnmanagedKeys};
+
 export function isCodexConfigCorrupted(): boolean {
 	const text = readCodexConfigText();
 	if (text === null) {

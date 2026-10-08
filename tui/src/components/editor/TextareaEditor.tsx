@@ -1,11 +1,11 @@
-import React, { forwardRef, useImperativeHandle, useRef, useState } from 'react';
-import { TextAttributes } from '@opentui/core';
-import type { TextareaRenderable, SyntaxStyle, KeyEvent } from '@opentui/core';
-import { useKeyboard, useRenderer } from '@opentui/react';
-import { colors, borderColors } from '../../theme/index.js';
-import { isAppModifier } from '../../utils/keyboard.js';
-import { ErrorPanel } from '../error-panel.js';
-import { handleTextareaEditKeys, handleTextareaIndentKey } from './textarea-edit-keys.js';
+import React, {forwardRef, useImperativeHandle, useRef, useState} from 'react';
+import {TextAttributes} from '@opentui/core';
+import type {TextareaRenderable, SyntaxStyle, KeyEvent} from '@opentui/core';
+import {useKeyboard, useRenderer} from '@opentui/react';
+import {colors, borderColors} from '../../theme/index.js';
+import {isAppModifier} from '../../utils/keyboard.js';
+import {ErrorPanel} from '../error-panel.js';
+import {handleTextareaEditKeys, handleTextareaIndentKey} from './textarea-edit-keys.js';
 
 // TextareaEditor：编辑/预览双模式内嵌编辑器（HC-EDITOR-OPENTUI，零外部编辑器）
 // - 编辑模式：OpenTUI <textarea> 纯文本编辑，macOS Cmd+S 保存 / Cmd+C 复制，其他平台 Ctrl+S / Ctrl+C；Ctrl+P 切预览、Esc 取消、Tab 缩进（2 空格）
@@ -45,7 +45,7 @@ export type TextareaEditorProps = {
 	// 上报子模式给 App footer（edit / preview）。
 	readonly onModeChange?: (mode: 'edit' | 'preview') => void;
 	// 保存回调：返回 { ok:false, error } 时停留编辑器并展示错误。
-	readonly onSave: (content: string) => { ok: boolean; error?: string };
+	readonly onSave: (content: string) => {ok: boolean; error?: string};
 	readonly onCancel: () => void;
 	// 内容变更通知（用户输入 / 缩进 / undo/redo / 程序化插入均触发），供父视图做脏标记。
 	readonly onContentChange?: () => void;
@@ -75,23 +75,26 @@ function codeFiletype(filetype: EditorFiletype): string {
 	}
 }
 
-export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(function TextareaEditor({
-	title,
-	initialContent,
-	active,
-	isJson = false,
-	filetype = 'text',
-	syntaxStyle = null,
-	onModeChange,
-	onSave,
-	onCancel,
-	onContentChange,
-	tabMode = 'indent',
-	onCycleFocus,
-	escapeMode = 'cancel',
-	textareaFocused,
-	previewEnabled = true
-}, ref) {
+export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(function TextareaEditor(
+	{
+		title,
+		initialContent,
+		active,
+		isJson = false,
+		filetype = 'text',
+		syntaxStyle = null,
+		onModeChange,
+		onSave,
+		onCancel,
+		onContentChange,
+		tabMode = 'indent',
+		onCycleFocus,
+		escapeMode = 'cancel',
+		textareaFocused,
+		previewEnabled = true
+	},
+	ref
+) {
 	const taRef = useRef<TextareaRenderable>(null);
 	const renderer = useRenderer();
 	const [error, setError] = useState<string | null>(null);
@@ -161,7 +164,7 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 		}
 	};
 
-	useKeyboard((keyEvent) => {
+	useKeyboard(keyEvent => {
 		if (!active) {
 			return;
 		}
@@ -202,19 +205,23 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 	});
 
 	// 命令式句柄：供父视图程序化插入片段 / 灌缓冲 / 读取 / 聚焦。
-	useImperativeHandle(ref, () => ({
-		insertText: (text: string) => {
-			taRef.current?.insertText(text);
-			onContentChange?.();
-		},
-		replaceText: (text: string) => {
-			taRef.current?.replaceText(text);
-			onContentChange?.();
-		},
-		getText: () => taRef.current?.plainText ?? '',
-		focus: () => taRef.current?.focus(),
-		blur: () => taRef.current?.blur()
-	}), [onContentChange]);
+	useImperativeHandle(
+		ref,
+		() => ({
+			insertText: (text: string) => {
+				taRef.current?.insertText(text);
+				onContentChange?.();
+			},
+			replaceText: (text: string) => {
+				taRef.current?.replaceText(text);
+				onContentChange?.();
+			},
+			getText: () => taRef.current?.plainText ?? '',
+			focus: () => taRef.current?.focus(),
+			blur: () => taRef.current?.blur()
+		}),
+		[onContentChange]
+	);
 
 	// ── 预览模式渲染 ──（enterPreview 已保证 syntaxStyle 非 null）
 	if (mode === 'preview' && syntaxStyle) {
@@ -228,12 +235,19 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 
 				<box flexGrow={1} minHeight={0} borderStyle="rounded" borderColor={borderColors.active}>
 					{filetype === 'markdown' ? (
-						<scrollbox style={{ flexGrow: 1 }}>
+						<scrollbox style={{flexGrow: 1}}>
 							<markdown content={previewContent} syntaxStyle={syntaxStyle} />
 						</scrollbox>
 					) : (
-						<scrollbox style={{ flexGrow: 1 }}>
-							<line-number fg={colors.lineNumberForeground} bg={colors.lineNumberBackground} minWidth={3} paddingRight={1} showLineNumbers style={{ flexGrow: 1 }}>
+						<scrollbox style={{flexGrow: 1}}>
+							<line-number
+								fg={colors.lineNumberForeground}
+								bg={colors.lineNumberBackground}
+								minWidth={3}
+								paddingRight={1}
+								showLineNumbers
+								style={{flexGrow: 1}}
+							>
 								<code
 									content={previewContent}
 									filetype={codeFiletype(filetype)}
@@ -241,7 +255,7 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 									fg={colors.text}
 									selectionBg={colors.selectionBg}
 									selectionFg={colors.selectionFg}
-									style={{ flexGrow: 1 }}
+									style={{flexGrow: 1}}
 								/>
 							</line-number>
 						</scrollbox>
@@ -259,7 +273,7 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 	// 统一 flex 标准：根 box flexGrow={1} 填满父容器，标题行 flexShrink={0} 稳定占 1 行，
 	// 边框 box flexGrow={1} minHeight={0} 吃满剩余高度、超出行数由 textarea 自身滚动（光标跟随）。
 	// 横向：textarea native measure 把最长逻辑行宽当 min-content，flex 默认不收缩到 min-content
-	// 以下，会逐层把边框撑破右边框外、连带挤乱同层推荐栏滚动条 x 位置。minWidth 不向下传导，根 box /
+	// 以下，会逐层把边框撑破右边框外、连带挤乱同层侧栏滚动条 x 位置。minWidth 不向下传导，根 box /
 	// 边框 box / textarea 三层各自声明 minWidth={0}，让宽度按父容器分配、内容超出时由 textarea 自身换行。
 	return (
 		<box flexDirection="column" flexGrow={1} minWidth={0}>
@@ -269,7 +283,13 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 				</text>
 			</box>
 
-			<box flexGrow={1} minWidth={0} minHeight={0} borderStyle="rounded" borderColor={active ? borderColors.active : borderColors.inactive}>
+			<box
+				flexGrow={1}
+				minWidth={0}
+				minHeight={0}
+				borderStyle="rounded"
+				borderColor={active ? borderColors.active : borderColors.inactive}
+			>
 				<textarea
 					ref={taRef}
 					initialValue={initialContent}
@@ -281,7 +301,7 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 					selectionFg={colors.selectionFg}
 					onContentChange={onContentChange ? () => onContentChange() : undefined}
 					onKeyDown={handleEditorKey}
-					style={{ flexGrow: 1, minWidth: 0, minHeight: 0 }}
+					style={{flexGrow: 1, minWidth: 0, minHeight: 0}}
 				/>
 			</box>
 

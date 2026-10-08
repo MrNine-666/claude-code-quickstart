@@ -11,9 +11,14 @@ import {mergePiProviderModels, piProviderFormAdapter, replacePiProviderModels} f
 const form = buildPiProviderFormModel({mode: 'add'});
 
 describe('Pi Provider registry', () => {
-	test('暴露 openai-codex / xai 的 OAuth 元数据', () => {
+	test('暴露 Pi 1.0.0 OpenAI Codex / Radius / xAI OAuth 元数据', () => {
 		const registry = loadPiProviderRegistry();
-		expect(registry.some(provider => provider.providerId === 'openai-codex' && provider.oauth)).toBe(true);
+		expect(
+			registry.some(provider => provider.providerId === 'openai-codex' && provider.displayName === 'OpenAI Codex' && provider.oauth)
+		).toBe(true);
+		expect(registry.some(provider => provider.providerId === 'radius' && provider.displayName === 'Radius' && provider.oauth)).toBe(
+			true
+		);
 		expect(registry.some(provider => provider.providerId === 'xai' && provider.oauth)).toBe(true);
 	});
 });

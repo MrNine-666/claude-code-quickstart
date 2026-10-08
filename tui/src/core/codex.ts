@@ -3,6 +3,8 @@ import {normalizeBaseUrl, testProviderKey} from './text-utils.js';
 import {codexAuthJsonPath, codexConfigPath, codexDir, codexProfilePath} from './paths.js';
 import {atomicWrite as atomicWriteText, SECRET_FILE_MODE} from './fs-utils.js';
 import {atomicWrite, deletePath, getPath, parse, redactTomlSecrets, setPath, stringify, type TomlDocument} from './toml-edit.js';
+import {portableCodexConfig, readCodexConfigDocumentStrict} from './codex-config.js';
+import {type SectionMergeReport, type TransferResult, transferFail, transferOk} from './config-transfer.js';
 
 // Codex provider/profile core：官方 profile-file 机制 + key 唯一身份（design D6/D7/D8）。
 
@@ -424,14 +426,117 @@ function readCodexConfigDocumentOrEmpty(): TomlDocument {
 	return existsSync(configPath) ? parse(readFileSync(configPath, 'utf8')) : {};
 }
 
-/** 清空 config.toml 的全部供应商键，保留其余顶层键（mcp_servers/hooks 等）。 */
-function clearCodexProviderKeys(): void {
+/** 合并写入 config.toml 的供应商投影：先删旧供应商键，再导入投影中存在的键；其余顶层键原样保留。 */
+export function mergeCodexProviderProjection(projection: TomlDocument): void {
 	let merged = readCodexConfigDocumentOrEmpty();
 	for (const providerKey of CODEX_PROVIDER_CLEAR_KEYS) {
 		merged = deletePath(merged, [providerKey]);
 	}
 
+	for (const providerKey of CODEX_PROVIDER_IMPORT_KEYS) {
+		const value = getPath(projection, [providerKey]);
+		if (value !== undefined) {
+			merged = setPath(merged, [providerKey], value);
+		}
+	}
+
 	atomicWrite(codexConfigPath(), merged, {mode: SECRET_FILE_MODE});
+}
+
+/** 从 config document 提取供应商投影（model / model_provider / model_providers）。 */
+export function codexProviderProjection(document: TomlDocument): TomlDocument {
+	let projection: TomlDocument = {};
+	for (const key of CODEX_PROVIDER_IMPORT_KEYS) {
+		const value = getPath(document, [key]);
+		if (value !== undefined) {
+			projection = setPath(projection, [key], value);
+		}
+	}
+
+	return projection;
+}
+
+/**
+ * 合并导入 config.toml 供应商投影（区别于 activation 的整表替换）：
+ * `model`/`model_provider` 使用包值，`model_providers` 按 id 合并，本机独有条目与字段保留。
+ */
+export function importCodexProviderProjection(projection: TomlDocument, options: {readonly preserveCredentials?: boolean} = {}): void {
+	const merged = mergeImportedCodexProviderProjection(readCodexConfigDocumentOrEmpty(), projection, options);
+	atomicWrite(codexConfigPath(), merged, {mode: SECRET_FILE_MODE});
+}
+
+/** Import preview and write must compare the same merged owner projection. */
+function mergeImportedCodexProviderProjection(
+	local: TomlDocument,
+	projection: TomlDocument,
+	options: {readonly preserveCredentials?: boolean}
+): TomlDocument {
+	let merged = local;
+	merged = deletePath(merged, ['profile']);
+	merged = deletePath(merged, ['profiles']);
+	if (options.preserveCredentials) projection = stripCodexProjectionCredentials(projection);
+
+	for (const key of ['model', 'model_provider'] as const) {
+		const value = getPath(projection, [key]);
+		if (value !== undefined) {
+			merged = setPath(merged, [key], value);
+		}
+	}
+
+	const incomingProviders = getPath(projection, ['model_providers']);
+	if (isRecord(incomingProviders)) {
+		const localProviders = getPath(merged, ['model_providers']);
+		const nextProviders: Record<string, unknown> = isRecord(localProviders) ? {...localProviders} : {};
+		for (const [id, entry] of Object.entries(incomingProviders)) {
+			const localEntry = nextProviders[id];
+			nextProviders[id] = mergeCodexProviderFields(localEntry, entry);
+		}
+
+		merged = setPath(merged, ['model_providers'], nextProviders);
+	}
+
+	return merged;
+}
+
+function mergeCodexProviderFields(local: unknown, incoming: unknown): unknown {
+	if (!isRecord(local) || !isRecord(incoming)) return incoming;
+	const merged = {...local};
+	for (const [key, value] of Object.entries(incoming)) {
+		merged[key] = mergeCodexProviderFields(merged[key], value);
+	}
+	return merged;
+}
+
+const CODEX_PROVIDER_CREDENTIAL_FIELDS = [API_KEY_FIELD, 'http_headers'] as const;
+
+function stripCodexProjectionCredentials(document: TomlDocument): TomlDocument {
+	const providers = getPath(document, ['model_providers']);
+	let next = document;
+	if (isRecord(providers)) {
+		for (const id of Object.keys(providers)) {
+			for (const field of CODEX_PROVIDER_CREDENTIAL_FIELDS) next = deletePath(next, ['model_providers', id, field]);
+		}
+	}
+	return next;
+}
+
+/** Provider owner owns credential facts for both profile TOML and runtime projection. */
+export function codexProvidersContainCredentials(section: CodexProvidersSection): boolean {
+	const contains = (document: TomlDocument): boolean => {
+		const providers = getPath(document, ['model_providers']);
+		return (
+			isRecord(providers) &&
+			Object.values(providers).some(
+				entry =>
+					isRecord(entry) &&
+					CODEX_PROVIDER_CREDENTIAL_FIELDS.some(field => {
+						const value = entry[field];
+						return typeof value === 'string' ? value.length > 0 : isRecord(value) && Object.keys(value).length > 0;
+					})
+			)
+		);
+	};
+	return section.profiles.some(entry => contains(parse(entry.toml))) || contains(section.configProjection);
 }
 
 /**
@@ -444,30 +549,14 @@ function clearCodexProviderKeys(): void {
  */
 export function setDefaultCodexProfile(key: string): void {
 	if (isOfficialLoginKey(key)) {
-		clearCodexProviderKeys();
+		mergeCodexProviderProjection({});
 		return;
 	}
 
 	const rawToml = readCodexProfileToml(key);
 	const profileDoc = parse(rawToml);
 	validateCodexProfileDocument(safeCodexProfileKey(key), profileDoc);
-
-	let merged = readCodexConfigDocumentOrEmpty();
-
-	// 1. 删旧供应商：清掉现有 config 里的三个供应商键
-	for (const providerKey of CODEX_PROVIDER_CLEAR_KEYS) {
-		merged = deletePath(merged, [providerKey]);
-	}
-
-	// 2. 导新供应商：从新 profile 取三个键（profile 有才写，如 official login 无 provider 表）
-	for (const providerKey of CODEX_PROVIDER_IMPORT_KEYS) {
-		const value = getPath(profileDoc, [providerKey]);
-		if (value !== undefined) {
-			merged = setPath(merged, [providerKey], value);
-		}
-	}
-
-	atomicWrite(codexConfigPath(), merged, {mode: SECRET_FILE_MODE});
+	mergeCodexProviderProjection(codexProviderProjection(profileDoc));
 }
 
 /**
@@ -510,4 +599,238 @@ export function migrateLegacyOfficialLoginFile(): {removed: boolean} {
 /** 输出前统一脱敏，供调用层展示解析/保存失败信息时复用。 */
 export function redactCodexTomlForOutput(content: string): string {
 	return redactTomlSecrets(content);
+}
+
+// ── 导入导出 seam（Phase 2）：供应商 profiles 与 config.toml 供应商投影 ─────────
+
+/** profile TOML 中的明文凭据字段；未选择敏感凭据时必须从包中移除。 */
+export const CODEX_PROFILE_CREDENTIAL_FIELD = API_KEY_FIELD;
+
+export type CodexProviderProfileEntry = {readonly key: string; readonly toml: string};
+
+export type CodexProvidersSection = {
+	readonly profiles: readonly CodexProviderProfileEntry[];
+	/** config.toml 中可迁移的供应商投影：model / model_provider / model_providers。 */
+	readonly configProjection: TomlDocument;
+};
+
+/** 校验 `<key>.config.toml` 文本（导入边界；不写盘）。 */
+export function validateCodexProfileToml(key: string, rawToml: string): {readonly ok: true} | {readonly ok: false; readonly error: string} {
+	try {
+		validateCodexProfileDocument(safeCodexProfileKey(key), parse(rawToml));
+		return {ok: true};
+	} catch (error) {
+		return {ok: false, error: safeCodexLoadFailureReason(error)};
+	}
+}
+
+/** 移除 profile TOML 中的明文凭据字段（未选择敏感凭据时导出）。 */
+function stripCodexProfileCredentials(key: string, toml: string): string {
+	let document: TomlDocument;
+	try {
+		document = parse(toml);
+	} catch {
+		return toml;
+	}
+
+	if (CODEX_PROVIDER_CREDENTIAL_FIELDS.every(field => getPath(document, ['model_providers', key, field]) === undefined)) {
+		return toml;
+	}
+
+	return stringify(stripCodexProjectionCredentials(document));
+}
+
+/** 用本机已有 token 回填未包含凭据的包内容，避免同 key 覆盖时丢失本机凭据。 */
+function preserveCodexProfileCredentials(key: string, incomingToml: string, localToml: string): string {
+	let incoming: TomlDocument;
+	let local: TomlDocument;
+	try {
+		incoming = parse(incomingToml);
+		local = parse(localToml);
+	} catch {
+		return incomingToml;
+	}
+
+	let changed = false;
+	for (const field of CODEX_PROVIDER_CREDENTIAL_FIELDS) {
+		const path = ['model_providers', key, field];
+		const localValue = getPath(local, path);
+		if (localValue !== undefined && getPath(incoming, path) === undefined) {
+			incoming = setPath(incoming, path, localValue);
+			changed = true;
+		}
+	}
+	return changed ? stringify(incoming) : incomingToml;
+}
+
+/** 快照 `~/.codex/<key>.config.toml` 与 config.toml 供应商投影。 */
+export function snapshotCodexProvidersSection(options: {readonly includeCredentials: boolean}): TransferResult<CodexProvidersSection> {
+	const warnings: string[] = [];
+	const profiles: CodexProviderProfileEntry[] = [];
+
+	for (const key of listCodexProfileKeys()) {
+		let toml: string;
+		try {
+			toml = readCodexProfileToml(key);
+		} catch {
+			warnings.push(`已跳过无法读取的供应商配置：${key}`);
+			continue;
+		}
+
+		const validated = validateCodexProfileToml(key, toml);
+		if (!validated.ok) {
+			warnings.push(`已跳过损坏的供应商配置：${key}`);
+			continue;
+		}
+
+		profiles.push({key, toml: options.includeCredentials ? toml : stripCodexProfileCredentials(key, toml)});
+	}
+
+	let configProjection: TomlDocument = {};
+	const config = readCodexConfigDocumentStrict();
+	if (config.status === 'invalid') {
+		warnings.push('Codex config.toml 损坏，未包含供应商投影');
+	} else if (config.status === 'valid') {
+		const portable = portableCodexConfig(config.value);
+		configProjection = codexProviderProjection(portable.config);
+		if (!options.includeCredentials) configProjection = stripCodexProjectionCredentials(configProjection);
+		for (const exclusion of portable.excluded) {
+			warnings.push(`已排除本机绑定配置：${exclusion.key}`);
+		}
+	}
+
+	return transferOk({profiles, configProjection}, warnings);
+}
+
+/** 校验包中的 Codex 供应商分类（导入边界；不信任包内容）。 */
+export function parseCodexProvidersSection(value: unknown): TransferResult<CodexProvidersSection> {
+	if (!isRecord(value)) {
+		return transferFail('validation', '供应商分类内容无效');
+	}
+
+	if (!Array.isArray(value.profiles)) {
+		return transferFail('validation', '供应商分类缺少配置列表');
+	}
+
+	const profiles: CodexProviderProfileEntry[] = [];
+	const seen = new Set<string>();
+	for (const raw of value.profiles) {
+		if (
+			!isRecord(raw) ||
+			typeof raw.key !== 'string' ||
+			!testCodexProfileKey(raw.key) ||
+			typeof raw.toml !== 'string' ||
+			raw.toml.trim() === ''
+		) {
+			return transferFail('validation', '供应商分类包含无效条目');
+		}
+
+		if (seen.has(raw.key)) {
+			return transferFail('validation', '供应商分类包含重复条目');
+		}
+
+		seen.add(raw.key);
+		const validated = validateCodexProfileToml(raw.key, raw.toml);
+		if (!validated.ok) {
+			return transferFail('validation', `供应商配置无效：${validated.error}`);
+		}
+
+		profiles.push({key: raw.key, toml: raw.toml});
+	}
+
+	if (!isRecord(value.configProjection)) {
+		return transferFail('validation', '供应商分类缺少投影配置');
+	}
+
+	// 再次过滤，防止外部包把本机绑定条目带进 config.toml。
+	const portable = portableCodexConfig(value.configProjection as TomlDocument);
+	const warnings = portable.excluded.map(exclusion => `已排除本机绑定配置：${exclusion.key}`);
+	return transferOk({profiles, configProjection: codexProviderProjection(portable.config)}, warnings);
+}
+
+/** 合并导入 Codex 供应商分类：同 key 覆盖，其他本机 profile 与 config 键保留。 */
+export function importCodexProvidersSection(
+	data: unknown,
+	options: {readonly containsCredentials: boolean; readonly dryRun?: boolean}
+): TransferResult<SectionMergeReport> {
+	const parsed = parseCodexProvidersSection(data);
+	if (!parsed.ok) {
+		return parsed;
+	}
+
+	const localConfig = readCodexConfigDocumentStrict();
+	if (localConfig.status === 'invalid') {
+		return transferFail('conflict', '本机 Codex config.toml 损坏，已停止导入供应商分类');
+	}
+
+	const added: string[] = [];
+	const replaced: string[] = [];
+	const unchanged: string[] = [];
+	const warnings = [...parsed.warnings];
+
+	for (const entry of parsed.data.profiles) {
+		const profilePath = codexProfilePath(entry.key);
+		let toml = options.containsCredentials ? entry.toml : stripCodexProfileCredentials(entry.key, entry.toml);
+		let existing: string | null = null;
+		if (existsSync(profilePath)) {
+			try {
+				existing = readFileSync(profilePath, 'utf8');
+			} catch {
+				return transferFail('conflict', `本机供应商配置无法读取：${entry.key}`);
+			}
+
+			const validated = validateCodexProfileToml(entry.key, existing);
+			if (!validated.ok) {
+				return transferFail('conflict', `本机供应商配置损坏，已停止导入：${entry.key}`);
+			}
+
+			if (!options.containsCredentials) {
+				toml = preserveCodexProfileCredentials(entry.key, toml, existing);
+			}
+		}
+
+		if (existing === toml) {
+			unchanged.push(entry.key);
+			continue;
+		}
+
+		if (existing === null) {
+			added.push(entry.key);
+		} else {
+			replaced.push(entry.key);
+		}
+
+		if (!options.dryRun) {
+			try {
+				saveCodexProfileToml(entry.key, toml);
+			} catch {
+				return transferFail('io', `供应商配置写入失败：${entry.key}`);
+			}
+		}
+	}
+
+	const localProjection = localConfig.status === 'valid' ? codexProviderProjection(localConfig.value) : {};
+	const incomingProjection = parsed.data.configProjection;
+	const mergedProjection = codexProviderProjection(
+		mergeImportedCodexProviderProjection(localProjection, incomingProjection, {
+			preserveCredentials: !options.containsCredentials
+		})
+	);
+	if (Object.keys(incomingProjection).length === 0) {
+		// 包中没有默认供应商投影时不清理本机默认项（合并语义不删除包外内容）。
+		unchanged.push('config');
+	} else if (JSON.stringify(localProjection) === JSON.stringify(mergedProjection)) {
+		unchanged.push('config');
+	} else {
+		(Object.keys(localProjection).length === 0 ? added : replaced).push('config');
+		if (!options.dryRun) {
+			try {
+				importCodexProviderProjection(incomingProjection, {preserveCredentials: !options.containsCredentials});
+			} catch {
+				return transferFail('io', 'Codex config.toml 写入失败');
+			}
+		}
+	}
+
+	return transferOk({added, replaced, unchanged, skipped: [], warnings});
 }

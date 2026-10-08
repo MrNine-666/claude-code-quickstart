@@ -2,7 +2,7 @@ import {afterEach, beforeEach, expect, test} from 'bun:test';
 import {join} from 'node:path';
 
 import {claudeDir, codexAgentsPath} from '../../src/core/paths.js';
-import {getConfigPath, loadRecommendationAnnotated} from '../../src/services/config-service.js';
+import {getConfigPath} from '../../src/services/config-service.js';
 import {getRulesPath} from '../../src/services/prompts-service.js';
 import {createTempHome, type TempHome} from '../helpers/temp-home.js';
 
@@ -24,7 +24,7 @@ afterEach(() => {
 	tempHome.cleanup();
 });
 
-test('1.12b Config 路径隔离：settings.json ↔ config.toml', () => {
+test('配置文件路径隔离：settings.json ↔ config.toml', () => {
 	expect(getConfigPath('cc'), 'Claude Config 目标为 settings.json').toBe(join(tempHome.path, '.claude', 'settings.json'));
 	expect(getConfigPath('cx'), 'Codex Config 目标为 config.toml').toBe(join(tempHome.path, '.codex', 'config.toml'));
 });
@@ -36,9 +36,4 @@ test('6.7/6.8/6.9 Rules 路径隔离：CLAUDE.md ↔ AGENTS.md', () => {
 	// P5d 迁自 scripts/verify-prompts-view.mjs：Pi 规则目标路径隔离（原脚本 3 目标循环，
 	// cc/cx 两条已由本文件覆盖，pi 一条为覆盖缺口）。
 	expect(getRulesPath('pi'), 'Pi 全局规则为 ~/.pi/agent/AGENTS.md').toBe(join(tempHome.path, '.pi', 'agent', 'AGENTS.md'));
-});
-
-test('6.4/6.5 Codex 推荐配置契约可加载且含 file_opener', () => {
-	expect(loadRecommendationAnnotated('cx')?.includes('sandbox_mode'), 'Codex 推荐配置契约可加载').toBe(true);
-	expect(loadRecommendationAnnotated('cx')?.includes('file_opener'), 'Codex 推荐配置含 file_opener').toBe(true);
 });

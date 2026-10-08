@@ -32,6 +32,11 @@ const expectedFiles = [
 	'views/skills/skills-view-actions.ts',
 	'views/skills/skills-view-input.ts',
 	'views/skills/skills-view-services.ts',
+	'views/system-settings/SystemSettingsView.tsx',
+	'views/system-settings/SystemSettingsPageView.tsx',
+	'views/system-settings/SystemSettingsModals.tsx',
+	'views/system-settings/system-settings-view-input.ts',
+	'views/system-settings/system-settings-view-actions.ts',
 	'types/provider-form-adapter.ts'
 ];
 for (const file of expectedFiles) assert.equal(existsSync(src(file)), true, `架构文件必须存在：${file}`);
@@ -52,7 +57,11 @@ const roots = {
 	provider: ['views/provider/ProviderView.tsx', ['ProviderHomeView', 'ProviderFormView']],
 	mcp: ['views/mcp/McpView.tsx', ['McpHomeView', 'McpFormView']],
 	tools: ['views/tools/ToolsView.tsx', ['ToolsHomeView', 'ToolsModals']],
-	skills: ['views/skills/SkillsView.tsx', ['SkillsHomeView', 'SkillsInstallView', 'SkillsModals']]
+	skills: ['views/skills/SkillsView.tsx', ['SkillsHomeView', 'SkillsInstallView', 'SkillsModals']],
+	'system-settings': [
+		'views/system-settings/SystemSettingsView.tsx',
+		['SystemSettingsPageView', 'SystemSettingsModals']
+	]
 };
 for (const [name, [file, children]] of Object.entries(roots)) {
 	const source = read(file);
@@ -78,7 +87,9 @@ const pageFiles = [
 	'views/tools/ToolsModals.tsx',
 	'views/skills/SkillsHomeView.tsx',
 	'views/skills/SkillsInstallView.tsx',
-	'views/skills/SkillsModals.tsx'
+	'views/skills/SkillsModals.tsx',
+	'views/system-settings/SystemSettingsPageView.tsx',
+	'views/system-settings/SystemSettingsModals.tsx'
 ];
 const stripTypeImports = source => source.replace(/import\s+type[\s\S]*?from\s+['"][^'"]+['"];?/g, '');
 for (const file of pageFiles) {
@@ -103,7 +114,8 @@ for (const path of [
 	'./views/config/ConfigView.js',
 	'./views/prompts/PromptsView.js',
 	'./views/tools/ToolsView.js',
-	'./views/skills/SkillsView.js'
+	'./views/skills/SkillsView.js',
+	'./views/system-settings/SystemSettingsView.js'
 ]) {
 	assert.match(appSource, new RegExp(`from ['"]${path.replaceAll('.', '\\.')}`), `App 必须从新 domain 入口导入 ${path}`);
 }
@@ -358,28 +370,6 @@ assert.match(
 	/subtitle === undefined \? null : [\s\S]{0,120}<text fg=\{colors\.muted\}[^>]*selectionBg=\{colors\.selectionBg\}[^>]*selectionFg=\{colors\.selectionFg\}/,
 	'所有页面标题副文案必须使用主题化文本选中背景/前景'
 );
-for (const [name, source] of [['ConfigView', archG1bDocumentFormSource]]) {
-	assert.match(
-		source,
-		/<box(?=[^>]*key="recommend-panel")(?=[^>]*flexGrow=\{1\})(?=[^>]*flexBasis=\{0\})(?=[^>]*minWidth=\{0\})[^>]*>/,
-		`${name} split 推荐列必须用 flexGrow={1} + flexBasis={0} + minWidth={0} 保持横向等分`
-	);
-	assert.match(
-		source,
-		/<box(?=[^>]*key="editor-panel")(?=[^>]*flexGrow=\{1\})(?=[^>]*flexBasis=\{0\})(?=[^>]*minWidth=\{0\})[^>]*>/,
-		`${name} split 编辑列必须用 flexGrow={1} + flexBasis={0} + minWidth={0} 保持横向等分`
-	);
-	assert.match(
-		source,
-		/<box(?=[^>]*flexGrow=\{1\})(?=[^>]*minHeight=\{0\})[^>]*borderStyle="rounded"/,
-		`${name} split 左列推荐边框必须带 flexGrow={1} + minHeight={0}，避免溢出内容挤掉标题 marginBottom 导致边框错位`
-	);
-	assert.match(
-		source,
-		/<ThemedScrollbox(?=[^>]*style=\{\{[^}]*flexGrow: 1)(?=[^>]*style=\{\{[^}]*minHeight: 0)[^>]*>/,
-		`${name} split 左列推荐 ThemedScrollbox 必须带 minHeight: 0，让内容在分配空间内收缩而非撑大父容器`
-	);
-}
 assert.match(archG1bSpinnerSource, /props\.variant === 'overlay'/, '共享 Spinner 必须同时支持 inline 与 overlay 模式');
 assert.match(archG1bSpinnerSource, /position="absolute"[\s\S]*width="100%"[\s\S]*height="100%"[\s\S]*zIndex=\{200\}/, 'Spinner overlay 必须覆盖整个终端并高于普通 Modal');
 assert.match(archG1bSpinnerSource, /backgroundColor=\{colors\.modalBackground\}[\s\S]{0,80}opacity=\{0\.72\}/, 'Spinner overlay 背景必须使用主题色与半透明度');
@@ -401,8 +391,8 @@ assert.doesNotMatch(archG1bComponentsIndexSource, /ProgressLog|progress-log/, '�
 // ── 迁自 verify-agent-context.mjs（隐藏 Header 模块的上下文 / 焦点不变量）──
 assert.match(
 	archG1bAppSource,
-	/AGENT_HEADER_HIDDEN_MODULES\s*=\s*new Set<ManageModuleId>\(\[\s*'tools',\s*'mcp',\s*'skills'\s*\]\)/,
-	'AGENT_HEADER_HIDDEN_MODULES 含 tools + mcp + skills（共享双侧模块隐藏 Header）'
+	/AGENT_HEADER_HIDDEN_MODULES\s*=\s*new Set<ManageModuleId>\(\[\s*'tools',\s*'mcp',\s*'skills',\s*'system-settings'\s*\]\)/,
+	'AGENT_HEADER_HIDDEN_MODULES 含 tools + mcp + skills + transfer（共享双侧与跨工具模块隐藏 Header）'
 );
 assert.match(archG1bAppSource, /hideAgentHeader\s*\?\s*null\s*:\s*\(?\s*<AgentHeader/, '隐藏 Header 模块（hideAgentHeader）不渲染 AgentHeader');
 assert.match(
@@ -493,23 +483,16 @@ const archG2CodexUserSurfaceSource = [
 
 // ── 迁自 verify-config-view.mjs（ConfigView → adapter 必经路径 / dirty 编辑 / editor 面板结构）──
 assert.match(archG2ConfigViewSource, /createConfigDocumentAdapter\(props\.agentContext\)/, 'ConfigView 必须从 agentContext 派生 adapter');
-assert.match(archG2ConfigViewSource, /if \(dirty\) \{[\s\S]{0,80}toast\.info\('已放弃未保存的编辑'\)/, '取消编辑必须识别 dirty 状态');
+// ManagedDocumentView owns cancelEdit; allow Biome's block form as well as the legacy single statement.
+assert.match(archG2ConfigViewSource, /if\s*\(dirty\)\s*(?:\{\s*)?toast\.info\('已放弃未保存的编辑'\)/, '取消编辑必须识别 dirty 状态');
 assert.match(
 	archG2ConfigViewSource,
 	/useEffect\(\(\) => \{[\s\S]{0,120}reset\(adapter\.load\(\)\);[\s\S]{0,40}\}, \[adapter\]\);/,
 	'agentContext adapter 切换时必须重载视图状态，避免旧配置页内容残留'
 );
 assert.match(archG2ConfigViewSource, /setDirty\(false\);/, '保存/取消/切换后必须清理 dirty 状态，避免跨上下文误写');
-// HC-EDITOR-PANEL-STABLE：editor 面板容器父路径必须恒定（始终 row 容器内的 key='editor-panel'），
-// 推荐边栏作为带 key 的兄弟条件插入/移除。否则 split↔editor 切换会改变 editorEl 父路径，React 卸载重挂
-// TextareaEditor，<textarea initialValue> 用 editInitial 重新初始化、丢失用户编辑（关闭推荐边栏内容回退 bug）。
-assert.match(archG2ConfigViewSource, /key="editor-panel"/, 'ConfigView editor 面板必须有稳定 key，父路径恒定避免 textarea 重挂丢内容');
-assert.match(archG2ConfigViewSource, /key="recommend-panel"/, 'ConfigView 推荐边栏必须作为带 key 的兄弟节点条件渲染，不改变 editor 面板父路径');
-assert.doesNotMatch(
-	archG2ConfigViewSource,
-	/\?\s*\([\s\S]{0,200}\{editorEl\}[\s\S]{0,200}\)\s*:\s*\(\s*editorEl\s*\)/,
-	'editor 不得再走 split/非 split 两分支渲染（会改变父路径导致重挂）'
-);
+// ConfigView 普通编辑只需保留稳定 editor 路径，不再校验已删除的 recommendation split。
+assert.match(archG2ConfigViewSource, /<DocumentFormView[\s\S]*editorRef=\{editorRef\}/, 'ConfigView 必须渲染普通编辑器');
 
 // ── 迁自 verify-prompts-view.mjs（PromptsView → adapter 必经路径 / 规则 core 无推荐模板）──
 assert.match(archG2PromptsViewSource, /createPromptsDocumentAdapter\(props\.agentContext\)/, 'PromptsView 必须从 agentContext 派生 adapter');
@@ -732,3 +715,71 @@ assert.doesNotMatch(
 );
 
 console.log('[PASS] P1-G4 静态合同：工具卸载的 CLI/TUI 共用 core 入口、无层外特判');
+
+// ════════════════════════════════════════════════════════════════════════════
+// Phase 4 配置导入导出模块静态合同
+// ════════════════════════════════════════════════════════════════════════════
+const archSettingsRootSource = read('views/system-settings/SystemSettingsView.tsx');
+const archSettingsPageSource = read('views/system-settings/SystemSettingsPageView.tsx');
+const archSettingsModalsSource = read('views/system-settings/SystemSettingsModals.tsx');
+const archSettingsInputSource = read('views/system-settings/system-settings-view-input.ts');
+const archSettingsStateSource = read('state/system-settings-state.ts');
+const archSettingsShortcutsSource = read('state/shortcuts.ts');
+const archSettingsPageSources = `${archSettingsPageSource}\n${archSettingsModalsSource}`;
+
+assert.match(archSettingsRootSource, /SystemSettingsPageView/, '系统设置 root 必须渲染单页页面');
+assert.doesNotMatch(archSettingsRootSource, /<(?:FormPanel|ScrollList|Card)\b/, '系统设置 root 不得内联主页/表单控件 JSX');
+assert.match(archSettingsRootSource, /<SystemSettingsExportModal/, '系统设置 root 必须渲染导出明细弹窗');
+assert.match(archSettingsRootSource, /<SystemSettingsImportModal/, '系统设置 root 必须渲染导入明细弹窗');
+assert.match(archSettingsPageSource, /<SelectField/, '页面必须用共享 SelectField 展示自动更新与加密选项');
+assert.doesNotMatch(archSettingsPageSource, /<ScrollList|本机配置清单/, '主页不再展示配置清单');
+assert.match(archSettingsModalsSource, /<ScrollList/, '弹窗分类树必须复用共享 ScrollList');
+assert.match(archSettingsPageSource, /label="导出密码"/, '主页必须在加密开启时渲染密码输入');
+assert.doesNotMatch(archSettingsPageSources, /终端代理|代理地址/, '终端代理已移除，不得残留入口');
+assert.match(archSettingsModalsSource, /<Modal/, '两个明细弹窗必须复用共享 Modal');
+assert.match(archSettingsModalsSource, /<Checkbox/, '弹窗树必须复用共享 Checkbox');
+assert.match(archSettingsRootSource, /createConfigTransferService/, '系统设置 root 必须拥有 service 编排');
+assert.match(archSettingsRootSource, /onBusyStateChange/, '系统设置 root 必须上报 busy overlay');
+assert.doesNotMatch(archSettingsPageSources, /from\s+['"][^'"]*services\//, '系统设置页面组件不得直接 import service');
+assert.doesNotMatch(
+	archSettingsPageSources,
+	/from\s+['"]node:(?:fs|child_process)['"]/,
+	'系统设置页面组件不得直接读写文件或启动进程'
+);
+assert.match(archSettingsModalsSource, /systemSettingsHint\('export-modal'\)/, '导出弹窗 hint 必须从统一快捷键 registry 派生');
+assert.match(archSettingsModalsSource, /systemSettingsHint\('import-preview'\)/, '导入弹窗 hint 必须从统一快捷键 registry 派生');
+assert.match(archSettingsInputSource, /systemSettingsHint/, '系统设置 Modal hint 必须由 registry 派生');
+assert.doesNotMatch(archSettingsPageSource, /systemSettingsHint\(|<ShortcutBar\b/, '页面不得自绘底部快捷键；footer 由 App 持有');
+assert.match(archSettingsRootSource, /onSubModeChange\?\.\(subMode\)/, '系统设置必须上报子模式供 App footer 渲染');
+assert.match(appSource, /<ShortcutBar shortcuts=\{activeFooterShortcuts\}/, 'App 必须统一渲染 footer');
+assert.doesNotMatch(archSettingsPageSources, /Ctrl\+|⌘|⌃/, '系统设置页面不得硬编码快捷键文案');
+assert.doesNotMatch(archSettingsPageSources, /SingleLineInput|手动输入|path-input/, '系统设置单页不得保留路径输入框或手动 fallback');
+// 文本字段只允许密码：若重新引入路径/位置输入框，label 不含「密码」即失败。
+const settingsFieldLabels = [...archSettingsPageSources.matchAll(/label="([^"]*)"/g)].map(match => match[1]);
+assert.ok(
+	settingsFieldLabels.some(label => label.includes('密码')),
+	`系统设置页面必须保留密码字段，发现：${settingsFieldLabels.join('、')}`
+);
+assert.ok(
+	settingsFieldLabels.every(label => !/路径|位置|文件名|文件夹/.test(label)),
+	`系统设置页面不得出现路径输入框，发现：${settingsFieldLabels.join('、')}`
+);
+assert.match(appSource, /case 'system-settings'[\s\S]{0,240}<SystemSettingsView/, 'App 必须在 ModuleContent 接入 SystemSettingsView');
+assert.match(
+	appSource,
+	/case 'system-settings'[\s\S]{0,320}onBusyStateChange=\{onBusyStateChange\}/,
+	'系统设置执行必须接入全局 busy overlay'
+);
+assert.match(appSource, /onAutoUpdateChange=\{handleAutoUpdateChange\}/, 'App 必须把自动更新偏好接线到系统设置页');
+assert.match(archSettingsStateSource, /eventLog/, '系统设置状态必须保留脱敏事件日志');
+// 统一退出生命周期：q 与更新弹窗都经 requestExitWithStagedUpdate，且有已验证下载时先应用再退出。
+assert.match(appSource, /requestExitWithStagedUpdate/, 'App 必须提供统一退出入口');
+assert.match(appSource, /createStagedUpdateExit/, '统一退出必须复用可测的 staged 更新协调器');
+assert.match(appSource, /exitCoordinator\.requestExit\(\)/, '统一出口必须经协调器 requestExit');
+assert.doesNotMatch(appSource, /renderer\?\.destroy\(\);\s*process\.exit\(0\)/, 'TUI 不得保留绕过入口控制器的直接退出路径');
+assert.match(appSource, /currentFocusedRenderable instanceof EditBufferRenderable/, 'q 全局退出必须在文本编辑焦点让位给字符输入');
+assert.match(archSettingsShortcutsSource, /SYSTEM_SETTINGS_COMMANDS\.EXPORT/, '系统设置 footer 必须展示导出');
+assert.match(archSettingsShortcutsSource, /SYSTEM_SETTINGS_COMMANDS\.IMPORT/, '系统设置 footer 必须展示导入');
+assert.match(archSettingsStateSource, /mode: 'busy'/, '系统设置 busy 必须是显式模式');
+
+console.log('[PASS] 系统设置模块：单页拓扑、两个树形弹窗、Modal hint registry、busy overlay 接线');

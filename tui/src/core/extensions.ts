@@ -1,5 +1,14 @@
-import {execCommand, formatCommandInstruction, throwIfAborted, type ExecResult, type ProgressCallback} from './exec.js';
+import {
+	execCommand,
+	formatCommandInstruction,
+	removeAnsiSequences,
+	throwIfAborted,
+	type ExecResult,
+	type ProgressCallback
+} from './exec.js';
 import {detectTool, TOOL_DEFINITIONS} from './tools-install.js';
+import {inspectPiPackageInstallation, parsePiPackageSource} from './pi-package-source.js';
+import {piAgentDir} from './paths.js';
 
 export const PI_MCP_ADAPTER_ID = 'pi-mcp-adapter';
 export const PI_MCP_ADAPTER_SPEC = 'npm:pi-mcp-adapter';
@@ -44,7 +53,12 @@ export type PiExtensionManifest = {
 
 export type PiExtensionResult =
 	| {readonly ok: true; readonly package: PiExtensionPackage; readonly output?: string}
-	| {readonly ok: false; readonly error: string; readonly output?: string};
+	| {
+			readonly ok: false;
+			readonly error: string;
+			readonly output?: string;
+			readonly kind?: 'validation' | 'install' | 'postflight' | 'cancelled';
+	  };
 
 export type PiExtensionSearchPage = {
 	readonly items: readonly PiExtensionPackage[];
@@ -72,6 +86,8 @@ export type ExtensionCommandDeps = {
 	/** 官方 npm Registry 搜索与 Downloads API 的可注入请求边界。 */
 	readonly request?: ExtensionCatalogRequest;
 	readonly signal?: AbortSignal;
+	/** Read-only storage/ref fact seam; never treat settings declarations as installed. */
+	readonly packageInstalled?: (source: string) => boolean;
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -453,7 +469,7 @@ function packageNameFromRecord(item: unknown): string {
 }
 
 function packageNameFromListLine(line: string): string {
-	const source = line.trim();
+	const source = line.trim().replace(/ \(filtered\)$/, '');
 	if (!source) return '';
 	const indentation = line.match(/^\s*/)?.[0].length ?? 0;
 	if (indentation > 2 && /^(?:[A-Za-z]:[\\/]|\/)/.test(source)) return '';
@@ -466,7 +482,10 @@ export async function listPiPackages(exec: typeof execCommand = execCommand): Pr
 	const parsed = parseJson<unknown>(result.stdout || '');
 	if (Array.isArray(parsed)) return parsed.map(packageNameFromRecord).filter(Boolean);
 	if (isObject(parsed) && Array.isArray(parsed.packages)) return parsed.packages.map(packageNameFromRecord).filter(Boolean);
-	return (result.stdout || '').split(/\r?\n/).map(packageNameFromListLine).filter(Boolean);
+	return removeAnsiSequences(result.stdout || '')
+		.split(/\r?\n/)
+		.map(packageNameFromListLine)
+		.filter(Boolean);
 }
 
 export async function isPiCliInstalled(exec: typeof execCommand = execCommand): Promise<boolean> {
@@ -484,7 +503,12 @@ async function runPiCommand(
 	onProgress?: ProgressCallback
 ): Promise<ExecResult> {
 	const exec = deps.exec ?? execCommand;
-	const installed = deps.piInstalled ? await deps.piInstalled() : await isPiCliInstalled(exec);
+	if (deps.signal) throwIfAborted(deps.signal);
+	const installed = deps.piInstalled
+		? await deps.piInstalled()
+		: await isPiCliInstalled((command, args, options) =>
+				exec(command, args, {...options, signal: deps.signal, env: {...process.env, PI_CODING_AGENT_DIR: piAgentDir()}})
+			);
 	if (!installed) throw new Error('需要先安装 Pi Agent CLI，才能管理 Pi package 扩展');
 	if (deps.signal) throwIfAborted(deps.signal);
 	onProgress?.({
@@ -493,7 +517,11 @@ async function runPiCommand(
 		componentId: component,
 		instruction: formatCommandInstruction('pi', args)
 	});
-	const result = await exec('pi', [...args], {timeout: 120000, signal: deps.signal});
+	const result = await exec('pi', [...args], {
+		timeout: 120000,
+		signal: deps.signal,
+		env: {...process.env, PI_CODING_AGENT_DIR: piAgentDir()}
+	});
 	if (deps.signal) throwIfAborted(deps.signal);
 	if (result.code !== 0) throw new Error(result.stderr || result.stdout || `pi 命令失败 (exit ${result.code})`);
 	return result;
@@ -517,21 +545,31 @@ export async function installPiPackage(
 	deps: ExtensionCommandDeps = {},
 	onProgress?: ProgressCallback
 ): Promise<PiExtensionResult> {
+	let stage: 'validation' | 'install' | 'postflight' = 'validation';
 	try {
-		const spec = nameOrSpec.startsWith('npm:') ? nameOrSpec : `npm:${nameOrSpec}`;
+		const spec = /^(?:npm:|git:|https:\/\/|ssh:\/\/)/.test(nameOrSpec) ? nameOrSpec : `npm:${nameOrSpec}`;
+		const source = parsePiPackageSource(spec);
+		if (!source.ok) throw new Error(source.error);
+		stage = 'install';
+		const result = await runPiCommand(['install', spec, '--no-approve'], spec, deps, onProgress);
+		stage = 'postflight';
+		if (deps.signal) throwIfAborted(deps.signal);
+		if (!(deps.packageInstalled ?? inspectPiPackageInstallation)(spec)) throw new Error('Pi package 安装状态复核失败');
 		const exec = deps.exec ?? execCommand;
-		const result = await runPiCommand(['install', spec], nameOrSpec, deps, onProgress);
-		await reconcilePiPackage(nameOrSpec, true, exec);
+		await reconcilePiPackage(spec, true, (command, args, options) =>
+			exec(command, args, {...options, signal: deps.signal, env: {...process.env, PI_CODING_AGENT_DIR: piAgentDir()}})
+		);
+		if (deps.signal) throwIfAborted(deps.signal);
 		return {
 			ok: true,
 			package: packageFromManifest(
 				{name: displayPackageName(nameOrSpec), pi: {extensions: ['unknown']}},
-				{installed: true, source: nameOrSpec.startsWith('npm:') ? nameOrSpec : `npm:${nameOrSpec}`}
+				{installed: true, source: spec}
 			)!,
 			output: result.stdout
 		};
 	} catch (error) {
-		return {ok: false, error: error instanceof Error ? error.message : String(error)};
+		return {ok: false, kind: deps.signal?.aborted ? 'cancelled' : stage, error: error instanceof Error ? error.message : String(error)};
 	}
 }
 

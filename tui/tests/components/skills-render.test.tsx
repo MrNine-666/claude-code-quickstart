@@ -1,7 +1,8 @@
 import React, {act} from 'react';
 import {KeyEvent, PasteEvent, RGBA, type ParsedKey} from '@opentui/core';
 import {testRender} from '@opentui/react/test-utils';
-import {describe, expect, test} from 'bun:test';
+import {describe, expect, spyOn, test} from 'bun:test';
+import {toast} from '../../src/components/toast.js';
 import {SingleLineInput} from '../../src/components/single-line-input.js';
 import type {InstalledSkillItem} from '../../src/core/skills-installed.js';
 import type {DetectionCache} from '../../src/hooks/use-detection-cache.js';
@@ -494,6 +495,7 @@ describe('SkillsView topology modal', () => {
 				]
 			}
 		};
+		const feedback = spyOn(toast, 'error').mockImplementation(() => {});
 		const setup = await testRender(<SkillsView services={services} cache={adoptCache} active />, {width: 76, height: 24});
 
 		try {
@@ -524,9 +526,14 @@ describe('SkillsView topology modal', () => {
 			expect(frame).toMatch(/Enter\s+确认执行/);
 			expect(frame).toMatch(/Esc\s+取消/);
 			await press('enter');
-			await setup.waitForFrame(value => value.includes('simulated adoption failure'));
+			await setup.flush();
+			expect(feedback).toHaveBeenCalledTimes(1);
+			expect(setup.captureCharFrame()).not.toContain('simulated adoption failure');
 			expect(adoptCache.refreshCount).toBe(1);
+			await press('down');
+			expect(feedback).toHaveBeenCalledTimes(1);
 		} finally {
+			feedback.mockRestore();
 			await act(async () => {
 				setup.renderer.destroy();
 			});

@@ -15,6 +15,8 @@ type DocumentFocus = 'editor' | 'recommend';
 export type ManagedDocumentViewProps = {
 	readonly adapter: ManagedDocumentAdapter;
 	readonly active: boolean;
+	/** Keep editor implementation available while a product surface is preview-only. */
+	readonly editingEnabled?: boolean;
 	readonly onSubModeChange?: (subMode: string) => void;
 	readonly onExitToNav: () => void;
 	readonly onExitToHeader?: () => void;
@@ -27,7 +29,8 @@ export function ManagedDocumentView({
 	onSubModeChange,
 	onExitToNav,
 	onExitToHeader,
-	syntaxStyle = null
+	syntaxStyle = null,
+	editingEnabled = true
 }: ManagedDocumentViewProps) {
 	const [snapshot, setSnapshot] = useState<ManagedDocumentSnapshot>(() => adapter.load());
 	const [mode, setMode] = useState<DocumentMode>('view');
@@ -182,7 +185,7 @@ export function ManagedDocumentView({
 				openExternalFile();
 				return;
 			}
-			if ((name === 'e' && snapshot.hasContent) || (name === 'a' && !snapshot.hasContent)) {
+			if (editingEnabled && ((name === 'e' && snapshot.hasContent) || (name === 'a' && !snapshot.hasContent))) {
 				enterEdit();
 				return;
 			}
@@ -201,6 +204,7 @@ export function ManagedDocumentView({
 			return;
 		}
 
+		if (!editingEnabled) return;
 		if (name === 'escape') {
 			cancelEdit();
 			return;

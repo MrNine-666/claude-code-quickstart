@@ -1119,7 +1119,8 @@ export function ProviderFormView<TInput, TValues, TModel extends ProviderFormMod
 				return;
 			}
 
-			setErrors([result.error]);
+			setErrors([]);
+			toast.error(result.error);
 			return;
 		}
 

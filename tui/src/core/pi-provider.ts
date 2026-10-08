@@ -28,6 +28,8 @@ import {resolvePiModelSources, resolvePiRelatedSources, stripNonPortableModelFie
 import type {PiCatalogIndex, PiCatalogSource} from './pi-model-catalog.js';
 import type {ProviderDisplayData, ProviderDisplayProfile} from './provider.js';
 import type {FormField} from '../components/form/field-types.js';
+import {type SectionMergeReport, type TransferResult, transferFail, transferOk} from './config-transfer.js';
+import {validPiApiKeyEntry, validPiAuthDocument, validPiModelsDocument, validPiProviderDefinition} from './pi-model-config-validation.js';
 
 export {PI_APIS, PI_KNOWN_APIS} from './pi-api-discovery.js';
 export type {PiApi, PiFormApi} from './pi-api-discovery.js';
@@ -1287,4 +1289,309 @@ export function validatePiProviderForm(mode: PiProviderFormMode, values: PiProvi
 		if (mode === 'add' && !values.apiKey.trim()) errors.push('API Key 不能为空');
 	}
 	return errors;
+}
+
+// ── 导入导出 seam（Phase 2）：models.json 定义与 auth.json API-key 凭据 ────────
+// OAuth 条目永不采集、覆盖或删除；unknown fields 在两侧均保留。
+
+export type PiProviderDefinitionEntry = Readonly<Record<string, unknown>>;
+export type PiApiKeyAuthEntry = Readonly<Record<string, unknown>>;
+
+export type PiProvidersSection = {
+	readonly models: Readonly<Record<string, PiProviderDefinitionEntry>>;
+	readonly auth: Readonly<Record<string, PiApiKeyAuthEntry>>;
+};
+
+function isPiSectionProviderId(value: unknown): value is string {
+	return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) && parsePiProviderKey(value) !== null;
+}
+
+/** 将 auth.json 条目归一化为 API-key 形态；OAuth、未知形态与空字符串返回 null。 */
+function toPiApiKeyAuthEntry(value: unknown): JsonObject | null {
+	if (typeof value === 'string') {
+		return value === '' ? null : {type: 'api_key', key: value};
+	}
+
+	if (!isObject(value)) {
+		return null;
+	}
+
+	return validPiApiKeyEntry(value) ? {...value} : null;
+}
+
+function stripPiModelCredentials(entry: JsonObject): JsonObject {
+	const next = {...entry};
+	delete next.apiKey;
+	delete next.headers;
+	if (Array.isArray(next.models)) {
+		next.models = next.models.map(model => {
+			const clean = {...model};
+			delete clean.headers;
+			delete clean.apiKey;
+			return clean;
+		});
+	}
+	if (isObject(next.modelOverrides)) {
+		next.modelOverrides = Object.fromEntries(
+			Object.entries(next.modelOverrides).map(([id, value]) => {
+				const clean = {...(value as JsonObject)};
+				delete clean.headers;
+				delete clean.apiKey;
+				return [id, clean];
+			})
+		);
+	}
+	return next;
+}
+
+/** 快照 `~/.pi/agent/models.json` 供应商定义与 `auth.json` 中 API-key 凭据。 */
+export function snapshotPiProvidersSection(options: {readonly includeCredentials: boolean}): TransferResult<PiProvidersSection> {
+	const warnings: string[] = [];
+	const models: Record<string, PiProviderDefinitionEntry> = {};
+	const auth: Record<string, PiApiKeyAuthEntry> = {};
+
+	const modelsResult = readJsonFileStrict<unknown>(piModelsJsonPath());
+	if (modelsResult.status === 'valid' && validPiModelsDocument(modelsResult.value)) {
+		for (const [providerId, entry] of Object.entries(modelsResult.value.providers as JsonObject)) {
+			if (!isPiSectionProviderId(providerId) || !validPiProviderDefinition(entry)) {
+				warnings.push('已跳过无效的 Pi 供应商定义');
+				continue;
+			}
+
+			// OAuth 登录能力不属于配置迁移。只采集原生 API-key/模型声明。
+			if (Object.hasOwn(entry, 'oauth')) {
+				warnings.push(`已排除 OAuth 供应商：${providerId}`);
+				continue;
+			}
+			models[providerId] = options.includeCredentials ? {...entry} : stripPiModelCredentials(entry);
+		}
+	} else if (modelsResult.status === 'invalid') {
+		warnings.push('Pi models.json 损坏，未包含供应商定义');
+	} else if (modelsResult.status === 'valid') {
+		warnings.push('Pi models.json 结构无效，未包含供应商定义');
+	}
+
+	const authResult = readJsonFileStrict<unknown>(piAuthJsonPath());
+	if (authResult.status === 'valid' && isObject(authResult.value) && options.includeCredentials) {
+		for (const [providerId, value] of Object.entries(authResult.value)) {
+			if (!isPiSectionProviderId(providerId)) {
+				continue;
+			}
+
+			const entry = toPiApiKeyAuthEntry(value);
+			if (entry) {
+				auth[providerId] = entry;
+			} else if (isObject(value) && value.type !== 'oauth') {
+				warnings.push(`已排除无效的 Pi API-key 凭据：${providerId}`);
+			}
+		}
+	} else if (authResult.status === 'invalid') {
+		warnings.push('Pi auth.json 损坏，未包含 API-key 凭据');
+	} else if (authResult.status === 'valid' && !isObject(authResult.value)) {
+		warnings.push('Pi auth.json 结构无效，未包含 API-key 凭据');
+	}
+
+	return transferOk({models, auth}, warnings);
+}
+
+/** 校验包中的 Pi 供应商分类（导入边界；不信任包内容，拒绝非 API-key 凭据）。 */
+export function parsePiProvidersSection(value: unknown): TransferResult<PiProvidersSection> {
+	if (!isObject(value)) {
+		return transferFail('validation', '供应商分类内容无效');
+	}
+
+	if (!isObject(value.models)) {
+		return transferFail('validation', '供应商分类缺少模型定义');
+	}
+
+	if (!isObject(value.auth)) {
+		return transferFail('validation', '供应商分类缺少凭据条目');
+	}
+
+	const models: Record<string, PiProviderDefinitionEntry> = {};
+	for (const [providerId, entry] of Object.entries(value.models)) {
+		if (!isPiSectionProviderId(providerId) || !validPiProviderDefinition(entry) || Object.hasOwn(entry, 'oauth')) {
+			return transferFail('validation', '供应商分类包含无效模型定义');
+		}
+
+		models[providerId] = {...entry};
+	}
+
+	const auth: Record<string, PiApiKeyAuthEntry> = {};
+	for (const [providerId, entry] of Object.entries(value.auth)) {
+		if (!isPiSectionProviderId(providerId)) {
+			return transferFail('validation', '供应商分类包含无效凭据身份');
+		}
+
+		if (!validPiApiKeyEntry(entry)) {
+			return transferFail('validation', '供应商分类包含非原生 API-key 凭据');
+		}
+		const parsedEntry = entry;
+
+		auth[providerId] = parsedEntry;
+	}
+
+	return transferOk({models, auth});
+}
+
+/** 按模型 id 合并：同 id 使用包值逐字段覆盖，本机独有字段与模型保留。 */
+function mergePiModelLists(local: readonly PiModelDefinition[], incoming: readonly PiModelDefinition[]): readonly PiModelDefinition[] {
+	const byId = new Map(local.map(model => [model.id, model]));
+	for (const model of incoming) {
+		const current = byId.get(model.id) ?? null;
+		byId.set(model.id, mergePiModelDefinitions([{id: model.id}, current, model]));
+	}
+
+	return [...byId.values()];
+}
+
+function mergePiProviderEntry(local: JsonObject | null, incoming: JsonObject): JsonObject {
+	const merged: JsonObject = {...(local ?? {}), ...incoming};
+	if (local && Array.isArray(local.models) && Array.isArray(incoming.models)) {
+		// 相同模型列表原样保留，保证重复导入是幂等 no-op。
+		merged.models =
+			JSON.stringify(local.models) === JSON.stringify(incoming.models)
+				? local.models
+				: mergePiModelLists(modelList(local.models), modelList(incoming.models));
+	}
+	if (local && isObject(local.modelOverrides) && isObject(incoming.modelOverrides)) {
+		const overrides: JsonObject = {...local.modelOverrides};
+		for (const [id, entry] of Object.entries(incoming.modelOverrides)) {
+			const previous = overrides[id];
+			overrides[id] = isObject(previous) && isObject(entry) ? {...previous, ...entry} : entry;
+		}
+		merged.modelOverrides = overrides;
+	}
+
+	return merged;
+}
+
+function setPiProviderDefinition(root: JsonObject, providerId: string, entry: JsonObject): JsonObject {
+	return {...root, providers: {...(isObject(root.providers) ? root.providers : {}), [providerId]: entry}};
+}
+
+/** 合并导入 Pi 供应商分类：同 provider 覆盖，OAuth 凭据永不触碰，其他本机项保留。 */
+export function importPiProvidersSection(
+	data: unknown,
+	options: {readonly containsCredentials: boolean; readonly dryRun?: boolean}
+): TransferResult<SectionMergeReport> {
+	const parsed = parsePiProvidersSection(data);
+	if (!parsed.ok) {
+		return parsed;
+	}
+
+	let current: PiDocuments;
+	try {
+		current = validatePiProviderJsonFiles();
+		if (
+			(existsSync(piModelsJsonPath()) && !validPiModelsDocument(current.models)) ||
+			(existsSync(piAuthJsonPath()) && !validPiAuthDocument(current.auth))
+		) {
+			return transferFail('conflict', '本机 Pi models.json 或 auth.json schema 损坏，已停止导入供应商分类');
+		}
+	} catch {
+		return transferFail('conflict', '本机 Pi models.json 或 auth.json 损坏，已停止导入供应商分类');
+	}
+
+	const states = new Map<string, 'added' | 'replaced' | 'unchanged'>();
+	const recordState = (id: string, state: 'added' | 'replaced' | 'unchanged'): void => {
+		const existing = states.get(id);
+		if (existing === 'replaced' || existing === state) {
+			return;
+		}
+
+		if (existing === 'added' && state === 'unchanged') {
+			return;
+		}
+
+		states.set(id, state);
+	};
+
+	const skipped: string[] = [];
+	const warnings: string[] = [];
+	let nextModels = current.models;
+	let modelsChanged = false;
+
+	for (const [providerId, entry] of Object.entries(parsed.data.models)) {
+		const localEntry = providerEntry(current.models, providerId);
+		const incoming = options.containsCredentials ? entry : stripPiModelCredentials(entry);
+		const merged = mergePiProviderEntry(localEntry, incoming);
+		if (localEntry && JSON.stringify(localEntry) === JSON.stringify(merged)) {
+			recordState(providerId, 'unchanged');
+			continue;
+		}
+
+		recordState(providerId, localEntry ? 'replaced' : 'added');
+		nextModels = setPiProviderDefinition(nextModels, providerId, merged);
+		modelsChanged = true;
+	}
+
+	let nextAuth = current.auth;
+	let authChanged = false;
+	if (options.containsCredentials) {
+		for (const [providerId, entry] of Object.entries(parsed.data.auth)) {
+			const localValue = current.auth[providerId];
+			if (authInfo(localValue).kind === 'oauth') {
+				skipped.push(`oauth:${providerId}`);
+				warnings.push(`已跳过 OAuth 凭据：${providerId}`);
+				continue;
+			}
+
+			const merged = isObject(localValue) ? {...localValue, ...entry} : {...entry};
+			if (localValue !== undefined && JSON.stringify(localValue) === JSON.stringify(merged)) {
+				recordState(providerId, 'unchanged');
+				continue;
+			}
+
+			recordState(providerId, localValue === undefined ? 'added' : 'replaced');
+			nextAuth = {...nextAuth, [providerId]: merged};
+			authChanged = true;
+		}
+	} else if (Object.keys(parsed.data.auth).length > 0) {
+		warnings.push('导出包标记为不含凭据，已忽略其中的凭据条目');
+	}
+
+	// 检查最终合并结果（包含保留的本机未知字段），不把 schema 失败留给 Pi 启动时发现。
+	if ((modelsChanged && !validPiModelsDocument(nextModels)) || (authChanged && !validPiAuthDocument(nextAuth))) {
+		return transferFail('validation', 'Pi 供应商合并结果 schema 无效，未写入配置');
+	}
+	for (const providerId of Object.keys(parsed.data.models)) {
+		const definition = providerEntry(nextModels, providerId);
+		const credential = nextAuth[providerId];
+		if (
+			(!isObject(credential) || credential.type !== 'oauth') &&
+			(!isObject(credential) || typeof credential.key !== 'string' || credential.key.length === 0) &&
+			!(typeof definition?.apiKey === 'string' && definition.apiKey.length > 0) &&
+			!isObject(definition?.headers)
+		) {
+			warnings.push(`供应商 ${providerId} 未包含 API Key；如无环境变量或本机登录，导入后需重新登录`);
+		}
+	}
+	if (!options.dryRun && (modelsChanged || authChanged)) {
+		const changes: {readonly path: string; readonly value: JsonObject}[] = [];
+		if (modelsChanged) {
+			changes.push({path: piModelsJsonPath(), value: nextModels});
+		}
+
+		if (authChanged) {
+			changes.push({path: piAuthJsonPath(), value: nextAuth});
+		}
+
+		try {
+			writePiJsonTransaction(changes);
+		} catch {
+			return transferFail('io', 'Pi 供应商配置写入失败');
+		}
+	}
+
+	const added: string[] = [];
+	const replaced: string[] = [];
+	const unchanged: string[] = [];
+	for (const [id, state] of states) {
+		if (state === 'added') added.push(id);
+		else if (state === 'replaced') replaced.push(id);
+		else unchanged.push(id);
+	}
+
+	return transferOk({added, replaced, unchanged, skipped, warnings});
 }

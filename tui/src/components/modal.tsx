@@ -49,7 +49,7 @@ export function Modal({active, title, hint, tone = 'default', width = DEFAULT_MO
 					{children}
 				</box>
 				{hint ? (
-					<box marginTop={1} flexDirection="column">
+					<box marginTop={1} flexShrink={0} width="100%">
 						<ModalHint hint={hint} />
 					</box>
 				) : null}
@@ -63,19 +63,24 @@ const HINT_KEY_TOKENS = new Set(['↑/↓', '空格', 'Space', 'Enter', 'Esc']);
 const HINT_KEY_SPLIT = /(↑\/↓|空格|Space|Enter|Esc)/g;
 
 function ModalHint({hint}: {readonly hint: string}) {
-	const parts = hint.split(HINT_KEY_SPLIT);
 	return (
-		<box flexDirection="row" justifyContent="flex-end">
-			<text selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-				{parts.map((part, index) => {
-					const isKey = HINT_KEY_TOKENS.has(part);
-					return (
-						<span key={`${part}-${index}`} fg={isKey ? PRIMARY : colors.muted} attributes={isKey ? TextAttributes.BOLD : 0}>
-							{part}
-						</span>
-					);
-				})}
-			</text>
+		<box flexDirection="row" flexWrap="wrap" width="100%" justifyContent="flex-end">
+			{hint.split(/ {2,}/).map((item, index) => (
+				<text key={index} marginLeft={index === 0 ? 0 : 2} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+					{item.split(HINT_KEY_SPLIT).map((part, partIndex) => {
+						const isKey = HINT_KEY_TOKENS.has(part);
+						return (
+							<span
+								key={`${part}-${partIndex}`}
+								fg={isKey ? PRIMARY : colors.muted}
+								attributes={isKey ? TextAttributes.BOLD : 0}
+							>
+								{part}
+							</span>
+						);
+					})}
+				</text>
+			))}
 		</box>
 	);
 }

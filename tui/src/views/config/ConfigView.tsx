@@ -15,5 +15,5 @@ export type ConfigViewProps = {
 
 export function ConfigView(props: ConfigViewProps) {
 	const adapter = useMemo(() => createConfigDocumentAdapter(props.agentContext), [props.agentContext]);
-	return <ManagedDocumentView {...props} adapter={adapter} />;
+	return <ManagedDocumentView {...props} adapter={adapter} editingEnabled={false} />;
 }

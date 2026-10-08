@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useMemo, useReducer} from 'react';
+import React, {useCallback, useEffect, useMemo, useReducer, useRef} from 'react';
 import {useKeyboard} from '@opentui/react';
 import {ErrorPanel, ListLoadingState, ViewHeader, toast} from '../../components/index.js';
 import type {DetectionState} from '../../services/async-detection.js';
@@ -37,6 +37,15 @@ export function skillsSubModeOf(
 export function SkillsView({services, cache, active = true, onSubModeChange, onBusyStateChange, onExitToNav}: SkillsViewProps) {
 	const [view, dispatch] = useReducer(reduceSkillsViewState, undefined, createInitialSkillsViewState);
 	const detection = cache.state;
+	const lastError = useRef<string | undefined>(undefined);
+	useEffect(() => {
+		if (!active) return;
+		if (view.errorText && view.errorText !== lastError.current) {
+			// Multi-line command diagnostics are not suitable for persistent UI or toast.
+			toast.error(view.errorText.includes('\n') ? 'Skills 操作失败，请检查来源与安装状态后重试' : view.errorText);
+		}
+		lastError.current = view.errorText;
+	}, [active, view.errorText]);
 	const taskCancellation = useTaskCancellation();
 	const subMode = skillsSubModeOf(view);
 	// 依赖只取 cache.refresh（引用稳定）而非整个 cache：cache 会随检测 state 变化而重建，
@@ -86,11 +95,6 @@ export function SkillsView({services, cache, active = true, onSubModeChange, onB
 			<ViewHeader title="Skills 技能管理" subtitle="维护 Claude Code、Codex、Pi Skills（搜索、安装、更新、卸载）" />
 			{renderDetectionNotice(detection)}
 			{renderPage(view, detection, pageActive, dispatch, focusInstallSearch, submitInstallSearch)}
-			{view.errorText ? (
-				<box marginTop={1}>
-					<ErrorPanel message={view.errorText} />
-				</box>
-			) : null}
 			{view.mode === 'select-install-target' || view.mode === 'manage-inject' ? <SkillsInstallTargetModal view={view} /> : null}
 			{view.mode === 'confirm-topology-change' ? <SkillsTopologyConfirmModal view={view} /> : null}
 			{view.mode === 'confirm-source-replacement' ? <SkillsSourceReplacementConfirmModal view={view} /> : null}

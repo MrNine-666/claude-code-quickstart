@@ -5,6 +5,7 @@ import {readJsonFile, readJsonFileStrict, SECRET_FILE_MODE, withProfileLock, wri
 import {providersDir, settingsPath, claudeJsonPath} from './paths.js';
 import {escapeRegex, isNullOrWhiteSpace, maskApiKey, normalizeBaseUrl, testProviderBaseUrlMatch, testProviderKey} from './text-utils.js';
 import {getManagedModelEnvFromLegacyAliases, loadProviderContract, type ProviderRuntimeConfig} from './provider-contract.js';
+import {type SectionMergeReport, type TransferResult, transferFail, transferOk} from './config-transfer.js';
 
 // ── 类型 ────────────────────────────────────────────────────────────────────
 
@@ -398,10 +399,10 @@ function getProviderRuntimeProjections(profiles: readonly ProviderListItem[]): P
 	return projections;
 }
 
-function providerOwnedEnvKeys(projections: readonly ProviderRuntimeProjection[]): Set<string> {
+function providerOwnedEnvKeys(envs: readonly Readonly<Record<string, string>>[]): Set<string> {
 	const keys = new Set<string>([...providerIdentityRequiredEnvKeys, ...cfg().managedModelEnvKeys]);
-	for (const projection of projections) {
-		for (const key of Object.keys(projection.env)) {
+	for (const env of envs) {
+		for (const key of Object.keys(env)) {
 			keys.add(key);
 		}
 	}
@@ -551,7 +552,7 @@ function resolveActiveProfile(profiles: readonly ProviderListItem[], settings: R
 		return null;
 	}
 
-	const ownedKeys = providerOwnedEnvKeys(projections);
+	const ownedKeys = providerOwnedEnvKeys(projections.map(projection => projection.env));
 	const exactMatches = projections.filter(projection => matchesFullProviderProjection(settings, projection, ownedKeys));
 	if (exactMatches.length === 1) {
 		return exactMatches[0]?.item ?? null;
@@ -1127,4 +1128,282 @@ function migrateLegacyProfilesUnlocked(): MigrationResult {
  */
 export function migrateLegacyProfiles(): MigrationResult {
 	return withProfileLock(() => migrateLegacyProfilesUnlocked());
+}
+
+// ── 导入导出 seam（Phase 2）：供应商 profiles 与 provider-owned settings 投影 ───
+
+/** 供应商 profile 中属于凭据的 env 键；未选择敏感凭据时必须从包中移除。 */
+export const PROVIDER_CREDENTIAL_ENV_KEYS = ['ANTHROPIC_AUTH_TOKEN'] as const;
+
+export type ClaudeProviderProfileEntry = {
+	readonly key: string;
+	readonly profile: ProviderProfile;
+};
+
+export type ClaudeProvidersSection = {
+	readonly profiles: readonly ClaudeProviderProfileEntry[];
+	/** 当前 settings.json 中 provider-owned runtime env 投影。 */
+	readonly settingsEnv: Readonly<Record<string, string>>;
+};
+
+export type ClaudeProviderProfileParseResult =
+	| {readonly ok: true; readonly profile: ProviderProfile}
+	| {readonly ok: false; readonly error: string};
+
+/** 校验单层 `{env}` profile document（导入边界；不信任包内容）。 */
+export function parseClaudeProviderProfileDocument(value: unknown): ClaudeProviderProfileParseResult {
+	if (!isRecord(value)) {
+		return {ok: false, error: '供应商配置必须是 JSON 对象'};
+	}
+
+	const env = value.env;
+	if (env !== undefined && !isRecord(env)) {
+		return {ok: false, error: '供应商配置的 env 必须是对象'};
+	}
+
+	for (const item of Object.values(env ?? {})) {
+		if (typeof item !== 'string') {
+			return {ok: false, error: '供应商配置的 env 值必须是字符串'};
+		}
+	}
+
+	return {ok: true, profile: value as ProviderProfile};
+}
+
+function withOptionalProviderCredentials(profile: ProviderProfile, includeCredentials: boolean): ProviderProfile {
+	if (includeCredentials || !profile.env) {
+		return profile;
+	}
+
+	return {...profile, env: stripProviderCredentialEnv(profile.env)};
+}
+
+/** 移除 provider env 中的凭据键（未选择敏感凭据时导出/导入使用）。 */
+function stripProviderCredentialEnv(env: Readonly<Record<string, string>>): Record<string, string> {
+	const next = {...env};
+	for (const key of PROVIDER_CREDENTIAL_ENV_KEYS) {
+		delete next[key];
+	}
+
+	return next;
+}
+
+/** 快照 `~/.claude/providers/*.json` 与 provider-owned settings 投影。 */
+export function snapshotClaudeProvidersSection(options: {readonly includeCredentials: boolean}): TransferResult<ClaudeProvidersSection> {
+	const warnings: string[] = [];
+	const profiles: ClaudeProviderProfileEntry[] = [];
+	const dir = providersDir();
+
+	if (existsSync(dir)) {
+		let files: string[] = [];
+		try {
+			files = readdirSync(dir)
+				.filter(name => name.endsWith('.json'))
+				.sort();
+		} catch {
+			return transferFail('io', '无法读取供应商目录');
+		}
+
+		for (const file of files) {
+			const key = basename(file, '.json');
+			if (!testProviderKey(key)) {
+				warnings.push(`已跳过非法供应商文件名：${key}`);
+				continue;
+			}
+
+			const result = readJsonFileStrict<unknown>(join(dir, file));
+			if (result.status === 'missing') {
+				continue;
+			}
+
+			if (result.status === 'invalid') {
+				warnings.push(`已跳过损坏的供应商配置：${key}`);
+				continue;
+			}
+
+			const parsed = parseClaudeProviderProfileDocument(result.value);
+			if (!parsed.ok) {
+				warnings.push(`已跳过损坏的供应商配置：${key}`);
+				continue;
+			}
+
+			profiles.push({key, profile: withOptionalProviderCredentials(parsed.profile, options.includeCredentials)});
+		}
+	}
+
+	const projection: Record<string, string> = {};
+	const settings = readJsonFileStrict<unknown>(settingsPath());
+	if (settings.status === 'invalid' || (settings.status === 'valid' && !isRecord(settings.value))) {
+		warnings.push('settings.json 损坏，未包含供应商 settings 投影');
+	} else if (settings.status === 'valid') {
+		const current = settingsEnv(settings.value as Record<string, unknown>);
+		const owned = providerOwnedEnvKeys(profiles.map(entry => getEffectiveProviderEnv(entry.profile)));
+		for (const [key, value] of Object.entries(current)) {
+			if (!owned.has(key)) {
+				continue;
+			}
+
+			if (!options.includeCredentials && (PROVIDER_CREDENTIAL_ENV_KEYS as readonly string[]).includes(key)) {
+				continue;
+			}
+
+			projection[key] = value;
+		}
+	}
+
+	return transferOk({profiles, settingsEnv: projection}, warnings);
+}
+
+/** 校验包中的 Claude 供应商分类（导入边界；不信任包内容）。 */
+export function parseClaudeProvidersSection(value: unknown): TransferResult<ClaudeProvidersSection> {
+	if (!isRecord(value)) {
+		return transferFail('validation', '供应商分类内容无效');
+	}
+
+	if (!Array.isArray(value.profiles)) {
+		return transferFail('validation', '供应商分类缺少配置列表');
+	}
+
+	const profiles: ClaudeProviderProfileEntry[] = [];
+	const seen = new Set<string>();
+	for (const raw of value.profiles) {
+		if (!isRecord(raw) || typeof raw.key !== 'string' || !testProviderKey(raw.key)) {
+			return transferFail('validation', '供应商分类包含无效条目');
+		}
+
+		if (seen.has(raw.key)) {
+			return transferFail('validation', '供应商分类包含重复条目');
+		}
+
+		seen.add(raw.key);
+		const parsed = parseClaudeProviderProfileDocument(raw.profile);
+		if (!parsed.ok) {
+			return transferFail('validation', `供应商配置无效：${parsed.error}`);
+		}
+
+		profiles.push({key: raw.key, profile: parsed.profile});
+	}
+
+	const rawProjection = value.settingsEnv;
+	if (rawProjection !== undefined && !isRecord(rawProjection)) {
+		return transferFail('validation', '供应商 settings 投影无效');
+	}
+
+	const projection: Record<string, string> = {};
+	for (const [key, item] of Object.entries(rawProjection ?? {})) {
+		if (typeof item !== 'string') {
+			return transferFail('validation', '供应商 settings 投影值必须是字符串');
+		}
+
+		projection[key] = item;
+	}
+
+	return transferOk({profiles, settingsEnv: projection});
+}
+
+function mergeClaudeProviderProfile(
+	local: ProviderProfile | null,
+	incoming: ProviderProfile,
+	containsCredentials: boolean
+): ProviderProfile {
+	if (containsCredentials || !local?.env || !incoming.env) {
+		return {...incoming};
+	}
+
+	// 未选择敏感凭据的包：同 key 覆盖时保留本机凭据，避免导入后供应商不可用。
+	const env = {...incoming.env};
+	for (const key of PROVIDER_CREDENTIAL_ENV_KEYS) {
+		const localValue = local.env[key];
+		if (typeof localValue === 'string' && localValue !== '' && (env[key] === undefined || env[key] === '')) {
+			env[key] = localValue;
+		}
+	}
+
+	return {...incoming, env};
+}
+
+/** 合并导入 Claude 供应商分类：同 key 覆盖，其他本机 profile 与 settings 字段保留。 */
+export function importClaudeProvidersSection(
+	data: unknown,
+	options: {readonly containsCredentials: boolean; readonly dryRun?: boolean}
+): TransferResult<SectionMergeReport> {
+	const parsed = parseClaudeProvidersSection(data);
+	if (!parsed.ok) {
+		return parsed;
+	}
+
+	const settingsResult = readJsonFileStrict<unknown>(settingsPath());
+	if (settingsResult.status === 'invalid' || (settingsResult.status === 'valid' && !isRecord(settingsResult.value))) {
+		return transferFail('conflict', '本机 settings.json 损坏，已停止导入供应商分类');
+	}
+
+	const settings = settingsResult.status === 'valid' ? (settingsResult.value as Record<string, unknown>) : {};
+	const currentEnv = settingsEnv(settings);
+	const added: string[] = [];
+	const replaced: string[] = [];
+	const unchanged: string[] = [];
+
+	for (const entry of parsed.data.profiles) {
+		const profilePath = join(providersDir(), `${entry.key}.json`);
+		const local = readJsonFileStrict<unknown>(profilePath);
+		if (local.status === 'invalid') {
+			return transferFail('conflict', `本机供应商配置损坏，已停止导入：${entry.key}`);
+		}
+
+		let localProfile: ProviderProfile | null = null;
+		if (local.status === 'valid') {
+			const validated = parseClaudeProviderProfileDocument(local.value);
+			if (!validated.ok) {
+				return transferFail('conflict', `本机供应商配置损坏，已停止导入：${entry.key}`);
+			}
+
+			localProfile = validated.profile;
+		}
+
+		const next = mergeClaudeProviderProfile(localProfile, entry.profile, options.containsCredentials);
+		if (localProfile !== null && JSON.stringify(localProfile) === JSON.stringify(next)) {
+			unchanged.push(entry.key);
+			continue;
+		}
+
+		if (localProfile === null) {
+			added.push(entry.key);
+		} else {
+			replaced.push(entry.key);
+		}
+
+		if (!options.dryRun) {
+			try {
+				writeJsonAtomic(profilePath, next, {mode: SECRET_FILE_MODE});
+			} catch {
+				return transferFail('io', `供应商配置写入失败：${entry.key}`);
+			}
+		}
+	}
+
+	const projection = options.containsCredentials ? parsed.data.settingsEnv : stripProviderCredentialEnv(parsed.data.settingsEnv);
+	const nextEnv = {...currentEnv};
+	let settingsChanged = false;
+	for (const [key, value] of Object.entries(projection)) {
+		if (nextEnv[key] !== value) {
+			nextEnv[key] = value;
+			settingsChanged = true;
+		}
+	}
+
+	if (!settingsChanged) {
+		unchanged.push('settings');
+	} else {
+		const existed = Object.keys(projection).some(key => Object.hasOwn(currentEnv, key));
+		(existed ? replaced : added).push('settings');
+		if (!options.dryRun) {
+			try {
+				writeSettingsAtomic({...settings, env: nextEnv});
+			} catch {
+				return transferFail('io', 'settings.json 写入失败');
+			}
+		}
+	}
+
+	return transferOk({added, replaced, unchanged, skipped: [], warnings: parsed.warnings});
 }

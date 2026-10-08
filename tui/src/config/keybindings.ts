@@ -210,44 +210,24 @@ export const PROMPTS_COMMANDS = {
 } as const;
 
 export const promptsBindings: Binding[] = commandBindings({
-	[PROMPTS_COMMANDS.ADD]: 'a',
-	[PROMPTS_COMMANDS.EDIT_ENTRY]: 'e',
 	[PROMPTS_COMMANDS.OPEN_FILE]: 'o',
-	[PROMPTS_COMMANDS.EDITOR_SAVE]: editingShortcutKey('s'),
-	[PROMPTS_COMMANDS.EDITOR_CANCEL]: 'escape',
 	[PROMPTS_COMMANDS.PREVIEW_UP]: 'up',
 	[PROMPTS_COMMANDS.PREVIEW_DOWN]: 'down'
 });
 
-// ------------------------------------------------------------
-// 配置文件视图 commands（view-first：只读展示 ↔ a/e 编辑 ↔ 推荐边栏）
-// ------------------------------------------------------------
+// 配置文件视图 commands（view-first：只读展示 ↔ a/e 编辑 ↔ 普通保存）
 export const CONFIG_COMMANDS = {
-	// view 态入口（只读展示 / 空状态）
-	ADD: 'config:add', // a 新建（空白 {} 编辑器）
-	EDIT_ENTRY: 'config:edit-entry', // e 编辑现有（载入磁盘内容）
-	OPEN_FILE: 'config:open-file', // o 使用系统默认关联应用打开配置文件
-	// edit 态主操作
-	TOGGLE_PANEL: 'config:toggle-panel', // Ctrl+T 开/关推荐边栏（TUI 应用功能）
-	IMPORT: 'config:import', // Ctrl+O fill-missing 灌入缓冲（TUI 应用功能，仅补缺失）
-	EDITOR_SAVE: 'config:editor-save', // macOS Cmd+S / 其他平台 Ctrl+S 保存（编辑语义）
-	EDITOR_CANCEL: 'config:editor-cancel', // escape 取消编辑回 view
-	// 双栏焦点切换
-	FOCUS_CYCLE: 'config:focus-cycle', // tab 编辑器↔推荐边栏
-	// 滚动（view 展示 / 边栏）
-	PREVIEW_UP: 'config:preview-up', // up 滚动
-	PREVIEW_DOWN: 'config:preview-down' // down 滚动
+	ADD: 'config:add',
+	EDIT_ENTRY: 'config:edit-entry',
+	OPEN_FILE: 'config:open-file',
+	EDITOR_SAVE: 'config:editor-save',
+	EDITOR_CANCEL: 'config:editor-cancel',
+	PREVIEW_UP: 'config:preview-up',
+	PREVIEW_DOWN: 'config:preview-down'
 } as const;
 
 export const configBindings: Binding[] = commandBindings({
-	[CONFIG_COMMANDS.ADD]: 'a',
-	[CONFIG_COMMANDS.EDIT_ENTRY]: 'e',
 	[CONFIG_COMMANDS.OPEN_FILE]: 'o',
-	[CONFIG_COMMANDS.TOGGLE_PANEL]: appShortcutKey('t'),
-	[CONFIG_COMMANDS.IMPORT]: appShortcutKey('o'),
-	[CONFIG_COMMANDS.EDITOR_SAVE]: editingShortcutKey('s'),
-	[CONFIG_COMMANDS.EDITOR_CANCEL]: 'escape',
-	[CONFIG_COMMANDS.FOCUS_CYCLE]: 'tab',
 	[CONFIG_COMMANDS.PREVIEW_UP]: 'up',
 	[CONFIG_COMMANDS.PREVIEW_DOWN]: 'down'
 });
@@ -324,6 +304,43 @@ export const extensionsBindings: Binding[] = commandBindings({
 });
 
 // ------------------------------------------------------------
+// 系统设置视图 commands
+// ------------------------------------------------------------
+export const SYSTEM_SETTINGS_COMMANDS = {
+	UP: 'system-settings:up',
+	DOWN: 'system-settings:down',
+	TOGGLE: 'system-settings:toggle',
+	FOLD: 'system-settings:fold',
+	EXPAND: 'system-settings:expand',
+	OPTION_PREV: 'system-settings:option-prev',
+	OPTION_NEXT: 'system-settings:option-next',
+	CYCLE_FOCUS: 'system-settings:cycle-focus',
+	PRIMARY: 'system-settings:primary',
+	EXPORT: 'system-settings:export',
+	IMPORT: 'system-settings:import',
+	CLEAR_PASSWORD: 'system-settings:clear-password',
+	SAVE: 'system-settings:save',
+	BACK: 'system-settings:back'
+} as const;
+
+export const systemSettingsBindings: Binding[] = commandBindings({
+	[SYSTEM_SETTINGS_COMMANDS.UP]: 'up',
+	[SYSTEM_SETTINGS_COMMANDS.DOWN]: 'down',
+	[SYSTEM_SETTINGS_COMMANDS.TOGGLE]: 'space',
+	[SYSTEM_SETTINGS_COMMANDS.FOLD]: 'left',
+	[SYSTEM_SETTINGS_COMMANDS.EXPAND]: 'right',
+	[SYSTEM_SETTINGS_COMMANDS.OPTION_PREV]: 'left',
+	[SYSTEM_SETTINGS_COMMANDS.OPTION_NEXT]: 'right',
+	[SYSTEM_SETTINGS_COMMANDS.CYCLE_FOCUS]: 'down',
+	[SYSTEM_SETTINGS_COMMANDS.PRIMARY]: 'enter',
+	[SYSTEM_SETTINGS_COMMANDS.EXPORT]: appShortcutKey('o'),
+	[SYSTEM_SETTINGS_COMMANDS.IMPORT]: appShortcutKey('i'),
+	[SYSTEM_SETTINGS_COMMANDS.CLEAR_PASSWORD]: 'ctrl+k',
+	[SYSTEM_SETTINGS_COMMANDS.SAVE]: appShortcutKey('s'),
+	[SYSTEM_SETTINGS_COMMANDS.BACK]: 'escape'
+});
+
+// ------------------------------------------------------------
 // 全局 bindings 合集（供 App.tsx 注册）
 // ------------------------------------------------------------
 export const allBindings: Binding[] = [
@@ -336,5 +353,6 @@ export const allBindings: Binding[] = [
 	...promptsBindings,
 	...configBindings,
 	...toolsBindings,
-	...extensionsBindings
+	...extensionsBindings,
+	...systemSettingsBindings
 ];

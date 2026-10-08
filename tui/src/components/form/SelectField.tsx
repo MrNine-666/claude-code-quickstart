@@ -1,5 +1,5 @@
-import React from 'react';
-import {TextAttributes} from '@opentui/core';
+import React, {useEffect, useRef} from 'react';
+import {TextAttributes, type TabSelectRenderable} from '@opentui/core';
 import {colors} from '../../theme/index.js';
 import {FormLabel, FORM_VALUE_MARGIN_LEFT} from './FormLabel.js';
 import {FormControlFrame} from './FormControlFrame.js';
@@ -14,28 +14,45 @@ export type SelectFieldProps = {
 	readonly onChange: (value: string) => void;
 };
 
-/**
- * SelectField：OpenTUI 官方 <tab-select> 封装。
- * - 左右键、滚动与选中高亮交给官方组件处理
- * - 外层仍保留 label/helpText 与表单值同步，避免视图层直接依赖底层组件
- */
+/** 横向原生 tab-select；外层持有值，选择变化立即回写。 */
 export function SelectField({label, value, options, helpText, focused, onChange}: SelectFieldProps) {
+	const selectRef = useRef<TabSelectRenderable>(null);
 	const selectedIndex = Math.max(
 		0,
 		options.findIndex(opt => opt.value === value)
 	);
-	const visibleOptions = options.slice(Math.max(0, selectedIndex - 1), selectedIndex + 2);
+
+	// tab-select 没有 selectedIndex JSX 属性，外层值变化时同步原生选中项。
+	useEffect(() => {
+		if (selectRef.current && selectRef.current.getSelectedIndex() !== selectedIndex) {
+			selectRef.current.setSelectedIndex(selectedIndex);
+		}
+	}, [selectedIndex]);
 
 	return (
 		<box flexDirection="column">
 			<box flexDirection="row" alignItems="center">
 				<FormLabel label={label} focused={focused} />
 				<FormControlFrame>
-					<text fg={focused ? colors.primary : colors.text} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
-						{selectedIndex > 0 ? '‹ ' : '  '}
-						{visibleOptions.map(option => (option.value === value ? `[${option.label}]` : option.label)).join('  ')}
-						{selectedIndex < options.length - 1 ? ' ›' : ''}
-					</text>
+					<tab-select
+						ref={selectRef}
+						options={options.map(option => ({name: option.label, description: '', value: option.value}))}
+						width={options.length * 6}
+						tabWidth={6}
+						height={1}
+						showDescription={false}
+						showUnderline={false}
+						showScrollArrows={false}
+						wrapSelection
+						focused={focused}
+						textColor={colors.text}
+						focusedBackgroundColor={colors.focusedBackground}
+						selectedBackgroundColor={focused ? colors.primary : colors.selectInactiveBackground}
+						selectedTextColor={focused ? colors.navSelectedForeground : colors.text}
+						onChange={(_, option) => {
+							if (typeof option?.value === 'string' && option.value !== value) onChange(option.value);
+						}}
+					/>
 				</FormControlFrame>
 			</box>
 			{helpText ? (

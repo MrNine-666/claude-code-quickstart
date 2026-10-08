@@ -16,7 +16,7 @@ const mcpSrc = readFileSync(new URL('../src/views/mcp/McpHomeView.tsx', import.m
 const skillsSrc = readFileSync(new URL('../src/views/skills/SkillsView.tsx', import.meta.url), 'utf8');
 const indexSrc = readFileSync(new URL('../src/index.tsx', import.meta.url), 'utf8');
 
-assert.match(appSrc, /AGENT_HEADER_HIDDEN_MODULES\s*=\s*new Set<ManageModuleId>\(\[\s*'tools',\s*'mcp',\s*'skills'\s*\]\)/, 'HIDDEN_MODULES 含 tools + mcp + skills');
+assert.match(appSrc, /AGENT_HEADER_HIDDEN_MODULES\s*=\s*new Set<ManageModuleId>\(\[\s*'tools',\s*'mcp',\s*'skills',\s*'system-settings'\s*\]\)/, 'HIDDEN_MODULES 含 tools + mcp + skills + system-settings');
 assert.match(appSrc, /hideAgentHeader\s*\?\s*null\s*:\s*\(?\s*<AgentHeader/, '隐藏 Header 模块不渲染 AgentHeader');
 assert.match(appSrc, /AGENT_HEADER_HIDDEN_MODULES\.has\(displayMenuId\) && state\.focus === 'header'/, '隐藏 Header 模块下 header 焦点被 coerce 回 view');
 // 隐藏 Header 不占布局行由 flex 自适应天然保证（hideAgentHeader ? null : <AgentHeader> 不渲染即不占位），
@@ -37,5 +37,19 @@ console.log('[PASS] Tools / MCP / Skills 模块隐藏 Agent Header + MCP/Skills 
 // 本段只保留入口接线源码契约。
 assert.match(indexSrc, /onDestroy:\s*exitController\.handleRendererDestroyed/, 'renderer onDestroy 必须接入退出控制器');
 assert.match(indexSrc, /<App[^>]*onExit=\{requestTuiExit\}/, 'App 必须把普通退出委派给入口控制器');
-assert.match(appSrc, /if \(state\.shouldExit\) \{\s*onExit\(\);/, 'shouldExit 必须调用入口 onExit，不能只销毁界面');
+assert.match(
+	appSrc,
+	/if \(state\.shouldExit\) \{\s*requestExitWithStagedUpdate\(\);/,
+	'shouldExit 必须走统一退出入口（先应用已验证更新再退出）'
+);
+assert.match(
+	appSrc,
+	/const requestExitWithStagedUpdate[\s\S]{0,240}exitCoordinator\.requestExit\(\)/,
+	'统一退出入口必须经 staged 更新协调器 requestExit'
+);
+assert.match(
+	appSrc,
+	/createStagedUpdateExit\(\{[\s\S]{0,200}onExit: \(\) => onExitRef\.current\(\)/,
+	'退出协调器必须委派渲染器清理入口 onExit'
+);
 console.log('[PASS] TUI 退出在 renderer 清理后显式结束 ccq 进程');

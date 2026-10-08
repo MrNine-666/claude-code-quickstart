@@ -1,5 +1,6 @@
 import {act} from 'react';
-import {expect, test} from 'bun:test';
+import {expect, spyOn, test} from 'bun:test';
+import {toast} from '../../src/components/toast.js';
 import {KeyEvent, type ParsedKey} from '@opentui/core';
 import {testRender} from '@opentui/react/test-utils';
 
@@ -19,6 +20,34 @@ import {ProviderFormView, type DiscoveryMatchOutcome} from '../../src/views/prov
 // 阶段 E 组件断言：预设动作行（←/→ 只移高亮）、Enter 应用与确认弹窗、跨协议提示、
 // 焦点顺序、api 切换联动、CC/Codex textarea 不回归、文案不含禁用术语。
 // 组件层不落盘：save / validate 均为 stub，绝不触碰真实 Pi 配置。
+
+test('Provider 保存失败只用 toast，保留编辑草稿', async () => {
+	const model = piModel();
+	const error = '无法保存供应商配置';
+	const feedback = spyOn(toast, 'error').mockImplementation(() => {});
+	const setup = await testRender(
+		<ProviderFormView<{readonly mode: string}, PiProviderFormValues, PiProviderFormModel>
+			model={model}
+			active
+			onCancel={() => {}}
+			onSaved={() => {}}
+			buildForm={() => model}
+			save={() => ({ok: false, error})}
+			validate={() => []}
+			adapter={piProviderFormAdapter}
+		/>,
+		{width: 150, height: 46}
+	);
+	try {
+		await pressEditingShortcut(setup, 's');
+		expect(feedback).toHaveBeenCalledWith(error);
+		expect(feedback).toHaveBeenCalledTimes(1);
+		expect(await frameOf(setup)).not.toContain(error);
+	} finally {
+		feedback.mockRestore();
+		await act(async () => setup.renderer.destroy());
+	}
+});
 
 const EMPTY_HEADERS = '';
 

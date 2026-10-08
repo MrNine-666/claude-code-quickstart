@@ -1,6 +1,6 @@
 import {afterEach, beforeEach, expect, test} from 'bun:test';
 import {runUpdate} from '../../src/cli/commands/update.js';
-import {checkLatestVersion, formatSelfUpdateError, type SelfUpdatePlan} from '../../src/core/self-update.js';
+import {canAutoUpdateInPlace, checkLatestVersion, formatSelfUpdateError, type SelfUpdatePlan} from '../../src/core/self-update.js';
 import {isSelfUpdateCancellable, reduceSelfUpdateScreen} from '../../src/state/self-update-state.js';
 import {createTempHome, type TempHome} from '../helpers/temp-home.js';
 
@@ -406,4 +406,13 @@ test('ccq update CLI 下载进度条', async () => {
 	expect(cliOutput.some(line => line.includes('已安排更新'))).toBe(true);
 	expect(cliOutput.some(line => line.includes('替换并重启'))).toBe(false);
 	expect(cliProgressOutput.join('')).toMatch(/\r\[============------------\]\s+50%\s+5 B \/ 10 B\s+raw\n/);
+});
+
+test('canAutoUpdateInPlace：仅官方安装位就地运行允许自动更新', () => {
+	// 官方安装位（installer 落盘位置）→ 允许自动下载与退出时应用。
+	expect(canAutoUpdateInPlace('/home/u/.local/bin/ccq', '/home/u/.local/bin/ccq')).toBe(true);
+	// `bun run dev` / `bun run --watch`：execPath 是 Bun，不是安装位。
+	expect(canAutoUpdateInPlace('/home/u/.bun/bin/bun', '/home/u/.local/bin/ccq')).toBe(false);
+	// 构建产物或其他副本：不自动覆盖，避免静默替换安装位/产物。
+	expect(canAutoUpdateInPlace('/repo/dist/ccq-macos-arm64', '/home/u/.local/bin/ccq')).toBe(false);
 });

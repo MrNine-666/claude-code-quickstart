@@ -74,7 +74,7 @@ test('OpenTUI 更新错误交互真实渲染与按键', async () => {
 					closeCount += 1;
 				}}
 				onUpdate={noop}
-				onApplyUpdate={noop}
+				onReadyExit={noop}
 				onCancelUpdate={noop}
 				onExit={noop}
 				onRetry={() => {
@@ -119,7 +119,7 @@ test('OpenTUI 更新最新态不得永久显示处理中', async () => {
 				active
 				onClose={noop}
 				onUpdate={noop}
-				onApplyUpdate={noop}
+				onReadyExit={noop}
 				onCancelUpdate={noop}
 				onExit={noop}
 				onRetry={noop}
@@ -149,7 +149,7 @@ test('OpenTUI 更新完成态 Enter 退出而非关闭浮窗', async () => {
 					closeCount += 1;
 				}}
 				onUpdate={noop}
-				onApplyUpdate={noop}
+				onReadyExit={noop}
 				onCancelUpdate={noop}
 				onExit={() => {
 					exitCount += 1;
@@ -184,7 +184,7 @@ test('OpenTUI 更新 gzip→raw 回退提示真实渲染', async () => {
 				active
 				onClose={noop}
 				onUpdate={noop}
-				onApplyUpdate={noop}
+				onReadyExit={noop}
 				onCancelUpdate={noop}
 				onExit={noop}
 				onRetry={noop}
@@ -206,6 +206,51 @@ test('OpenTUI 更新 gzip→raw 回退提示真实渲染', async () => {
 	);
 	try {
 		await setup.waitForFrame(frame => frame.includes('已回退 raw 完整包'));
+	} finally {
+		await act(async () => setup.renderer.destroy());
+		harness.cleanup();
+	}
+});
+
+test('OpenTUI 更新就绪态 Enter 走统一退出入口而非仅关闭浮窗', async () => {
+	const harness = createTestKeymap({defaultKeys: true});
+	let readyExitCount = 0;
+	let closeCount = 0;
+	const setup = await testRender(
+		<KeymapProvider keymap={keymapProp(harness)}>
+			<UpdateDialog
+				active
+				onClose={() => {
+					closeCount += 1;
+				}}
+				onUpdate={noop}
+				onReadyExit={() => {
+					readyExitCount += 1;
+				}}
+				onCancelUpdate={noop}
+				onExit={noop}
+				onRetry={noop}
+				screen={{
+					kind: 'readyToRestart',
+					transaction: {
+						plan: fallbackPlan,
+						targetPath: '/tmp/ccq',
+						tempPath: '/tmp/ccq.tmp'
+					}
+				}}
+			/>
+		</KeymapProvider>,
+		{width: 72, height: 12}
+	);
+	try {
+		const frame = await setup.waitForFrame(value => value.includes('更新就绪'));
+		expect(frame, '就绪态必须说明退出后应用').toMatch(/退出/);
+		await act(async () => {
+			harness.host.press('enter');
+			await setup.renderOnce();
+		});
+		expect(readyExitCount, '就绪态 Enter 必须触发统一退出入口').toBe(1);
+		expect(closeCount, '就绪态 Enter 不得只关闭浮窗').toBe(0);
 	} finally {
 		await act(async () => setup.renderer.destroy());
 		harness.cleanup();

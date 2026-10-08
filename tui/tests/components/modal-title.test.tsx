@@ -2,6 +2,8 @@ import React, {act} from 'react';
 import {testRender} from '@opentui/react/test-utils';
 import {describe, expect, test} from 'bun:test';
 import {Modal} from '../../src/components/modal.js';
+import {displayWidth} from '../../src/core/text-utils.js';
+import {systemSettingsHint} from '../../src/views/system-settings/system-settings-view-input.js';
 import {colors, PRIMARY} from '../../src/theme/index.js';
 
 // 迁自 scripts/verify-modal-title.mjs 的源码正则段（P1-G1 后半 A 类）。
@@ -10,6 +12,36 @@ import {colors, PRIMARY} from '../../src/theme/index.js';
 // 每个 testRender 用例固定 terminal 尺寸，并在 finally 的 act() 内销毁 renderer。
 
 describe('Modal 标题渲染', () => {
+	test('固定高度导入导出弹窗完整显示多组快捷键且不覆盖底边框', async () => {
+		for (const [mode, title, width, viewport] of [
+			['export-modal', '导出配置', 72, 90],
+			['import-preview', '导入配置', 68, 90],
+			['export-modal', '导出配置', 42, 46]
+		] as const) {
+			const setup = await testRender(
+				<Modal active title={title} hint={systemSettingsHint(mode)} width={width} height={18}>
+					<box flexGrow={1}>
+						<text>配置明细</text>
+					</box>
+				</Modal>,
+				{width: viewport, height: 24}
+			);
+			try {
+				const frame = await setup.waitForFrame(value => value.includes(title) && value.includes('Esc'));
+				const lines = frame.split('\n');
+				const bottom = lines.find(line => line.includes('╰') && line.includes('╯')) ?? '';
+				expect(bottom).toContain('╰');
+				expect(bottom).not.toMatch(/Enter|Esc|折叠/);
+				expect(frame).toContain('Enter');
+				expect(frame).toContain('Esc');
+				expect(frame).toContain('折叠/展开');
+				expect(lines.every(line => displayWidth(line) <= viewport)).toBe(true);
+			} finally {
+				await act(async () => setup.renderer.destroy());
+			}
+		}
+	});
+
 	test('标题必须渲染在顶部边框行，而不是内容首行', async () => {
 		const setup = await testRender(
 			<Modal active title="确认删除配置">

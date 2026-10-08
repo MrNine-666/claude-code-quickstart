@@ -359,6 +359,19 @@ export function getSelfUpdateTargetPath(): string {
 	return isLikelyCcqExecutablePath(process.execPath) ? process.execPath : getCcqExecutablePath();
 }
 
+/**
+ * 是否允许自动就地更新：当前进程必须就是官方安装位置的可执行文件。
+ *
+ * `bun run dev` / `bun run --watch` 的 process.execPath 是 Bun 本体；`dist/ccq-*`
+ * 构建产物也不是安装位。这些情况下静默下载会在退出时替换官方安装位（或覆盖构建
+ * 产物），且 dev 版本号总是低于线上 Release，会造成每次启动重复下载。
+ * 因此自动更新（静默下载 + 退出时应用）只在就地运行时生效；其他运行方式仍可经
+ * 底部更新按钮显式手动更新。
+ */
+export function canAutoUpdateInPlace(execPath: string = process.execPath, installedPath: string = getCcqExecutablePath()): boolean {
+	return resolve(execPath) === resolve(installedPath);
+}
+
 export async function checkLatestVersion(deps: CheckLatestVersionDeps = {}): Promise<CheckLatestVersionResult> {
 	const fetchRelease = deps.fetch ?? fetch;
 	const currentVersion = deps.currentVersion ?? CCQ_VERSION;

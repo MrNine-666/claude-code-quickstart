@@ -20,23 +20,26 @@ import {createTuiExitController} from '../../src/core/tui-exit.js';
 const keys = ['up', 'down', 'left', 'right', 'tab', 'shift-tab', 'enter', 'escape', 'ctrl-s', 'q', 'other'] as const;
 
 describe('Manage TUI 初始状态不变量', () => {
-	test('启动即聚焦右侧视图 + 7 菜单', () => {
+	test('启动即聚焦右侧视图 + 8 菜单', () => {
 		const state = createInitialManageState();
 		expect(state.focus, '启动即聚焦右侧视图（首个菜单工具管理），无需先按 enter').toBe('view');
 		expect(state.selectedIndex).toBe(0);
 		expect(selectedMenuItem(state).label).toBe('工具管理');
-		expect(menuItems.length, '工具管理/供应商/配置文件/全局规则/MCP/Skills/扩展管理共 7 项菜单（检查更新为底部按钮不计入）').toBe(7);
+		expect(
+			menuItems.length,
+			'工具管理/供应商/配置文件/全局规则/MCP/Skills/扩展管理/系统设置共 8 项菜单（检查更新为底部按钮不计入）'
+		).toBe(8);
 	});
 });
 
-describe('2.1/2.2 默认 Claude Code + agentContext=cc + 7 菜单顺序恒定', () => {
+describe('2.1/2.2 默认 Claude Code + agentContext=cc + 8 菜单顺序恒定', () => {
 	test('默认 agentContext 与菜单顺序', () => {
 		const state = createInitialManageState();
 		expect(state.agentContext, '默认 agentContext 为 cc（Claude Code）').toBe('cc');
 		expect(
 			menuItems.map(item => item.id),
-			'7 菜单顺序固定：工具管理/供应商/配置文件/全局规则/MCP/Skills/扩展管理'
-		).toEqual(['tools', 'provider', 'config', 'prompts', 'mcp', 'skills', 'extensions']);
+			'8 菜单顺序固定：工具管理/供应商/配置文件/全局规则/MCP/Skills/扩展管理/系统设置'
+		).toEqual(['tools', 'provider', 'config', 'prompts', 'mcp', 'skills', 'extensions', 'system-settings']);
 	});
 });
 
@@ -66,7 +69,7 @@ describe('2.5 Header 焦点切换：上键进入 + 左右循环 + 菜单顺序/�
 		expect(s.selectedIndex, '切换后左侧菜单选中项不变').toBe(beforeSel);
 		expect(
 			menuItems.map(item => item.id),
-			'切换后 7 菜单顺序不变'
+			'切换后 8 菜单顺序不变'
 		).toEqual(initialMenuIds);
 		s = reduceManageState(s, 'left' as never);
 		expect(s.agentContext, 'Header 左键从 cx 循环回 cc').toBe('cc');

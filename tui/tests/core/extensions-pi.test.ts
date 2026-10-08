@@ -80,6 +80,10 @@ describe('listPiPackages 目录解析', () => {
 
 		const emptyList = await listPiPackages(execOf(async () => ({code: 0, stdout: 'No packages installed.\n', stderr: ''})));
 		expect(emptyList).toEqual([]);
+		const filtered = await listPiPackages(
+			execOf(async () => ({code: 0, stdout: 'User packages:\n  git:github.com/demo/tools@v1 (filtered)\n', stderr: ''}))
+		);
+		expect(filtered).toEqual(['git:github.com/demo/tools@v1']);
 	});
 });
 
@@ -191,11 +195,12 @@ describe('Pi 包生命周期（install / update / remove / adapter）', () => {
 		const lifecycleCalls: {command: string; args: string[]}[] = [];
 		const installed = await installPiPackage('@scope/demo', {
 			exec: lifecycleExec(lifecycleCalls),
-			piInstalled: async () => true
+			piInstalled: async () => true,
+			packageInstalled: source => source === 'npm:@scope/demo'
 		});
 		expect(installed.ok).toBe(true);
 		expect(lifecycleCalls.map(call => call.args)).toEqual([
-			['install', 'npm:@scope/demo'],
+			['install', 'npm:@scope/demo', '--no-approve'],
 			['list', '--no-approve']
 		]);
 
@@ -205,6 +210,29 @@ describe('Pi 包生命周期（install / update / remove / adapter）', () => {
 		});
 		expect(guarded.ok).toBe(false);
 		expect(guarded.ok === false && guarded.error).toMatch(/先安装 Pi Agent CLI/);
+	});
+
+	test('install rejects unsafe source before CLI detection/spawn; Git/ref transmitted unchanged', async () => {
+		let spawned = 0;
+		let detected = 0;
+		const calls: string[][] = [];
+		const deps = {
+			piInstalled: async () => {
+				detected++;
+				return true;
+			},
+			packageInstalled: () => true,
+			exec: execOf(async (_c, args) => {
+				spawned++;
+				calls.push([...args]);
+				return {code: 0, stdout: 'User packages:\n  git:github.com/demo/tools@v1 (filtered)\n', stderr: ''};
+			})
+		};
+		expect((await installPiPackage('git:https://user:secret@host.com/org/repo', deps)).ok).toBe(false);
+		expect(spawned).toBe(0);
+		expect(detected).toBe(0);
+		expect((await installPiPackage('git:github.com/demo/tools@v1', deps)).ok).toBe(true);
+		expect(calls[0]).toEqual(['install', 'git:github.com/demo/tools@v1', '--no-approve']);
 	});
 
 	test('update 走官方 update --extension', async () => {
@@ -247,6 +275,7 @@ describe('Pi 包生命周期（install / update / remove / adapter）', () => {
 		const adapterCalls: {command: string; args: string[]}[] = [];
 		const adapterResult = await installPiMcpAdapter({
 			piInstalled: async () => true,
+			packageInstalled: source => source === 'npm:pi-mcp-adapter',
 			exec: execOf(async (command, args) => {
 				adapterCalls.push({command, args: [...args]});
 				if (args[0] === 'list') return {code: 0, stdout: JSON.stringify(['pi-mcp-adapter']), stderr: ''};
@@ -254,6 +283,6 @@ describe('Pi 包生命周期（install / update / remove / adapter）', () => {
 			})
 		});
 		expect(adapterResult.ok).toBe(true);
-		expect(adapterCalls[0]!.args).toEqual(['install', 'npm:pi-mcp-adapter']);
+		expect(adapterCalls[0]!.args).toEqual(['install', 'npm:pi-mcp-adapter', '--no-approve']);
 	});
 });

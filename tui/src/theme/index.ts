@@ -1,7 +1,7 @@
 // 集中主题：Claude 品牌橙 + 终端 dark/light 双套语义色系统
 // OpenTUI 通过 renderer.themeMode 检测终端主题，脚本侧通过 OSC 11/COLORFGBG 对齐
 
-import type { BorderCharacters, ThemeMode as OpenTuiThemeMode } from '@opentui/core';
+import type {BorderCharacters, ThemeMode as OpenTuiThemeMode} from '@opentui/core';
 
 export type AppThemeMode = Extract<OpenTuiThemeMode, 'dark' | 'light'>;
 
@@ -52,6 +52,7 @@ export type ThemePalette = {
 		readonly text: string;
 		readonly navSelectedForeground: string;
 		readonly navInactiveSelectedBackground: string;
+		readonly selectInactiveBackground: string;
 		readonly modalBackground: string;
 		readonly lineNumberForeground: string;
 		readonly lineNumberBackground: string;
@@ -139,6 +140,7 @@ export const darkTheme: ThemePalette = {
 		text: '#E6EDF3',
 		navSelectedForeground: '#1A1A1A',
 		navInactiveSelectedBackground: '#3A2A20',
+		selectInactiveBackground: '#624436',
 		modalBackground: '#16110D',
 		lineNumberForeground: '#6B7280',
 		lineNumberBackground: '#161B22',
@@ -191,6 +193,7 @@ export const lightTheme: ThemePalette = {
 		text: '#24292F',
 		navSelectedForeground: '#FFFFFF',
 		navInactiveSelectedBackground: '#F0D9CC',
+		selectInactiveBackground: '#E0B49B',
 		modalBackground: '#F5EDE5',
 		lineNumberForeground: '#6A737D',
 		lineNumberBackground: '#F6F8FA',

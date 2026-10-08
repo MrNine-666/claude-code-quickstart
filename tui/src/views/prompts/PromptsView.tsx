@@ -15,5 +15,5 @@ export type PromptsViewProps = {
 
 export function PromptsView(props: PromptsViewProps) {
 	const adapter = useMemo(() => createPromptsDocumentAdapter(props.agentContext), [props.agentContext]);
-	return <ManagedDocumentView {...props} adapter={adapter} />;
+	return <ManagedDocumentView {...props} adapter={adapter} editingEnabled={false} />;
 }
