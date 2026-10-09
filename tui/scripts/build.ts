@@ -110,11 +110,20 @@ async function compileTarget(target: BuildTarget): Promise<void> {
 
   args.push(SRC_ENTRY);
 
-  const proc = Bun.spawn(args, {
+  let proc = Bun.spawn(args, {
     stdout: "inherit",
     stderr: "inherit",
   });
-  const exitCode = await proc.exited;
+  let exitCode = await proc.exited;
+  if (exitCode !== 0 && args.some(argument => argument.startsWith("--windows-icon="))) {
+    console.warn("   ⚠️  带可选图标的编译失败，清理产物并重试无图标编译");
+    cleanTargetArtifacts(target);
+    proc = Bun.spawn(args.filter(argument => !argument.startsWith("--windows-icon=")), {
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    exitCode = await proc.exited;
+  }
   if (exitCode !== 0) {
     throw new Error(`构建 ${bunTarget} 失败，退出码: ${exitCode}`);
   }
@@ -147,9 +156,10 @@ export async function runBuildTargets(
       console.error(`\n⚠️  ${target.id} 构建失败: ${errorMessage}`);
       results.push({ target, success: false, error: errorMessage });
 
-      // 默认四目标本地构建保留 arm64 已知限制的兼容行为。
+      // Continue collecting results so one failure cannot hide another, but fail the
+      // invocation below; partial multi-target builds are not publishable.
       if (target.arch === "arm64" && targets.length > 1) {
-        console.log(`   → arm64 交叉编译失败是已知限制，继续构建其他平台...\n`);
+        console.log(`   → arm64 构建失败，继续收集其他目标结果；最终构建仍失败。\n`);
       }
     }
   }
@@ -165,8 +175,8 @@ export async function runBuildTargets(
   }
 
   const successCount = results.filter(result => result.success).length;
-  if (successCount === 0) {
-    throw new Error("所有选定平台构建均失败");
+  if (successCount !== results.length) {
+    throw new Error(`选定目标构建不完整: ${successCount}/${results.length} 成功`);
   }
 
   console.log(`\n成功: ${successCount}/${results.length} 个平台`);

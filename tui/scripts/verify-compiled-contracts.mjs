@@ -20,6 +20,11 @@ function currentTarget() {
 		return {target: 'bun-darwin-arm64', ext: ''};
 	}
 
+	if (platform === 'linux' && (arch === 'x64' || arch === 'arm64')) {
+		// Host-only embedded probe, not a Linux product artifact.
+		return {target: `bun-linux-${arch}`, ext: ''};
+	}
+
 	throw new Error(`当前平台暂不支持编译产物契约验证: ${platform}/${arch}`);
 }
 
@@ -47,6 +52,7 @@ try {
 	const build = await run(process.execPath, [
 		'build',
 		'--compile',
+		'--no-compile-autoload-dotenv',
 		`--target=${target}`,
 		`--outfile=${outfile}`,
 		join(root, 'scripts', 'compiled-contracts-probe.ts')
@@ -54,7 +60,7 @@ try {
 
 	assert.equal(build.exitCode, 0, `编译契约探针失败\nstdout:\n${build.stdout}\nstderr:\n${build.stderr}`);
 
-	const probe = await run(outfile, [], {cwd: root});
+	const probe = await run(outfile, [], {cwd: tempDir});
 	assert.equal(probe.exitCode, 0, `运行契约探针失败\nstdout:\n${probe.stdout}\nstderr:\n${probe.stderr}`);
 	assert.match(probe.stdout, /PROBE_PASS/, `契约探针未输出 PROBE_PASS\nstdout:\n${probe.stdout}\nstderr:\n${probe.stderr}`);
 	assert.doesNotMatch(probe.stdout, /B:\/?~BUN|[A-Za-z]:[\\/].*contracts|\/embedded\/contracts/, '探针输出不应包含契约路径字符串');

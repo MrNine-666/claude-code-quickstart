@@ -109,37 +109,6 @@ function Get-ArtifactBuildOrder {
     return ,@($order)
 }
 
-function Get-PlatformTuiArtifactNames {
-    <#
-    .SYNOPSIS
-    从 UpdateTransports.GzipAssets 派生指定平台的 TUI raw/gzip 文件集合。
-    .DESCRIPTION
-    可执行文件与 gzip 名称只能有一个来源：UpdateTransports.GzipAssets[].Raw
-    （gzip = Raw + '.gz'）。严禁再用「除 install 脚本外的全部 artifact」这类过滤推断，
-    否则新增 download-ccq.* 脚本会被当成可执行文件处理。
-    #>
-    param(
-        [Parameter(Mandatory)]
-        [ValidateSet('Windows', 'macOS')]
-        [string]$Platform
-    )
-
-    $manifest = Get-BuildManifest
-    $names = [System.Collections.Generic.List[string]]::new()
-    foreach ($asset in @($manifest['UpdateTransports']['GzipAssets'])) {
-        $raw = [string]$asset['Raw']
-        # Windows 可执行文件带 .exe 后缀；macOS raw 无扩展名。区分只用于选择平台集合，
-        # 文件名本身仍逐字来自 GzipAssets。
-        $isWindowsAsset = $raw.EndsWith('.exe')
-        $belongsToPlatform = ($Platform -eq 'Windows' -and $isWindowsAsset) -or
-            ($Platform -eq 'macOS' -and -not $isWindowsAsset)
-        if (-not $belongsToPlatform) { continue }
-        $names.Add($raw)
-        $names.Add([string]$asset['Gzip'])
-    }
-    return ,@($names)
-}
-
 function Get-ScriptParamBlockInfo {
     <#
     .SYNOPSIS
@@ -179,105 +148,6 @@ function Get-ScriptParamBlockInfo {
         EndLine   = $endLine
         Lines     = $paramLines
     }
-}
-
-function Invoke-ManageTuiPackage {
-    <#
-    .SYNOPSIS
-    构建 TUI 可执行文件（4 平台交叉编译）到 dist/ 目录。
-
-    .DESCRIPTION
-    构建 OpenTUI TUI 可执行文件（4 平台交叉编译）。流程：
-      1. 确保 Bun 可用（>=1.2.0）；
-      2. 在 tui/ 子项目中执行 bun run build（调用 scripts/build.ts）；
-      3. 产出 4 个 raw 可执行文件和对应 4 个 gzip 更新资产到 dist/:
-         - ccq-windows-x64.exe
-         - ccq-windows-arm64.exe
-         - ccq-macos-x64
-         - ccq-macos-arm64
-    契约已通过 src/core/embedded-contracts.ts 静态 import 内嵌进可执行文件（TDR-4）。
-    Bun 不可用时 warn 跳过（不阻断平台 .ps1 产物构建；CI 通过 release artifact 校验强制可执行文件）。
-
-    .OUTPUTS
-    System.Boolean - 构建成功返回 $true，跳过或失败返回 $false
-    #>
-    param(
-        [Parameter(Mandatory)]
-        [string]$InstallerRoot,
-
-        [Parameter(Mandatory)]
-        [string]$OutputDir
-    )
-
-    $repoRoot = Split-Path $InstallerRoot -Parent
-    $tuiDir = Join-Path $repoRoot 'tui'
-    if (-not (Test-Path $tuiDir -PathType Container)) {
-        Write-Host "[WARN] 未找到 tui 子项目，跳过可执行文件构建: $tuiDir" -ForegroundColor Yellow
-        return $false
-    }
-
-    # 检查 Bun（>=1.2.0）
-    $bunCmd = Get-Command bun -ErrorAction SilentlyContinue
-    if (-not $bunCmd) {
-        Write-Host "[WARN] 未检测到 Bun，跳过 TUI 可执行文件构建" -ForegroundColor Yellow
-        Write-Host "       请安装 Bun (https://bun.sh) 并确保在 PATH 中" -ForegroundColor Yellow
-        return $false
-    }
-
-    # 验证 Bun 版本
-    $bunVersion = & bun --version 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[WARN] 无法获取 Bun 版本，跳过 TUI 可执行文件构建" -ForegroundColor Yellow
-        return $false
-    }
-
-    Write-Host "正在构建 TUI 可执行文件（Bun $bunVersion）..."
-    Write-Host "工作目录: $tuiDir"
-
-    # 执行 bun run build（调用 scripts/build.ts）
-    Push-Location $tuiDir
-    try {
-        & bun run build
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "[FAIL] TUI 可执行文件构建失败（退出码 $LASTEXITCODE）" -ForegroundColor Red
-            return $false
-        }
-    } finally {
-        Pop-Location
-    }
-
-    # 验证产物并复制到 OutputDir；TUI 本地构建直接输出到 repo 根 dist/。
-    $tuiArtifactDir = Join-Path $repoRoot 'dist'
-    $expectedFiles = Get-PlatformTuiArtifactNames -Platform Windows
-
-    $allSuccess = $true
-    foreach ($fileName in $expectedFiles) {
-        $srcPath = Join-Path $tuiArtifactDir $fileName
-        $destPath = Join-Path $OutputDir $fileName
-
-        if (-not (Test-Path $srcPath -PathType Leaf)) {
-            Write-Host "[FAIL] 缺失可执行文件: $fileName" -ForegroundColor Red
-            $allSuccess = $false
-            continue
-        }
-
-        # TUI 本地构建已直接写入 OutputDir；若调用方改了 OutputDir，则再复制过去。
-        $srcFullPath = (Resolve-Path $srcPath).Path
-        $destFullPath = [System.IO.Path]::GetFullPath($destPath)
-        if ($srcFullPath -ne $destFullPath) {
-            Copy-Item -Path $srcPath -Destination $destPath -Force
-        }
-        $sizeKB = [math]::Round((Get-Item $destPath).Length / 1KB, 1)
-        Write-Host "[PASS] $fileName 已生成（$sizeKB KB）" -ForegroundColor Green
-    }
-
-    if (-not $allSuccess) {
-        Write-Host "[FAIL] 部分可执行文件构建失败" -ForegroundColor Red
-        return $false
-    }
-
-    Write-Host "[PASS] 所有 TUI 可执行文件构建完成" -ForegroundColor Green
-    return $true
 }
 
 function Build-SingleFileScript {
@@ -389,15 +259,10 @@ function Build-SingleFileScript {
         New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
     }
 
-    # Release install.ps1 必须是纯 ASCII trampoline：Windows PowerShell 5.1 的 Invoke-RestMethod
-    # 对 GitHub Release application/octet-stream 会按 Latin1/ANSI 解码，BOM 也无法纠正。
+    # Raw main/dist 脚本必须是纯 ASCII trampoline：Windows PowerShell 5.1 的远程响应
+    # 可能按 Latin1/ANSI 解码，BOM 也无法纠正。
     # 让外层脚本只包含 ASCII，再在本机用 UTF-8 还原真实脚本，才能保留 irm|iex 入口。
     $scriptText = $buffer -join "`r`n"
-    $releaseTag = [Environment]::GetEnvironmentVariable('GITHUB_REF_NAME', 'Process')
-    if ([string]::IsNullOrWhiteSpace($releaseTag) -or $releaseTag -notlike 'v*') {
-        $releaseTag = '__CCQ_RELEASE_TAG__'
-    }
-    $scriptText = $scriptText.Replace('__CCQ_RELEASE_TAG__', $releaseTag)
     $outputText = $scriptText
     $effectiveEncoding = $OutputEncoding
     if ($OutputEncoding -eq 'asciiTrampoline') {
@@ -481,64 +346,10 @@ function Test-BuiltScriptSyntax {
     return $true
 }
 
-function Clear-KnownBuildArtifacts {
-    <#
-    .SYNOPSIS
-    清理输出目录中的当前平台构建产物，避免旧产物残留。
-    .DESCRIPTION
-    Windows 构建入口清理当前 Windows install 产物与旧 Manage/Bootstrap 残留，保留 macOS install 产物。
-    macOS 构建入口应只清理 macOS 产物（.sh），保留 Windows 产物（.ps1）。
-    .PARAMETER SkipTuiBuild
-    为真时只清理 install 脚本与 legacy 残留，保留已交叉编译的 ccq-* 可执行产物与 gzip 更新资产，
-    供 CI 下游 job 复用 build-tui job 下载的 artifact。
-    #>
-    param(
-        [Parameter(Mandatory)]
-        [string]$OutputDir,
-
-        [Parameter(Mandatory)]
-        [ValidateSet('Windows', 'macOS')]
-        [string]$Platform,
-
-        [switch]$SkipTuiBuild
-    )
-
-    $manifest = Get-BuildManifest
-    $platformKey = if ($Platform -eq 'Windows') { 'Windows' } else { 'MacOS' }
-    $platformArtifacts = @($manifest['BuildEntrypoints'][$platformKey]['Artifacts'])
-    $legacyArtifacts = if ($Platform -eq 'Windows') {
-        # 旧 Manage/Bootstrap 残留（HC-DELETE-LEGACY）
-        @('manage.ps1', 'bootstrap.ps1', 'manage.sh', 'manage-tui.tgz')
-    } else {
-        @()
-    }
-
-    # SkipTuiBuild 模式下保留交叉编译的可执行产物与 gzip 资产，只重建脚本类 artifact，
-    # 因此这一层只清理脚本 artifact（由 Role 判定）与 legacy 残留，ccq-* 与 *.gz 留给
-    # download-artifact 提供。
-    # 注意：脚本类 artifact 必须由 Role 判定，不能用「除 install 脚本外的全部」推断。
-    $platformArtifactsConfig = @($manifest[$platformKey]['Artifacts'])
-    $scriptArtifacts = @($platformArtifactsConfig | Where-Object {
-        [string]$_['Role'] -in @('Install', 'CcqDownload')
-    } | ForEach-Object { [string]$_['OutputFile'] })
-    if ($SkipTuiBuild) {
-        $filesToClean = @($scriptArtifacts + $legacyArtifacts)
-    } else {
-        $filesToClean = @($platformArtifacts + $legacyArtifacts)
-    }
-
-    foreach ($fileName in $filesToClean) {
-        $path = Join-Path $OutputDir $fileName
-        if (Test-Path $path -PathType Leaf) {
-            Remove-Item -Path $path -Force
-        }
-    }
-}
-
 function Assert-ExpectedWindowsOutputs {
     <#
     .SYNOPSIS
-    确认 Windows 构建入口生成了 Windows artifact（install.ps1 + 2 raw + 2 gzip）。
+    确认 Windows scripts-only 构建入口生成了全部脚本。
     .DESCRIPTION
     不再禁止 macOS 产物存在，允许两个平台产物共存。
     #>
@@ -548,8 +359,7 @@ function Assert-ExpectedWindowsOutputs {
     )
 
     $manifest = Get-BuildManifest
-    $expected = @($manifest['BuildEntrypoints']['Windows']['Artifacts'])
-    foreach ($fileName in $expected) {
+    foreach ($fileName in @($manifest['Windows']['Artifacts'] | ForEach-Object { $_['OutputFile'] })) {
         $path = Join-Path $OutputDir $fileName
         if (-not (Test-Path $path -PathType Leaf)) {
             throw "缺少预期 Windows 构建产物: $path"
@@ -560,22 +370,24 @@ function Assert-ExpectedWindowsOutputs {
 function Main {
     <#
     .SYNOPSIS
-    Windows 构建入口：生成 install.ps1 + 从 tui/dist 拷贝 2 raw + 2 gzip。
+    Windows 人工 scripts-only 构建入口：生成 install.ps1 / download-tui.ps1。
     .PARAMETER InstallerRoot
     installer/ 目录的绝对路径。
     .PARAMETER OutputDir
     输出目录路径。
     .PARAMETER Platform
     保留兼容参数名，但仅允许 Windows。
+    .PARAMETER ScriptsOnly
+    显式声明 scripts-only；默认也是此模式，不依赖已有 exe/gzip。
     .PARAMETER SkipTuiBuild
-    为真时跳过 TUI 可执行文件交叉编译，并保留已存在的 ccq-* / gzip 产物，供 CI 下游 job
-    复用 build-tui job 通过 download-artifact 提供的现成可执行文件。本地直接运行保持默认。
+    兼容旧调用；当前入口始终只构建脚本。
     #>
     param(
         [string]$InstallerRoot = (Resolve-Path $PSScriptRoot).Path,
         [string]$OutputDir = (Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..')).Path 'dist'),
         [ValidateSet('Windows')]
         [string]$Platform = 'Windows',
+        [switch]$ScriptsOnly,
         [switch]$SkipTuiBuild
     )
 
@@ -596,16 +408,9 @@ function Main {
         New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
         Write-Host "已创建输出目录: $OutputDir"
     }
-    Clear-KnownBuildArtifacts -OutputDir $OutputDir -Platform $Platform -SkipTuiBuild:$SkipTuiBuild
+    # 不预删已跟踪脚本；构建成功后由 Build-SingleFileScript 替换。
 
-    # 构建 TUI 可执行文件（4 平台交叉编译）
-    Write-Host ''
-    Write-Host '─── 构建 TUI 可执行文件（4 平台） ─────────────────────────' -ForegroundColor Yellow
-    if ($SkipTuiBuild) {
-        Write-Host '[SKIP] SkipTuiBuild 已启用，跳过 TUI 可执行文件构建并复用现有产物' -ForegroundColor Yellow
-    } else {
-        $null = Invoke-ManageTuiPackage -InstallerRoot $InstallerRoot -OutputDir $OutputDir
-    }
+    # 安装脚本独立人工构建，不编译或检查 TUI 可执行文件。
 
     $builtItems = [System.Collections.Generic.List[hashtable]]::new()
     $allOk = $true

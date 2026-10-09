@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 # Load.zsh - macOS core 加载顺序与加载函数的唯一声明处
 # 功能: 以唯一一份有序声明 CCQ_CORE_ORDER 驱动 source 模式 core 加载。
-# 说明: Install.zsh 与 Download-Ccq.zsh 都只 source 本文件并调用 ccq_load_core，
+# 说明: Install.zsh 与 Download-Tui.zsh 都只 source 本文件并调用 ccq_load_core，
 #       入口内不得再出现 core 文件列表。
 #
 # 为什么这里不能用 installer/contracts/build.json 做 manifest 驱动：

@@ -1,7 +1,7 @@
 ﻿# Ccq.ps1 - ccq 可执行文件管理（Windows 平台唯一实现）
 # 功能: 架构/路径检测、版本规范化与比较、Release tag/URL 解析、下载（gzip-first/raw fallback）、
 #       运行中映像替换与回滚、replacement backup cleanup、用户 PATH 注册表写入、下载 handoff 确认。
-# 说明: 完整 install 与 download-ccq.ps1 专用入口都 dot-source 本文件消费同一实现；
+# 说明: 完整 install 与 download-tui.ps1 专用入口都 dot-source 本文件消费同一实现；
 #       本文件是这些 CCQ 行为函数的唯一声明处，旧 Process.ps1 / Install.ps1 不得再定义。
 
 #Requires -Version 5.1
@@ -1109,7 +1109,7 @@ function Get-CcqReleaseTargetVersion {
 function Get-CcqReleaseDownloadBaseUrl {
     <#
     .SYNOPSIS
-    解析 ccq 可执行文件下载基址；tag 构建使用当前 Release，源码运行回退 latest。
+    解析 ccq 下载基址；默认 latest stable，保留调用方显式 tag/URL 覆盖。
     #>
     param()
 
@@ -1120,9 +1120,7 @@ function Get-CcqReleaseDownloadBaseUrl {
 
     $tag = Get-CcqReleaseTag
 
-    # 哨兵判断改用"tag 是否以 v 开头"（与 build.ps1 的 GITHUB_REF_NAME -like 'v*' 约定一致）。
-    # 不可比对占位符字面量：build 用全文 Replace 注入 tag，会把此处的 "__CCQ_RELEASE_TAG__" 一并
-    # 替换成实际 tag，导致 `$tag -ne $tag` 恒为 false → 永远走 latest 兜底（已实测复现）。
+    # 仅调用方显式提供 v* tag 时选择固定 Release；人工 builder 不注入 tag。
     if ($tag -like 'v*') {
         return "https://github.com/MrNine-666/claude-code-quickstart/releases/download/$tag"
     }
@@ -1135,7 +1133,7 @@ function Confirm-CcqExecutableDownload {
     .SYNOPSIS
     在 install 末尾或专用下载入口中执行 ccq 下载与安装的 handoff。
     .DESCRIPTION
-    完整 install 与 download-ccq.ps1 共用本 handoff，仅入口 UX 不同：
+    完整 install 与 download-tui.ps1 共用本 handoff，仅入口 UX 不同：
     - Install：未安装时先弹「是否现在下载 ccq 可执行文件」确认，用户可拒绝。
     - Dedicated：用户主动运行专用下载脚本即视为首次下载授权，跳过首次确认菜单。
     两种模式都保留：同版本跳过；版本不一致时显示默认保留的覆盖菜单；目标版本未知时保留现有可执行文件。
@@ -1174,7 +1172,7 @@ function Confirm-CcqExecutableDownload {
 
         if ([string]::IsNullOrWhiteSpace($targetVersion)) {
             Write-UiWarning "无法确定安装器目标版本，已保留现有 ccq"
-            Write-UiDim "  如需更新，请使用正式 Release 安装脚本或在 ccq 中执行更新"
+            Write-UiDim "  如需更新，请运行 ccq update"
             return $true
         }
 

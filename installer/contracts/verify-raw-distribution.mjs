@@ -1,0 +1,109 @@
+// Local manual packaging check. Never installs software or publishes assets; not a TUI CI gate.
+import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
+import {mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join, resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
+
+const installerRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const repoRoot = resolve(installerRoot, '..');
+const manifest = JSON.parse(readFileSync(join(installerRoot, 'contracts/build.json'), 'utf8'));
+const expected = [...manifest.Windows.Artifacts, ...manifest.MacOS.Artifacts].map(item => item.OutputFile).sort();
+const directory = mkdtempSync(join(tmpdir(), 'ccq-raw-distribution-'));
+const env = {...process.env, GITHUB_REF_NAME: 'v99.99.99', CCQ_HOME: join(directory, 'home')};
+// Isolate explicit download overrides without changing the caller's environment.
+delete env.CCQ_RELEASE_TAG;
+delete env.CCQ_RELEASE_DOWNLOAD_BASE_URL;
+
+function run(command, args, input) {
+	const result = spawnSync(command, args, {cwd: repoRoot, env, input, encoding: 'utf8', timeout: 120_000});
+	assert.equal(result.status, 0, `${command}: ${result.error ?? ''}\n${result.stderr}\n${result.stdout}`);
+	return result.stdout;
+}
+function powershell(script) {
+	return run('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]);
+}
+function psQuote(value) { return `'${value.replaceAll("'", "''")}'`; }
+
+try {
+	run('sh', ['installer/build.sh', '--scripts-only', '--output', directory]);
+	if (process.platform === 'win32') {
+		run('pwsh', ['-NoProfile', '-File', 'installer/build.ps1', '-OutputDir', directory]);
+		assert.deepEqual(readdirSync(directory).sort(), expected, 'Scripts-only packaging must need no raw/gzip assets');
+	} else {
+		assert.deepEqual(readdirSync(directory).sort(), manifest.MacOS.Artifacts.map(item => item.OutputFile).sort());
+		console.log('[SKIP] PS5.1/Windows builder requires Windows host');
+	}
+	for (const name of readdirSync(directory)) {
+		const file = join(directory, name);
+		const bytes = readFileSync(file);
+		let content = bytes.toString('utf8');
+		if (name.endsWith('.ps1')) {
+			assert.ok(bytes.every(byte => byte < 128), `${name} must be ASCII`);
+			const payload = content.match(/\$script = @'\r?\n([\s\S]*?)\r?\n'@/);
+			assert.ok(payload, 'Keep ASCII trampoline');
+			content = Buffer.from(payload[1].replace(/\s/g, ''), 'base64').toString('utf8');
+			// Parse outer and decoded payload with native PS5.1, then load only URL/version helpers.
+			powershell(`
+$ErrorActionPreference = 'Stop'
+if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'Expected native PS5.1' }
+$text = [IO.File]::ReadAllText(${psQuote(file)})
+$tokens = $null; $errors = $null
+$null = [Management.Automation.Language.Parser]::ParseInput($text, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw ($errors | Out-String) }
+$payload = [regex]::Match($text, ${psQuote("(?s)\\$script = @'\\r?\\n(.*?)\\r?\\n'@")}).Groups[1].Value
+$decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($payload -replace '\\s', '')))
+$ast = [Management.Automation.Language.Parser]::ParseInput($decoded, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw ($errors | Out-String) }
+foreach ($function in $ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]}, $true)) {
+    if ($function.Name -in @('Get-CcqReleaseTag', 'Get-CcqReleaseTargetVersion', 'Get-CcqReleaseDownloadBaseUrl', 'ConvertTo-CcqComparableVersion')) {
+        . ([scriptblock]::Create($function.Extent.Text))
+    }
+}
+$script:CcqReleaseTag = '__CCQ_RELEASE_TAG__'
+if ((Get-CcqReleaseDownloadBaseUrl) -ne 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download') { throw 'Default URL must use latest stable' }
+if (Get-CcqReleaseTargetVersion) { throw 'Default target version must be unknown' }
+`);
+			const option = name === 'install.ps1' ? '-ListSteps' : '-Help';
+			const output = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', file, option]);
+			assert.match(output, name === 'install.ps1' ? /NodeJS|Node\.js/ : /download-tui\.ps1/);
+			// Cloud execution has no PSScriptRoot; invoke decoded artifact through its outer scriptblock.
+			const cloudOutput = powershell(`& ([scriptblock]::Create([IO.File]::ReadAllText(${psQuote(file)}))) ${option}`);
+			assert.match(cloudOutput, name === 'install.ps1' ? /NodeJS|Node\.js/ : /download-tui\.ps1/);
+		} else {
+			assert.ok(content.startsWith('#!/usr/bin/env bash'));
+			assert.ok(content.includes('exec /bin/zsh'));
+			assert.ok(content.includes('export CCQ_BUILT_MODE=1'));
+			assert.equal(content.includes('CCQ_CONTRACT_STEPS_JSON'), name === 'install.sh');
+			assert.doesNotMatch(content, /^\s*source "\$\{(?:file_path|full_path|CCQ_MACOS_ROOT\/core\/Load\.zsh)\}"\s*$/m);
+			// URL helper uses POSIX syntax; exercise generated bytes with bash even without zsh.
+			const getter = content.match(/^ccq_get_release_download_base_url\(\) \{[\s\S]*?^\}/m);
+			assert.ok(getter);
+			assert.equal(run('bash', ['-s'], `${getter[0]}\nccq_get_release_download_base_url\n`).trim(), 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download');
+			const zsh = spawnSync('zsh', ['--version'], {encoding: 'utf8'});
+			if (zsh.status === 0) {
+				run('zsh', ['-n', file]);
+				assert.match(run('zsh', [file, '--help']), /Options|用法/);
+				if (name === 'install.sh') assert.match(run('zsh', [file, '--list-steps']), /NodeJS|Node\.js/);
+			} else console.log(`[SKIP] ${name}: native zsh syntax/help/list unavailable`);
+		}
+		assert.ok(!content.includes('v99.99.99'), 'Builder must ignore GITHUB_REF_NAME');
+		assert.ok(content.includes('__CCQ_RELEASE_TAG__'), 'Default target remains unknown; preserve existing ccq');
+		assert.ok(!/^\s*\.\s+["']?\$(?:scriptRoot|script:WindowsRoot|corePath)/m.test(content), 'Artifact must inline installer modules');
+	}
+	// Repeat builders with existing binary fixtures; scripts must never clear/copy/replace them.
+	const binaryNames = manifest.BuildEntrypoints.ReleaseArtifacts;
+	for (const name of binaryNames) writeFileSync(join(directory, name), `preserve-${name}`);
+	run('sh', ['installer/build.sh', '--output', directory]);
+	if (process.platform === 'win32') run('pwsh', ['-NoProfile', '-File', 'installer/build.ps1', '-ScriptsOnly', '-OutputDir', directory]);
+	for (const name of binaryNames) assert.equal(readFileSync(join(directory, name), 'utf8'), `preserve-${name}`);
+	for (const name of expected) {
+		assert.equal(spawnSync('git', ['check-ignore', '--no-index', `dist/${name}`], {cwd: repoRoot}).status, 1, `Git must allow ${name}`);
+		assert.ok(run('git', ['check-attr', 'eol', '--', `dist/${name}`]).trim().endsWith(': lf'), `Git must keep LF for ${name}`);
+	}
+	for (const name of [...binaryNames, 'scratch.tmp', 'other.ps1', 'nested/install.ps1']) assert.equal(spawnSync('git', ['check-ignore', '--no-index', `dist/${name}`], {cwd: repoRoot}).status, 0, `Git must ignore ${name}`);
+	console.log('[PASS] Manual scripts-only build, self-contained artifacts, latest stable defaults, binary preservation and four-file Git whitelist');
+} finally {
+	rmSync(directory, {recursive: true, force: true});
+}

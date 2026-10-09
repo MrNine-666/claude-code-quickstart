@@ -762,7 +762,7 @@ function Main {
 
         # ── ccq 可执行文件下载确认（TDR-6；install 模式保留首次下载确认）
         # 完整 install 沿用既有语义：ccq 下载失败只告警，不把基础环境安装判为失败。
-        # 返回值供专用入口（download-ccq.ps1）决定退出码；这里显式丢弃以免打印 True/False。
+        # 返回值供专用入口（download-tui.ps1）决定退出码；这里显式丢弃以免打印 True/False。
         Write-Host ""
         $null = Confirm-CcqExecutableDownload -Mode Install
 

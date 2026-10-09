@@ -2,7 +2,7 @@
 # Ccq.zsh - ccq 可执行文件管理（macOS 平台唯一实现）
 # 功能: 架构/路径检测、版本规范化、已安装探测、下载（gzip-first/raw fallback）、
 #       chmod +x 落盘、幂等 ~/.zprofile PATH 写入，以及 Release URL/版本与下载 handoff。
-# 说明: 完整 install 与 Download-Ccq.zsh 专用入口都通过 core/Load.zsh 加载本文件，
+# 说明: 完整 install 与 Download-Tui.zsh 专用入口都通过 core/Load.zsh 加载本文件，
 #       消费同一实现；本文件是这些 CCQ 行为函数的唯一声明处。
 # ─── CCQ 可执行文件管理 ──────────────────────────────────────────────────────
 
@@ -244,15 +244,13 @@ ccq_install_executable() {
 # 专用入口把该返回值当作退出码；完整 install 沿用既有「告警但不中断」语义。
 # 有意跳过（用户拒绝、目标版本未知、选择保留）不算失败，仍返回 0。
 ccq_get_release_download_base_url() {
-  # 解析 ccq 可执行文件下载基址；tag 构建使用当前 Release，源码运行回退 latest。
+  # 默认 latest stable，保留调用方显式 tag/URL 覆盖。
   if [ -n "${CCQ_RELEASE_DOWNLOAD_BASE_URL:-}" ]; then
     printf '%s' "${CCQ_RELEASE_DOWNLOAD_BASE_URL%/}"
     return 0
   fi
 
-  # 哨兵判断以 v 开头（与 build 的 GITHUB_REF_NAME=v* 约定一致）。
-  # 不能比对 __CCQ_RELEASE_TAG__ 字面量：build 用全局替换注入 tag，会把此处哨兵也
-  # 换成实际 tag，导致 "v2.1.0-rc.x" != "v2.1.0-rc.x" 恒为假 → 永远走 latest 兜底。
+  # 仅调用方显式提供 v* tag 时选择固定 Release；人工 builder 不注入 tag。
   local tag="${CCQ_RELEASE_TAG:-}"
   case "${tag}" in
     v*)
@@ -312,7 +310,7 @@ ccq_confirm_executable_download() {
 
     if [ -z "${target_version}" ]; then
       ccq_ui_warning "无法确定安装器目标版本，已保留现有 ccq"
-      ccq_ui_dim "  如需更新，请使用正式 Release 安装脚本或在 ccq 中执行更新"
+      ccq_ui_dim "  如需更新，请运行 ccq update"
       return 0
     fi
 

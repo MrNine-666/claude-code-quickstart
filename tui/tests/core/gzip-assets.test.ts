@@ -21,11 +21,11 @@ test('RAW_TO_GZIP 映射与 installer 契约同源', () => {
 		expect(buildContract.BuildEntrypoints.ReleaseArtifacts.includes(raw), `Release 必须仍发布 raw: ${raw}`).toBe(true);
 		expect(buildContract.BuildEntrypoints.ReleaseArtifacts.includes(gzip), `Release 必须发布 gzip: ${gzip}`).toBe(true);
 	}
-	const platformArtifacts = [...buildContract.BuildEntrypoints.Windows.Artifacts, ...buildContract.BuildEntrypoints.MacOS.Artifacts];
+	const releaseArtifacts = contractMappings.flatMap(item => [item.Raw, item.Gzip]);
 	expect(
 		[...buildContract.BuildEntrypoints.ReleaseArtifacts].sort(),
-		'Release 集合必须等于两个平台 Artifacts 的并集，不得维护第二份名单或数量魔数'
-	).toEqual([...new Set(platformArtifacts)].sort());
+		'Release 集合必须等于 raw/gzip 映射，不包含 installer 脚本'
+	).toEqual(releaseArtifacts.sort());
 });
 
 test('gzipDeterministic 字节确定性 + roundtrip', () => {

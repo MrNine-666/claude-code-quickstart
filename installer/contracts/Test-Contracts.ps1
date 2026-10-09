@@ -445,9 +445,9 @@ function Test-BuildManifestContract {
         Add-Issue "macOS raw/gzip 传输资产应为 4 个，实际: $(@($macOSExeArtifacts).Count)"
     }
 
-    # Release 精确集合 = 两个平台 Artifacts 的并集（含新增专用脚本）；数量由并集派生，不写死魔数。
+    # 人工 builder 只生成脚本；Release 集合只包含 TUI raw/gzip。
     $entrypoints = $Contract['BuildEntrypoints']
-    $releaseOutputs = @(@($entrypoints['Windows']['Artifacts']) + @($entrypoints['MacOS']['Artifacts']))
+    $releaseOutputs = @($windowsExeArtifacts) + @($macOSExeArtifacts)
 
     foreach ($output in $windowsOutputs) {
         if ($output -notin @($entrypoints['Windows']['Artifacts'])) {
@@ -459,16 +459,8 @@ function Test-BuildManifestContract {
             Add-Issue "macOS artifact 集合缺少脚本产物: $output"
         }
     }
-    foreach ($asset in $windowsExeArtifacts) {
-        if ($asset -notin @($entrypoints['Windows']['Artifacts'])) {
-            Add-Issue "Windows artifact 集合缺少传输资产: $asset"
-        }
-    }
-    foreach ($asset in $macOSExeArtifacts) {
-        if ($asset -notin @($entrypoints['MacOS']['Artifacts'])) {
-            Add-Issue "macOS artifact 集合缺少传输资产: $asset"
-        }
-    }
+    Assert-Equal 'build.windows.script-outputs' @($windowsOutputs | Sort-Object) @($entrypoints['Windows']['Artifacts'] | Sort-Object)
+    Assert-Equal 'build.macos.script-outputs' @($macOSOutputs | Sort-Object) @($entrypoints['MacOS']['Artifacts'] | Sort-Object)
 
     Assert-Equal 'build.release.outputs' @($releaseOutputs | Sort-Object) @($entrypoints['ReleaseArtifacts'] | Sort-Object)
     Assert-Equal 'build.entrypoints.windows.script' 'installer/build.ps1' $entrypoints['Windows']['Script']
@@ -546,17 +538,9 @@ function Test-BuildManifestContract {
     if ($buildSh -notmatch "readJson\('installer/contracts/build\.json'\)") {
         Add-Issue 'installer/build.sh 未读取共享构建清单 installer/contracts/build.json'
     }
-    if ($buildPs1 -notmatch "BuildEntrypoints'\]\['Windows'\]\['Artifacts") {
-        Add-Issue 'installer/build.ps1 未从 BuildEntrypoints.Windows.Artifacts 派生 raw/gzip 输出集合'
-    }
-    if ($buildSh -notmatch 'manifest\.BuildEntrypoints\.MacOS\.Artifacts') {
-        Add-Issue 'installer/build.sh 未从 BuildEntrypoints.MacOS.Artifacts 派生 raw/gzip 输出集合'
-    }
-    if ($buildPs1 -notmatch "platformArtifacts\s*=\s*@\(\`$manifest\['BuildEntrypoints'\]\[\`$platformKey\]\['Artifacts'\]\)") {
-        Add-Issue 'installer/build.ps1 清理未从当前平台 BuildEntrypoints artifacts 派生，旧 raw/gzip 可能伪装构建成功'
-    }
-    if ($buildSh -notmatch '(?s)function clearKnownBuildArtifacts\(manifest\).*?manifest\.BuildEntrypoints\.MacOS\.Artifacts') {
-        Add-Issue 'installer/build.sh 清理未覆盖当前 macOS raw/gzip，旧文件可能伪装构建成功'
+    if ($buildPs1 -match 'GITHUB_REF_NAME|Invoke-ManageTuiPackage|Clear-KnownBuildArtifacts' -or
+        $buildSh -match 'GITHUB_REF_NAME|buildManageTuiPackage|clearKnownBuildArtifacts') {
+        Add-Issue '人工脚本 builder 不得注入 tag、编译 TUI 或预删 tracked 脚本'
     }
 
     if ($buildPs1 -match "-ne 'install\.ps1'") {
@@ -564,12 +548,6 @@ function Test-BuildManifestContract {
     }
     if ($buildSh -match "!== 'install\.sh'|=== 'install\.sh'") {
         Add-Issue 'installer/build.sh 仍用「除 install 脚本外的全部」推断可执行文件'
-    }
-    if ($buildPs1 -notmatch "UpdateTransports'\]\['GzipAssets'") {
-        Add-Issue 'installer/build.ps1 未从 UpdateTransports.GzipAssets 派生 raw/gzip 名称'
-    }
-    if ($buildSh -notmatch 'UpdateTransports\.GzipAssets') {
-        Add-Issue 'installer/build.sh 未从 UpdateTransports.GzipAssets 派生 raw/gzip 名称'
     }
     if ($buildPs1 -match 'Get-InstallBuildOrder') {
         Add-Issue 'installer/build.ps1 仍保留写死 Role 的 Get-InstallBuildOrder'
@@ -821,7 +799,7 @@ function Test-CcqVersionHandoffContract {
 
 # dot-source 必须发生在脚本作用域；若放在函数内，Registry 等函数会随函数返回而失效。
 # 注意：claude-config 现为纯 TUI 链契约（runtime 实现在 tui/src/core/config-recommend.ts，
-#       由 tui/scripts/verify-contracts.mjs 校验），installer 侧不再 dot-source 已删除的
+#       由 tui/scripts/verify-compiled-contracts.mjs 验证内嵌加载），installer 侧不再 dot-source 已删除的
 #       windows/steps/ClaudeConfig.ps1，仅做 JSON 自洽校验。
 . (Join-Path $script:CoreRoot 'Ui.ps1')
 # 顺序与 build.json 的 Windows CoreFiles 保持一致（Process < Profile < Admin < Net < Ccq < Registry），
@@ -1999,8 +1977,8 @@ function Test-CcqSingleDefinitionContract {
     }
 
     # ③ 两个专用入口不得包含资产名拼接/架构映射/版本比较/落地替换/PATH 写入/step 生命周期。
-    $windowsEntryPath = Join-Path $script:WindowsRoot 'Download-Ccq.ps1'
-    $macEntryPath = Join-Path $script:InstallerRoot 'macos\Download-Ccq.zsh'
+    $windowsEntryPath = Join-Path $script:WindowsRoot 'Download-Tui.ps1'
+    $macEntryPath = Join-Path $script:InstallerRoot 'macos\Download-Tui.zsh'
     Assert-PathExists 'ccq.entry.windows' $windowsEntryPath
     Assert-PathExists 'ccq.entry.macos' $macEntryPath
 

@@ -5,8 +5,12 @@
 .pi/
 .trellis/
 
-# ─── 构建产物（由本地构建或 GitHub Actions 自动生成）───
-dist/
+# ─── main/dist 人工脚本；二进制、gzip 和临时产物继续忽略 ───
+/dist/*
+!/dist/install.ps1
+!/dist/install.sh
+!/dist/download-tui.ps1
+!/dist/download-tui.zsh
 installer/build/*.zip
 installer/build/*.exe
 

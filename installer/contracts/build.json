@@ -10,11 +10,7 @@
       ],
       "Artifacts": [
         "install.ps1",
-        "download-ccq.ps1",
-        "ccq-windows-x64.exe",
-        "ccq-windows-x64.exe.gz",
-        "ccq-windows-arm64.exe",
-        "ccq-windows-arm64.exe.gz"
+        "download-tui.ps1"
       ]
     },
     "MacOS": {
@@ -24,18 +20,10 @@
       ],
       "Artifacts": [
         "install.sh",
-        "download-ccq.zsh",
-        "ccq-macos-x64",
-        "ccq-macos-x64.gz",
-        "ccq-macos-arm64",
-        "ccq-macos-arm64.gz"
+        "download-tui.zsh"
       ]
     },
     "ReleaseArtifacts": [
-      "install.ps1",
-      "download-ccq.ps1",
-      "install.sh",
-      "download-ccq.zsh",
       "ccq-windows-x64.exe",
       "ccq-windows-x64.exe.gz",
       "ccq-windows-arm64.exe",
@@ -93,10 +81,10 @@
       },
       {
         "Role": "CcqDownload",
-        "OutputFile": "download-ccq.ps1",
+        "OutputFile": "download-tui.ps1",
         "RequiresHeader": "#Requires -Version 5.1",
-        "EntryFile": "windows/Download-Ccq.ps1",
-        "HoistParamFrom": "windows/Download-Ccq.ps1",
+        "EntryFile": "windows/Download-Tui.ps1",
+        "HoistParamFrom": "windows/Download-Tui.ps1",
         "OutputEncoding": "asciiTrampoline",
         "CoreFiles": [
           "windows/core/Json.ps1",
@@ -135,8 +123,8 @@
       },
       {
         "Role": "CcqDownload",
-        "OutputFile": "download-ccq.zsh",
-        "EntryFile": "macos/Download-Ccq.zsh",
+        "OutputFile": "download-tui.zsh",
+        "EntryFile": "macos/Download-Tui.zsh",
         "IncludeSteps": false,
         "Wrapper": "bash-to-zsh",
         "ReuseCoreFilesFromRole": "Install"

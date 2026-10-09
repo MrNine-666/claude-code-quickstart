@@ -184,8 +184,7 @@ async function getCommandVersion(
 //      而在 ~/.claude/.ccg/config.toml 的 version = "..."（ccg-workflow 引擎版本单一真理源）。
 //   2. 远程最新版本不在 `npm outdated -g`（非全局包查不到），需 `npm view` 单包查询。
 // CcgWorkflow 已从安装步骤降级为 TUI 工具项，其安装/更新统一在 manage TUI 维护。
-// 守卫 verify-update-scope.mjs 锁定 type='npm' / package='ccg-workflow'，故二者保持不变，
-// 仅检测来源与更新动作（applyUpdates）走专用分支。
+// 保持 type='npm' / package='ccg-workflow'；仅检测来源与更新动作（applyUpdates）走专用分支。
 
 /** 读取 CcgWorkflow 本地版本：从 ~/.claude/.ccg/config.toml 提取 version。 */
 function readCcgLocalVersion(): {installed: boolean; version: string} {

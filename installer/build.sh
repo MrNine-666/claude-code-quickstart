@@ -11,7 +11,8 @@ Usage: sh installer/build.sh [OPTIONS]
 Options:
   --platform <macos>   构建平台，默认 macos
   --output <dir>       输出目录，默认 repo 根目录 dist/
-  --skip-tui-build     跳过 TUI 可执行文件构建并复用现有产物（CI 下游 job 用）
+  --scripts-only       只生成脚本（默认），不编译或检查 TUI 可执行文件
+  --skip-tui-build     兼容旧调用，等同 --scripts-only
   --check              只检查 build.sh 语法/结构，不生成 artifact
   --help               显示帮助
 EOF
@@ -22,7 +23,6 @@ repo_root=$(CDPATH= cd -- "${script_dir}/.." && pwd)
 platform="macos"
 output_dir="${repo_root}/dist"
 check_only=0
-skip_tui_build=0
 
 check_build_script() {
   script_path="${script_dir}/build.sh"
@@ -61,8 +61,7 @@ while [ "$#" -gt 0 ]; do
       check_only=1
       shift
       ;;
-    --skip-tui-build)
-      skip_tui_build=1
+    --scripts-only|--skip-tui-build)
       shift
       ;;
     --help|-h)
@@ -96,7 +95,7 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-node - "${script_dir}" "${output_dir}" "${platform}" "${skip_tui_build}" <<'NODE_SCRIPT'
+node - "${script_dir}" "${output_dir}" "${platform}" <<'NODE_SCRIPT'
 const fs = require('fs');
 const path = require('path');
 const childProcess = require('child_process');
@@ -104,8 +103,7 @@ const childProcess = require('child_process');
 const installerRoot = path.resolve(process.argv[2]);
 const outputDir = path.resolve(process.argv[3]);
 const platform = process.argv[4];
-const skipTuiBuild = process.argv[5] === '1';
-// contracts 已上升为根级目录（与 installer/ 平级），契约/清单从 repo 根定位
+// 清单与内嵌契约从 repo 根目录定位。
 const repoRoot = path.dirname(installerRoot);
 
 function fail(message) {
@@ -285,83 +283,6 @@ function filterZshSource(relativePath) {
   return lines;
 }
 
-function buildManageTuiPackage(manifest) {
-  // Phase 6：构建 TUI 可执行文件（4 平台交叉编译）到 dist/ 目录。
-  // 构建 OpenTUI TUI 可执行文件（4 平台交叉编译）。流程：
-  //   1. 确保 Bun 可用（>=1.2.0）；
-  //   2. 在 tui/ 子项目中执行 bun run build（调用 scripts/build.ts）；
-  //   3. 产出 4 个 raw 可执行文件和对应 4 个 gzip 更新资产到 dist/。
-  // 契约已通过 src/core/embedded-contracts.ts 静态 import 内嵌进可执行文件（TDR-4）。
-  // Bun 不可用时 warn 跳过（不阻断 .sh 产物；CI 通过 release artifact 校验强制可执行文件）。
-
-  const tuiDir = path.join(repoRoot, 'tui');
-  if (!fs.existsSync(tuiDir)) {
-    console.warn('[WARN] 未找到 tui 子项目，跳过可执行文件构建');
-    return false;
-  }
-
-  // 检查 Bun（>=1.2.0）
-  const bunCheck = childProcess.spawnSync('bun', ['--version'], { stdio: 'pipe', encoding: 'utf8' });
-  if (bunCheck.status !== 0) {
-    console.warn('[WARN] 未检测到 Bun，跳过 TUI 可执行文件构建');
-    console.warn('       请安装 Bun (https://bun.sh) 并确保在 PATH 中');
-    return false;
-  }
-
-  const bunVersion = (bunCheck.stdout || '').trim();
-  console.log(`正在构建 TUI 可执行文件（Bun ${bunVersion}）...`);
-  console.log(`工作目录: ${tuiDir}`);
-
-  // 执行 bun run build（调用 scripts/build.ts）
-  const useShell = process.platform === 'win32';
-  const build = childProcess.spawnSync('bun', ['run', 'build'], {
-    cwd: tuiDir,
-    stdio: 'inherit',
-    shell: useShell
-  });
-
-  if (build.status !== 0) {
-    console.warn(`[WARN] TUI 可执行文件构建失败（退出码 ${build.status}）`);
-    return false;
-  }
-
-  // macOS 构建入口只输出 macOS ccq 产物；TUI 本地构建直接输出到 repo 根 dist/。
-  // raw/gzip 名称只能来自 UpdateTransports.GzipAssets，不得用「除 install 脚本外的全部」推断。
-  const tuiArtifactDir = path.join(repoRoot, 'dist');
-  const expectedFiles = [];
-  for (const asset of manifest.UpdateTransports.GzipAssets) {
-    if (asset.Raw.endsWith('.exe')) continue; // Windows raw
-    expectedFiles.push(asset.Raw, asset.Gzip);
-  }
-
-  let allSuccess = true;
-  for (const fileName of expectedFiles) {
-    const srcPath = path.join(tuiArtifactDir, fileName);
-    const destPath = path.join(outputDir, fileName);
-
-    if (!fs.existsSync(srcPath)) {
-      console.warn(`[WARN] 缺失可执行文件: ${fileName}`);
-      allSuccess = false;
-      continue;
-    }
-
-    // 复制到输出目录；若 OutputDir 与 TUI 产物目录相同则跳过。
-    if (path.resolve(srcPath) !== path.resolve(destPath)) {
-      fs.copyFileSync(srcPath, destPath);
-    }
-    const sizeKB = Math.round((fs.statSync(destPath).size / 1024) * 10) / 10;
-    pass(`${fileName} 已生成（${sizeKB} KB）`);
-  }
-
-  if (!allSuccess) {
-    console.warn('[WARN] 部分可执行文件构建失败');
-    return false;
-  }
-
-  pass('所有 TUI 可执行文件构建完成');
-  return true;
-}
-
 function buildMacOSArtifact(manifest, stepsContract, role) {
   const { artifact, order } = macOSBuildOrder(manifest, stepsContract, role);
   for (const relPath of order) requireFile(relPath);
@@ -379,10 +300,7 @@ function buildMacOSArtifact(manifest, stepsContract, role) {
     lines.push(...filterZshSource(relPath));
   }
 
-  const releaseTag = (process.env.GITHUB_REF_NAME || '').startsWith('v')
-    ? process.env.GITHUB_REF_NAME
-    : '__CCQ_RELEASE_TAG__';
-  const content = lines.join('\n').replace(/__CCQ_RELEASE_TAG__/g, releaseTag);
+  const content = lines.join('\n');
 
   const entryCalls = {
     Install: 'ccq_main "$@"',
@@ -427,23 +345,6 @@ function validateMacOSArtifact(outputPath, artifact) {
   pass(`zsh 语法检查通过: ${outputPath}`);
 }
 
-function clearKnownBuildArtifacts(manifest) {
-  // 清理当前 macOS 入口拥有的 artifact，保留 Windows 产物。
-  // 脚本类 artifact 由 Role 判定（Install / CcqDownload）；skipTuiBuild 模式下只清理
-  // 脚本产物，保留已交叉编译的 ccq-macos-* 与 gzip 资产，供 CI 下游 job 复用
-  // build-tui job 通过 download-artifact 提供的现成可执行文件。
-  const scriptOutputs = manifest.MacOS.Artifacts
-    .filter((artifact) => artifact.Role === 'Install' || artifact.Role === 'CcqDownload')
-    .map((artifact) => artifact.OutputFile);
-  const files = skipTuiBuild
-    ? scriptOutputs
-    : manifest.BuildEntrypoints.MacOS.Artifacts;
-  for (const fileName of files) {
-    const fullPath = path.join(outputDir, fileName);
-    if (fs.existsSync(fullPath)) fs.rmSync(fullPath, { force: true });
-  }
-}
-
 function ensureExpectedOutputs(manifest) {
   const expected = manifest.MacOS.Artifacts.map((item) => item.OutputFile);
   for (const fileName of expected) {
@@ -457,7 +358,7 @@ function ensureExpectedOutputs(manifest) {
 const manifest = readJson('installer/contracts/build.json');
 const stepsContract = readJson(manifest.MacOS.StepContract || 'installer/contracts/steps.json');
 fs.mkdirSync(outputDir, { recursive: true });
-clearKnownBuildArtifacts(manifest);
+// 不预删已跟踪脚本或其他平台产物。
 
 console.log('═══════════════════════════════════════════════════════════════');
 console.log('  Claude Code 安装器 - macOS 单文件构建工具');
@@ -466,15 +367,6 @@ console.log(`安装器根目录: ${installerRoot}`);
 console.log(`输出目录:     ${outputDir}`);
 console.log(`构建平台:     ${platform}`);
 
-// 构建 TUI 可执行文件（4 平台交叉编译）
-console.log('');
-console.log('─── 构建 TUI 可执行文件（4 平台） ─────────────────────────');
-if (skipTuiBuild) {
-  console.log('[SKIP] skip-tui-build 已启用，跳过 TUI 可执行文件构建并复用现有产物');
-} else {
-  buildManageTuiPackage(manifest);
-}
-console.log('');
 
 buildMacOSArtifact(manifest, stepsContract, 'Install');
 for (const artifact of manifest.MacOS.Artifacts) {

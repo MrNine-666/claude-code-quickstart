@@ -49,13 +49,13 @@ Windows：以**管理员身份**打开 PowerShell，执行
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
-irm 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/install.ps1' | iex
+irm 'https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/install.ps1' | iex
 ```
 
 macOS（12+）：
 
 ```sh
-curl -fsSL "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/install.sh" | bash
+curl -fsSL "https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/install.sh" | bash
 ```
 
 装完**新开一个终端**，运行 `ccq` 进入控制台。
@@ -68,22 +68,24 @@ Windows：
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
-irm 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/download-ccq.ps1' | iex
+irm 'https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/download-tui.ps1' | iex
 ```
 
 macOS：
 
 ```sh
-curl -fsSL "https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download/download-ccq.zsh" | zsh
+curl -fsSL "https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/download-tui.zsh" | zsh
 ```
 
 这两个入口只装 `ccq` 本体，不装 Node.js、Git 和三个 Agent。
 
 ![macOS 安装界面](./assets/screenshots/macos-install.png)
 
+首次安装会下载最新稳定版 `ccq`。已安装的 `ccq` 会保留，升级时运行 `ccq update`。如果之前使用旧安装命令，请改用上面的命令。
+
 ### 方式二 下载脚本执行
 
-从 [Releases](../../releases) 下载对应平台的安装脚本和可执行文件，然后运行：
+下载 [Windows 安装脚本](https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/install.ps1) 或 [macOS 安装脚本](https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/install.sh)，保存后运行。脚本会下载最新稳定版二进制：
 
 ```powershell
 # Windows
@@ -94,17 +96,6 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
 ```sh
 # macOS
 bash ./install.sh
-```
-
-### 方式三 从源码运行（开发者）
-
-```sh
-git clone https://github.com/MrNine-666/claude-code-quickstart.git
-cd claude-code-quickstart
-
-cd tui
-bun install --frozen-lockfile
-bun run dev
 ```
 
 ---
@@ -146,7 +137,7 @@ bun run dev
 
 ![供应商管理](./assets/screenshots/tui-providers.png)
 
-**3）配置文件**：只读预览三个 Agent 的普通配置，按 `O` 使用系统默认应用打开文件编辑。配置页不再提供推荐边栏、补全推荐或 TUI 内编辑入口；供应商、MCP 等字段仍由对应模块管理。
+**3）配置文件**：只读预览三个 Agent 的普通配置，按 `O` 使用系统默认应用打开文件编辑。供应商、MCP 等设置在对应页面管理。
 
 ![配置文件管理](./assets/screenshots/tui-config.png)
 
@@ -156,7 +147,7 @@ bun run dev
 
 **5）MCP**：`A` 新增、`E` 编辑、`D` 删除、`Enter` 启用 / 停用。内置 Context7、DeepWiki、Tavily、Playwright、Exa Search、MasterGo、Figma、Chrome DevTools 等常用 MCP，凭据填一次就存下来。
 
-Pi MCP 使用正式版 **Pi >=1.0.0** 的原生 `~/.pi/agent/mcp.json`，无需安装 adapter 扩展。修改后在 Pi 中运行 `/reload` 或重开会话；需要 OAuth 登录时使用 `pi mcp login`。删除确认会清理三个 Agent 的同名配置和共享定义，包括并非由 CCQ 创建的配置。
+Pi MCP 需要 **Pi >=1.0.0**。修改后在 Pi 中运行 `/reload` 或重开会话；需要 OAuth 登录时使用 `pi mcp login`。删除确认会清理三个 Agent 的同名配置，包括并非由 CCQ 创建的配置。
 
 ![MCP 管理](./assets/screenshots/tui-mcp.png)
 

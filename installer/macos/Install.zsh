@@ -79,7 +79,7 @@ ccq_parse_args() {
 
 # ─── 加载 core（顺序声明唯一位于 core/Load.zsh）─────────────────────────────
 # 本入口不再硬编码 core 文件列表：只 source Load.zsh 并调用 ccq_load_core。
-# 专用入口 Download-Ccq.zsh 复用同一份声明。
+# 专用入口 Download-Tui.zsh 复用同一份声明。
 #
 # 为什么 macOS 不能用 build.json 做 manifest 驱动加载：读取 JSON 只能依赖 node
 # （见 core/Json.zsh / core/Registry.zsh），而 CCQ 专用入口恰恰不能依赖 node，
@@ -449,7 +449,7 @@ ccq_main() {
 
   # ccq 可执行文件下载确认（TDR-6；install 模式保留首次下载确认）
   # 完整 install 沿用既有语义：ccq 下载失败只告警，不把基础环境安装判为失败；
-  # 失败返回值由专用入口（Download-Ccq.zsh）作为退出码使用。
+  # 失败返回值由专用入口（Download-Tui.zsh）作为退出码使用。
   printf '\n'
   ccq_confirm_executable_download install || true
 }
