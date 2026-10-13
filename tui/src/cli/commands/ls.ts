@@ -1,7 +1,9 @@
 // `ccq ls` — 列出 Claude provider 或 Codex profile，并标记当前默认。
-// 非 TTY 友好纯文本输出。Claude 路径复用 getProviderList + getActiveProvider。
+// 非 TTY 友好纯文本输出。Claude 使用只读 display + 原生授权查询。
 
-import {getProviderList, getActiveProvider} from '../../core/provider.js';
+import {CLAUDE_OFFICIAL_KEY} from '../../core/provider.js';
+import {refreshClaudeProviderDisplay} from '../../services/provider-service.js';
+import {CLAUDE_NATIVE_AUTH_GUIDANCE, type ClaudeAuthOptions} from '../../core/claude-auth.js';
 import {scanCodexProfiles, type CodexProfileListItem} from '../../core/codex.js';
 import type {ProviderListItem} from '../../core/provider.js';
 import type {ToolTarget} from '../argv.js';
@@ -18,27 +20,26 @@ export function listProvidersForDisplay(list: ProviderListItem[], activeKey?: st
 export function listCodexProfilesForDisplay(list: readonly CodexProfileListItem[]): string[] {
 	return list.map(p => {
 		const marker = p.isDefault ? '*' : ' ';
-		const auth = p.providerType === 'officialLogin' ? 'official login' : p.hasApiKey ? 'api key' : 'custom';
-		return `${marker} ${p.key.padEnd(12)} ${p.baseUrl || '(official/default)'} ${auth}`;
+		if (p.providerType === 'officialLogin') return `${marker} ${p.key.padEnd(12)} 官方账号 · 已授权登录`;
+		const auth = p.hasApiKey ? 'api key' : 'custom';
+		return `${marker} ${p.key.padEnd(12)} ${p.baseUrl || '(未配置 BaseUrl)'} ${auth}`;
 	});
 }
 
-function runClaudeLs(): number {
-	const list = getProviderList();
-	const active = getActiveProvider();
-	const activeKey = active?.key;
-
-	if (list.length === 0) {
-		console.log('当前没有任何供应商。');
-		console.log('运行 `ccq` 进入 TUI 新建供应商，或使用 `ccq add`（待实现）。');
-		return 0;
+async function runClaudeLs(options: ClaudeAuthOptions): Promise<number> {
+	const display = await refreshClaudeProviderDisplay(options);
+	console.log(display.hasProviders ? '供应商（* = 当前默认）:' : '当前没有任何供应商。');
+	for (const profile of display.profiles) {
+		const marker = profile.isActive ? '*' : ' ';
+		const summary =
+			profile.key === CLAUDE_OFFICIAL_KEY
+				? '官方账号 · 已授权登录'
+				: profile.baseUrl || '(未配置 BaseUrl)';
+		console.log(`  ${marker} ${profile.key.padEnd(12)} ${summary}`);
+		if (profile.authReason) console.error(`警告：${profile.authReason}`);
 	}
-
-	console.log('供应商（* = 当前默认）:');
-	for (const line of listProvidersForDisplay(list, activeKey)) {
-		console.log(`  ${line}`);
-	}
-
+	for (const failure of display.loadFailures ?? []) console.error(`警告：${failure.key}：${failure.reason}`);
+	console.log(CLAUDE_NATIVE_AUTH_GUIDANCE);
 	return 0;
 }
 
@@ -84,6 +85,6 @@ function runPiLs(): number {
 }
 
 /** 执行 ls 子命令。返回退出码。 */
-export function runLs(tool: ToolTarget = 'claude'): number {
-	return tool === 'codex' ? runCodexLs() : tool === 'pi' ? runPiLs() : runClaudeLs();
+export async function runLs(tool: ToolTarget = 'claude', options: ClaudeAuthOptions = {}): Promise<number> {
+	return tool === 'codex' ? runCodexLs() : tool === 'pi' ? runPiLs() : runClaudeLs(options);
 }

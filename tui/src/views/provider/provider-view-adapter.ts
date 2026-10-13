@@ -1,14 +1,20 @@
 import {truncateToWidth} from '../../core/text-utils.js';
-import {getMigrationResult, loadProviderDisplay, removeProvider, switchActiveProvider} from '../../services/provider-service.js';
 import {
-	isCodexOfficialLoggedIn,
+	getMigrationResult,
+	loadProviderDisplay,
+	refreshClaudeProviderDisplay,
+	removeProvider,
+	switchActiveProvider
+} from '../../services/provider-service.js';
+import {
 	loadCodexProviderDisplay,
 	removeCodexProvider,
 	switchActiveCodexProvider
 } from '../../services/codex-service.js';
 import {loadPiProviderDisplayData, loadPiProviderProfileByRef, removePiProvider} from '../../services/pi-provider-service.js';
 import {isOfficialLoginKey} from '../../core/codex.js';
-import type {ProviderDisplayData, ProviderDisplayProfile} from '../../core/provider.js';
+import {CLAUDE_OFFICIAL_KEY, type ProviderDisplayData, type ProviderDisplayProfile} from '../../core/provider.js';
+import type {ClaudeAuthOptions} from '../../core/claude-auth.js';
 import type {AgentContext} from '../../state/manage-state.js';
 import type {ProviderServiceResult} from '../../services/provider-service.js';
 
@@ -26,11 +32,14 @@ export type ProviderViewAdapter = {
 	readonly isCodex: boolean;
 	readonly isPi: boolean;
 	readonly loadDisplay: () => ProviderDisplayData;
+	readonly refreshAuth?: (options: ClaudeAuthOptions) => Promise<ProviderDisplayData>;
 	readonly migrationFailures: readonly {readonly key: string; readonly reason?: string}[];
 	readonly toHomeRow: (profile: ProviderDisplayProfile) => ProviderHomeRow;
 	readonly isOfficial: (profile: ProviderDisplayProfile | null) => boolean;
-	readonly isOfficialLoggedIn: () => boolean;
-	readonly switchActive?: (key: string) => ProviderServiceResult<{readonly providerName: string}>;
+	readonly switchActive?: (
+		key: string,
+		options?: ClaudeAuthOptions
+	) => ProviderServiceResult<{readonly providerName: string}> | Promise<ProviderServiceResult<{readonly providerName: string}>>;
 	readonly remove: (key: string) => ProviderServiceResult<{
 		readonly clearedSettings?: boolean;
 		readonly deleted?: boolean;
@@ -59,15 +68,19 @@ function piCredentialTypeLabel(source: ProviderDisplayProfile['source']): string
  */
 function providerHomeSummary(
 	profile: ProviderDisplayProfile,
-	context: {readonly isPi: boolean; readonly isCodex: boolean; readonly official: boolean}
+	context: {readonly isPi: boolean; readonly official: boolean}
 ): string {
 	const credential = `${profile.baseUrl || '未配置 Base URL'} · ${profile.maskedApiKey}`;
 	if (context.isPi) {
 		// 卡片只展示凭据事实（`baseUrl · 掩码凭据 · 类型` / 登录状态），不拼请求头状态。
 		return profile.authKind === 'oauth' ? loginSummary(profile.authStatus) : `${credential} · ${piCredentialTypeLabel(profile.source)}`;
 	}
-	if (context.isCodex && context.official) {
-		return isCodexOfficialLoggedIn() ? '已授权登录' : '未授权登录';
+	if (context.official) {
+		return profile.authStatus === 'configured'
+			? '已授权登录'
+			: profile.authStatus === 'missing'
+				? '未授权登录'
+				: `状态未知${profile.authReason ? `：${profile.authReason}` : ''}`;
 	}
 	return credential;
 }
@@ -83,25 +96,36 @@ export function createProviderViewAdapter(agentContext: AgentContext): ProviderV
 		isCodex,
 		isPi,
 		loadDisplay: isPi ? loadPiProviderDisplayData : isCodex ? loadCodexProviderDisplay : loadProviderDisplay,
+		...(!isPi && !isCodex ? {refreshAuth: refreshClaudeProviderDisplay} : {}),
 		migrationFailures,
 		toHomeRow: profile => ({
 			title:
-				isPi && profile.displayName?.trim() && profile.displayName.trim() !== profile.key
-					? `${profile.displayName.trim()} · ${profile.key}`
-					: isPi
-						? profile.key
-						: undefined,
+				!isPi && (isCodex ? isOfficialLoginKey(profile.key) : profile.key === CLAUDE_OFFICIAL_KEY)
+					? profile.displayName
+					: isPi && profile.displayName?.trim() && profile.displayName.trim() !== profile.key
+						? `${profile.displayName.trim()} · ${profile.key}`
+						: isPi
+							? profile.key
+							: undefined,
 			key: profile.key,
 			baseUrl: profile.baseUrl,
 			maskedApiKey: profile.maskedApiKey,
 			isActive: profile.isActive,
 			summary: truncateToWidth(
-				providerHomeSummary(profile, {isPi, isCodex, official: isCodex && isOfficialLoginKey(profile.key)}),
+				providerHomeSummary(profile, {
+					isPi,
+					official: isCodex ? isOfficialLoginKey(profile.key) : !isPi && profile.key === CLAUDE_OFFICIAL_KEY
+				}),
 				64
 			)
 		}),
-		isOfficial: profile => (isCodex && profile ? isOfficialLoginKey(profile.key) : false),
-		isOfficialLoggedIn: () => isCodex && isCodexOfficialLoggedIn(),
+		isOfficial: profile =>
+			Boolean(
+				profile &&
+					(isCodex
+						? isOfficialLoginKey(profile.key)
+						: !isPi && profile.key === CLAUDE_OFFICIAL_KEY && profile.authKind === 'oauth')
+			),
 		...(isPi ? {} : {switchActive: isCodex ? switchActiveCodexProvider : switchActiveProvider}),
 		remove: isPi ? removePiProvider : isCodex ? removeCodexProvider : removeProvider
 	};

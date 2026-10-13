@@ -44,8 +44,9 @@ export const HELP_LS = `ccq ls — 列出供应商
 
 行为:
   - 默认等价 ccq ls --tool claude
-  - claude：扫描 ~/.claude/providers/*.json，列出 key + BaseUrl，并标记当前默认供应商
-  - codex：扫描 ~/.codex 下的 <key>.config.toml，列出供应商并标记当前默认
+  - claude：扫描 ~/.claude/providers/*.json，原生授权确认时列出只读 @official 官方账号
+  - codex：扫描 ~/.codex 下的 <key>.config.toml，本机授权判据成立时列出只读 official 官方账号
+  - 未授权或状态未知时隐藏官方条目；仍可显式 use 切换官方身份
   - pi：扫描 ~/.pi/agent/auth.json、models.json 与 settings.json，按 provider 展示认证状态、来源与模型数量，并标记当前默认
   - 非 TTY 友好（纯文本输出，可在管道/CI 中使用）
 `;
@@ -56,10 +57,14 @@ export const HELP_USE = `ccq use — 设默认供应商
   ccq use <name>
   ccq use <name> --tool claude
   ccq use <name> --tool codex
+  ccq use @official --tool claude
+  ccq use official --tool codex
 
 行为:
   - 默认等价 ccq use <name> --tool claude
   - claude：将 <name> 的 env 合并写入 ~/.claude/settings.json（持久生效）
+  - claude @official：仅解除可证明属于 ccq 的供应商配置；登录/退出请运行 claude auth login / claude auth logout
+  - 官方授权未知或受环境/项目/策略覆盖时不标记活跃；真实 official.json 不受 @official 影响
   - codex：读取 ~/.codex/<name>.config.toml，并结构化写入 ~/.codex/config.toml
   - codex 不写 profile = "<name>" 或 [profiles.<name>]
   - Pi 默认 Provider 请在 Pi 配置页编辑 settings.json 的 defaultProvider

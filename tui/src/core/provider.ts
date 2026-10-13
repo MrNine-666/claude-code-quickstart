@@ -6,6 +6,15 @@ import {providersDir, settingsPath, claudeJsonPath} from './paths.js';
 import {escapeRegex, isNullOrWhiteSpace, maskApiKey, normalizeBaseUrl, testProviderBaseUrlMatch, testProviderKey} from './text-utils.js';
 import {getManagedModelEnvFromLegacyAliases, loadProviderContract, type ProviderRuntimeConfig} from './provider-contract.js';
 import {type SectionMergeReport, type TransferResult, transferFail, transferOk} from './config-transfer.js';
+import {
+	claudeAuthBlocker,
+	stripClaudeOAuthEnv,
+	CLAUDE_OAUTH_ENV_KEYS,
+	CLAUDE_NATIVE_AUTH_GUIDANCE,
+	type ClaudeAuthStatus
+} from './claude-auth.js';
+
+export const CLAUDE_OFFICIAL_KEY = '@official';
 
 // ── 类型 ────────────────────────────────────────────────────────────────────
 
@@ -32,11 +41,12 @@ export type ProviderDisplayProfile = {
 	readonly profilePath: string;
 	readonly isActive: boolean;
 	readonly maskedApiKey: string;
-	/** Provider-native display metadata. Claude/Codex leave these fields unset. */
+	/** Provider-native display metadata, including read-only official identities. */
 	readonly providerId?: string;
 	readonly displayName?: string;
 	readonly authKind?: 'api_key' | 'oauth' | 'none' | 'unknown';
 	readonly authStatus?: 'configured' | 'missing' | 'invalid' | 'unknown';
+	readonly authReason?: string;
 	readonly source?: 'builtin' | 'custom' | 'builtin-override' | 'unknown';
 	readonly modelCount?: number;
 	readonly modelIds?: readonly string[];
@@ -57,6 +67,8 @@ export type ProviderDisplayData = {
 	readonly profiles: readonly ProviderDisplayProfile[];
 	readonly activeKey: string;
 	readonly hasProviders: boolean;
+	/** 授权事实独立于列表可见性，供显式官方切换诊断使用。 */
+	readonly officialAuth?: ClaudeAuthStatus;
 	readonly loadFailures?: readonly ProviderLoadFailure[];
 };
 
@@ -140,6 +152,9 @@ function readSettingsForMutation(): Record<string, unknown> {
 		throw new Error('~/.claude/settings.json 的 env 必须是对象，请先修复后重试');
 	}
 
+	if (Object.values(result.value.env ?? {}).some(value => typeof value !== 'string')) {
+		throw new Error('~/.claude/settings.json 的 env 值必须是字符串，请先修复后重试');
+	}
 	return result.value;
 }
 
@@ -505,24 +520,35 @@ function collectPreviousProviderManagedKeys(): Set<string> {
 
 /** 扫描 ~/.claude/providers/*.json，返回 Profile 摘要数组。 */
 export function getProviderList(): ProviderListItem[] {
+	return scanClaudeProfiles().profiles;
+}
+
+function scanClaudeProfiles(): {profiles: ProviderListItem[]; failures: ProviderLoadFailure[]} {
+	const failures: ProviderLoadFailure[] = [];
 	const dir = providersDir();
 	if (!existsSync(dir)) {
-		return [];
+		return {profiles: [], failures};
 	}
 
 	let files: string[] = [];
 	try {
 		files = readdirSync(dir).filter(f => f.endsWith('.json'));
 	} catch {
-		return [];
+		return {profiles: [], failures: [{key: 'providers', reason: '无法读取供应商目录'}]};
 	}
 
 	const results: ProviderListItem[] = [];
 	for (const f of files) {
+		const key = basename(f, '.json');
 		try {
+			if (!testProviderKey(key)) throw new Error('非法供应商文件名');
 			const profilePath = join(dir, f);
-			const profile = readJsonFile<ProviderProfile | null>(profilePath, null);
-			if (!profile?.env?.ANTHROPIC_AUTH_TOKEN) {
+			const result = readJsonFileStrict<unknown>(profilePath);
+			if (result.status !== 'valid') throw new Error('供应商配置损坏或无法读取');
+			const parsed = parseClaudeProviderProfileDocument(result.value);
+			if (!parsed.ok) throw new Error(parsed.error);
+			const profile = parsed.profile;
+			if (!profile.env?.ANTHROPIC_AUTH_TOKEN) {
 				continue;
 			}
 
@@ -534,11 +560,11 @@ export function getProviderList(): ProviderListItem[] {
 				profilePath
 			});
 		} catch {
-			/* 跳过损坏的 Profile 文件 */
+			failures.push({key, reason: '供应商文件名或配置无效，已保留原文件'});
 		}
 	}
 
-	return results;
+	return {profiles: results, failures};
 }
 
 /** 从 settings 的完整 provider-owned runtime env 投影解析唯一活跃供应商。 */
@@ -578,11 +604,28 @@ export function getActiveProvider(): {key: string; baseUrl: string; profilePath:
 }
 
 /** 聚合供应商展示数据（合并 Profiles + ActiveKey）。 */
-export function getDisplayData(): ProviderDisplayData {
-	const profiles = getProviderList();
-	const env = settingsEnv(readSettings());
-	const active = resolveActiveProfile(profiles, env);
-	const activeKey = active ? active.key : '';
+export function getDisplayData(auth: ClaudeAuthStatus = {status: 'unknown'}): ProviderDisplayData {
+	const scan = scanClaudeProfiles();
+	const profiles = scan.profiles;
+	let settings: Record<string, unknown> = {};
+	let settingsKnown = true;
+	try {
+		settings = readSettingsForMutation();
+	} catch {
+		settingsKnown = false;
+		scan.failures.push({key: 'settings', reason: 'settings.json 或 env 无效，无法确认活跃身份'});
+	}
+	const env = settingsEnv(settings);
+	const active = settingsKnown ? resolveActiveProfile(profiles, env) : null;
+	const officialClean = settingsKnown && scan.failures.length === 0 && !hasClaudeProviderResidue(profiles, settings);
+	const blocker = claudeAuthBlocker(env) ?? (settings.apiKeyHelper ? 'apiKeyHelper 覆盖认证' : undefined);
+	const officialAuth: ClaudeAuthStatus = !settingsKnown
+		? {status: 'unknown', reason: 'settings.json 无效'}
+		: blocker
+			? {status: 'unknown', reason: blocker}
+			: auth;
+	const officialActive = officialClean && officialAuth.status === 'configured';
+	const activeKey = active ? active.key : officialActive ? CLAUDE_OFFICIAL_KEY : '';
 
 	const displayProfiles: ProviderDisplayProfile[] = profiles.map(p => ({
 		key: p.key,
@@ -593,11 +636,55 @@ export function getDisplayData(): ProviderDisplayData {
 		maskedApiKey: maskApiKey(p.authToken)
 	}));
 
+	if (officialAuth.status === 'configured') {
+		displayProfiles.push({
+			key: CLAUDE_OFFICIAL_KEY,
+			displayName: '官方账号',
+			profilePath: '',
+			baseUrl: '',
+			authToken: '',
+			maskedApiKey: '',
+			isActive: officialActive,
+			authKind: 'oauth',
+			authStatus: officialAuth.status,
+			authReason: officialAuth.reason,
+			canEdit: false,
+			canDelete: false,
+			canSwitch: true
+		});
+	}
 	return {
 		profiles: displayProfiles,
 		activeKey,
-		hasProviders: displayProfiles.length > 0
+		hasProviders: displayProfiles.length > 0,
+		officialAuth,
+		loadFailures: scan.failures
 	};
+}
+
+function hasClaudeProviderResidue(profiles: readonly ProviderListItem[], settings: Record<string, unknown>): boolean {
+	const env = settingsEnv(settings);
+	const keys = providerOwnedEnvKeys(getProviderRuntimeProjections(profiles).map(p => p.env));
+	return [...keys].some(key => Object.hasOwn(env, key)) || Object.hasOwn(settings, cfg().legacyModelKey);
+}
+
+function switchClaudeOfficialUnlocked(): {success: boolean; providerName: string} {
+	const settings = readSettingsForMutation();
+	const scan = scanClaudeProfiles();
+	if (scan.failures.length) throw new Error('供应商目录含无效配置，无法证明清理范围；请先修复');
+	if (!hasClaudeProviderResidue(scan.profiles, settings)) return {success: true, providerName: CLAUDE_OFFICIAL_KEY};
+	const env = settingsEnv(settings);
+	const active = resolveActiveProfile(scan.profiles, env);
+	if (!active) throw new Error('当前供应商来源不明或身份歧义，无法安全解除配置；请先修复');
+	const profile = readJsonFileStrict<unknown>(active.profilePath);
+	const parsed = profile.status === 'valid' ? parseClaudeProviderProfileDocument(profile.value) : null;
+	if (!parsed?.ok) throw new Error('活跃供应商配置无效，无法安全解除配置');
+	for (const [key, value] of Object.entries(getEffectiveProviderEnv(parsed.profile))) {
+		if (Object.hasOwn(env, key) && providerEnvValueMatches(key, env[key], value)) delete env[key];
+	}
+	delete settings[cfg().legacyModelKey];
+	writeSettingsAtomic({...settings, env});
+	return {success: true, providerName: CLAUDE_OFFICIAL_KEY};
 }
 
 // ── 变更层（switch / add / edit / delete） ──────────────────────────────────
@@ -624,6 +711,7 @@ function switchProviderUnlocked(key: string, additionalCleanupKeys: Iterable<str
 		throw new Error(`供应商 Profile 读取失败: ${key}`);
 	}
 
+	if (!parseClaudeProviderProfileDocument(profile).ok) throw new Error('供应商配置无效，已保留原文件，请先修复');
 	const settings = readSettingsForMutation();
 	if (!settings.env) {
 		settings.env = {};
@@ -744,6 +832,12 @@ function addProviderUnlocked(opts: AddProviderOptions): AddProviderResult {
 		}
 	}
 
+	const target = readJsonFileStrict<unknown>(join(providersDir(), `${selectedKey}.json`));
+	if (target.status === 'invalid' || (target.status === 'valid' && !parseClaudeProviderProfileDocument(target.value).ok)) {
+		result.error = '已有供应商配置无效，已保留原文件，请先修复';
+		return result;
+	}
+
 	// 构建 Profile（单层 env，无 _meta，settings-compatible）
 	const profile: ProviderProfile = {
 		env: {
@@ -795,6 +889,7 @@ function addProviderUnlocked(opts: AddProviderOptions): AddProviderResult {
 
 /** 修改供应商配置（非交互核心）。 */
 function editProviderUnlocked(key: string, updates: EditProviderUpdates): {success: boolean; key: string; renamed: boolean} {
+	if (key === CLAUDE_OFFICIAL_KEY) throw new Error(CLAUDE_NATIVE_AUTH_GUIDANCE);
 	if (!testProviderKey(key)) {
 		throw new Error(`非法 Provider Key: ${key}`);
 	}
@@ -808,6 +903,7 @@ function editProviderUnlocked(key: string, updates: EditProviderUpdates): {succe
 	if (!profile) {
 		throw new Error(`供应商 Profile 读取失败: ${key}`);
 	}
+	if (!parseClaudeProviderProfileDocument(profile).ok) throw new Error('供应商配置无效，已保留原文件，请先修复');
 	const previousOwnedKeys = new Set(Object.keys(profile.env ?? {}));
 	const settingsBefore = readSettingsForMutation();
 	const settingsBeforeEnv = settingsEnv(settingsBefore);
@@ -905,6 +1001,7 @@ function editProviderUnlocked(key: string, updates: EditProviderUpdates): {succe
 
 /** 删除供应商 Profile（force=true 允许删除活跃供应商并清理 settings 引用）。 */
 function deleteProviderUnlocked(key: string, opts?: {force?: boolean}): {success: boolean; key: string; clearedSettings: boolean} {
+	if (key === CLAUDE_OFFICIAL_KEY) throw new Error(CLAUDE_NATIVE_AUTH_GUIDANCE);
 	const options = opts ?? {};
 	if (!testProviderKey(key)) {
 		throw new Error(`非法 Provider Key: ${key}`);
@@ -924,18 +1021,11 @@ function deleteProviderUnlocked(key: string, opts?: {force?: boolean}): {success
 		throw new Error(`无法删除当前活跃的供应商: ${active!.key}，请先切换到其他供应商后再删除`);
 	}
 
-	// §2.8.1：删除前读出 profile.env 键集合，活跃供应商删除时据此精确清理 settings.env。
-	let managedKeys: readonly string[] = [];
-	let profile: ProviderProfile | null = null;
-	try {
-		profile = readJsonFile<ProviderProfile | null>(profilePath, null);
-	} catch {
-		/* 读取失败按无键处理 */
-	}
-
-	if (profile?.env) {
-		managedKeys = Object.keys(profile.env);
-	}
+	// 删除前必须确认目标可解析，损坏文件不能当作空 profile 删除。
+	const target = readJsonFileStrict<unknown>(profilePath);
+	const parsed = target.status === 'valid' ? parseClaudeProviderProfileDocument(target.value) : null;
+	if (!parsed?.ok) throw new Error('供应商配置无效，已保留原文件，请先修复');
+	const managedKeys = Object.keys(parsed.profile.env ?? {});
 
 	unlinkSync(profilePath);
 
@@ -958,7 +1048,7 @@ function deleteProviderUnlocked(key: string, opts?: {force?: boolean}): {success
 
 // 公开版本：用 withProfileLock 包裹
 export function switchProvider(key: string): {success: boolean; providerName: string} {
-	return withProfileLock(() => switchProviderUnlocked(key));
+	return withProfileLock(() => (key === CLAUDE_OFFICIAL_KEY ? switchClaudeOfficialUnlocked() : switchProviderUnlocked(key)));
 }
 
 export function addProvider(opts: AddProviderOptions): AddProviderResult {
@@ -1004,7 +1094,15 @@ function migrateLegacyProfilesUnlocked(): MigrationResult {
 		const profilePath = join(dir, f);
 
 		try {
+			if (!testProviderKey(key)) {
+				failed.push({key, status: 'failed', reason: '非法供应商文件名'});
+				continue;
+			}
 			const profile = readJsonFile<ProviderProfile | null>(profilePath, null);
+			if (!parseClaudeProviderProfileDocument(profile).ok) {
+				failed.push({key, status: 'failed', reason: '供应商配置无效，已保留原文件'});
+				continue;
+			}
 			if (!profile) {
 				skipped.push(key);
 				continue;
@@ -1171,11 +1269,9 @@ export function parseClaudeProviderProfileDocument(value: unknown): ClaudeProvid
 }
 
 function withOptionalProviderCredentials(profile: ProviderProfile, includeCredentials: boolean): ProviderProfile {
-	if (includeCredentials || !profile.env) {
-		return profile;
-	}
-
-	return {...profile, env: stripProviderCredentialEnv(profile.env)};
+	if (!profile.env) return profile;
+	const env = stripClaudeOAuthEnv(profile.env);
+	return {...profile, env: includeCredentials ? env : stripProviderCredentialEnv(env)};
 }
 
 /** 移除 provider env 中的凭据键（未选择敏感凭据时导出/导入使用）。 */
@@ -1251,7 +1347,7 @@ export function snapshotClaudeProvidersSection(options: {readonly includeCredent
 		}
 	}
 
-	return transferOk({profiles, settingsEnv: projection}, warnings);
+	return transferOk({profiles, settingsEnv: stripClaudeOAuthEnv(projection)}, warnings);
 }
 
 /** 校验包中的 Claude 供应商分类（导入边界；不信任包内容）。 */
@@ -1281,7 +1377,7 @@ export function parseClaudeProvidersSection(value: unknown): TransferResult<Clau
 			return transferFail('validation', `供应商配置无效：${parsed.error}`);
 		}
 
-		profiles.push({key: raw.key, profile: parsed.profile});
+		profiles.push({key: raw.key, profile: withOptionalProviderCredentials(parsed.profile, true)});
 	}
 
 	const rawProjection = value.settingsEnv;
@@ -1298,7 +1394,7 @@ export function parseClaudeProvidersSection(value: unknown): TransferResult<Clau
 		projection[key] = item;
 	}
 
-	return transferOk({profiles, settingsEnv: projection});
+	return transferOk({profiles, settingsEnv: stripClaudeOAuthEnv(projection)});
 }
 
 function mergeClaudeProviderProfile(
@@ -1306,20 +1402,20 @@ function mergeClaudeProviderProfile(
 	incoming: ProviderProfile,
 	containsCredentials: boolean
 ): ProviderProfile {
-	if (containsCredentials || !local?.env || !incoming.env) {
-		return {...incoming};
+	const env = stripClaudeOAuthEnv(incoming.env ?? {});
+	// OAuth 仅保留本机值，incoming 永不迁移。
+	for (const key of CLAUDE_OAUTH_ENV_KEYS) {
+		if (local?.env?.[key] !== undefined) env[key] = local.env[key];
 	}
-
-	// 未选择敏感凭据的包：同 key 覆盖时保留本机凭据，避免导入后供应商不可用。
-	const env = {...incoming.env};
-	for (const key of PROVIDER_CREDENTIAL_ENV_KEYS) {
-		const localValue = local.env[key];
+	// 未选择敏感凭据的包：同 key 覆盖时保留本机凭据。
+	for (const key of containsCredentials ? [] : PROVIDER_CREDENTIAL_ENV_KEYS) {
+		const localValue = local?.env?.[key];
 		if (typeof localValue === 'string' && localValue !== '' && (env[key] === undefined || env[key] === '')) {
 			env[key] = localValue;
 		}
 	}
 
-	return {...incoming, env};
+	return {...local, ...incoming, env};
 }
 
 /** 合并导入 Claude 供应商分类：同 key 覆盖，其他本机 profile 与 settings 字段保留。 */
@@ -1338,6 +1434,7 @@ export function importClaudeProvidersSection(
 	}
 
 	const settings = settingsResult.status === 'valid' ? (settingsResult.value as Record<string, unknown>) : {};
+	if (!parseClaudeProviderProfileDocument(settings).ok) return transferFail('conflict', '本机 settings.env 无效，已停止导入');
 	const currentEnv = settingsEnv(settings);
 	const added: string[] = [];
 	const replaced: string[] = [];

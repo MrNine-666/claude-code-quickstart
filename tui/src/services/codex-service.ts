@@ -1,9 +1,9 @@
-import {existsSync, readFileSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
 import {
 	deleteCodexProfile,
 	codexProfileExists,
 	isDefaultCodexProfile,
-	isOfficialLoginActive,
+	isCodexOfficialLoggedIn,
 	isOfficialLoginKey,
 	scanCodexProfiles,
 	migrateLegacyOfficialLoginFile,
@@ -14,7 +14,6 @@ import {
 	setDefaultCodexProfile,
 	type CodexProfile
 } from '../core/codex.js';
-import {codexAuthJsonPath} from '../core/paths.js';
 import {deletePath, getPath, parse, setPath, stringify} from '../core/toml-edit.js';
 import {
 	buildCodexProviderFormModel,
@@ -60,29 +59,30 @@ function runCodexOfficialMigrationOnce(): void {
 	}
 }
 
-/** official login 是否已登录：已激活默认态，或 auth.json 存在（凭据由 codex login 生成，ccq 只读）。 */
-export function isCodexOfficialLoggedIn(): boolean {
-	try {
-		return isOfficialLoginActive() || existsSync(codexAuthJsonPath());
-	} catch {
-		return existsSync(codexAuthJsonPath());
-	}
-}
+export {isCodexOfficialLoggedIn};
 
 export function loadCodexProviderDisplay(): ProviderDisplayData {
 	runCodexOfficialMigrationOnce();
-	const officialLoggedIn = isCodexOfficialLoggedIn();
 	const scan = scanCodexProfiles();
 	const profiles = scan.profiles.map(profile => {
 		const official = profile.providerType === 'officialLogin';
 		return {
 			key: profile.key,
-			baseUrl: profile.baseUrl || (official ? 'official login' : ''),
+			baseUrl: profile.baseUrl,
 			authToken: profile.hasApiKey ? '<managed-by-codex-profile>' : '',
 			profilePath: profile.profilePath,
 			isActive: profile.isDefault,
-			maskedApiKey: profile.hasApiKey ? 'sk-****' : official ? (officialLoggedIn ? 'codex login' : '未登录') : '未配置',
-			...(official ? {canEdit: false, canDelete: false, canSwitch: true} : {})
+			maskedApiKey: official ? '' : profile.hasApiKey ? 'sk-****' : '未配置',
+			...(official
+				? {
+						displayName: '官方账号',
+						authKind: 'oauth' as const,
+						authStatus: 'configured' as const,
+						canEdit: false,
+						canDelete: false,
+						canSwitch: true
+					}
+				: {})
 		};
 	});
 	const active = profiles.find(profile => profile.isActive);
@@ -186,7 +186,14 @@ export function saveCodexProviderForm(input: CodexProviderFormInput, values: Cod
 export function switchActiveCodexProvider(key: string): ProviderServiceResult<{providerName: string}> {
 	try {
 		setDefaultCodexProfile(key);
-		return {ok: true, data: {providerName: key}};
+		const official = isOfficialLoginKey(key);
+		return {
+			ok: true,
+			data: {providerName: official ? '官方账号' : key},
+			...(official && !isCodexOfficialLoggedIn()
+				? {warning: '已解除 ccq 供应商配置，但官方身份尚未确认。请运行 codex login 或 codex logout。'}
+				: {})
+		};
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return {ok: false, error: redactCodexTomlForOutput(message)};

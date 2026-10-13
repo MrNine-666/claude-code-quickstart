@@ -64,7 +64,7 @@ export function ProviderHomeView({
 
 	return (
 		<box flexDirection="column" flexGrow={1}>
-			<ViewHeader title="供应商管理" subtitle="管理 API 供应商、密钥与模型环境变量" />
+			<ViewHeader title="供应商管理" subtitle="管理供应商与官方账号；登录/退出由 Agent 原生命令管理" />
 			{migrationFailures.length > 0 ? (
 				<box marginBottom={1}>
 					<ErrorPanel

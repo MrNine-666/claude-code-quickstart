@@ -1,4 +1,4 @@
-import {useEffect, useMemo, useState} from 'react';
+import {useEffect, useMemo, useRef, useState} from 'react';
 import {toast} from '../../components/index.js';
 import {clampMove} from '../../core/list-utils.js';
 import {buildForm, discoverProviderModels, loadProviderProfile, saveProviderForm} from '../../services/provider-service.js';
@@ -40,11 +40,10 @@ type ProviderScreen =
  * 只读供应商提示：Codex official 与 Pi auth.json 数据源（/login 创建）均由各自 CLI 原生管理，
  * ccq 只能编辑/删除 models.json 中定义的 Provider。
  */
-function providerReadOnlyMessage(isCodex: boolean, action: 'edit' | 'delete'): string {
-	if (isCodex) {
-		return action === 'edit'
-			? 'Codex 官方账号由 Codex 原生管理，不可在表单中编辑；请运行 codex login 或 codex logout。'
-			: 'Codex 官方账号由 Codex 原生管理，不可在表单中编辑；请运行 codex logout。';
+export function providerReadOnlyMessage(kind: 'claude' | 'codex' | 'pi', action: 'edit' | 'delete'): string {
+	if (kind !== 'pi') {
+		const command = kind === 'claude' ? 'claude auth' : 'codex';
+		return `官方账号由原生 CLI 管理，不可编辑或删除；请运行 ${command} login 或 ${command} logout。`;
 	}
 	return action === 'edit'
 		? '该供应商由 Pi 原生 /login 管理，ccq 仅能编辑 models.json 中定义的 Provider；请打开 pi 输入 /login 或 /logout。'
@@ -63,6 +62,9 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 	const adapter = useMemo(() => createProviderViewAdapter(agentContext), [agentContext]);
 	const [display, setDisplay] = useState<ProviderDisplayData>(() => adapter.loadDisplay());
 	const [selected, setSelected] = useState(0);
+	const [refreshVersion, setRefreshVersion] = useState(0);
+	const switchController = useRef<AbortController | null>(null);
+	const authGeneration = useRef(0);
 	const [screen, setScreen] = useState<ProviderScreen>({kind: 'list'});
 	const profiles = display.profiles;
 	const safeSelected = profiles.length === 0 ? 0 : Math.min(selected, profiles.length - 1);
@@ -78,6 +80,24 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 		setScreen({kind: 'list'});
 	}, [adapter]);
 
+	useEffect(
+		() => () => {
+			switchController.current?.abort();
+			switchController.current = null;
+		},
+		[active, adapter]
+	);
+
+	useEffect(() => {
+		const generation = ++authGeneration.current;
+		if (!active || screen.kind !== 'list' || !adapter.refreshAuth) return;
+		const controller = new AbortController();
+		void adapter.refreshAuth({signal: controller.signal}).then(next => {
+			if (!controller.signal.aborted && generation === authGeneration.current) setDisplay(next);
+		});
+		return () => controller.abort();
+	}, [active, adapter, screen.kind, refreshVersion]);
+
 	useEffect(() => {
 		if (!active) return;
 		if (screen.kind === 'add' || screen.kind === 'edit') return;
@@ -88,11 +108,13 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 
 	useEffect(() => {
 		if (!active || screen.kind !== 'edit' || !currentEditBlocked) return;
-		toast.info(providerReadOnlyMessage(adapter.isCodex, 'edit'));
+		toast.info(providerReadOnlyMessage(adapter.kind, 'edit'));
 		setScreen({kind: 'list'});
-	}, [active, adapter.isCodex, currentEditBlocked, screen.kind]);
+	}, [active, adapter.kind, currentEditBlocked, screen.kind]);
 
 	function refresh(): void {
+		++authGeneration.current;
+		setRefreshVersion(previous => previous + 1);
 		const next = adapter.loadDisplay();
 		setDisplay(next);
 		setSelected(previous => (next.profiles.length === 0 ? 0 : Math.min(previous, next.profiles.length - 1)));
@@ -250,21 +272,28 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 			switchEnabled={adapter.switchActive !== undefined}
 			confirmingDelete={screen.kind === 'confirm-delete'}
 			onMove={delta => setSelected(previous => clampMove(previous, delta, profiles.length))}
-			onSwitch={() => {
+			onSwitch={async () => {
 				const switchActive = adapter.switchActive;
-				if (!current || !switchActive) return;
-				if (currentIsOfficial && !adapter.isOfficialLoggedIn())
-					toast.warning('official login 未登录，请先运行 codex login 完成官方账号登录');
-				const result = switchActive(current.key);
-				if (result.ok) {
-					refresh();
-					toast.success(`已切换为活跃供应商：${result.data.providerName}`);
-				} else toast.error(result.error);
+				if (!current || !switchActive || switchController.current) return;
+				const controller = new AbortController();
+				switchController.current = controller;
+				++authGeneration.current;
+				try {
+					const result = await switchActive(current.key, {signal: controller.signal});
+					if (controller.signal.aborted) return;
+					if (result.ok) {
+						refresh();
+						if (result.warning) toast.warning(result.warning);
+						else toast.success(`已切换为活跃供应商：${result.data.providerName}`);
+					} else toast.error(result.error);
+				} finally {
+					if (switchController.current === controller) switchController.current = null;
+				}
 			}}
 			onAdd={() => setScreen({kind: 'add'})}
 			onEdit={() => {
 				if (currentEditBlocked) {
-					toast.info(providerReadOnlyMessage(adapter.isCodex, 'edit'));
+					toast.info(providerReadOnlyMessage(adapter.kind, 'edit'));
 					return;
 				}
 				if (current) setScreen({kind: 'edit', key: current.key});
@@ -275,7 +304,7 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 					return;
 				}
 				if (currentIsReadOnly || (adapter.isPi && current?.canDelete === false)) {
-					toast.info(providerReadOnlyMessage(adapter.isCodex, 'delete'));
+					toast.info(providerReadOnlyMessage(adapter.kind, 'delete'));
 					return;
 				}
 				if (current) setScreen({kind: 'confirm-delete', key: current.key});
@@ -289,7 +318,7 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 					return;
 				}
 				if (currentIsReadOnly) {
-					toast.info(providerReadOnlyMessage(adapter.isCodex, 'delete'));
+					toast.info(providerReadOnlyMessage(adapter.kind, 'delete'));
 					setScreen({kind: 'list'});
 					return;
 				}

@@ -1,5 +1,6 @@
 import {
 	addProvider,
+	CLAUDE_OFFICIAL_KEY,
 	deleteProvider,
 	editProvider,
 	getDisplayData,
@@ -25,6 +26,8 @@ import {
 import {readJsonFile} from '../core/fs-utils.js';
 import {discoverModels} from '../core/model-discovery.js';
 import {resolveModelDiscoveryConfig} from '../core/provider-contract.js';
+import {claudeDir} from '../core/paths.js';
+import {readClaudeAuthStatus, CLAUDE_NATIVE_AUTH_GUIDANCE, type ClaudeAuthOptions} from '../core/claude-auth.js';
 
 // Provider service：TUI 视图唯一入口，封装 core 调用为结构化结果，组件不直接读写文件。
 
@@ -62,7 +65,13 @@ export function loadProviderDisplay(): ProviderDisplayData {
 	return getDisplayData();
 }
 
+export async function refreshClaudeProviderDisplay(options: ClaudeAuthOptions = {}): Promise<ProviderDisplayData> {
+	const auth = await readClaudeAuthStatus(claudeDir(), options);
+	return getDisplayData(auth);
+}
+
 export function loadProviderProfile(profilePath: string): ProviderProfile | null {
+	if (!profilePath || profilePath === CLAUDE_OFFICIAL_KEY) return null;
 	return readJsonFile<ProviderProfile | null>(profilePath, null);
 }
 
@@ -95,6 +104,7 @@ export function saveProviderForm(
 	input: ProviderFormInput,
 	values: ProviderFormValues
 ): ProviderServiceResult<AddProviderResult | {key: string; renamed: boolean}> {
+	if (input.profileKey === CLAUDE_OFFICIAL_KEY) return {ok: false, error: CLAUDE_NATIVE_AUTH_GUIDANCE};
 	const mode = input.mode;
 	const errors = validateProviderForm(mode, values);
 	if (errors.length > 0) {
@@ -154,10 +164,26 @@ export function saveProviderForm(
 	}
 }
 
-export function switchActiveProvider(key: string): ProviderServiceResult<{providerName: string}> {
+export async function switchActiveProvider(
+	key: string,
+	options: ClaudeAuthOptions = {}
+): Promise<ProviderServiceResult<{providerName: string}>> {
 	try {
+		if (options.signal?.aborted) return {ok: false, error: '切换已取消'};
 		const result = switchProvider(key);
-		return {ok: true, data: {providerName: result.providerName}};
+		const providerName = key === CLAUDE_OFFICIAL_KEY ? '官方账号' : result.providerName;
+		if (key === CLAUDE_OFFICIAL_KEY) {
+			const display = await refreshClaudeProviderDisplay(options);
+			if (display.activeKey !== CLAUDE_OFFICIAL_KEY) {
+				const reason = display.officialAuth?.reason;
+				return {
+					ok: true,
+					data: {providerName},
+					warning: `已解除 ccq 供应商配置，但官方身份尚未确认${reason ? `：${reason}` : ''}。${CLAUDE_NATIVE_AUTH_GUIDANCE}`
+				};
+			}
+		}
+		return {ok: true, data: {providerName}};
 	} catch (error) {
 		return {ok: false, error: error instanceof Error ? error.message : String(error)};
 	}

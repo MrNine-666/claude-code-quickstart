@@ -346,6 +346,11 @@ function currentDefaultProviderKey(): string {
 	return typeof value === 'string' ? value : '';
 }
 
+/** 沿用既有本机授权判据：仅 auth.json 存在，不验证令牌或远端状态。 */
+export function isCodexOfficialLoggedIn(): boolean {
+	return existsSync(codexAuthJsonPath());
+}
+
 /** official login 当前是否为激活默认态：config.toml 无供应商键 + auth.json 存在。 */
 export function isOfficialLoginActive(): boolean {
 	return currentDefaultProviderKey() === '' && existsSync(codexAuthJsonPath());
@@ -391,7 +396,7 @@ function safeCodexLoadFailureReason(error: unknown): string {
 }
 
 /**
- * 列出 Codex profile：真实 `<key>.config.toml` + 始终追加一个 official login 虚拟条目。
+ * 列出 Codex profile：真实 `<key>.config.toml` + 本机授权判据成立时追加官方账号虚拟条目。
  * 虚拟条目排在末尾，profilePath 为空串（无磁盘文件）；其 isDefault 随 auth.json/config.toml 计算。
  */
 export function scanCodexProfiles(): CodexProfileScanResult {
@@ -412,7 +417,7 @@ export function scanCodexProfiles(): CodexProfileScanResult {
 		}
 	}
 
-	profiles.push(officialLoginListItem(defaultKey));
+	if (isCodexOfficialLoggedIn()) profiles.push(officialLoginListItem(defaultKey));
 	return {profiles, failures};
 }
 

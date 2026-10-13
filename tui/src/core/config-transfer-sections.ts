@@ -18,6 +18,8 @@ import {atomicWrite as atomicWriteToml, parse as parseToml, stringify as stringi
 import {portableCodexConfig, readCodexConfigDocumentStrict, stripCodexUnmanagedKeys} from './codex-config.js';
 import {readInstalledSettingsText, settingsFilePath, stripProviderEnvFromDocument} from './config-recommend.js';
 import {readPiConfigText, stripPiConfigProtectedFields} from './pi-config.js';
+import {stripClaudeOAuthEnv} from './claude-auth.js';
+import {parseClaudeProviderProfileDocument} from './provider.js';
 
 // 通用设置与全局规则的导入导出 seam（Phase 2）。
 // 设置语义复用各 owner 的 owned projection：Claude 剥离 provider-owned 键与 env、
@@ -80,14 +82,14 @@ function stripKeys(document: JsonObject, keys: readonly string[], strip: boolean
 
 /** Claude `settings.json`：`env` 内的凭据键。 */
 function stripClaudeCredentialEnv(document: JsonObject, strip: boolean): {readonly document: JsonObject; readonly keys: readonly string[]} {
-	const env = document.env;
+	const env = isRecord(document.env) ? stripClaudeOAuthEnv(document.env) : document.env;
 	if (!isRecord(env)) {
 		return {document, keys: []};
 	}
 
 	const keys = credentialKeysOf(env);
 	if (!strip || keys.length === 0) {
-		return {document, keys: keys.map(key => `env.${key}`)};
+		return {document: {...document, env}, keys: keys.map(key => `env.${key}`)};
 	}
 
 	const nextEnv: JsonObject = {...env};
@@ -268,6 +270,7 @@ function importClaudeSettings(text: string, dryRun: boolean, containsCredentials
 			return transferFail('validation', '通用设置分类不是 JSON 对象');
 		}
 
+		if (!parseClaudeProviderProfileDocument(parsed).ok) return transferFail('validation', 'Claude settings.env 无效');
 		// provider-owned 顶层键与 env 归供应商分类，导入设置时绝不覆盖本机值。
 		incoming = stripProviderEnvFromDocument(parsed);
 	} catch {
@@ -283,6 +286,8 @@ function importClaudeSettings(text: string, dryRun: boolean, containsCredentials
 	}
 
 	const localDocument = local.status === 'valid' ? (local.value as JsonObject) : {};
+	if (!parseClaudeProviderProfileDocument(localDocument).ok || !parseClaudeProviderProfileDocument(incoming).ok)
+		return transferFail('conflict', 'Claude settings.env 无效，已停止导入');
 	const merged = mergeTransferDocuments(localDocument, incoming) as JsonObject;
 	const changed = JSON.stringify(localDocument) !== JSON.stringify(merged);
 	if (changed && !dryRun) {

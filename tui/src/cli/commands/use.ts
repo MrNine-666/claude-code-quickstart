@@ -3,7 +3,10 @@
 // Codex: 复用 core/codex.ts 的 setDefaultCodexProfile，结构化写 ~/.codex/config.toml。
 // use 会写盘，持久修改默认供应商。
 
-import {getProviderList, switchProvider} from '../../core/provider.js';
+import {getProviderList, CLAUDE_OFFICIAL_KEY} from '../../core/provider.js';
+import {switchActiveProvider} from '../../services/provider-service.js';
+import {switchActiveCodexProvider} from '../../services/codex-service.js';
+import type {ClaudeAuthOptions} from '../../core/claude-auth.js';
 import {
 	codexProfileExists,
 	isOfficialLoginKey,
@@ -15,15 +18,15 @@ import {testProviderKey} from '../../core/text-utils.js';
 import {listProvidersForDisplay} from './ls.js';
 import type {ToolTarget} from '../argv.js';
 
-function runClaudeUse(name: string): number {
-	if (!testProviderKey(name)) {
+async function runClaudeUse(name: string, options: ClaudeAuthOptions): Promise<number> {
+	if (name !== CLAUDE_OFFICIAL_KEY && !testProviderKey(name)) {
 		console.error(`无效供应商名称: ${name}`);
 		console.error('名称只能包含英文字母、数字、点号、下划线和短横线。');
 		return 1;
 	}
 
 	const list = getProviderList();
-	if (!list.some(p => p.key === name)) {
+	if (name !== CLAUDE_OFFICIAL_KEY && !list.some(p => p.key === name)) {
 		console.error(`未找到供应商: ${name}`);
 		if (list.length > 0) {
 			console.error('');
@@ -38,9 +41,14 @@ function runClaudeUse(name: string): number {
 	}
 
 	try {
-		const result = switchProvider(name);
-		console.log(`已设置默认供应商: ${result.providerName}`);
-		console.log('后续 claude 调用将读取 ~/.claude/settings.json 中的 env 配置。');
+		const result = await switchActiveProvider(name, options);
+		if (!result.ok) {
+			console.error(`设置默认供应商失败: ${result.error}`);
+			return 1;
+		}
+		if (result.warning) console.error(`警告：${result.warning}`);
+		else console.log(`已设置默认供应商: ${result.data.providerName}`);
+		if (name !== CLAUDE_OFFICIAL_KEY) console.log('后续 claude 调用将读取 ~/.claude/settings.json 中的 env 配置。');
 		return 0;
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
@@ -52,16 +60,14 @@ function runClaudeUse(name: string): number {
 function runCodexUse(name: string): number {
 	// official login 虚拟条目：无文件、不校验存在性，激活 = 清空 config.toml 供应商键回到登录态。
 	if (isOfficialLoginKey(name)) {
-		try {
-			setDefaultCodexProfile(name);
-			console.log('已切换默认为 official login（官方账号）。');
-			console.log('已清空 ~/.codex/config.toml 供应商键；如未登录请先运行 `codex login`。');
-			return 0;
-		} catch (error) {
-			const msg = redactCodexTomlForOutput(error instanceof Error ? error.message : String(error));
-			console.error(`切换 official login 失败: ${msg}`);
+		const result = switchActiveCodexProvider(name);
+		if (!result.ok) {
+			console.error(`切换官方账号失败: ${result.error}`);
 			return 1;
 		}
+		if (result.warning) console.error(`警告：${result.warning}`);
+		else console.log(`已设置默认供应商: ${result.data.providerName}`);
+		return 0;
 	}
 
 	let safe: string;
@@ -97,6 +103,6 @@ function runPiUse(): number {
 }
 
 /** 执行 use 子命令。返回退出码。 */
-export function runUse(name: string, tool: ToolTarget = 'claude'): number {
-	return tool === 'codex' ? runCodexUse(name) : tool === 'pi' ? runPiUse() : runClaudeUse(name);
+export async function runUse(name: string, tool: ToolTarget = 'claude', options: ClaudeAuthOptions = {}): Promise<number> {
+	return tool === 'codex' ? runCodexUse(name) : tool === 'pi' ? runPiUse() : runClaudeUse(name, options);
 }
