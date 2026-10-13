@@ -1,6 +1,7 @@
 import {loadMcpContract, type McpServerDefinition} from './mcp-contract.js';
 import {validateServerId, type McpConfigEntry} from './mcp-config-builder.js';
 import {validatePiMcpServer} from './pi-mcp-adapter.js';
+import {parseEditableJson} from './editable-json.js';
 
 // MCP 表单 core（JSON 即真源范式）：模板生成、config↔JSON、保存校验。
 // 取代旧字段集/字段↔JSON 联动——表单直接编辑最终 config JSON，落盘前由 parseMcpFormInput 校验。
@@ -208,7 +209,7 @@ export type McpJsonFormatResult =
 export function parseMcpJsonFormat(json: string): McpJsonFormatResult {
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(json);
+		parsed = parseEditableJson(json).value;
 	} catch {
 		// Native OAuth/clientSecret and other MCP values must not appear in parser diagnostics.
 		return {ok: false, error: 'JSON 格式错误，请检查配置语法'};

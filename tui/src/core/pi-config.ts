@@ -1,5 +1,6 @@
 import {existsSync, readFileSync} from 'node:fs';
 import {loadContract} from './contracts.js';
+import {parseEditableJson} from './editable-json.js';
 import {atomicWrite, readJsonFileStrict, SECRET_FILE_MODE} from './fs-utils.js';
 import {piProjectSettingsPath, piSettingsPath} from './paths.js';
 
@@ -111,7 +112,7 @@ function annotateMember(key: string, value: unknown, description: string | undef
 export function applyPiConfigFillMissing(text: string): {ok: true; text: string; changed: number} | {ok: false; error: string} {
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(text || '{}');
+		parsed = parseEditableJson(text || '{}').value;
 	} catch (error) {
 		return {ok: false, error: `JSON 格式错误: ${error instanceof Error ? error.message : String(error)}`};
 	}
@@ -131,7 +132,7 @@ export function applyPiConfigFillMissing(text: string): {ok: true; text: string;
 export function savePiConfigText(text: string): {ok: boolean; error?: string} {
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(text);
+		parsed = parseEditableJson(text).value;
 	} catch (error) {
 		return {ok: false, error: `JSON 格式错误: ${error instanceof Error ? error.message : String(error)}`};
 	}

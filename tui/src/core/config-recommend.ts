@@ -1,5 +1,6 @@
 import {existsSync, readFileSync} from 'node:fs';
 import {loadContract} from './contracts.js';
+import {parseEditableJson} from './editable-json.js';
 import {atomicWrite} from './fs-utils.js';
 import {settingsPath} from './paths.js';
 
@@ -309,7 +310,7 @@ export function applyFillMissingToText(
 
 	let source: JsonObject = {};
 	try {
-		const parsed = JSON.parse(jsonText) as unknown;
+		const parsed = parseEditableJson(jsonText).value;
 		if (isObject(parsed)) {
 			source = parsed;
 		}
@@ -388,7 +389,7 @@ export function mergeProviderEnvOnSave(
 ): {readonly ok: true; readonly text: string} | {readonly ok: false; readonly error: string} {
 	let edited: JsonObject;
 	try {
-		const parsed = JSON.parse(editedText) as unknown;
+		const parsed = parseEditableJson(editedText).value;
 		if (!isObject(parsed)) {
 			return {ok: false, error: '编辑内容不是 JSON 对象'};
 		}

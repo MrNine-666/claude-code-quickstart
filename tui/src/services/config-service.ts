@@ -22,6 +22,7 @@ import {
 import {openExternalFile, type OpenExternalFileResult} from '../core/open-file.js';
 import {existsSync} from 'node:fs';
 import {atomicWrite} from '../core/fs-utils.js';
+import {parseEditableJson} from '../core/editable-json.js';
 import {codexConfigPath, piSettingsPath} from '../core/paths.js';
 import type {AgentContext} from '../state/manage-state.js';
 
@@ -104,7 +105,7 @@ export function saveConfigText(content: string, target: ConfigTarget = 'cc'): {o
 	}
 
 	try {
-		JSON.parse(content); // 校验 edited 合法 JSON
+		parseEditableJson(content); // 校验 edited 合法 JSON
 	} catch (error) {
 		return {ok: false, error: `JSON 格式错误: ${error instanceof Error ? error.message : String(error)}`};
 	}

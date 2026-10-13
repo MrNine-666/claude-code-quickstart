@@ -1,3 +1,4 @@
+import {parseEditableJson} from './editable-json.js';
 import {loadProviderContract} from './provider-contract.js';
 import {getManagedModelEnv, type ProviderProfile} from './provider.js';
 import {isNullOrWhiteSpace, testProviderKey} from './text-utils.js';
@@ -322,7 +323,7 @@ export type ProviderProfileJsonResult =
 export function valuesFromProviderProfileJson(baseValues: ProviderFormValues, raw: string): ProviderProfileJsonResult {
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(raw);
+		parsed = parseEditableJson(raw).value;
 	} catch (error) {
 		return {ok: false, error: `JSON 格式错误: ${error instanceof Error ? error.message : String(error)}`};
 	}

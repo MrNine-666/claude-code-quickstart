@@ -3,6 +3,7 @@ import {TextAttributes} from '@opentui/core';
 import type {TextareaRenderable, SyntaxStyle, KeyEvent} from '@opentui/core';
 import {useKeyboard, useRenderer} from '@opentui/react';
 import {colors, borderColors} from '../../theme/index.js';
+import {parseEditableJson} from '../../core/editable-json.js';
 import {isAppModifier} from '../../utils/keyboard.js';
 import {ErrorPanel} from '../error-panel.js';
 import {handleTextareaEditKeys, handleTextareaIndentKey} from './textarea-edit-keys.js';
@@ -10,7 +11,7 @@ import {handleTextareaEditKeys, handleTextareaIndentKey} from './textarea-edit-k
 // TextareaEditor：编辑/预览双模式内嵌编辑器（HC-EDITOR-OPENTUI，零外部编辑器）
 // - 编辑模式：OpenTUI <textarea> 纯文本编辑，macOS Cmd+S 保存 / Cmd+C 复制，其他平台 Ctrl+S / Ctrl+C；Ctrl+P 切预览、Esc 取消、Tab 缩进（2 空格）
 // - 预览模式（只读）：markdown 用 <markdown>，代码/JSON 用 <line-number><code>（语法高亮 + 行号），Esc 返回编辑
-// - isJson 模式：保存前 JSON.parse 校验，失败显示错误但不退出（容忍中间态）
+// - isJson 模式：保存前规整字符串外的 Unicode 空格并校验，失败停留编辑器
 // - 命令式能力（forwardRef）：insertText/replaceText/getText/focus/blur，供工作台等父视图程序化插入片段 / 灌缓冲
 // - tabMode='cycle-focus'：Tab 不缩进，改由父视图切焦点（工作台双栏）
 // - escapeMode='bubble'：编辑态 Esc 不触发 onCancel，交给父视图处理（工作台 Esc 退菜单单一入口）
@@ -36,7 +37,7 @@ export type TextareaEditorProps = {
 	readonly title: string;
 	readonly initialContent: string;
 	readonly active: boolean;
-	// JSON 模式：保存前做 JSON.parse 校验。
+	// JSON 模式：保存前规整特殊空格并校验。
 	readonly isJson?: boolean;
 	// 预览渲染文件类型（默认 text，text 无预览）。
 	readonly filetype?: EditorFiletype;
@@ -122,11 +123,11 @@ export const TextareaEditor = forwardRef<TextEditorHandle, TextareaEditorProps>(
 
 	// 保存：macOS Cmd+S，其他平台 Ctrl+S；isJson 模式先校验 JSON，再回调 onSave。
 	const saveContent = (): void => {
-		const content = taRef.current?.plainText ?? '';
+		let content = taRef.current?.plainText ?? '';
 
 		if (isJson) {
 			try {
-				JSON.parse(content);
+				content = parseEditableJson(content).text;
 			} catch (e) {
 				setError(`JSON 格式错误: ${e instanceof Error ? e.message : String(e)}`);
 				return;

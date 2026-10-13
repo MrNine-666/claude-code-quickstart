@@ -1,5 +1,6 @@
 import {release} from 'node:os';
 import {loadContract} from './contracts.js';
+import {parseEditableJson} from './editable-json.js';
 
 /**
  * Pi 请求头预设：契约驱动的「填充动作」。
@@ -241,7 +242,7 @@ export function parseHeaderJson(
 	if (text.trim() === '') return {ok: true, headers: {}};
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(text);
+		parsed = parseEditableJson(text).value;
 	} catch (error) {
 		return {ok: false, error: `请求头 JSON 格式错误：${error instanceof Error ? error.message : String(error)}`};
 	}
