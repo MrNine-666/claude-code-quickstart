@@ -112,11 +112,11 @@ export async function runUpdate(checkOnly: boolean, deps: RunUpdateDeps = {}): P
 		return 1;
 	}
 
-	if (applied.state === 'scheduled') {
-		console.log('已安排更新，ccq 将在当前命令退出后完成替换。');
-	} else {
-		console.log(`ccq 更新完成: ${applied.targetPath}`);
+	if (applied.state !== 'applied') {
+		console.error('更新尚未完成，请检查更新状态后重试。');
+		return 1;
 	}
+	console.log(`ccq 更新完成: ${applied.targetPath}`);
 	console.log('请重新运行 ccq 使用新版本。');
 
 	return 0;

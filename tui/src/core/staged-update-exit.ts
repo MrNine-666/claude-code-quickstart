@@ -16,7 +16,7 @@ export type StagedUpdateExit = {
 };
 
 export type StagedUpdateExitDeps = {
-	/** 应用事务；返回是否成功（对应 applyUpdate 的 applied/scheduled 事实）。 */
+	/** 应用事务；返回是否成功（对应 applyUpdate 的已校验 applied 事实）。 */
 	readonly apply: (transaction: DownloadedSelfUpdate) => Promise<boolean>;
 	readonly onExit: () => void;
 };

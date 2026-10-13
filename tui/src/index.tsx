@@ -9,6 +9,17 @@ import {runCli} from './cli/index.js';
 import {copyTextWithFeedback} from './utils/copy-feedback.js';
 import {isAppModifier} from './utils/keyboard.js';
 import {createTuiExitController} from './core/tui-exit.js';
+import {recoverWindowsSelfUpdate} from './core/windows-self-update.js';
+import {CCQ_VERSION} from './version.js';
+
+if (process.platform === 'win32') {
+	try {
+		await recoverWindowsSelfUpdate(process.execPath, CCQ_VERSION);
+	} catch (error) {
+		console.error(`ccq: ${error instanceof Error ? error.message : 'Windows 更新恢复失败'}`);
+		process.exit(1);
+	}
+}
 
 // argv 子命令路由（HC-CLI-SUBCOMMAND）：有子命令 → 走非交互路径，不进 TUI。
 // 必须在 non-TTY 守卫之前执行，否则管道/CI 下 ccq ls 等命令会被守卫挡掉。

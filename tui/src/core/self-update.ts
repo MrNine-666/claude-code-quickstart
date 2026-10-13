@@ -11,7 +11,6 @@ import {
 	renameSync,
 	rmSync,
 	statSync,
-	writeFileSync,
 	writeSync
 } from 'node:fs';
 import {basename, dirname, join, resolve} from 'node:path';
@@ -31,13 +30,12 @@ import {
 	type SelfUpdateTransportEncoding
 } from './self-update-cache.js';
 import {
-	spawnDetachedPowerShell,
-	uniqueWindowsHelperPath,
 	WINDOWS_HELPER_INTERVAL_MS,
 	WINDOWS_HELPER_MAX_ATTEMPTS,
 	type SpawnProcess
 } from './windows-deferred-operation.js';
 import {CCQ_VERSION} from '../version.js';
+import {applyWindowsSelfUpdate, buildWindowsUpdateHelperScript as windowsUpdateHelperScript} from './windows-self-update.js';
 
 const GITHUB_REPO = 'MrNine-666/claude-code-quickstart';
 const RELEASE_API_URL = 'https://api.github.com/repos/' + GITHUB_REPO + '/releases/latest';
@@ -177,6 +175,7 @@ export type ApplyUpdateOptions = {
 	readonly platform?: NodeJS.Platform;
 	readonly restartAfterApply?: boolean;
 	readonly spawnProcess?: SpawnProcess;
+	readonly timeoutMs?: number;
 	readonly chmodFile?: (filePath: string, mode: number) => void;
 	readonly openFile?: (filePath: string, flags: string) => number;
 	readonly fsyncFile?: (fd: number) => void;
@@ -942,167 +941,7 @@ export const WINDOWS_HELPER_COPY_MAX_ATTEMPTS = WINDOWS_HELPER_MAX_ATTEMPTS;
 export const WINDOWS_HELPER_COPY_INTERVAL_MS = WINDOWS_HELPER_INTERVAL_MS;
 
 export function buildWindowsUpdateHelperScript(): string {
-	return [
-		'param(',
-		'  [int]$ParentPid,',
-		'  [string]$TempPath,',
-		'  [string]$TargetPath,',
-		'  [string]$WorkingDirectory,',
-		'  [long]$ExpectedSize,',
-		'  [string]$ExpectedSha256,',
-		'  [string]$ReadyPath,',
-		'  [switch]$RestartAfterApply',
-		')',
-		'$ErrorActionPreference = "Stop"',
-		'$logPath = Join-Path $env:TEMP "ccq-update.log"',
-		'function Write-UpdateLog($msg) {',
-		'  try { Add-Content -LiteralPath $logPath -Value ("[{0}] [pid {1}] {2}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"), $PID, $msg) -ErrorAction SilentlyContinue } catch {}',
-		'}',
-		'function Exit-Update($code) {',
-		'  if ($ReadyPath) { Remove-Item -LiteralPath $ReadyPath -Force -ErrorAction SilentlyContinue }',
-		'  Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue',
-		'  exit $code',
-		'}',
-		'function Get-Sha256($Path) {',
-		'  $stream = [System.IO.File]::OpenRead($Path)',
-		'  try {',
-		'    $sha256 = [System.Security.Cryptography.SHA256]::Create()',
-		'    try {',
-		'      return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()',
-		'    } finally {',
-		'      $sha256.Dispose()',
-		'    }',
-		'  } finally {',
-		'    $stream.Dispose()',
-		'  }',
-		'}',
-		'$BackupPath = $PSCommandPath + ".backup"',
-		'function Test-ExpectedFile($Path) {',
-		'  try {',
-		'    if (-not (Test-Path -LiteralPath $Path)) { return $false }',
-		'    return ((Get-Item -LiteralPath $Path).Length -eq $ExpectedSize -and (Get-Sha256 $Path) -eq $ExpectedSha256.ToLowerInvariant())',
-		'  } catch {',
-		'    return $false',
-		'  }',
-		'}',
-		'function Restore-Target {',
-		'  if (-not (Test-Path -LiteralPath $BackupPath)) { return $false }',
-		'  try {',
-		'    if (Test-Path -LiteralPath $TargetPath) {',
-		'      [System.IO.File]::Replace($BackupPath, $TargetPath, $null, $true)',
-		'    } else {',
-		'      [System.IO.File]::Move($BackupPath, $TargetPath)',
-		'    }',
-		'    Write-UpdateLog "target restore succeeded"',
-		'    return $true',
-		'  } catch {',
-		'    Write-UpdateLog "target restore failed"',
-		'    return $false',
-		'  }',
-		'}',
-		'try {',
-		'  Write-UpdateLog "helper start: parent=$ParentPid restart=$RestartAfterApply"',
-		'  if ($ReadyPath) { Set-Content -LiteralPath $ReadyPath -Value $PID -NoNewline }',
-		'  Wait-Process -Id $ParentPid -ErrorAction SilentlyContinue',
-		'  if (-not (Test-Path -LiteralPath $TempPath)) { Write-UpdateLog "temp missing"; Exit-Update 1 }',
-		'  $tempSize = (Get-Item -LiteralPath $TempPath).Length',
-		'  $tempHash = Get-Sha256 $TempPath',
-		'  if ($tempSize -ne $ExpectedSize -or $tempHash -ne $ExpectedSha256.ToLowerInvariant()) {',
-		'    Write-UpdateLog "temp verification failed"',
-		'    Exit-Update 1',
-		'  }',
-		'  $targetDir = Split-Path -Parent $TargetPath',
-		'  if (-not (Test-Path -LiteralPath $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir | Out-Null }',
-		'  $replaced = $false',
-		'  for ($i = 1; $i -le ' + WINDOWS_HELPER_MAX_ATTEMPTS + '; $i++) {',
-		'    try {',
-		'      if (Test-Path -LiteralPath $TargetPath) {',
-		'        [System.IO.File]::Replace($TempPath, $TargetPath, $BackupPath, $true)',
-		'      } else {',
-		'        [System.IO.File]::Move($TempPath, $TargetPath)',
-		'      }',
-		'      $replaced = $true',
-		'      Write-UpdateLog "replace succeeded on attempt $i"',
-		'      break',
-		'    } catch {',
-		'      if (Test-ExpectedFile $TargetPath) {',
-		'        $replaced = $true',
-		'        Write-UpdateLog "replace completed despite reported error"',
-		'        break',
-		'      }',
-		'      Write-UpdateLog "replace attempt $i failed"',
-		'      Start-Sleep -Milliseconds ' + WINDOWS_HELPER_INTERVAL_MS,
-		'    }',
-		'  }',
-		'  if (-not $replaced) { Write-UpdateLog "replace failed after all attempts, keeping temp file"; Exit-Update 1 }',
-		'  if (-not (Test-ExpectedFile $TargetPath)) {',
-		'    Write-UpdateLog "target verification failed, restoring old target"',
-		'    [void](Restore-Target)',
-		'    Exit-Update 1',
-		'  }',
-		'  Remove-Item -LiteralPath $TempPath -Force -ErrorAction SilentlyContinue',
-		'  Remove-Item -LiteralPath $BackupPath -Force -ErrorAction SilentlyContinue',
-		'  if ($RestartAfterApply) {',
-		'    Write-UpdateLog "starting updated executable"',
-		'    if ($WorkingDirectory -and (Test-Path -LiteralPath $WorkingDirectory)) {',
-		'      Start-Process -FilePath $TargetPath -WorkingDirectory $WorkingDirectory',
-		'    } else {',
-		'      Start-Process -FilePath $TargetPath',
-		'    }',
-		'  }',
-		'  Write-UpdateLog "update completed"',
-		'  Exit-Update 0',
-		'} catch {',
-		'  Write-UpdateLog "helper failed"',
-		'  [void](Restore-Target)',
-		'  Exit-Update 1',
-		'}',
-		''
-	].join('\r\n');
-}
-
-async function startWindowsUpdateHelper(
-	transaction: DownloadedSelfUpdate,
-	restartAfterApply: boolean,
-	spawnProcess?: SpawnProcess
-): Promise<ApplySelfUpdateResult> {
-	const helperPath = uniqueWindowsHelperPath(dirname(transaction.targetPath), 'ccq-update');
-	try {
-		writeFileSync(helperPath, buildWindowsUpdateHelperScript(), {encoding: 'utf8', flag: 'wx'});
-		const args = [
-			'-ParentPid',
-			String(process.pid),
-			'-TempPath',
-			transaction.tempPath,
-			'-TargetPath',
-			transaction.targetPath,
-			'-WorkingDirectory',
-			process.cwd(),
-			'-ExpectedSize',
-			String(transaction.plan.target.expectedSize),
-			'-ExpectedSha256',
-			transaction.plan.target.expectedSha256
-		];
-		if (restartAfterApply) args.push('-RestartAfterApply');
-		await spawnDetachedPowerShell(helperPath, args, spawnProcess);
-		return {
-			ok: true,
-			state: 'scheduled',
-			targetPath: transaction.targetPath,
-			restartStarted: restartAfterApply,
-			helperPath
-		};
-	} catch (error) {
-		removeFileBestEffort(helperPath);
-		return {
-			ok: false,
-			error: makeSelfUpdateError('apply', '启动 Windows 更新 helper 失败', {
-				cause: errorCause(error),
-				targetPath: transaction.targetPath,
-				tempPath: transaction.tempPath
-			})
-		};
-	}
+	return windowsUpdateHelperScript();
 }
 
 export async function applyUpdate(transaction: DownloadedSelfUpdate, options: ApplyUpdateOptions = {}): Promise<ApplySelfUpdateResult> {
@@ -1122,7 +961,8 @@ export async function applyUpdate(transaction: DownloadedSelfUpdate, options: Ap
 	}
 	try {
 		if (platform === 'win32') {
-			return startWindowsUpdateHelper(transaction, options.restartAfterApply ?? false, options.spawnProcess);
+			await applyWindowsSelfUpdate(transaction, options.spawnProcess, options.timeoutMs);
+			return {ok: true, state: 'applied', targetPath: transaction.targetPath, restartStarted: false};
 		}
 		const chmodFile = options.chmodFile ?? chmodSync;
 		const openFile = options.openFile ?? ((filePath: string, flags: string) => openSync(filePath, flags));
@@ -1144,9 +984,12 @@ export async function applyUpdate(transaction: DownloadedSelfUpdate, options: Ap
 			restartStarted: false
 		};
 	} catch (error) {
+		let retryStage: SelfUpdateStage | undefined;
+		try { validateTransaction(transaction); } catch { retryStage = 'download'; }
 		return {
 			ok: false,
 			error: makeSelfUpdateError('apply', '替换 ccq 可执行文件失败', {
+				retryStage,
 				cause: errorCause(error),
 				targetPath: transaction.targetPath,
 				tempPath: transaction.tempPath

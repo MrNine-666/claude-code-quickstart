@@ -81,7 +81,7 @@ export const HELP_UPDATE = `ccq update — 更新 ccq 可执行文件
   - 仅当 latest 语义化版本严格高于当前版本时更新，不会降级
   - 下载前要求 Release 提供合法 size 与 SHA-256 digest，下载后严格校验
   - macOS/Linux 校验通过后原子替换；命令退出后请重新运行 ccq
-  - Windows 会安排 helper 在当前命令退出后完成替换，不会自动启动 TUI
+  - Windows 同步替换并校验成功后返回，不会自动启动 TUI
 `;
 
 export const HELP_TOOLS = `ccq tools — 管理工具更新与卸载
