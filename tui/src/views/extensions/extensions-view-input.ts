@@ -1,7 +1,8 @@
 import type {KeyEvent} from '@opentui/core';
-import type {PiExtensionPackage} from '../../core/extensions.js';
+import {piExtensionUpdateStatus, type PiExtensionPackage} from '../../core/extensions.js';
 import {
 	isExtensionInstalled,
+	findInstalledExtension,
 	selectedExtension,
 	type ExtensionsViewAction,
 	type ExtensionsViewState,
@@ -14,6 +15,7 @@ export type ExtensionsViewInputHandlers = {
 	readonly onOpenExternal: (item: PiExtensionPackage) => void;
 	readonly onOpenConfirm: (action: PendingExtensionAction) => void;
 	readonly onRunConfirm: (action: PendingExtensionAction) => void;
+	readonly onAlreadyCurrent?: () => void;
 	readonly onExitToNav: () => void;
 };
 
@@ -95,9 +97,14 @@ export function handleExtensionsKey(
 	if (key === 'a') {
 		if (installed.length === 0) return;
 		keyEvent.preventDefault?.();
+		const targets = installed.filter(item => piExtensionUpdateStatus(item) !== 'current');
+		if (targets.length === 0) {
+			handlers.onAlreadyCurrent?.();
+			return;
+		}
 		handlers.onOpenConfirm({
 			kind: 'update-all',
-			targets: installed.map(item => ({name: item.name, source: item.source}))
+			targets: targets.map(item => ({name: item.name, source: item.source}))
 		});
 		return;
 	}
@@ -106,10 +113,17 @@ export function handleExtensionsKey(
 		keyEvent.preventDefault?.();
 		const item = selectedExtension(view);
 		if (!item) return;
+		const local = findInstalledExtension(item, installed);
+		const isInstalled = isExtensionInstalled(item, installed);
+		const updateInfo = {...(local ?? item), version: item.version};
+		if (isInstalled && piExtensionUpdateStatus(updateInfo) === 'current') {
+			handlers.onAlreadyCurrent?.();
+			return;
+		}
 		handlers.onOpenConfirm({
-			kind: isExtensionInstalled(item, installed) ? 'update' : 'install',
+			kind: isInstalled ? 'update' : 'install',
 			name: item.name,
-			source: item.source
+			source: local?.source ?? item.source
 		});
 		return;
 	}

@@ -77,9 +77,15 @@ export function isExtensionInstalled(
 	item: Pick<PiExtensionPackage, 'name' | 'source' | 'installed'>,
 	installed: readonly PiExtensionPackage[]
 ): boolean {
-	if (item.installed) return true;
+	return item.installed || findInstalledExtension(item, installed) !== undefined;
+}
+
+export function findInstalledExtension(
+	item: Pick<PiExtensionPackage, 'name' | 'source'>,
+	installed: readonly PiExtensionPackage[]
+): PiExtensionPackage | undefined {
 	const target = extensionIdentity(item.source || item.name);
-	return installed.some(
+	return installed.find(
 		candidate =>
 			extensionIdentity(candidate.source || candidate.name) === target ||
 			extensionIdentity(candidate.name) === extensionIdentity(item.name)

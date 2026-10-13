@@ -1,4 +1,6 @@
 import {execCommand} from '../core/exec.js';
+import {readInstalledPiPackageManifest} from '../core/pi-package-source.js';
+import {parseSemver} from '../core/semver.js';
 import {
 	PI_MCP_ADAPTER_ID,
 	PI_MCP_ADAPTER_SPEC,
@@ -8,6 +10,7 @@ import {
 	installedPiPackagePlaceholder,
 	inspectPiPackage,
 	listPiPackages,
+	packageFromManifest,
 	removePiPackage,
 	requestPiPackageCatalog,
 	searchPiPackageCatalogPage,
@@ -37,21 +40,41 @@ export function createExtensionsService(deps: ExtensionCommandDeps = {}): Extens
 		loadInstalled: async () => {
 			const sources = await listPiPackages(exec);
 			const packages = await Promise.all(
-				sources.map(async source => {
+				sources.map(async (source): Promise<PiExtensionPackage | null> => {
 					const packageSource = packageSourceFromListEntry(source);
-					try {
-						const packageInfo = await inspectPiPackage(packageSource, exec, metadataRequest);
-						return packageInfo?.resourceTypes.includes('extension')
-							? {...packageInfo, installed: true, source: packageSource}
-							: null;
-					} catch {
-						// Git/local packages and private registry entries may not be readable by
-						// `npm view`; keep the installed Pi source visible with a safe fallback.
-						const placeholder = installedPiPackagePlaceholder(packageSource);
-						if (!metadataRequest) return placeholder;
-						const monthlyDownloads = await fetchPiPackageMonthlyDownloads(packageSource, metadataRequest);
-						return monthlyDownloads === undefined ? placeholder : {...placeholder, monthlyDownloads};
+					const manifest = readInstalledPiPackageManifest(packageSource);
+					const installedVersion = typeof manifest?.version === 'string' && parseSemver(manifest.version) ? manifest.version : '';
+					const localInfo = manifest ? packageFromManifest(manifest, {installed: true, source: packageSource}) : null;
+					if (manifest && !localInfo?.resourceTypes.includes('extension')) return null;
+					let registryInfo: PiExtensionPackage | null = null;
+					if (packageSource.startsWith('npm:')) {
+						try {
+							registryInfo = await inspectPiPackage(packageSource, exec);
+						} catch (error) {
+							// Keep local versions/resources usable when the registry is offline/private.
+							console.error('[extensions] npm 元数据读取失败', packageSource, error);
+						}
 					}
+					if (!localInfo && registryInfo && !registryInfo.resourceTypes.includes('extension')) return null;
+					const packageInfo = localInfo ?? registryInfo ?? installedPiPackagePlaceholder(packageSource);
+					const monthlyDownloads =
+						metadataRequest && packageSource.startsWith('npm:')
+							? await fetchPiPackageMonthlyDownloads(packageSource, metadataRequest)
+							: undefined;
+					return {
+						...packageInfo,
+						...(registryInfo ?? {}),
+						// Local resources/identity and current version stay independent of latest metadata.
+						name: packageInfo.name,
+						type: packageInfo.type,
+						resourceTypes: packageInfo.resourceTypes,
+						author: registryInfo?.author && registryInfo.author !== '未知作者' ? registryInfo.author : packageInfo.author,
+						version: registryInfo?.version ?? '',
+						installed: true,
+						source: packageSource,
+						installedVersion,
+						...(monthlyDownloads === undefined ? {} : {monthlyDownloads})
+					};
 				})
 			);
 			return packages.filter((item): item is PiExtensionPackage => item !== null);
@@ -75,5 +98,5 @@ export function createExtensionsService(deps: ExtensionCommandDeps = {}): Extens
 export {PI_MCP_ADAPTER_ID, PI_MCP_ADAPTER_SPEC};
 
 function packageSourceFromListEntry(source: string): string {
-	return /^(?:npm:|git:|https?:\/\/|file:|\.{1,2}[\\/]|[A-Za-z]:[\\/]|\/)/.test(source) ? source : `npm:${source}`;
+	return /^(?:npm:|git:|https?:\/\/|file:|~|\.{1,2}[\\/]|[A-Za-z]:[\\/]|\/)/.test(source) ? source : `npm:${source}`;
 }

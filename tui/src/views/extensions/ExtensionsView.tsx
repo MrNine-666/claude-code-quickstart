@@ -7,12 +7,13 @@ import {
 	ListLoadingState,
 	Modal,
 	SingleLineInput,
+	StatusDot,
 	ThemedScrollbox,
 	ViewHeader,
 	toast,
 	type BusyOverlayState
 } from '../../components/index.js';
-import {piPackageDetailsUrl, piResourceLabel, type PiExtensionPackage} from '../../core/extensions.js';
+import {piPackageDetailsUrl, piResourceLabel, piExtensionUpdateStatus, type PiExtensionPackage} from '../../core/extensions.js';
 import {openExternalFile} from '../../core/open-file.js';
 import {createExtensionsService, type ExtensionsService} from '../../services/extensions-service.js';
 import {AGENT_CONTEXT_LABELS, type AgentContext} from '../../state/manage-state.js';
@@ -20,6 +21,7 @@ import {useTaskCancellation} from '../../hooks/use-task-cancellation.js';
 import {
 	createInitialExtensionsViewState,
 	extensionsSubMode,
+	findInstalledExtension,
 	isExtensionInstalled,
 	reduceExtensionsViewState,
 	visibleExtensions,
@@ -164,6 +166,7 @@ export function ExtensionsView({
 						});
 				},
 				onOpenConfirm: action => dispatch({type: 'open-confirm', action}),
+				onAlreadyCurrent: () => toast.info('扩展已是最新版本'),
 				onRunConfirm: action => {
 					const signal = taskCancellation.start();
 					if (!signal) return;
@@ -285,6 +288,7 @@ function ExtensionGrid({
 							<ExtensionCard
 								item={item}
 								installed={isExtensionInstalled(item, installed)}
+								installedVersion={findInstalledExtension(item, installed)?.installedVersion}
 								focused={active && index === cursor}
 								width={cardWidth}
 							/>
@@ -299,18 +303,34 @@ function ExtensionGrid({
 export function ExtensionCard({
 	item,
 	installed,
+	installedVersion = item.installedVersion,
 	focused,
 	width
 }: {
 	readonly item: PiExtensionPackage;
 	readonly installed: boolean;
+	readonly installedVersion?: string;
 	readonly focused: boolean;
 	readonly width: number;
 }) {
+	const updateStatus = piExtensionUpdateStatus({...item, installedVersion});
 	return (
 		<Card
 			title={item.name}
-			titleRight={<text fg={installed ? colors.success : colors.muted}>{installed ? '● 已安装' : '○ 未安装'}</text>}
+			titleRight={
+				<StatusDot
+					kind={!installed ? 'notInstalled' : updateStatus === 'available' ? 'updatable' : 'latest'}
+					label={
+						!installed
+							? '未安装'
+							: updateStatus === 'available'
+								? `${installedVersion || '-'} → ${item.version || '-'}`
+								: updateStatus === 'current'
+									? installedVersion || '最新'
+									: `${installedVersion || '已安装'} · 无法检测更新`
+					}
+				/>
+			}
 			focused={focused}
 			width={width}
 			multiLine
@@ -332,12 +352,6 @@ export function ExtensionCard({
 				</text>
 				<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} wrapMode="none" truncate>
 					<span fg={colors.warning}>{piResourceLabel(item.resourceTypes)}</span>
-					{item.version ? (
-						<>
-							<span fg={colors.muted}>{' · '}</span>
-							<span fg={colors.primaryBright}>{`v${item.version}`}</span>
-						</>
-					) : null}
 				</text>
 			</box>
 		</Card>
@@ -410,7 +424,7 @@ function extensionBusyTitle(action: PendingExtensionAction): string {
 
 function extensionCommand(action: PendingExtensionAction): string {
 	if (action.kind === 'update-all') {
-		return `pi update --extension <每个已安装扩展>（共 ${action.targets.length} 个）`;
+		return `pi update --extension <需更新或版本未知扩展>（共 ${action.targets.length} 个）`;
 	}
 	const source = action.source.startsWith('npm:') ? action.source : `npm:${action.source}`;
 	return action.kind === 'install'

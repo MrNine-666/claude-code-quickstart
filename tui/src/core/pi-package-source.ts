@@ -1,7 +1,7 @@
 import {existsSync, readFileSync} from 'node:fs';
-import {join} from 'node:path';
+import {join, resolve} from 'node:path';
 import {readJsonFileStrict} from './fs-utils.js';
-import {piAgentDir} from './paths.js';
+import {piAgentDir, resolveHome} from './paths.js';
 import {parseSemver} from './semver.js';
 
 /** Native PackageSource subset. Unknown incoming fields fail closed; local extras remain untouched. */
@@ -142,6 +142,25 @@ function gitRef(dir: string, ref: string, seen = new Set<string>()): string {
 	if (i < 0) return '';
 	return lines[i + 1]?.startsWith('^') ? lines[i + 1]!.slice(1) : lines[i]!.split(' ')[0]!;
 }
+/** Read installed metadata only; never substitute a registry version for local facts. */
+export function readInstalledPiPackageManifest(source: string): (Record<string, unknown> & {name: string}) | null {
+	const parsed = parsePiPackageSource(source);
+	let dir: string;
+	if (parsed.ok) {
+		const p = parsed.data;
+		dir = p.kind === 'npm' ? join(piAgentDir(), 'npm', 'node_modules', p.name) : join(piAgentDir(), 'git', p.host!, p.name);
+	} else if (isLocalPiPackageSource(source)) {
+		const path = source.replace(/^file:/, '');
+		dir = path === '~' ? resolveHome() : /^~[\\/]/.test(path) ? resolve(resolveHome(), path.slice(2)) : resolve(piAgentDir(), path);
+	} else {
+		return null;
+	}
+	const result = readJsonFileStrict<unknown>(join(dir, 'package.json'));
+	if (result.status !== 'valid' || !object(result.value) || typeof result.value.name !== 'string') return null;
+	if (parsed.ok && parsed.data.kind === 'npm' && result.value.name !== parsed.data.name) return null;
+	return {...result.value, name: result.value.name};
+}
+
 /** Zero commands/network/writes. A declaration alone never proves installation. */
 export function inspectPiPackageInstallation(source: string): boolean {
 	const parsed = parsePiPackageSource(source);

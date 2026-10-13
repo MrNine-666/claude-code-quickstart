@@ -9,6 +9,7 @@ import {
 import {detectTool, TOOL_DEFINITIONS} from './tools-install.js';
 import {inspectPiPackageInstallation, parsePiPackageSource} from './pi-package-source.js';
 import {piAgentDir} from './paths.js';
+import {parseSemver, semverCompare} from './semver.js';
 
 export const PI_MCP_ADAPTER_ID = 'pi-mcp-adapter';
 export const PI_MCP_ADAPTER_SPEC = 'npm:pi-mcp-adapter';
@@ -25,6 +26,8 @@ export type PiExtensionPackage = {
 	/** Exact source used by Pi package commands (for example `npm:foo` or a git URL). */
 	readonly source: string;
 	readonly version: string;
+	/** Local manifest version; empty when unavailable, never inferred from npm latest. */
+	readonly installedVersion?: string;
 	readonly description: string;
 	readonly type: PiPackageResourceKind;
 	readonly resourceTypes: readonly PiPackageResourceKind[];
@@ -39,6 +42,13 @@ export type PiExtensionPackage = {
 	readonly installed: boolean;
 	readonly installCommand: string;
 };
+
+export function piExtensionUpdateStatus(
+	item: Pick<PiExtensionPackage, 'installedVersion' | 'version'>
+): 'available' | 'current' | 'unknown' {
+	if (!parseSemver(item.installedVersion) || !parseSemver(item.version)) return 'unknown';
+	return semverCompare(item.version, item.installedVersion!) > 0 ? 'available' : 'current';
+}
 
 export type PiExtensionManifest = {
 	readonly name: string;
