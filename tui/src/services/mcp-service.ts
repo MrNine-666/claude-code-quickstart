@@ -23,7 +23,7 @@ import {
 import {definitionHash} from '../core/mcp-vault.js';
 import {type McpConfigEntry} from '../core/mcp-config-builder.js';
 import {parseMcpFormInput} from '../core/mcp-form.js';
-import {readPiMcpConfig} from '../core/pi-mcp-adapter.js';
+import {currentPiMcpNativeFact, readPiMcpConfig} from '../core/pi-mcp-adapter.js';
 import {loadMcpContract, type McpServerDefinition} from '../core/mcp-contract.js';
 
 // MCP service：TUI 视图唯一入口。enable/disable/remove 后统一落盘（HC-MCP-RULES-OFF：不再同步 rules 文件）。
@@ -214,7 +214,7 @@ export function addSharedMcpServer(serverId: string, text: string): McpServiceRe
 }
 
 /**
- * edit 保存（Section 9.3）：写 vault 共享定义 + 同步所有当前已开启侧；未开启侧不开启。
+ * edit 保存：完整替换共享定义及各侧配置，保持各 Agent 开关态；关闭的 Claude 不写回条目。
  */
 export function saveEditedMcpServer(serverId: string, text: string): McpServiceResult {
 	return persistParsed(serverId, text, syncSharedDefinition, true);
@@ -225,11 +225,12 @@ function persistParsed(
 	serverId: string,
 	text: string,
 	persist: (id: string, config: Record<string, unknown>, credentials: Record<string, string>, hash: string) => McpActionResult,
-	validateActivePi = false
+	validateSharedPi = false
 ): McpServiceResult {
-	const native = validateActivePi ? readPiMcpConfig() : null;
+	const native = validateSharedPi ? readPiMcpConfig() : null;
 	const piConfig = native?.ok ? native.document.mcpServers[serverId] : undefined;
-	const parsed = parseMcpFormInput(serverId, text, Boolean(piConfig) && piConfig?.enabled !== false);
+	const piShared = validateSharedPi && (Boolean(piConfig) || currentPiMcpNativeFact().supported);
+	const parsed = parseMcpFormInput(serverId, text, piShared ? 'pi-shared' : false);
 	if (!parsed.ok) {
 		return {ok: false, error: parsed.error};
 	}

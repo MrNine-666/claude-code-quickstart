@@ -1,6 +1,6 @@
 import {loadMcpContract, type McpServerDefinition} from './mcp-contract.js';
 import {validateServerId, type McpConfigEntry} from './mcp-config-builder.js';
-import {validatePiMcpServer} from './pi-mcp-adapter.js';
+import {validatePiMcpServer, validatePiMcpSharedServer} from './pi-mcp-adapter.js';
 import {parseEditableJson} from './editable-json.js';
 
 // MCP 表单 core（JSON 即真源范式）：模板生成、config↔JSON、保存校验。
@@ -277,7 +277,7 @@ function applyBucketOrDelete(config: McpConfigEntry, key: string, value: unknown
  * - http URL 若含 `{NAME}` 占位符：优先用 env[NAME] 做 encodeURIComponent 替换（兼容旧模板），
  *   成功后剥离对应 env；仍有未替换占位符则报错
  */
-export function parseMcpFormInput(serverId: string, json: string, piNative = false): McpFormParseResult {
+export function parseMcpFormInput(serverId: string, json: string, piNative: boolean | 'pi-shared' = false): McpFormParseResult {
 	const trimmedId = serverId.trim();
 	const idError = validateServerId(trimmedId);
 	if (idError) {
@@ -291,7 +291,8 @@ export function parseMcpFormInput(serverId: string, json: string, piNative = fal
 
 	// Validate native input BEFORE generic Claude normalization can hide SSE or coerce bad env/args.
 	if (piNative) {
-		const error = validatePiMcpServer(trimmedId, format.value);
+		const error =
+			piNative === 'pi-shared' ? validatePiMcpSharedServer(trimmedId, format.value) : validatePiMcpServer(trimmedId, format.value);
 		if (error) return {ok: false, error: `Pi 原生 MCP: ${error}`};
 	}
 	// Native empty Authorization changes OAuth selection; valid fields must not undergo Claude normalization.

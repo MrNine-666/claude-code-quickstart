@@ -104,7 +104,7 @@ export function createMcpEditFormModel(serverId: string): McpFormModel {
 	return {
 		mode: 'edit',
 		serverId,
-		initialJson: configToJson(detail.config),
+		initialJson: configToJson(detail.vaultEntry?.config ?? detail.config),
 		...(definition?.CredentialType === 'env-file' ? {credHint: '该 MCP 原由安装链用 env-file 管理，此处修改直接写入 config.env'} : {}),
 		templates: []
 	};

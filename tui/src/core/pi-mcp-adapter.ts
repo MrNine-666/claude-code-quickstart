@@ -318,6 +318,34 @@ export function buildPiMcpServerEntry(
 	return entry;
 }
 
+/** Shared aliases must be valid before projection; native input keeps its stricter schema. */
+export function validatePiMcpSharedServer(
+	serverId: string,
+	config: Record<string, unknown>,
+	definition: McpServerDefinition | null = null
+): string | undefined {
+	if (
+		Object.hasOwn(config, 'disabled') &&
+		(typeof config.disabled !== 'boolean' || (config.enabled !== undefined && config.enabled !== !config.disabled))
+	) {
+		return 'disabled/enabled 必须是语义一致的布尔值';
+	}
+	if (Object.hasOwn(config, 'http_headers')) {
+		const alias = config.http_headers;
+		const headers = config.headers;
+		if (
+			!isStringRecord(alias) ||
+			(headers !== undefined &&
+				(!isStringRecord(headers) ||
+					Object.keys(headers).length !== Object.keys(alias).length ||
+					Object.entries(alias).some(([key, value]) => headers[key] !== value)))
+		) {
+			return 'http_headers 必须是字符串映射，且不能与 headers 冲突';
+		}
+	}
+	return validatePiMcpServer(serverId, buildPiMcpServerEntry(definition, config));
+}
+
 export function piMcpUnsupportedReason(
 	fact: PiMcpNativeFact,
 	definition: McpServerDefinition | null,
@@ -328,32 +356,7 @@ export function piMcpUnsupportedReason(
 	if (!fact.supported) return fact.reason ?? 'pi-not-detected';
 	// Existing native entries must pass raw schema checks, not implicit legacy conversion.
 	if (configDialect === 'pi-native' && config && validatePiMcpServer(serverId, config)) return 'definition-not-expressible';
-	// Validate shared aliases before conversion removes them; never erase malformed or conflicting semantics.
-	if (configDialect === 'shared' && config) {
-		if (
-			Object.hasOwn(config, 'disabled') &&
-			(typeof config.disabled !== 'boolean' || (config.enabled !== undefined && config.enabled !== !config.disabled))
-		) {
-			return 'definition-not-expressible';
-		}
-		if (Object.hasOwn(config, 'http_headers')) {
-			const alias = config.http_headers;
-			const headers = config.headers;
-			if (
-				!isStringRecord(alias) ||
-				(headers !== undefined &&
-					(!isStringRecord(headers) ||
-						Object.keys(headers).length !== Object.keys(alias).length ||
-						Object.entries(alias).some(([key, value]) => headers[key] !== value)))
-			) {
-				return 'definition-not-expressible';
-			}
-		}
-	}
-	// Shared CC/CX definitions may use their own dialects; only these are projected.
-	const nativeConfig = config ? toPiNativeConfig(config) : null;
-	if (nativeConfig && ADAPTER_ONLY_KEYS.some(key => Object.hasOwn(nativeConfig, key))) return 'definition-not-expressible';
-	if (validatePiMcpServer(serverId, buildPiMcpServerEntry(definition, nativeConfig))) return 'definition-not-expressible';
+	if (validatePiMcpSharedServer(serverId, config ?? {}, definition)) return 'definition-not-expressible';
 	return undefined;
 }
 export function piMcpDisplayReason(reason: PiMcpUnsupportedReason): string {
