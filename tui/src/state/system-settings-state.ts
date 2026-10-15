@@ -629,14 +629,17 @@ function toggleDecisions(
 	row: SystemSettingsTreeRow
 ): Readonly<Record<string, TransferCategoryAction>> {
 	const next = {...decisions};
+	// 不支持合并的分类（MCP）以覆盖为基础动作。
+	const baseAction = (item: ConfigTransferImportPlanItem): TransferCategoryAction => (item.mergeUnavailable ? 'replace' : 'merge');
 	if (row.kind === 'tool') {
 		const toolItems = items.filter(item => item.tool === row.tool && item.status !== 'blocked');
 		const canReplace = toolItems.every(item => item.replace?.status !== 'blocked');
-		const allMerge = toolItems.length > 0 && toolItems.every(item => systemSettingsDecisionOf(next, item) === 'merge');
+		const allBase = toolItems.length > 0 && toolItems.every(item => systemSettingsDecisionOf(next, item) === baseAction(item));
 		const allReplace = toolItems.length > 0 && toolItems.every(item => systemSettingsDecisionOf(next, item) === 'replace');
-		const batchAction: TransferCategoryAction = allMerge && canReplace ? 'replace' : allReplace ? 'skip' : 'merge';
+		// 批量循环：基础 → 覆盖（全部可覆盖时）→ 跳过 → 基础。
+		const batch = allBase && canReplace && !allReplace ? 'replace' : allBase || allReplace ? 'skip' : 'base';
 		for (const item of toolItems) {
-			next[systemSettingsCategoryKey(item.tool, item.category)] = batchAction;
+			next[systemSettingsCategoryKey(item.tool, item.category)] = batch === 'base' ? baseAction(item) : batch;
 		}
 
 		return next;
@@ -650,7 +653,7 @@ function toggleDecisions(
 	const key = systemSettingsCategoryKey(item.tool, item.category);
 	const current = systemSettingsDecisionOf(next, item);
 	const canReplace = item.replace?.status !== 'blocked';
-	next[key] = current === 'merge' ? (canReplace ? 'replace' : 'skip') : current === 'replace' ? 'skip' : 'merge';
+	next[key] = current === 'merge' ? (canReplace ? 'replace' : 'skip') : current === 'replace' ? 'skip' : baseAction(item);
 	return next;
 }
 

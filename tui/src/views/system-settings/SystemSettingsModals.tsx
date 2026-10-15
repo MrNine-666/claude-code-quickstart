@@ -188,9 +188,9 @@ function SystemSettingsImportPreview({
 				},
 				{merge: 0, replace: 0, skip: 0}
 			);
-			const allMerge = actionCounts.merge === toolItems.filter(item => item.status !== 'blocked').length && actionCounts.merge > 0;
+			const selected = actionCounts.merge + actionCounts.replace;
 			return treeRowItem(row, focused, {
-				checked: allMerge,
+				checked: selected > 0 && selected === toolItems.filter(item => item.status !== 'blocked').length,
 				titleRight: `${actionCounts.merge}/${toolItems.length} 合并 · ${actionCounts.replace} 覆盖`,
 				collapsed: modal.collapsed.has(row.tool)
 			});
@@ -253,7 +253,7 @@ function SystemSettingsImportPreview({
 					<ScrollList items={items} cursor={modal.cursor} active={active} showPosition={false} />
 				</box>
 				<text fg={colors.muted} flexShrink={0} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} wrapMode="word">
-					阻断分类只能跳过；合并不删除本机多余内容
+					阻断分类只能跳过；合并不删除本机多余内容；MCP 只能按 id 整体覆盖或跳过
 				</text>
 			</box>
 		</Modal>
@@ -272,9 +272,16 @@ function SystemSettingsImportConfirm({
 		item => item.status !== 'blocked' && systemSettingsDecisionOf(modal.decisions, item) === 'replace'
 	);
 	const removed = replacements.reduce((total, item) => total + (item.replace?.counts.removed ?? 0), 0);
-	const identities = replacements.flatMap(item =>
-		(item.replace?.identities.removed ?? []).map(identity => `${systemSettingsCategoryLabel(item.tool, item.category)}：${identity}`)
-	);
+	const identities = replacements.flatMap(item => {
+		const label = systemSettingsCategoryLabel(item.tool, item.category);
+		// MCP 覆盖不删除包外 id，危险在于整体替换同 id 并清除包未携带的本机凭据。
+		const replaced = item.mergeUnavailable ? (item.replace?.identities.replaced ?? []) : [];
+		return [
+			...(item.replace?.identities.removed ?? []).map(identity => `${label}：删除 ${identity}`),
+			...replaced.map(identity => `${label}：整体覆盖 ${identity}`),
+			...(item.mergeUnavailable ? (item.replace?.warnings ?? []) : []).map(warning => `${label}：${warning}`)
+		];
+	});
 
 	return (
 		<Modal
@@ -287,7 +294,8 @@ function SystemSettingsImportConfirm({
 		>
 			<box flexDirection="column" flexGrow={1} minHeight={0}>
 				<text fg={colors.warning} wrapMode="word">
-					覆盖会删除包内不存在的受管条目；未选分类、未知字段、凭据和登录态不受影响。
+					覆盖会删除包内不存在的受管条目；MCP 只整体替换包内 id（包未携带的本机凭据会被清除），不删除包外
+					id。未选分类与登录态不受影响。
 				</text>
 				<text fg={colors.danger}>{`将覆盖 ${replacements.length} 个分类，删除 ${removed} 个条目。`}</text>
 				<box flexGrow={1} minHeight={0} marginTop={1} overflow="hidden">
@@ -295,7 +303,7 @@ function SystemSettingsImportConfirm({
 						items={
 							identities.length
 								? identities.map(identity => ({key: identity, title: `  ${identity}`}))
-								: [{key: 'none', title: '  无需删除条目'}]
+								: [{key: 'none', title: '  无需删除或覆盖条目'}]
 						}
 						cursor={0}
 						active={false}

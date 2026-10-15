@@ -20,18 +20,13 @@ import type {ExtensionCommandDeps} from './extensions.js';
 import {piPackageSource} from './pi-package-source.js';
 import {importCcqSettingsSection, snapshotCcqSettingsSection} from './config-transfer-ccq-settings.js';
 import {
-	importClaudeMcpSection,
-	importCodexMcpSection,
+	backfillMcpLibraryForExport,
+	importMcpActivationSection,
 	importMcpLibrarySection,
-	importPiMcpSection,
-	type McpClaudeSection,
-	type McpCodexSection,
 	type McpLibrarySection,
-	type McpPiSection,
-	snapshotClaudeMcpSection,
-	snapshotCodexMcpSection,
-	snapshotMcpLibrarySection,
-	snapshotPiMcpSection
+	previewMcpContractIds,
+	snapshotMcpActivationSection,
+	snapshotMcpLibrarySection
 } from './config-transfer-mcp.js';
 import {
 	importRulesSection,
@@ -130,6 +125,8 @@ export type ConfigTransferExportPlan = {
 export type ConfigTransferExportOptions = {
 	/** Skills 快照的 home/staging 注入；targets 由选择推导，不允许覆盖。 */
 	readonly skills?: Omit<SkillsSnapshotOptions, 'targets'>;
+	/** 仅真实导出：先把 runtime-only MCP id 补入契约（只补缺）；清单读取保持零写盘。 */
+	readonly backfillMcp?: boolean;
 };
 
 const SKILL_TRANSFER_ORDER = ['cc', 'cx', 'pi'] as const;
@@ -355,64 +352,16 @@ async function snapshotCategory(
 	}
 
 	if (category === 'mcp') {
-		if (tool === 'cc') {
-			const result = snapshotClaudeMcpSection({includeCredentials});
-			if (!result.ok) {
-				return result;
-			}
-
-			const data: McpClaudeSection = result.data;
-			return snapshotResult(
-				tool,
-				category,
-				data,
-				{
-					itemCount: data.servers.length,
-					containsCredentials: data.containsCredentials,
-					excludedCredentials: data.excludedCredentials.map(describeCredentialExclusion),
-					excluded: []
-				},
-				result.warnings
-			);
-		}
-
-		if (tool === 'cx') {
-			const result = snapshotCodexMcpSection({includeCredentials});
-			if (!result.ok) {
-				return result;
-			}
-
-			const data: McpCodexSection = result.data;
-			return snapshotResult(
-				tool,
-				category,
-				data,
-				{
-					itemCount: data.servers.length,
-					containsCredentials: data.containsCredentials,
-					excludedCredentials: data.excludedCredentials.map(describeCredentialExclusion),
-					excluded: data.excluded
-				},
-				result.warnings
-			);
-		}
-
-		const result = snapshotPiMcpSection({includeCredentials});
+		const result = snapshotMcpActivationSection(tool as 'cc' | 'cx' | 'pi');
 		if (!result.ok) {
 			return result;
 		}
 
-		const data: McpPiSection = result.data;
 		return snapshotResult(
 			tool,
 			category,
-			data,
-			{
-				itemCount: data.servers.length + data.overrides.length,
-				containsCredentials: data.containsCredentials,
-				excludedCredentials: data.excludedCredentials.map(describeCredentialExclusion),
-				excluded: data.excludedAuth
-			},
+			result.data,
+			{itemCount: result.data.servers.length, containsCredentials: false, excludedCredentials: [], excluded: []},
 			result.warnings
 		);
 	}
@@ -457,7 +406,11 @@ export async function planConfigTransferExport(
 	const identities = normalized.data;
 	const sections: BundleSection[] = [];
 	const summaries: ConfigTransferExportCategorySummary[] = [];
-	const warnings: string[] = [];
+	// 导出唯一写盘：runtime-only MCP id 先补入契约（只补缺），契约与开关分类才有同一 id 集合。
+	const warnings: string[] =
+		options.backfillMcp && identities.some(identity => identity.category === 'mcp' || identity.category === 'mcp-library')
+			? [...backfillMcpLibraryForExport()]
+			: [];
 	let containsCredentials = false;
 
 	const skillTargets = SKILL_TRANSFER_ORDER.filter(tool =>
@@ -542,6 +495,8 @@ export type ConfigTransferStrategyPreview = {
 
 export type ConfigTransferImportPlanItem = {
 	readonly replace?: ConfigTransferStrategyPreview;
+	/** 存在时该分类只能覆盖或跳过（MCP 按 id 整体覆盖）。 */
+	readonly mergeUnavailable?: string;
 	readonly tool: TransferTool;
 	readonly category: string;
 	readonly status: TransferCategoryStatus;
@@ -561,6 +516,8 @@ export type ConfigTransferImportPlan = {
 export type ConfigTransferImportOptions = {
 	readonly skills?: ImportSkillsOptions;
 	readonly piPackages?: ExtensionCommandDeps;
+	/** 仅预览：MCP 契约 id = 本机 vault ∪ 包内共享库；apply/postflight 以真实 vault 为准。 */
+	readonly mcpContractIds?: ReadonlySet<string>;
 };
 
 type CategoryPreview = {
@@ -640,8 +597,16 @@ function skillsPreview(plan: SkillsImportPlan): CategoryPreview {
 	return {counts: countsFromReport(report, skipped.length), report, reason};
 }
 
+function isMcpCategory(tool: TransferTool, category: string): boolean {
+	return category === 'mcp' || (tool === 'ccq' && category === 'mcp-library');
+}
+
+function mergeUnavailable(tool: TransferTool, category: string): string | null {
+	return isMcpCategory(tool, category) ? 'MCP 按 server id 整体覆盖或跳过，不支持合并' : null;
+}
+
 function replacementUnavailable(tool: TransferTool, category: string): string | null {
-	if (category === 'rules' || (tool === 'ccq' && category === 'system-settings')) return null;
+	if (category === 'rules' || (tool === 'ccq' && category === 'system-settings') || isMcpCategory(tool, category)) return null;
 	if (category === 'skills') return 'Skills 覆盖尚不能证明完整目标范围与共享实体安全；合并仍可用';
 	return '该分类尚无可验证的受管删除投影，覆盖未启用；合并仍可用';
 }
@@ -690,6 +655,8 @@ export async function planConfigTransferImport(
 	const byIdentity = new Map(payload.sections.map(section => [identityKey(section.tool, section.category), section]));
 	const items: ConfigTransferImportPlanItem[] = [];
 	const warnings: string[] = payload.sections.length === 0 ? ['导出包不含任何配置分类'] : [];
+	// 预览假设包内契约分类会被导入；用户跳过它时 apply 以真实 vault 为准并跳过缺失 id。
+	const previewOptions = {...options, mcpContractIds: previewMcpContractIds(byIdentity.get('ccq:mcp-library')?.data)};
 
 	for (const identity of TRANSFER_EXECUTION_ORDER) {
 		const section = byIdentity.get(identityKey(identity.tool, identity.category));
@@ -697,11 +664,27 @@ export async function planConfigTransferImport(
 			continue;
 		}
 
-		const preview = await previewCategory(identity.tool, identity.category, section.data, payload.containsCredentials, options);
-		const replace = await previewReplacement(identity.tool, identity.category, section.data, payload.containsCredentials, options);
+		const noMerge = mergeUnavailable(identity.tool, identity.category);
+		const mergeFlag = noMerge ? {mergeUnavailable: noMerge} : {};
+		const preview = await previewCategory(
+			identity.tool,
+			identity.category,
+			section.data,
+			payload.containsCredentials,
+			previewOptions,
+			noMerge ? 'replace' : 'merge'
+		);
+		const replace = await previewReplacement(
+			identity.tool,
+			identity.category,
+			section.data,
+			payload.containsCredentials,
+			previewOptions
+		);
 		if (!preview.ok) {
 			items.push({
 				replace,
+				...mergeFlag,
 				tool: identity.tool,
 				category: identity.category,
 				status: 'blocked',
@@ -717,10 +700,11 @@ export async function planConfigTransferImport(
 		const status = statusOf(preview.data.counts);
 		items.push({
 			replace,
+			...mergeFlag,
 			tool: identity.tool,
 			category: identity.category,
 			status,
-			defaultAction: status === 'blocked' ? 'skip' : 'merge',
+			defaultAction: status === 'blocked' ? 'skip' : noMerge ? 'replace' : 'merge',
 			counts: preview.data.counts,
 			identities: {
 				added: preview.data.report.added,
@@ -748,11 +732,12 @@ async function runCategoryImport(
 	dryRun: boolean,
 	mode: TransferImportMode = 'merge'
 ): Promise<ExtensionsImportResult> {
-	const unavailable = mode === 'replace' ? replacementUnavailable(tool, category) : null;
+	const unavailable = mode === 'replace' ? replacementUnavailable(tool, category) : mergeUnavailable(tool, category);
 	if (unavailable) return transferFail('conflict', unavailable);
+	const piExec = options.piPackages?.exec;
 	switch (identityKey(tool, category)) {
 		case 'ccq:mcp-library':
-			return importMcpLibrarySection(data, {containsCredentials, dryRun});
+			return importMcpLibrarySection(data, {containsCredentials, dryRun, exec: piExec});
 		case 'ccq:system-settings':
 			return importCcqSettingsSection(data, {dryRun});
 		case 'cc:providers':
@@ -774,11 +759,13 @@ async function runCategoryImport(
 		case 'pi:rules':
 			return importRulesSection('pi', data, {dryRun, mode});
 		case 'cc:mcp':
-			return importClaudeMcpSection(data, {containsCredentials, dryRun});
 		case 'cx:mcp':
-			return importCodexMcpSection(data, {containsCredentials, dryRun});
 		case 'pi:mcp':
-			return importPiMcpSection(data, {containsCredentials, dryRun});
+			return importMcpActivationSection(tool as 'cc' | 'cx' | 'pi', data, {
+				dryRun,
+				contractIds: options.mcpContractIds,
+				exec: piExec
+			});
 		case 'pi:extensions':
 			return dryRun
 				? importExtensionsSection(data, {dryRun, packageInstalled: options.piPackages?.packageInstalled})
@@ -800,7 +787,8 @@ async function runCategoryImport(
  */
 function categoryTargetPaths(tool: TransferTool, category: string, data: unknown): readonly string[] {
 	if (tool === 'ccq' && category === 'mcp-library') {
-		return [vaultPath()];
+		// 契约覆盖会立即投影到各 Agent，投影目标同分类回滚。
+		return [vaultPath(), claudeJsonPath(), settingsPath(), codexConfigPath(), piMcpConfigPath(), piMcpAdapterOverridesPath()];
 	}
 	if (tool === 'ccq' && category === 'system-settings') {
 		return [ccqSystemSettingsPath()];
@@ -835,11 +823,12 @@ function categoryTargetPaths(tool: TransferTool, category: string, data: unknown
 	}
 
 	if (category === 'mcp') {
+		// 启停复用 MCP owner，会补录/改写 vault（permissions、updatedAt）。
 		if (tool === 'cc') {
-			return [claudeJsonPath(), settingsPath()];
+			return [claudeJsonPath(), settingsPath(), vaultPath()];
 		}
 
-		return tool === 'cx' ? [codexConfigPath()] : [piMcpConfigPath(), piMcpAdapterOverridesPath()];
+		return tool === 'cx' ? [codexConfigPath(), vaultPath()] : [piMcpConfigPath(), piMcpAdapterOverridesPath(), vaultPath()];
 	}
 
 	if (category === 'skills') {
@@ -1019,7 +1008,10 @@ export async function applyConfigTransferImport(
 	if (
 		decisionsByKey.size !== decisions.length ||
 		decisions.some(
-			decision => !plans.has(identityKey(decision.tool, decision.category)) || !['merge', 'replace', 'skip'].includes(decision.action)
+			decision =>
+				!plans.has(identityKey(decision.tool, decision.category)) ||
+				!['merge', 'replace', 'skip'].includes(decision.action) ||
+				(decision.action === 'merge' && mergeUnavailable(decision.tool, decision.category))
 		)
 	) {
 		return transferFail('validation', '导入分类策略无效');
@@ -1085,7 +1077,9 @@ export async function applyConfigTransferImport(
 			continue;
 		}
 
-		if (action === 'replace' && categoryTargetFact(identity.tool, identity.category, section.data) !== item.replace?.targetFact) {
+		// Agent MCP 开关不删除包外 id，其目标又会被更早的分类合法改写（契约投影、settings），只在任何写入前复查。
+		const recheckFact = action === 'replace' && identity.category !== 'mcp';
+		if (recheckFact && categoryTargetFact(identity.tool, identity.category, section.data) !== item.replace?.targetFact) {
 			failures.push({...identity, error: '覆盖目标已变化，请重新预览并确认', restored: true});
 			stopped = true;
 			continue;
@@ -1139,7 +1133,7 @@ export async function applyConfigTransferImport(
 
 		if (
 			options.signal?.aborted ||
-			(action === 'replace' && categoryTargetFact(identity.tool, identity.category, section.data) !== item.replace?.targetFact)
+			(recheckFact && categoryTargetFact(identity.tool, identity.category, section.data) !== item.replace?.targetFact)
 		) {
 			cleanupTransactionDir(snapshot.data.rootDir, warnings);
 			if (!options.signal?.aborted) failures.push({...identity, error: '覆盖目标已变化，请重新预览并确认', restored: true});

@@ -123,7 +123,10 @@ export function createConfigTransferService(deps: ConfigTransferServiceDeps = {}
 
 	const prepareExport: ConfigTransferService['prepareExport'] = async (request, onProgress, options) => {
 		onProgress?.('正在收集所选配置...');
-		const plan = await planConfigTransferExport({categories: request.categories, includeCredentials: true}, deps.exportOptions);
+		const plan = await planConfigTransferExport(
+			{categories: request.categories, includeCredentials: true},
+			{...deps.exportOptions, backfillMcp: true}
+		);
 		if (!plan.ok) {
 			return plan;
 		}
