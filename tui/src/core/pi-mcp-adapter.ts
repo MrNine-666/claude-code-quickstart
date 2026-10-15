@@ -277,21 +277,6 @@ export function validatePiMcpServer(serverId: string, config: Record<string, unk
 	return undefined;
 }
 
-/** A changed endpoint must never inherit credentials bound to the previous URL. */
-export function piMcpMergeBase(local: Record<string, unknown>, incoming: Record<string, unknown>): Record<string, unknown> {
-	const next = {...local};
-	const toStdio = incoming.command !== undefined && incoming.url === undefined && local.url !== undefined;
-	const toHttp = incoming.url !== undefined && incoming.command === undefined && local.command !== undefined;
-	if (toStdio) delete next.url;
-	if (toHttp) for (const key of ['command', 'args', 'env', 'cwd']) delete next[key];
-	if (toStdio || toHttp) delete next.type;
-	if (toStdio || (incoming.url !== undefined && incoming.url !== local.url)) {
-		for (const key of ['headers', 'http_headers', 'oauth', 'auth', 'bearerToken', 'bearerTokenEnv', 'bearerTokenStore'])
-			delete next[key];
-	}
-	return next;
-}
-
 function toPiNativeConfig(config: Record<string, unknown>): Record<string, unknown> {
 	const next = {...config};
 	if (next.headers === undefined && isRecord(next.http_headers)) next.headers = next.http_headers;
@@ -370,6 +355,17 @@ export function piMcpDisplayReason(reason: PiMcpUnsupportedReason): string {
 	}[reason];
 }
 
+/** Unsupported status with the concrete schema reason; validator strings never contain values. */
+export function piMcpUnsupportedStatus(
+	reason: PiMcpUnsupportedReason,
+	serverId: string,
+	definition: McpServerDefinition | null,
+	config: Record<string, unknown> | null
+): string {
+	const detail = reason === 'definition-not-expressible' ? validatePiMcpSharedServer(serverId, config ?? {}, definition) : undefined;
+	return `Unsupported: ${piMcpDisplayReason(reason)}${detail ? `：${detail}` : ''}`;
+}
+
 /** Two-file transaction, byte-exact rollback, no credential-bearing parser/write diagnostics. */
 export function writePiMcpDocuments(nextNative: PiMcpConfigDocument, nextOverride: PiMcpOverrideDocument): PiMcpConfigSyncResult {
 	const nativeIds = Object.keys(nextNative.mcpServers);
@@ -429,16 +425,20 @@ export function writePiMcpOverride(
 	enabled: boolean,
 	definition: McpServerDefinition | null,
 	config: Record<string, unknown> | null,
-	credentials: Readonly<Record<string, string>> = {}
+	credentials: Readonly<Record<string, string>> = {},
+	// Only shared-definition replacement (edit save / contract import) may overwrite a non-compliant entry.
+	options: {readonly replaceInvalidExisting?: boolean} = {}
 ): PiMcpMutationResult {
 	const reason = piMcpUnsupportedReason(currentPiMcpNativeFact(), definition, config, serverId);
-	if (reason) return {Success: false, ServerId: serverId, Status: `Unsupported: ${piMcpDisplayReason(reason)}`};
+	if (reason) return {Success: false, ServerId: serverId, Status: piMcpUnsupportedStatus(reason, serverId, definition, config)};
 	const native = readPiMcpConfig();
 	const override = readPiMcpAdapterOverride();
-	if (!native.ok || !override.ok) return {Success: false, ServerId: serverId, Status: 'Unsupported: Pi MCP 文件无法读取'};
+	if (!native.ok) return {Success: false, ServerId: serverId, Status: `Unsupported: ${native.detail}`};
+	if (!override.ok) return {Success: false, ServerId: serverId, Status: `Unsupported: ${override.detail}`};
 	const existing = native.document.mcpServers[serverId];
-	if (existing && validatePiMcpServer(serverId, existing)) {
-		return {Success: false, ServerId: serverId, Status: `Unsupported: ${piMcpDisplayReason('definition-not-expressible')}`};
+	const existingError = existing && !options.replaceInvalidExisting ? validatePiMcpServer(serverId, existing) : undefined;
+	if (existingError) {
+		return {Success: false, ServerId: serverId, Status: `Unsupported: Pi MCP 现有条目无效：${existingError}`};
 	}
 	const entry = buildPiMcpServerEntry(definition, config, credentials);
 	const schemaError = validatePiMcpServer(serverId, entry);

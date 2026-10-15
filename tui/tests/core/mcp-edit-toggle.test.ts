@@ -177,6 +177,17 @@ describe('MCP 完整编辑与开关不恢复旧定义', () => {
 		expect(loadVault().servers[ID]?.config).toEqual({...NEXT, type: 'http'});
 	});
 
+	test('编辑保存不重置 vault permissions（投影只写 Agent runtime）', () => {
+		const vault = newEmptyVault();
+		vault.servers[ID] = {config: OLD, permissions: [`mcp__${ID}`]};
+		saveVault(vault);
+		writeJson(claudeJsonPath(), {mcpServers: {[ID]: OLD}});
+		seedCodex();
+		expect(saveEditedMcpServer(ID, JSON.stringify(NEXT)).ok).toBe(true);
+		expect(loadVault().servers[ID]?.permissions).toEqual([`mcp__${ID}`]);
+		expect(loadVault().servers[ID]?.config).toEqual(NEXT);
+	});
+
 	test('Pi 已禁用时编辑仍完整替换，但不自动开启', () => {
 		seedPi({...OLD, enabled: false, timeout: 15});
 		expect(saveEditedMcpServer(ID, JSON.stringify(NEXT)).ok).toBe(true);
@@ -230,6 +241,50 @@ describe('MCP 完整编辑与开关不恢复旧定义', () => {
 		expect(result.ok).toBe(false);
 		expect(JSON.stringify(result)).not.toContain('BROKEN-TEST-SECRET');
 		for (const [path, text] of snapshots) expect(readFileSync(path, 'utf8')).toBe(text);
+	});
+
+	describe('本机 Pi 条目不合规（旧版 lifecycle/disabled 字段）', () => {
+		const EXA = 'exa';
+		const EXA_NEXT = {url: 'https://mcp.exa.ai/mcp', headers: {'x-api-key': 'EXA-NEW-KEY'}};
+		const seedLegacyExa = (legacy: Record<string, unknown>): void =>
+			writeJson(piMcpConfigPath(), {mcpServers: {[EXA]: {url: 'https://mcp.exa.ai/mcp', ...legacy}}});
+		const exaEntry = (): Record<string, unknown> => JSON.parse(readFileSync(piMcpConfigPath(), 'utf8')).mcpServers[EXA];
+
+		test('旧禁用条目编辑保存成功：整条替换为新配置并保持禁用', () => {
+			seedLegacyExa({lifecycle: 'lazy', disabled: true});
+			expect(saveEditedMcpServer(EXA, JSON.stringify(EXA_NEXT))).toEqual({ok: true, status: 'Saved'});
+			expect(exaEntry()).toEqual({...EXA_NEXT, enabled: false});
+		});
+
+		test('旧开启条目编辑保存成功：整条替换为新配置并保持开启', () => {
+			seedLegacyExa({lifecycle: 'lazy'});
+			expect(saveEditedMcpServer(EXA, JSON.stringify(EXA_NEXT))).toEqual({ok: true, status: 'Saved'});
+			expect(exaEntry()).toEqual(EXA_NEXT);
+		});
+
+		test('sidecar 损坏时编辑失败，报错含具体原因且所有目标字节不变', () => {
+			seedLegacyExa({lifecycle: 'lazy'});
+			seedCodex();
+			seedVault(OLD);
+			writeJson(claudeJsonPath(), {mcpServers: {[EXA]: EXA_NEXT}});
+			writeJson(piMcpAdapterOverridesPath(), {schemaVersion: 2, servers: {}});
+			const paths = [claudeJsonPath(), codexConfigPath(), piMcpConfigPath(), piMcpAdapterOverridesPath(), vaultPath()];
+			const snapshots = paths.map(path => [path, readFileSync(path, 'utf8')] as const);
+			const result = saveEditedMcpServer(EXA, JSON.stringify(EXA_NEXT));
+			expect(result.ok).toBe(false);
+			expect(JSON.stringify(result)).toContain('Pi MCP ownership sidecar 无法读取或结构无效');
+			for (const [path, text] of snapshots) expect(readFileSync(path, 'utf8')).toBe(text);
+		});
+
+		test('开关操作仍拒绝不合规条目，并给出具体原因', () => {
+			seedLegacyExa({lifecycle: 'lazy', disabled: true});
+			const before = readFileSync(piMcpConfigPath(), 'utf8');
+			for (const result of [enableServer(EXA, 'pi'), disableServer(EXA, 'pi')]) {
+				expect(result.Success).toBe(false);
+				expect(result.Status).toContain('adapter 字段');
+			}
+			expect(readFileSync(piMcpConfigPath(), 'utf8')).toBe(before);
+		});
 	});
 
 	test('Pi active edit 保留空 Authorization，拒绝坏 args/env/SSE/矛盾别名且不泄漏凭据', () => {
