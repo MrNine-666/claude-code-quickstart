@@ -41,10 +41,7 @@ mock.module('../../src/services/provider-service.js', () => ({
 }));
 const {ProviderView, providerReadOnlyMessage} = await import('../../src/views/provider/ProviderView.js');
 for (const action of ['edit', 'delete'] as const) {
-	assert.equal(
-		providerReadOnlyMessage('claude', action),
-		providerReadOnlyMessage('codex', action).replaceAll('codex', 'claude auth')
-	);
+	assert.equal(providerReadOnlyMessage('claude', action), providerReadOnlyMessage('codex', action).replaceAll('codex', 'claude auth'));
 }
 const modes: string[] = [];
 let setContext: (context: AgentContext) => void = () => {};
@@ -113,21 +110,27 @@ try {
 		setContext('cc');
 	});
 	await setup.renderOnce();
-	const cancelled = pending.at(-1)!;
+	const inflight = pending.at(-1)!;
+	const refreshCount = pending.length;
 	await act(async () => {
 		setActive(false);
 	});
 	await setup.renderOnce();
-	assert(cancelled.signal?.aborted);
+	assert(!inflight.signal?.aborted, 'inactive menu preview keeps auth refresh');
 	resetToasts();
 	await act(async () => {
 		setup.mockInput.pressKey('e');
 	});
 	assert.equal(getToastSnapshot().length, 0, 'inactive input must not respond');
+	await act(async () => setContext('cx'));
+	await act(async () => setContext('cc'));
+	await setup.renderOnce();
+	assert.equal(pending.length, refreshCount + 1, 'menu preview loads auth before focus enters the view');
 	await act(async () => {
 		setActive(true);
 	});
 	await setup.renderOnce();
+	assert.equal(pending.length, refreshCount + 1, 'focus change must not respawn auth refresh');
 	await act(async () => pending.at(-1)!.resolve(getDisplayData({status: 'configured'})));
 	await setup.renderOnce();
 	assert(setup.captureCharFrame().includes('已授权登录'));

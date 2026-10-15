@@ -88,15 +88,16 @@ export function ProviderView({agentContext, active, onSubModeChange, onExitToNav
 		[active, adapter]
 	);
 
+	// 菜单预览挂载即刷新登录态（同 McpView）；active 只控制键盘输入与子模式上报。
 	useEffect(() => {
 		const generation = ++authGeneration.current;
-		if (!active || screen.kind !== 'list' || !adapter.refreshAuth) return;
+		if (screen.kind !== 'list' || !adapter.refreshAuth) return;
 		const controller = new AbortController();
 		void adapter.refreshAuth({signal: controller.signal}).then(next => {
 			if (!controller.signal.aborted && generation === authGeneration.current) setDisplay(next);
 		});
 		return () => controller.abort();
-	}, [active, adapter, screen.kind, refreshVersion]);
+	}, [adapter, screen.kind, refreshVersion]);
 
 	useEffect(() => {
 		if (!active) return;
