@@ -401,7 +401,7 @@ async function snapshotCategory(
 				excludedCredentials: [],
 				excluded: []
 			},
-			[...result.warnings, '明文扩展源码可能包含硬编码密钥；文件内容可从备份包直接还原']
+			result.warnings
 		);
 	}
 
