@@ -20,13 +20,12 @@ export type SkillStorageOptions = {
 	/** 项目级 Pi Skills 所在项目根；默认当前工作目录。 */
 	readonly projectDir?: string;
 	readonly tempDir?: string;
-	/** C/X 拓扑事务在 Pi 仍是独立目标时保留 Pi global projection。 */
-	readonly preservePiGlobal?: boolean;
 };
 
 export type SkillTopology = 'claude-only' | 'codex-only' | 'shared';
 export type SkillTopologyDraft = {readonly cc: boolean; readonly cx: boolean};
-export type SkillAgentTargets = Readonly<{readonly cc: boolean; readonly cx: boolean; readonly pi: boolean}>;
+/** Skills 目标：cc = `.claude/skills`；cx = `.agents/skills`（skills CLI 1.7 起 Codex 与 Pi 共用）。 */
+export type SkillAgentTargets = Readonly<{readonly cc: boolean; readonly cx: boolean}>;
 
 export type SkillStorageInspection = {
 	readonly name: string;
@@ -390,4 +389,45 @@ export async function removeSkillTarget(target: SkillDeletionTarget): Promise<vo
 	}
 
 	await rm(target.path, {recursive: true, force: false});
+}
+
+function comparablePath(path: string): string {
+	const resolved = resolve(path);
+	return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+/**
+ * 删除 `~/.pi/agent/skills` 中 skills CLI 1.5.x 遗留、指向同名 `~/.agents/skills` canonical 的链接。
+ * CLI 1.7 起 Pi 直接读取 `.agents`，这些链接冗余，卸载后还会变成断链。只用 lstat + readlink
+ * 判定（断链也要识别），实体目录、指向别处的链接与不安全名称一律不动；单项失败只返回 warning。
+ * names 省略时扫描整个目录。
+ */
+export async function cleanupLegacyPiSkillLinks(options: SkillStorageOptions = {}, names?: readonly string[]): Promise<readonly string[]> {
+	const homeDir = options.homeDir ?? resolveHome();
+	const piRoot = join(homeDir, '.pi', 'agent', 'skills');
+	let candidates = names;
+	if (!candidates) {
+		try {
+			candidates = await readdir(piRoot);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+			return [`无法读取旧 Pi Skills 目录：${error instanceof Error ? error.message : String(error)}`];
+		}
+	}
+
+	const warnings: string[] = [];
+	for (const name of candidates) {
+		if (!isSafeSkillName(name)) continue;
+		const linkPath = join(piRoot, name);
+		try {
+			if (!(await lstatIfPresent(linkPath))?.isSymbolicLink()) continue;
+			const target = resolve(piRoot, await readlink(linkPath));
+			if (comparablePath(target) !== comparablePath(join(homeDir, '.agents', 'skills', name))) continue;
+			await removeSkillTarget({path: linkPath, root: 'pi-global', kind: 'symlink'});
+		} catch (error) {
+			warnings.push(`清理旧 Pi Skill 链接失败：${name}（${error instanceof Error ? error.message : String(error)}）`);
+		}
+	}
+
+	return warnings;
 }

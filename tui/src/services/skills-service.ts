@@ -1,5 +1,3 @@
-import {lstat} from 'node:fs/promises';
-import {join} from 'node:path';
 import type {AgentContext} from '../state/manage-state.js';
 import type {SkillsInstallTarget} from '../state/skills-view-state.js';
 import {
@@ -19,6 +17,7 @@ import {
 	type SkillsSearchOutcome
 } from '../core/skills.js';
 import {
+	cleanupLegacyPiSkillLinks,
 	cleanupSkillSnapshot,
 	createSkillSnapshot,
 	inspectSkillStorage,
@@ -150,15 +149,14 @@ export function planSkillInstallBatches(results: readonly SearchSkillResult[]): 
 	return [...batches.entries()].map(([source, batch]) => ({source, skillNames: batch.skillNames}));
 }
 
-function installAgentsForTargets(targets: readonly SkillsInstallTarget[]): readonly AgentContext[] {
+function installAgentsForTargets(targets: readonly AgentContext[]): readonly AgentContext[] {
 	if (targets.length === 0) {
 		throw new Error('未选择安装目标');
 	}
 
 	const agents: AgentContext[] = [];
 	if (targets.includes('cc')) agents.push('cc');
-	if (targets.includes('cc') || targets.includes('cx') || targets.includes('pi')) agents.push('cx');
-	if (targets.includes('pi')) agents.push('pi');
+	if (targets.includes('cc') || targets.includes('cx')) agents.push('cx');
 	return agents;
 }
 
@@ -172,8 +170,7 @@ function installTargetPlans(targets: readonly SkillsInstallTarget[]): readonly I
 	const plans: InstallTargetPlan[] = [];
 	const sharedTargets: SkillsInstallTarget[] = [];
 	if (targets.includes('cc')) sharedTargets.push('cc');
-	if (targets.includes('cc') || targets.includes('cx') || targets.includes('pi')) sharedTargets.push('cx');
-	if (targets.includes('pi')) sharedTargets.push('pi');
+	if (targets.includes('cc') || targets.includes('cx')) sharedTargets.push('cx');
 	if (sharedTargets.length > 0) {
 		plans.push({targets: sharedTargets, agents: installAgentsForTargets(sharedTargets)});
 	}
@@ -198,7 +195,7 @@ export async function installSearchResultsToTargets(
 
 	const installedItems = options.installed ?? [];
 	if (options.installed) {
-		await validateInstallCandidates(results, installedItems, options.storage, targets);
+		await validateInstallCandidates(results, installedItems, options.storage);
 	}
 
 	const plan = planSkillInstallBatches(results);
@@ -250,19 +247,16 @@ export async function installSearchResultsToTargets(
 /** 选定目标 Agent 映射到将被官方 add 物化的受管根（design §8.1）。 */
 function installTargetRoots(targets: readonly SkillsInstallTarget[]): readonly SkillsStorageRoot[] {
 	const roots: SkillsStorageRoot[] = [];
-	if (targets.includes('cc') || targets.includes('cx') || targets.includes('pi')) roots.push('agents');
+	if (targets.includes('cc') || targets.includes('cx')) roots.push('agents');
 	if (targets.includes('cc')) roots.push('claude');
-	if (targets.includes('pi')) roots.push('pi-global');
 	return roots;
 }
 
 async function validateInstallCandidates(
 	results: readonly SearchSkillResult[],
 	installedItems: readonly InstalledSkillItem[],
-	storageOptions: SkillStorageOptions = {},
-	targets: readonly SkillsInstallTarget[] = []
+	storageOptions: SkillStorageOptions = {}
 ): Promise<void> {
-	const targetRoots = targets.length > 0 ? installTargetPlans(targets).flatMap(plan => installTargetRoots(plan.targets)) : [];
 	for (const result of results) {
 		const identity = searchSkillIdentity(result);
 		if (!identity || installedItems.some(item => item.name === identity.skillName)) {
@@ -273,30 +267,6 @@ async function validateInstallCandidates(
 		if (storage.kind !== 'missing') {
 			throw new Error(`${identity.skillName} 的安装目录已存在但未被检测识别，拒绝自动覆盖`);
 		}
-
-		for (const root of targetRoots) {
-			const targetPath = nativeSkillTargetPath(root, identity.skillName, storageOptions);
-			if (!targetPath) continue;
-			if (await pathExists(targetPath)) {
-				throw new Error(`${identity.skillName} 的 ${root} 安装目录已存在但未被检测识别，拒绝自动覆盖`);
-			}
-		}
-	}
-}
-
-function nativeSkillTargetPath(root: SkillsStorageRoot, name: string, options: SkillStorageOptions): string | undefined {
-	const homeDir = options.homeDir ?? resolveHome();
-	if (root === 'pi-global') return join(homeDir, '.pi', 'agent', 'skills', name);
-	return undefined;
-}
-
-async function pathExists(path: string): Promise<boolean> {
-	try {
-		await lstat(path);
-		return true;
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-		throw error;
 	}
 }
 
@@ -387,12 +357,9 @@ async function verifyAndFinishReplacement(
 ): Promise<SkillsReplacementExecution> {
 	const storageOptions = options.storage ?? {};
 	const postflight = await inspectSkillStorage(prepared.identity.skillName, storageOptions);
-	const piRoot = targets.includes('pi') ? 'pi-global' : undefined;
-	const selectedProjectionReady = piRoot
-		? postflight.canonicalValid && Boolean(await nativeSkillTargetPathExists(piRoot, prepared.identity.skillName, storageOptions))
-		: targets.includes('cc')
-			? postflight.kind === 'shared-symlink' || postflight.kind === 'shared-copy'
-			: postflight.canonicalValid;
+	const selectedProjectionReady = targets.includes('cc')
+		? postflight.kind === 'shared-symlink' || postflight.kind === 'shared-copy'
+		: postflight.canonicalValid;
 	if (!selectedProjectionReady) {
 		return replacementFailure(prepared, postflight.error ?? '所选 Agent 投影未物化，来源替换对账失败');
 	}
@@ -407,15 +374,6 @@ async function verifyAndFinishReplacement(
 	}
 
 	return replacementSuccess(prepared);
-}
-
-async function nativeSkillTargetPathExists(
-	root: Extract<SkillsStorageRoot, 'pi-global'>,
-	name: string,
-	options: SkillStorageOptions
-): Promise<boolean> {
-	const path = nativeSkillTargetPath(root, name, options);
-	return path ? pathExists(path) : false;
 }
 
 async function removeUntargetedClaudeProjection(
@@ -487,7 +445,7 @@ export function listRepoSkillsForView(repo: string, agentContext: AgentContext =
 
 /**
  * 需求③：批量安装某 repo 下多个选中子 skill（单次多 --skill）。
- * 含 cc 或 pi 时按「谁用归谁」补齐 canonical Agent（`[cc, cx]` 或 `[cx, pi]`）触发 symlink；仅 cx 单 agent 直落本体。
+ * 含 cc 时按「谁用归谁」补齐 canonical Agent（`[cc, cx]`）触发 symlink；仅 cx 单 agent 直落本体。
  */
 export function installMultipleSkillsForView(
 	input: {source: string; skillNames: readonly string[]; displayName?: string},
@@ -529,7 +487,7 @@ export type SkillsSideResult = {readonly agentContext: AgentContext; readonly re
 /**
  * 多目标安装（Section 17.2）：一次调用同传全部选中侧的 `--agent` 以触发 symlink。
  *
- * 含 cc 或 pi 时按「谁用归谁」补齐 canonical Agent——skills CLI 单一 skillsDir 会强制 copy，
+ * 含 cc 时按「谁用归谁」补齐 canonical Agent——skills CLI 单一 skillsDir 会强制 copy，
  * 双 agent 令 uniqueDirs.size==2 且不传 --copy → 本体落 `~/.agents/skills`，各 Agent 目录建软链指向本体；
  * 仅 cx 时单 agent 直落本体（universal，无 copy 问题）。UI 中 cx 草稿恒 true，含 cc 必然也含 cx，语义自洽。
  *
@@ -546,7 +504,7 @@ export async function installResultToTargets(
 		return [];
 	}
 
-	// 含 cc 或 pi → 与 canonical Codex 一起触发 symlink；仅 cx → 单 agent 直落本体。
+	// 含 cc → 与 canonical Codex 一起触发 symlink；仅 cx → 单 agent 直落本体。
 	const callAgents = installAgentsForTargets(targets);
 	const callResult = await installSearchResult(result, onProgress, callAgents, exec);
 
@@ -669,6 +627,7 @@ export type SkillsBatchUninstallOutcome = {
  * - 否则按 Item 投影定向删除：每条路径经 `verifySkillDeletionTarget` 验证后 `removeSkillTarget`，
  *   所有权歧义整体拒绝，绝不猜测；
  * - 不做名称级乐观成功；返回 complete / partial / failed，最终可见状态由调用方完整复检决定。
+ * - skills CLI 1.7 不认识 1.5.x 遗留的 `~/.pi/agent/skills/<name>` 链接，两个分支结束后都顺带清理，避免留下断链。
  */
 export async function uninstallSkillInstance(
 	item: InstalledSkillItem,
@@ -676,6 +635,21 @@ export async function uninstallSkillInstance(
 	onProgress?: ProgressCallback,
 	exec?: SkillsExecFn,
 	storageOptions: SkillStorageOptions = {}
+): Promise<SkillsUninstallOutcome> {
+	const outcome = await removeSkillInstanceTargets(item, allItems, onProgress, exec, storageOptions);
+	for (const message of await cleanupLegacyPiSkillLinks(storageOptions, [item.name])) {
+		onProgress?.({level: 'warning', message});
+	}
+
+	return outcome;
+}
+
+async function removeSkillInstanceTargets(
+	item: InstalledSkillItem,
+	allItems: readonly InstalledSkillItem[],
+	onProgress: ProgressCallback | undefined,
+	exec: SkillsExecFn | undefined,
+	storageOptions: SkillStorageOptions
 ): Promise<SkillsUninstallOutcome> {
 	if (officialRemovalIsolated(item, allItems)) {
 		const result = await uninstallSkills([item.name], onProgress, '*', exec);
@@ -687,8 +661,8 @@ export async function uninstallSkillInstance(
 	const homeDir = storageOptions.homeDir ?? resolveHome();
 	const projectDir = storageOptions.projectDir ?? process.cwd();
 	const roots = supportedSkillsRoots(homeDir, projectDir);
-	const ownership = buildSkillsDeletionOwnershipIndex(allItems, homeDir, projectDir);
-	const candidates = skillDeletionCandidatePaths(item, homeDir, projectDir);
+	const ownership = buildSkillsDeletionOwnershipIndex(allItems, homeDir);
+	const candidates = skillDeletionCandidatePaths(item, homeDir);
 	const targets: Array<Awaited<ReturnType<typeof verifySkillDeletionTarget>> & {readonly ok: true}> = [];
 	const preflightFailures: string[] = [];
 	for (const candidate of candidates) {

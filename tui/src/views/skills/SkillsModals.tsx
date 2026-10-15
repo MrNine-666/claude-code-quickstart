@@ -1,7 +1,6 @@
 import React from 'react';
 import {TextAttributes} from '@opentui/core';
 import {Modal, ThemedScrollbox} from '../../components/index.js';
-import {AGENT_CONTEXT_LABELS} from '../../state/manage-state.js';
 import {storageRootsOf, type InstalledSkillItem} from '../../core/skills-installed.js';
 import {
 	agentTargetsOfDraft,
@@ -18,7 +17,7 @@ import {
 } from '../../state/skills-view-state.js';
 import {viewShortcuts} from '../../state/shortcuts.js';
 import {colors} from '../../theme/index.js';
-import {agentTargetsLabel, provenanceLabel, storageRootLabel} from './skills-view-actions.js';
+import {agentTargetsLabel, provenanceLabel, SKILLS_TARGET_LABELS, storageRootLabel} from './skills-view-actions.js';
 
 const SKILLS_MODAL_WIDTH = 56;
 
@@ -85,17 +84,15 @@ export function SkillsUninstallConfirm({view}: {readonly view: SkillsViewState})
 export function SkillsTopologyConfirmModal({view}: {readonly view: SkillsViewState}) {
 	// 确认态读取快照实例，不按 cursor 重查，避免刷新后打到同名另一来源（R2）。
 	const current = pendingInstance(view) ?? selectedInstalled(view);
-	const currentTargets = current ? managedAgentTargetsOfItem(current) : {cc: false, cx: false, pi: false};
+	const currentTargets = current ? managedAgentTargetsOfItem(current) : {cc: false, cx: false};
 	const target = agentTargetsOfDraft(view.installDraft);
 	const addedTargets = {
 		cc: target.cc && !currentTargets.cc,
-		cx: target.cx && !currentTargets.cx,
-		pi: target.pi && !currentTargets.pi
+		cx: target.cx && !currentTargets.cx
 	};
 	const removedTargets = {
 		cc: currentTargets.cc && !target.cc,
-		cx: currentTargets.cx && !target.cx,
-		pi: currentTargets.pi && !target.pi
+		cx: currentTargets.cx && !target.cx
 	};
 	const migrating = Boolean(current && storageRootsOf(current).includes('codex') && (target.cc || target.cx));
 	return (
@@ -125,7 +122,7 @@ export function SkillsTopologyConfirmModal({view}: {readonly view: SkillsViewSta
 export function SkillsSourceReplacementConfirmModal({view}: {readonly view: SkillsViewState}) {
 	const replacements = pendingSourceReplacements(view);
 	const targets = SKILLS_INSTALL_TARGET_ORDER.filter(target => view.installDraft[target])
-		.map(target => skillsInstallTargetLabel(target))
+		.map(target => SKILLS_TARGET_LABELS[target])
 		.join('、');
 	const height = Math.max(3, Math.min(12, replacements.length * 4));
 	return (
@@ -184,7 +181,7 @@ export function SkillsInstallTargetModal({view}: {readonly view: SkillsViewState
 								selectionFg={colors.selectionFg}
 								flexGrow={1}
 							>
-								{`${focused ? '›' : ' '} ${skillsInstallTargetLabel(target)}${readonly ? '（只读）' : ''} `}
+								{`${focused ? '›' : ' '} ${SKILLS_TARGET_LABELS[target]}${readonly ? '（只读）' : ''} `}
 							</text>
 							<text
 								fg={checked ? colors.success : colors.muted}
@@ -213,9 +210,4 @@ function managedTargetReadonly(item: InstalledSkillItem | undefined): boolean {
 
 function managedTargetLabel(checked: boolean): string {
 	return checked ? '● 目标安装' : '○ 目标不安装';
-}
-
-function skillsInstallTargetLabel(target: (typeof SKILLS_INSTALL_TARGET_ORDER)[number]): string {
-	if (target === 'cc') return AGENT_CONTEXT_LABELS.cc;
-	return AGENT_CONTEXT_LABELS[target];
 }

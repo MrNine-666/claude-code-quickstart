@@ -154,7 +154,7 @@ export type SystemSettingsTreeRow =
 	| {readonly key: string; readonly kind: 'category'; readonly tool: TransferTool; readonly category: string; readonly label: string};
 
 const TOOL_LABELS: Readonly<Record<TransferTool, string>> = {
-	ccq: 'CCQ',
+	ccq: '公共模块',
 	cc: 'Claude Code',
 	cx: 'Codex',
 	pi: 'Pi'

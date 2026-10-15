@@ -2,6 +2,7 @@ import {createDetectionRunner, type DetectionRunner, type DetectionRunOptions, t
 import {createInitialDetectionState} from './async-detection.js';
 import {checkComponentUpdates, type UpdateComponent} from '../core/update.js';
 import {detectInstalledSkillItems, type ExecFn, type InstalledSkillItem} from '../core/skills-installed.js';
+import {cleanupLegacyPiSkillLinks} from '../core/skills-storage.js';
 import {detectComponents, type ManagedComponent} from '../core/tools-manage.js';
 
 // 视图检测服务（design D13）：Skills / Tools 首次进入立即渲染 loading，
@@ -23,7 +24,9 @@ export function createSkillsDetectionRunner(
 	return runner;
 }
 
-async function detectSkillsForView(exec?: ExecFn): Promise<readonly InstalledSkillItem[]> {
+async function detectSkillsForView(exec?: ExecFn, onWarning?: (message: string) => void): Promise<readonly InstalledSkillItem[]> {
+	// 进入 Skills 页先清理 skills CLI 1.5.x 遗留的 `~/.pi/agent/skills` 冗余链接；失败只提示，不阻断检测。
+	for (const message of await cleanupLegacyPiSkillLinks()) onWarning?.(message);
 	// Skills 页面只管理全局来源；项目目录（包括 `.pi/skills`）完全不进入检测与投影。
 	const detected = exec ? await detectInstalledSkillItems(exec) : await detectInstalledSkillItems();
 	return detected.flatMap(item => {
@@ -44,9 +47,13 @@ async function detectSkillsForView(exec?: ExecFn): Promise<readonly InstalledSki
 
 // 已安装检测（task 07-28 R1）：唯一事实源是一次不带 `--agent` 的 `skills list -g --json`。
 // 不读 `.skill-lock.json`、不扫 `.claude`/`.agents`/`.codex` 目录补充或修正列表事实。
-// exec 缝仅供测试注入桩。
-export function runSkillsDetection(runner: DetectionRunner<readonly InstalledSkillItem[]>, exec?: ExecFn): Promise<unknown> {
-	return runner.run(() => detectSkillsForView(exec));
+// exec 缝仅供测试注入桩；onWarning 接收旧 Pi 链接清理的非阻断提示。
+export function runSkillsDetection(
+	runner: DetectionRunner<readonly InstalledSkillItem[]>,
+	exec?: ExecFn,
+	onWarning?: (message: string) => void
+): Promise<unknown> {
+	return runner.run(() => detectSkillsForView(exec, onWarning));
 }
 
 // 工具管理检测 runner（Phase 11D）：检测 7 受管组件（ClaudeCode + 6 工具），不聚合 Skills/MCP。

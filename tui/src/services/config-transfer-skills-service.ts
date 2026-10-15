@@ -4,20 +4,20 @@ import {join} from 'node:path';
 
 import {materializePortableTreeEntries} from '../core/config-transfer-sections.js';
 import {type SectionMergeReport, type TransferResult, transferFail, transferOk} from '../core/config-transfer.js';
-import {
-	type ExportedSkill,
-	planSkillsImport,
-	parseSkillsSection,
-	type SkillImportPlanItem,
-	type SkillTransferTarget
-} from '../core/config-transfer-skills.js';
+import {type ExportedSkill, planSkillsImport, parseSkillsSection, type SkillImportPlanItem} from '../core/config-transfer-skills.js';
 import type {ProgressCallback} from '../core/exec.js';
 import type {SkillsExecFn} from '../core/skills-actions.js';
-import {cleanupSkillSnapshot, createSkillSnapshot, type SkillSnapshot, type SkillStorageOptions} from '../core/skills-storage.js';
+import {
+	cleanupSkillSnapshot,
+	createSkillSnapshot,
+	type SkillAgentTargets,
+	type SkillSnapshot,
+	type SkillStorageOptions
+} from '../core/skills-storage.js';
 import {materializeSkillTargetsFromSnapshot} from './skills-adoption.js';
 
 // Skills 导入分类事务 seam（Phase 2 Part B）：把 bundle 内容写入临时 staging，
-// 再经现有 Skills lifecycle 物化目标拓扑。包中未出现的本机 Skill 永不触碰/删除。
+// 再按 planSkillsImport 给出的目标拓扑经现有 Skills lifecycle 物化。包中未出现的本机 Skill 永不触碰/删除。
 // Phase 3 负责分类级快照/回滚；本模块只做内容验证、物化与脱敏报告。
 
 export type SkillMaterializeResult = {readonly ok: boolean; readonly error?: string};
@@ -25,7 +25,7 @@ export type SkillMaterializeResult = {readonly ok: boolean; readonly error?: str
 export type SkillMaterializeFn = (input: {
 	readonly name: string;
 	readonly snapshot: SkillSnapshot;
-	readonly targets: readonly SkillTransferTarget[];
+	readonly targets: SkillAgentTargets;
 }) => Promise<SkillMaterializeResult>;
 
 export type ImportSkillsOptions = SkillStorageOptions & {
@@ -58,20 +58,14 @@ function summarizePlan(items: readonly SkillImportPlanItem[]): SectionMergeRepor
 
 function defaultMaterialize(options: ImportSkillsOptions): SkillMaterializeFn {
 	return async ({name, snapshot, targets}) => {
-		const result = await materializeSkillTargetsFromSnapshot(
-			name,
-			snapshot,
-			{cc: targets.includes('cc'), cx: targets.includes('cx'), pi: targets.includes('pi')},
-			options.onProgress,
-			options.exec,
-			options
-		);
+		const result = await materializeSkillTargetsFromSnapshot(name, snapshot, targets, options.onProgress, options.exec, options);
 		return {ok: result.success, ...(result.error ? {error: result.error} : {})};
 	};
 }
 
 async function materializeSkill(
 	skill: ExportedSkill,
+	targets: SkillAgentTargets,
 	materialize: SkillMaterializeFn,
 	options: ImportSkillsOptions
 ): Promise<TransferResult<void>> {
@@ -89,7 +83,7 @@ async function materializeSkill(
 			homeDir: options.homeDir,
 			tempDir: options.tempDir
 		});
-		const result = await materialize({name: skill.name, snapshot, targets: skill.targets});
+		const result = await materialize({name: skill.name, snapshot, targets});
 		if (!result.ok) {
 			// 失败时保留 lifecycle 快照供 Phase 3 回滚诊断。
 			return transferFail('io', `Skill 导入失败：${skill.name}`);
@@ -105,7 +99,7 @@ async function materializeSkill(
 }
 
 /**
- * 合并导入 Skills 分类：只新增/覆盖包内 Skill，恢复 bundle 记录的目标拓扑。
+ * 合并导入 Skills 分类：只新增/覆盖包内 Skill，另一侧（`.agents` / `.claude`）只保留或建立共享，绝不删除。
  * `dryRun` 只返回 add/replace/unchanged/blocked 计数，零写盘。
  */
 export async function importSkillsSection(data: unknown, options: ImportSkillsOptions = {}): Promise<TransferResult<SectionMergeReport>> {
@@ -121,7 +115,7 @@ export async function importSkillsSection(data: unknown, options: ImportSkillsOp
 
 	const blocked = plan.data.items.filter(item => item.state === 'blocked');
 	if (blocked.length > 0) {
-		return transferFail('conflict', `本机同名 Skill 损坏，已停止导入：${blocked.map(item => item.name).join('、')}`);
+		return transferFail('conflict', `本机同名 Skill 冲突或损坏，已停止导入：${blocked.map(item => item.name).join('、')}`);
 	}
 
 	const report = summarizePlan(plan.data.items);
@@ -134,16 +128,12 @@ export async function importSkillsSection(data: unknown, options: ImportSkillsOp
 	const warnings = [...parsed.warnings];
 
 	for (const item of plan.data.items) {
-		if (item.state === 'unchanged') {
-			continue;
-		}
-
 		const skill = byId.get(item.id);
-		if (!skill) {
+		if (!skill || !item.targets) {
 			continue;
 		}
 
-		const result = await materializeSkill(skill, materialize, options);
+		const result = await materializeSkill(skill, item.targets, materialize, options);
 		if (!result.ok) {
 			return result;
 		}

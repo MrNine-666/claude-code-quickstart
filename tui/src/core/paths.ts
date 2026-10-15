@@ -136,11 +136,6 @@ export function piAgentsPath(): string {
 	return join(piAgentDir(), 'AGENTS.md');
 }
 
-/** Pi 全局 Skills 目录 `~/.pi/agent/skills`。 */
-export function piGlobalSkillsDir(): string {
-	return join(piAgentDir(), 'skills');
-}
-
 /** Pi 全局 Extensions 目录 `~/.pi/agent/extensions`（调用时解析，供导入导出实际内容快照）。 */
 export function piExtensionsDir(): string {
 	return join(piAgentDir(), 'extensions');

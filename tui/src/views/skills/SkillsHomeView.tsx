@@ -3,7 +3,6 @@ import {TextAttributes} from '@opentui/core';
 import {Checkbox, ListEmptyState, RadioField, ScrollList, SingleLineInput} from '../../components/index.js';
 import {isSafeHttpUrl} from '../../core/open-url.js';
 import {itemAvailableOn} from '../../core/skills-installed.js';
-import {AGENT_CONTEXT_LABELS} from '../../state/manage-state.js';
 import {
 	filteredInstalled,
 	installedSourceLabel,
@@ -12,6 +11,7 @@ import {
 	type SkillsViewState
 } from '../../state/skills-view-state.js';
 import {colors} from '../../theme/index.js';
+import {SKILLS_TARGET_LABELS} from './skills-view-actions.js';
 import type {InstalledSkillItem, SkillsViewDispatch} from './skills-view-types.js';
 
 const HOME_LAYOUT_OPTIONS = [
@@ -99,11 +99,9 @@ function InstalledSkillBody({skill}: {readonly skill: InstalledSkillItem}) {
 		<box flexDirection="column">
 			<SourceUrlRow skill={skill} />
 			<box flexDirection="row" height={1} overflow="hidden">
-				<StateBadge label={AGENT_CONTEXT_LABELS.cc} installed={itemAvailableOn(skill, 'cc')} />
+				<StateBadge label={SKILLS_TARGET_LABELS.cc} installed={itemAvailableOn(skill, 'cc')} />
 				<text fg={colors.muted}>{'  '}</text>
-				<StateBadge label={AGENT_CONTEXT_LABELS.cx} installed={itemAvailableOn(skill, 'cx')} />
-				<text fg={colors.muted}>{'  '}</text>
-				<StateBadge label={AGENT_CONTEXT_LABELS.pi} installed={itemAvailableOn(skill, 'pi')} />
+				<StateBadge label={SKILLS_TARGET_LABELS.cx} installed={itemAvailableOn(skill, 'cx')} />
 			</box>
 		</box>
 	);

@@ -175,11 +175,7 @@ function confirmedInstallKeys(
 		if (!current) return [];
 
 		// 目标 Agent 侧必须全部出现在刷新后的 agents 并集里。
-		const targetReady = targets.every(target =>
-			target === 'pi'
-				? itemAvailableOn(current, 'pi') && current.projections.some(projection => projection.root === 'pi-global')
-				: itemAvailableOn(current, target)
-		);
+		const targetReady = targets.every(target => itemAvailableOn(current, target));
 		if (!targetReady) return [];
 
 		// 覆盖安装（同名异源）额外要求 replacement 事务成功。
@@ -204,8 +200,7 @@ export function runTopologyTransitionAction(
 	// 确认后只认已快照的逻辑实例，避免刷新排序把迁移打到同名另一来源（R2/R6）。
 	const current = pendingInstance(view) ?? selectedInstalled(view);
 	const target = agentTargetsOfDraft(view.installDraft);
-	const targetCx = targetTopologyOfDraft({cc: target.cc, cx: target.cx});
-	if (!current || (!target.cc && !target.cx && !target.pi)) {
+	if (!current || (!target.cc && !target.cx)) {
 		dispatch({type: 'action-failed', error: '当前 Skill 或目标 Agent 集合无效'});
 		return;
 	}
@@ -218,13 +213,7 @@ export function runTopologyTransitionAction(
 	dispatch({type: 'confirm'});
 	void (async () => {
 		try {
-			const result = services.transitionAgents
-				? await services.transitionAgents(current, target, progressSink(dispatch), signal)
-				: targetCx === 'empty'
-					? (() => {
-							throw new Error('当前测试服务不支持 Pi-only 目标');
-						})()
-					: await services.transitionTopology(current, targetCx, progressSink(dispatch), signal);
+			const result = await services.transitionAgents(current, target, progressSink(dispatch), signal);
 			throwIfAborted(signal);
 			await finishTopologyLifecycle(result, cache, dispatch, current, target, signal);
 		} catch (error) {
@@ -295,7 +284,7 @@ async function reconcileManagedLifecycle(
 		const current = installed.find((item: InstalledSkillItem) => item.id === feedback.expected!.instanceId);
 		const actual = current ? managedAgentTargetsOfItem(current) : undefined;
 		const expected = feedback.expected.target;
-		if (!actual || actual.cc !== expected.cc || actual.cx !== expected.cx || actual.pi !== expected.pi) {
+		if (!actual || actual.cc !== expected.cc || actual.cx !== expected.cx) {
 			dispatch({type: 'action-failed', error: '最终检测未确认目标 Agent 集合'});
 			return;
 		}
@@ -432,8 +421,11 @@ export function topologyLabel(topology: SkillTopology | undefined): string {
 				: '部分完成';
 }
 
+/** Skills 模块目标标签：skills CLI 1.7 起 Pi 与 Codex 共用 `.agents`，合并为一个目标（全局 Agent 标签不变）。 */
+export const SKILLS_TARGET_LABELS: Readonly<Record<SkillsInstallTarget, string>> = {cc: AGENT_CONTEXT_LABELS.cc, cx: 'Codex / Pi'};
+
 export function agentTargetsLabel(target: SkillAgentTargets): string {
-	const labels = (['cc', 'cx', 'pi'] as const).filter(agent => target[agent]).map(agent => AGENT_CONTEXT_LABELS[agent]);
+	const labels = SKILLS_INSTALL_TARGET_ORDER.filter(agent => target[agent]).map(agent => SKILLS_TARGET_LABELS[agent]);
 	return labels.length > 0 ? labels.join('、') : '无目标';
 }
 

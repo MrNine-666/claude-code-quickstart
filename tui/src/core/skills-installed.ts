@@ -441,7 +441,7 @@ export function buildSkillsOwnershipIndex(items: readonly InstalledSkillItem[]):
  * Claude Code 只对应 `.claude`；Codex 的物理根必须由当前 JSON path 已明确为
  * `.agents` 或 `.codex` 后才能推导，绝不只凭 badge 猜测二者之一。
  */
-export function skillDeletionCandidatePaths(item: InstalledSkillItem, homeDir: string, projectDir = process.cwd()): readonly string[] {
+export function skillDeletionCandidatePaths(item: InstalledSkillItem, homeDir: string): readonly string[] {
 	const roots = storageRootsOf(item);
 	const candidates = item.projections.map(projection => projection.path);
 	if (itemAvailableOn(item, 'cc')) {
@@ -450,10 +450,6 @@ export function skillDeletionCandidatePaths(item: InstalledSkillItem, homeDir: s
 	if (itemAvailableOn(item, 'cx')) {
 		if (roots.includes('agents')) candidates.push(join(homeDir, '.agents', 'skills', item.name));
 		if (roots.includes('codex')) candidates.push(join(homeDir, '.codex', 'skills', item.name));
-	}
-	if (itemAvailableOn(item, 'pi')) {
-		if (roots.includes('pi-global')) candidates.push(join(homeDir, '.pi', 'agent', 'skills', item.name));
-		if (roots.includes('pi-project')) candidates.push(join(projectDir, '.pi', 'skills', item.name));
 	}
 
 	const seen = new Set<string>();
@@ -469,14 +465,10 @@ export function skillDeletionCandidatePaths(item: InstalledSkillItem, homeDir: s
  * 删除预检使用的所有权索引必须包含可证明的标准 Agent 投影；否则一个 Item 的
  * `.claude` badge 与另一来源声明的 `.claude` path 不会形成歧义，可能误删后者。
  */
-export function buildSkillsDeletionOwnershipIndex(
-	items: readonly InstalledSkillItem[],
-	homeDir: string,
-	projectDir = process.cwd()
-): SkillsOwnershipIndex {
+export function buildSkillsDeletionOwnershipIndex(items: readonly InstalledSkillItem[], homeDir: string): SkillsOwnershipIndex {
 	const expanded = items.map(item => ({
 		...item,
-		projections: skillDeletionCandidatePaths(item, homeDir, projectDir).map(path => ({
+		projections: skillDeletionCandidatePaths(item, homeDir).map(path => ({
 			path,
 			root: classifySkillsStorageRoot(path),
 			scope: 'global',
@@ -491,7 +483,8 @@ export function buildSkillsDeletionOwnershipIndex(
 export const SKILL_AGENT_DISPLAY_TO_CONTEXT: Readonly<Record<string, AgentContext>> = {
 	'Claude Code': 'cc',
 	Codex: 'cx',
-	Pi: 'pi'
+	// skills CLI 1.7 起 Pi 与 Codex 共用 `.agents`；agents 只列已检测安装的 Agent，任一出现即为 Codex / Pi 可用。
+	Pi: 'cx'
 };
 
 /** 某逻辑实例是否在给定 Agent 上可用。只读 `agents`，不看 path、不查磁盘。 */
@@ -524,13 +517,11 @@ export function currentTopologyOfItem(item: InstalledSkillItem): SkillTopology |
 }
 
 /**
- * 旧的 Codex `.codex` 与 Pi 全局 native `~/.pi/agent/skills` 实例，即使目标侧与当前一致，
- * 也必须迁移到受管拓扑，不是 no-op。二者都不是 `.agents` canonical，故任一受管目标都需要
- * 把本体收编；仅依据 JSON path 分类，不扫描用户目录。
+ * 旧的 Codex `.codex` 实例，即使目标侧与当前一致，也必须迁移到受管拓扑，不是 no-op。
+ * 它不是 `.agents` canonical，故任一受管目标都需要把本体收编；仅依据 JSON path 分类，不扫描用户目录。
  */
 export function needsManagedMigration(item: InstalledSkillItem, target: SkillTopology): boolean {
-	const roots = storageRootsOf(item);
-	if (!roots.includes('codex') && !roots.includes('pi-global')) return false;
+	if (!storageRootsOf(item).includes('codex')) return false;
 	return target === 'claude-only' || target === 'codex-only' || target === 'shared';
 }
 

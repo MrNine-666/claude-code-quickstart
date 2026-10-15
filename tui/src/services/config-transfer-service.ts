@@ -176,7 +176,7 @@ export function createConfigTransferService(deps: ConfigTransferServiceDeps = {}
 		if (JSON.stringify(current.data.sections) !== JSON.stringify(prepared.sections)) {
 			return transferFail('conflict', '本机配置已变化，请重新选择导出内容');
 		}
-		// Skills 会随目标 Agent 重新物化拓扑，不能直接从全选的 sections 里按首个工具过滤。
+		// 按最终选择重新规划，summary、凭据标记与 warnings 只对应所选分类。
 		const selected = await planConfigTransferExport({categories: request.categories, includeCredentials: true}, deps.exportOptions);
 		if (!selected.ok) return selected;
 		if (selected.data.sections.length === 0) return transferFail('validation', '没有可导出的配置内容');

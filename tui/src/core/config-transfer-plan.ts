@@ -36,10 +36,17 @@ import {
 	snapshotRulesSection,
 	snapshotSettingsSection
 } from './config-transfer-sections.js';
-import {planSkillsImport, type SkillsImportPlan, type SkillsSnapshotOptions, snapshotSkillsSection} from './config-transfer-skills.js';
+import {
+	LEGACY_SKILLS_SECTION_MESSAGE,
+	planSkillsImport,
+	type SkillsImportPlan,
+	type SkillsSnapshotOptions,
+	snapshotSkillsSection
+} from './config-transfer-skills.js';
 import {
 	type BundlePayload,
 	type BundleSection,
+	isRetiredTransferCategory,
 	type SectionMergeReport,
 	type TransferImportMode,
 	TRANSFER_EXECUTION_ORDER,
@@ -60,7 +67,6 @@ import {
 	piAgentsPath,
 	piAuthJsonPath,
 	piExtensionsDir,
-	piGlobalSkillsDir,
 	piMcpAdapterOverridesPath,
 	piMcpConfigPath,
 	piModelsJsonPath,
@@ -123,13 +129,11 @@ export type ConfigTransferExportPlan = {
 };
 
 export type ConfigTransferExportOptions = {
-	/** Skills 快照的 home/staging 注入；targets 由选择推导，不允许覆盖。 */
-	readonly skills?: Omit<SkillsSnapshotOptions, 'targets'>;
+	/** Skills 快照的 home/staging 注入；root 由分类决定，不允许覆盖。 */
+	readonly skills?: Omit<SkillsSnapshotOptions, 'root'>;
 	/** 仅真实导出：先把 runtime-only MCP id 补入契约（只补缺）；清单读取保持零写盘。 */
 	readonly backfillMcp?: boolean;
 };
-
-const SKILL_TRANSFER_ORDER = ['cc', 'cx', 'pi'] as const;
 
 function identityKey(tool: string, category: string): string {
 	return `${tool}:${category}`;
@@ -215,8 +219,22 @@ function snapshotResult(
 async function snapshotCategory(
 	tool: TransferTool,
 	category: string,
-	includeCredentials: boolean
+	includeCredentials: boolean,
+	options: ConfigTransferExportOptions
 ): Promise<TransferResult<CategorySnapshot>> {
+	if (category === 'skills' && (tool === 'ccq' || tool === 'cc')) {
+		// 公共模块 Skills = `~/.agents/skills`（Codex / Pi 共用）；Claude Code Skills = `~/.claude/skills`。
+		const result = await snapshotSkillsSection({...options.skills, root: tool === 'ccq' ? 'agents' : 'claude'});
+		if (!result.ok) return result;
+		return snapshotResult(
+			tool,
+			category,
+			result.data,
+			{itemCount: result.data.skills.length, containsCredentials: false, excludedCredentials: [], excluded: []},
+			result.warnings
+		);
+	}
+
 	if (tool === 'ccq' && category === 'mcp-library') {
 		const result = snapshotMcpLibrarySection({includeCredentials});
 		if (!result.ok) {
@@ -413,42 +431,8 @@ export async function planConfigTransferExport(
 			: [];
 	let containsCredentials = false;
 
-	const skillTargets = SKILL_TRANSFER_ORDER.filter(tool =>
-		identities.some(identity => identity.category === 'skills' && identity.tool === tool)
-	);
-	if (skillTargets.length > 0) {
-		// 设计 5.5：UI 按工具显示 Skills，但导出只产生一个去重 snapshot，并在 section 中记录全部目标拓扑。
-		// ponytail: 合并 section 挂在首个目标工具 key 下；需要按工具分别取舍时再拆分 section schema。
-		const snapshot = await snapshotSkillsSection({...options.skills, targets: skillTargets});
-		if (!snapshot.ok) {
-			return snapshot;
-		}
-
-		const primarySkillTool = skillTargets[0];
-		if (!primarySkillTool) {
-			return transferFail('validation', '未选择任何 Skills 导出目标');
-		}
-
-		const section: BundleSection = {tool: primarySkillTool, category: 'skills', data: {skills: snapshot.data.skills}};
-		sections.push(section);
-		summaries.push({
-			tool: section.tool,
-			category: 'skills',
-			itemCount: snapshot.data.skills.length,
-			containsCredentials: false,
-			excludedCredentials: [],
-			excluded: [],
-			warnings: snapshot.warnings
-		});
-		warnings.push(...snapshot.warnings);
-	}
-
 	for (const identity of identities) {
-		if (identity.category === 'skills') {
-			continue;
-		}
-
-		const result = await snapshotCategory(identity.tool, identity.category, selection.includeCredentials);
+		const result = await snapshotCategory(identity.tool, identity.category, selection.includeCredentials, options);
 		if (!result.ok) {
 			return result;
 		}
@@ -718,6 +702,21 @@ export async function planConfigTransferImport(
 		warnings.push(...preview.data.report.warnings);
 	}
 
+	// 旧包的退役分类只展示为阻断（只能跳过）并给出原因，不影响其它分类预览与导入。
+	for (const section of payload.sections) {
+		if (!isRetiredTransferCategory(section.tool, section.category)) continue;
+		items.push({
+			tool: section.tool,
+			category: section.category,
+			status: 'blocked',
+			defaultAction: 'skip',
+			counts: {added: 0, replaced: 0, unchanged: 0, blocked: 1},
+			identities: {added: [], replaced: [], unchanged: [], skipped: []},
+			warnings: [],
+			reason: LEGACY_SKILLS_SECTION_MESSAGE
+		});
+	}
+
 	return transferOk({containsCredentials: payload.containsCredentials, items, warnings});
 }
 
@@ -770,9 +769,8 @@ async function runCategoryImport(
 			return dryRun
 				? importExtensionsSection(data, {dryRun, packageInstalled: options.piPackages?.packageInstalled})
 				: importExtensionsWithPackages(data, options.piPackages);
+		case 'ccq:skills':
 		case 'cc:skills':
-		case 'cx:skills':
-		case 'pi:skills':
 			return importSkillsSection(data, {...options.skills, dryRun});
 		default:
 			return transferFail('validation', '不支持导入该配置分类');
@@ -833,7 +831,8 @@ function categoryTargetPaths(tool: TransferTool, category: string, data: unknown
 
 	if (category === 'skills') {
 		// ponytail: 整个 skills 根目录进事务快照；技能树过大时改为按 Skill 名定向快照。
-		return [join(claudeDir(), 'skills'), join(resolveHome(), '.agents', 'skills'), piGlobalSkillsDir()];
+		// 两个分类都可能把 Skill 物化为 shared，统一快照 `.claude` 与 `.agents` 两侧。
+		return [join(claudeDir(), 'skills'), join(resolveHome(), '.agents', 'skills')];
 	}
 
 	if (category === 'extensions') {

@@ -22,26 +22,25 @@ import {targetTopologyOfDraft, type SkillAgentTargets} from '../core/skills-stor
 export type SkillsViewMode =
 	| 'list' // 列表页：本地过滤 + flat/grouped 单列多选维护
 	| 'install' // 安装页：远程搜索框 + 扁平 skill 列表（默认 TOP 20）
-	| 'select-install-target' // 新安装目标 Modal：Claude Code/Pi 可切 / Codex canonical 必选
-	| 'manage-inject' // 存量管理 Modal：独立编辑 Claude Code / Codex / Pi
-	| 'confirm-topology-change' // 三 Agent 目标集合任意非 no-op 切换的统一强确认
+	| 'select-install-target' // 新安装目标 Modal：Claude Code 可切 / Codex / Pi canonical 必选
+	| 'manage-inject' // 存量管理 Modal：独立编辑 Claude Code 与 Codex / Pi
+	| 'confirm-topology-change' // 目标集合任意非 no-op 切换的统一强确认
 	| 'confirm-source-replacement' // 同名不同源覆盖 canonical/lock 的强确认
 	| 'confirm-uninstall' // 实例感知的批量卸载确认（全部 Agent + 可证明投影）
 	| 'busy'; // 安装/更新/卸载进行中（远程搜索走 inline，不进 busy）
 
-// 安装草稿：cc/cx/pi 是三个可见的全局 Agent 目标。`.agents/skills` 是 canonical，
-// Claude Code 与 Pi 在选择时通过软链接接入；当前页面完全忽略项目目录 Skills。
+// 安装草稿：cc 与 cx 两个可见的全局目标。`.agents/skills` 是 canonical，Codex 与 Pi（skills CLI 1.7
+// 起为 universal agent）都直接读取；Claude Code 选择时通过软链接接入；当前页面完全忽略项目目录 Skills。
 export type InstallDraft = Readonly<{
 	readonly cc: boolean;
 	readonly cx: boolean;
-	readonly pi: boolean;
 }>;
 
 /** Skills 页的可见目标顺序；项目目录 Skills 不属于当前页面的目标集合。 */
-export type SkillsInstallTarget = AgentContext;
-export const SKILLS_INSTALL_TARGET_ORDER: readonly AgentContext[] = ['cc', 'cx', 'pi'];
-/** 存量管理按官方 agents 目标独立维护 Claude Code、Codex 与 Pi。 */
-export const SKILLS_MANAGE_TARGET_ORDER: readonly AgentContext[] = ['cc', 'cx', 'pi'];
+export type SkillsInstallTarget = keyof InstallDraft;
+export const SKILLS_INSTALL_TARGET_ORDER: readonly SkillsInstallTarget[] = ['cc', 'cx'];
+/** 存量管理按官方 agents 目标维护 Claude Code 与 Codex / Pi。 */
+export const SKILLS_MANAGE_TARGET_ORDER: readonly SkillsInstallTarget[] = ['cc', 'cx'];
 
 export type SearchInstallStatus =
 	| 'available'
@@ -69,9 +68,8 @@ export type SourceReplacementItem = {
 	readonly projections: readonly SkillProjection[];
 };
 
-// 安装页默认草稿：三个 Agent 目标都装（cc symlink + cx 本体 + Pi 全局 native）。
-// Pi 与 cx 共享 `.agents` canonical，默认勾选不改变 C/X 拓扑，只多物化 `~/.pi/agent/skills` 投影。
-const DEFAULT_INSTALL_DRAFT: InstallDraft = {cc: true, cx: true, pi: true};
+// 安装页默认草稿：两个目标都装（cc symlink + cx 本体，Pi 直接读取 `.agents`）。
+const DEFAULT_INSTALL_DRAFT: InstallDraft = {cc: true, cx: true};
 
 export type SkillsHomeLayout = 'flat' | 'grouped';
 
@@ -286,20 +284,14 @@ export function pendingInstance(state: SkillsViewState): InstalledSkillItem | un
 }
 
 export function agentTargetsOfDraft(draft: InstallDraft): SkillAgentTargets {
-	return {cc: draft.cc, cx: draft.cx, pi: draft.pi};
-}
-
-function cxTopologyOfAgentTargets(target: SkillAgentTargets): ReturnType<typeof targetTopologyOfDraft> {
-	if (target.pi) return target.cc ? 'shared' : 'codex-only';
-	return targetTopologyOfDraft({cc: target.cc, cx: target.cx});
+	return {cc: draft.cc, cx: draft.cx};
 }
 
 /** 管理页 Agent 目标与列表卡片保持同一事实来源：只读 skills list 的 agents。 */
 export function managedAgentTargetsOfItem(item: InstalledSkillItem): SkillAgentTargets {
 	return {
 		cc: itemAvailableOn(item, 'cc'),
-		cx: itemAvailableOn(item, 'cx'),
-		pi: itemAvailableOn(item, 'pi')
+		cx: itemAvailableOn(item, 'cx')
 	};
 }
 
@@ -433,17 +425,12 @@ function sourceMatchKey(name: string, sourceIdentity: string): string {
 /** 安装草稿映射到受管存储根；新安装绝不以 `.codex` 为目标（R4）。 */
 export function targetRootsOfDraft(draft: InstallDraft): readonly SkillsStorageRoot[] {
 	const roots: SkillsStorageRoot[] = [];
-	if (draft.cx || draft.pi) {
+	if (draft.cx) {
 		roots.push('agents');
 	}
 
 	if (draft.cc) {
 		roots.push('claude');
-	}
-
-	// Codex 写入 `.agents/skills`；Pi 与 Claude Code 一样通过软链接接入 canonical。
-	if (draft.pi) {
-		roots.push('pi-global');
 	}
 
 	return roots;
@@ -578,7 +565,7 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				return {...state, errorText: '没有可选的 skill'};
 			}
 
-			// 安装页 Enter → 安装目标 Modal，草稿预置 C/X shared 与 Pi 全局；三者均可取消。
+			// 安装页 Enter → 安装目标 Modal，草稿预置 C/X shared。
 			return {
 				...state,
 				mode: 'select-install-target',
@@ -609,11 +596,7 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				...state,
 				mode: 'manage-inject',
 				pendingInstanceId: current.id,
-				installDraft: {
-					cc: itemAvailableOn(current, 'cc'),
-					cx: itemAvailableOn(current, 'cx'),
-					pi: managedAgentTargetsOfItem(current).pi
-				},
+				installDraft: managedAgentTargetsOfItem(current),
 				targetIndex: 0,
 				errorText: undefined
 			};
@@ -630,25 +613,12 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 			}
 
 			const target = agentTargetsOfDraft(state.installDraft);
-			if (!target.cc && !target.cx && !target.pi) {
+			const targetTopology = targetTopologyOfDraft(target);
+			if (targetTopology === 'empty') {
 				return {...state, errorText: '至少保留一个安装目标；如需全部删除请取消后按 d 卸载'};
 			}
 
-			const targetCx = cxTopologyOfAgentTargets(target);
-			const currentTargets = managedAgentTargetsOfItem(current);
-			const currentCx = currentTopologyOfItem(current);
-			const currentForCx = target.pi
-				? {
-						...current,
-						agents: current.agents.filter(agent => agent !== 'Pi'),
-						projections: current.projections.filter(projection => projection.root !== 'pi-global')
-					}
-				: current;
-			const cxReady =
-				targetCx === 'empty'
-					? !currentTargets.cc && !currentTargets.cx
-					: currentCx === targetCx && !needsManagedMigration(currentForCx, targetCx);
-			if (cxReady && currentTargets.pi === target.pi) {
+			if (currentTopologyOfItem(current) === targetTopology && !needsManagedMigration(current, targetTopology)) {
 				return {...state, mode: 'list', pendingInstanceId: undefined, errorText: undefined};
 			}
 
@@ -665,7 +635,7 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				return state;
 			}
 
-			// ↑/↓ 选侧首尾相接（loop）；安装与管理都展示三种 Agent。
+			// ↑/↓ 选侧首尾相接（loop）；安装与管理都展示两个目标。
 			const count = (state.mode === 'manage-inject' ? SKILLS_MANAGE_TARGET_ORDER : SKILLS_INSTALL_TARGET_ORDER).length;
 			return {...state, targetIndex: (state.targetIndex + action.delta + count) % count};
 		}
@@ -675,7 +645,7 @@ export function reduceSkillsViewState(state: SkillsViewState, action: SkillsView
 				return state;
 			}
 
-			// 新装默认物化 C/X shared；Pi 以及管理页三侧均可独立切换。
+			// 新装默认物化 C/X shared；管理页两个目标均可独立切换。
 			const targetOrder = state.mode === 'manage-inject' ? SKILLS_MANAGE_TARGET_ORDER : SKILLS_INSTALL_TARGET_ORDER;
 			const target = targetOrder[state.targetIndex];
 			if (!target) {

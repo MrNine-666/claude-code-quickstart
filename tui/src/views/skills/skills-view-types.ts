@@ -49,12 +49,6 @@ export type SkillsViewServices = {
 		confirmedKeys: readonly string[]
 	) => Promise<void>;
 	// 迁移/Agent 切换接收完整 Item 快照，而不是名称：同名异源必须能被区分（R6）。
-	readonly transitionTopology: (
-		item: InstalledSkillItem,
-		target: SkillTopology,
-		onProgress?: ProgressCallback,
-		signal?: AbortSignal
-	) => Promise<SkillsAdoptionResult>;
 	readonly transitionAgents: (
 		item: InstalledSkillItem,
 		target: SkillAgentTargets,

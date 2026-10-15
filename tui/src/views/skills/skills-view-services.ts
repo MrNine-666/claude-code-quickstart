@@ -1,5 +1,6 @@
+import {toast} from '../../components/index.js';
 import {bindExecSignal} from '../../core/exec.js';
-import {transitionSkillAgents, transitionSkillTopology} from '../../services/skills-adoption.js';
+import {transitionSkillAgents} from '../../services/skills-adoption.js';
 import {
 	cleanupConfirmedReplacementSnapshots,
 	installSearchResultsToTargets,
@@ -18,8 +19,6 @@ export function createSkillsViewServices(): SkillsViewServices {
 				...(installed ? {installed} : {})
 			}),
 		finalizeReplacementSnapshots: (replacements, confirmedKeys) => cleanupConfirmedReplacementSnapshots(replacements, confirmedKeys),
-		transitionTopology: (item, target, onProgress, signal) =>
-			transitionSkillTopology(item, target, onProgress, signal ? bindExecSignal(signal) : undefined),
 		transitionAgents: (item, target, onProgress, signal) =>
 			transitionSkillAgents(item, target, onProgress, signal ? bindExecSignal(signal) : undefined),
 		updateInstances: (items, onProgress, signal) =>
@@ -27,6 +26,6 @@ export function createSkillsViewServices(): SkillsViewServices {
 		uninstallInstances: (items, allItems, onProgress, signal) =>
 			uninstallSkillInstances(items, allItems, onProgress, signal ? bindExecSignal(signal) : undefined),
 		createDetectionRunner: onChange => createSkillsDetectionRunner(onChange),
-		runDetection: runner => runSkillsDetection(runner)
+		runDetection: runner => runSkillsDetection(runner, undefined, message => toast.warning(message))
 	};
 }

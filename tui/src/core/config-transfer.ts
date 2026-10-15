@@ -104,9 +104,9 @@ export const TRANSFER_CATEGORY_REGISTRY: readonly TransferCategoryDefinition[] =
 	{tool: 'cc', category: 'mcp', label: 'MCP', phase: 'mcp'},
 	{tool: 'cx', category: 'mcp', label: 'MCP', phase: 'mcp'},
 	{tool: 'pi', category: 'mcp', label: 'MCP', phase: 'mcp'},
+	// 先写 `~/.agents/skills` canonical，再写 Claude Code 投影。
+	{tool: 'ccq', category: 'skills', label: 'Skills', phase: 'skills'},
 	{tool: 'cc', category: 'skills', label: 'Skills', phase: 'skills'},
-	{tool: 'cx', category: 'skills', label: 'Skills', phase: 'skills'},
-	{tool: 'pi', category: 'skills', label: 'Skills', phase: 'skills'},
 	{tool: 'pi', category: 'extensions', label: 'Extensions', phase: 'extensions'}
 ];
 
@@ -128,6 +128,13 @@ export function isTransferTool(value: unknown): value is TransferTool {
 
 export function isTransferCategory(tool: unknown, category: unknown): category is string {
 	return typeof tool === 'string' && typeof category === 'string' && CATEGORY_KEYS.has(categoryKey(tool, category));
+}
+
+/** 已退役分类（skills CLI 1.7 起 Codex / Pi 共用 `.agents`）：旧包仍可解析，导入时跳过并提示。 */
+const RETIRED_CATEGORY_KEYS = new Set([categoryKey('cx', 'skills'), categoryKey('pi', 'skills')]);
+
+export function isRetiredTransferCategory(tool: unknown, category: unknown): category is string {
+	return typeof tool === 'string' && typeof category === 'string' && RETIRED_CATEGORY_KEYS.has(categoryKey(tool, category));
 }
 
 export function transferCategoryDefinition(tool: TransferTool, category: string): TransferCategoryDefinition | undefined {
@@ -251,7 +258,11 @@ export function parseBundlePayload(input: unknown): TransferResult<BundlePayload
 	const sections: BundleSection[] = [];
 	const seen = new Set<string>();
 	for (const raw of input.sections) {
-		if (!isRecord(raw) || !isTransferTool(raw.tool) || !isTransferCategory(raw.tool, raw.category)) {
+		if (
+			!isRecord(raw) ||
+			!isTransferTool(raw.tool) ||
+			!(isTransferCategory(raw.tool, raw.category) || isRetiredTransferCategory(raw.tool, raw.category))
+		) {
 			return fail('validation', '导出包包含未知的工具或配置分类');
 		}
 
