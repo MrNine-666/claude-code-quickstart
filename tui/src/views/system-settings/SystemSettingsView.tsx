@@ -38,6 +38,8 @@ export type SystemSettingsViewProps = {
 	/** 仅在系统设置文件成功保存后同步 App 中的运行态。 */
 	readonly onAutoUpdateChange?: (value: boolean) => void;
 	readonly onSettingsImported?: () => void;
+	/** Skills 分类已开始写入（完成或失败回滚）后刷新 Skills 检测缓存，仍由官方 list 决定最终事实。 */
+	readonly onSkillsImported?: () => void;
 	readonly onSubModeChange?: (subMode: string) => void;
 	readonly onBusyStateChange?: (state: BusyOverlayState | null) => void;
 	readonly onExitToNav: () => void;
@@ -51,6 +53,7 @@ export function SystemSettingsView({
 	autoUpdateError,
 	onAutoUpdateChange,
 	onSettingsImported,
+	onSkillsImported,
 	onSubModeChange,
 	onBusyStateChange,
 	onExitToNav
@@ -152,6 +155,12 @@ export function SystemSettingsView({
 			onSettingsImported?.();
 			loadPreferences();
 		}
+		if (
+			lastResult.kind === 'import' &&
+			[...lastResult.outcome.completed, ...lastResult.outcome.failed].some(item => item.category === 'skills')
+		) {
+			onSkillsImported?.();
+		}
 		if (lastResult.kind === 'export') {
 			toast.success('配置导出完成');
 			return;
@@ -173,7 +182,7 @@ export function SystemSettingsView({
 		} else {
 			toast.error('配置导入失败');
 		}
-	}, [state, onSettingsImported, loadPreferences]);
+	}, [state, onSettingsImported, onSkillsImported, loadPreferences]);
 
 	const lastPageFeedback = useRef<string | null>(null);
 	useEffect(() => {

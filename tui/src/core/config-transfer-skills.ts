@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {existsSync, lstatSync, readdirSync, realpathSync} from 'node:fs';
-import {join} from 'node:path';
+import {dirname, join} from 'node:path';
+import {isDeepStrictEqual} from 'node:util';
 
 import {collectPortableTreeEntries, excludedTransferAuthFile, excludedTransferAuthSymlink} from './config-transfer-sections.js';
 import {
@@ -12,6 +13,15 @@ import {
 	transferOk
 } from './config-transfer.js';
 import {resolveHome} from './paths.js';
+import {
+	classifySkillLockEntry,
+	findSkillLockKeys,
+	readSkillLock,
+	resolveSkillLockPath,
+	type SkillLockEntry,
+	type SkillLockPatch,
+	type SkillLockSnapshot
+} from './skills-lock-metadata.js';
 import {
 	cleanupSkillSnapshot,
 	createSkillSnapshot,
@@ -27,19 +37,32 @@ import {
 // 两个分类各自独立快照，互不删除对方一侧。内容源先经 createSkillSnapshot 验证（SKILL.md frontmatter、
 // 内部链接不逃逸、清单一致），根 projection symlink 先 realpath 解析到实体目录再快照。
 // 包内路径统一为 root `agents` + `<name>/<相对路径>`，物化落点由 section `root` 决定，
-// 具体拓扑由 services/skills-adoption.ts 的现有 lifecycle 负责。
+// 导入由 services/config-transfer-skills-service.ts 离线直接恢复内容与拓扑，并按名称补丁官方 lock（不调用 skills add）。
+// schema 2 起每个条目显式携带 tracking：官方 global lock v3 匹配条目原样导出，或 null（只恢复内容）。
 // shortcut: shared Skill 两个分类都选时内容在包内存两份；包体积成为问题时再做跨分类去重。
 
 export const SKILLS_ROOTS = ['agents', 'claude'] as const;
 export type SkillsRoot = (typeof SKILLS_ROOTS)[number];
 
+export const SKILLS_SECTION_SCHEMA = 2;
+
+/** 官方 global lock v3 条目原样（含未知 v3 字段），已通过 classifySkillLockEntry 安全校验。 */
+export type SkillTracking = {readonly kind: 'global-lock-v3'; readonly entry: SkillLockEntry};
+
 export type ExportedSkill = {
 	readonly id: string;
 	readonly name: string;
 	readonly files: readonly PortableTreeEntry[];
+	/** null = 无可迁移来源，只恢复内容。 */
+	readonly tracking: SkillTracking | null;
 };
 
-export type SkillsSection = {readonly root: SkillsRoot; readonly skills: readonly ExportedSkill[]};
+export type SkillsSection = {
+	/** 缺省 = 旧 v1 当前 root 格式（legacy content-only）：不含来源，也不得继承目标机同名来源。 */
+	readonly schema?: typeof SKILLS_SECTION_SCHEMA;
+	readonly root: SkillsRoot;
+	readonly skills: readonly ExportedSkill[];
+};
 
 export type SkillImportState = 'add' | 'replace' | 'unchanged' | 'blocked';
 
@@ -47,14 +70,32 @@ export type SkillImportPlanItem = {
 	readonly id: string;
 	readonly name: string;
 	readonly state: SkillImportState;
-	/** add/replace 的物化目标拓扑。 */
+	/** 需要重写内容时的物化目标拓扑；内容一致、只有来源变化时省略。 */
 	readonly targets?: SkillAgentTargets;
+	/** 官方 lock 按名称补丁；省略 = 来源记录已一致。 */
+	readonly lock?: SkillLockPatch;
 	readonly reason?: string;
 };
 
-export type SkillsImportPlan = {readonly items: readonly SkillImportPlanItem[]};
+export type SkillsImportPlan = {
+	readonly items: readonly SkillImportPlanItem[];
+	/** 规划时读取的 lock 原文/缺失事实；写入前据此复核外部修改。不进入 UI 计划。 */
+	readonly lock: SkillLockSnapshot;
+	readonly warnings: readonly string[];
+};
 
-export type SkillsSnapshotOptions = SkillStorageOptions & {readonly root: SkillsRoot};
+export type SkillsImportPlanOptions = SkillStorageOptions & {
+	/** 官方 lock 路径；transfer 编排解析一次后在 preview/snapshot/apply/postflight 复用。 */
+	readonly lockPath?: string;
+	/** 同批将执行的另一个 Skills 分类原始数据；同名来源提案不一致时阻断。 */
+	readonly peer?: unknown;
+};
+
+export type SkillsSnapshotOptions = SkillStorageOptions & {
+	readonly root: SkillsRoot;
+	/** 官方 lock 路径；省略时按 home/XDG_STATE_HOME 解析一次。 */
+	readonly lockPath?: string;
+};
 
 const ROOT_LABELS: Readonly<Record<SkillsRoot, string>> = {agents: 'Codex / Pi', claude: 'Claude Code'};
 
@@ -86,21 +127,74 @@ function localFileManifest(manifest: readonly string[]): readonly string[] {
 	return manifest.filter(entry => entry.startsWith('f:') || entry.startsWith('l:')).sort();
 }
 
-/** 离线采集一个 Skills 根的全局 Skill 实际内容（不依赖 `npx skills list` 或网络）。 */
+type CollectedSkill = Omit<ExportedSkill, 'tracking'> & {readonly otherRootConflict: boolean};
+
+function sameLockSnapshot(a: SkillLockSnapshot, b: SkillLockSnapshot): boolean {
+	return (a.state === 'valid' ? a.text : null) === (b.state === 'valid' ? b.text : null);
+}
+
+/** 按名称匹配官方 lock 条目；歧义、本机路径、凭据或不支持的来源只导出内容并给出脱敏 warning。 */
+function trackingOf(
+	skill: CollectedSkill,
+	lock: SkillLockSnapshot,
+	claims: ReadonlyMap<string, number>,
+	label: string
+): {readonly tracking: SkillTracking | null; readonly warning?: string} {
+	const contentOnly = (why: string) => ({tracking: null, warning: `${label} Skill ${why}，仅导出内容：${skill.name}`});
+	const keys = lock.state === 'valid' ? findSkillLockKeys(lock.lock, skill.name) : [];
+	if (keys.length === 0) {
+		return contentOnly('无官方来源记录');
+	}
+
+	if (keys.length > 1 || (claims.get(keys[0]!) ?? 0) > 1) {
+		return contentOnly('的官方来源记录存在同名歧义');
+	}
+
+	// 官方 lock 按名称记录；另一侧同名 Skill 内容不同时无法证明条目属于哪一侧。
+	if (skill.otherRootConflict) {
+		return contentOnly('与另一侧同名 Skill 内容不同，无法确定官方来源归属');
+	}
+
+	const classified = classifySkillLockEntry(lock.state === 'valid' ? lock.lock.skills[keys[0]!] : undefined);
+	if (classified.kind === 'content-only') {
+		const why = {
+			local: '来源为本机路径或内部快照，无法跨机器恢复更新来源',
+			credential: '来源含疑似凭据，已省略来源',
+			unsupported: '来源类型或字段不受支持'
+		}[classified.reason];
+		return contentOnly(why);
+	}
+
+	const tracking: SkillTracking = {kind: 'global-lock-v3', entry: classified.entry};
+	return classified.missingUpdateFields
+		? {tracking, warning: `${label} Skill 来源缺少更新基线，恢复后可能无法官方更新：${skill.name}`}
+		: {tracking};
+}
+
+/** 离线采集一个 Skills 根的全局 Skill 实际内容与可迁移官方来源（不依赖 `npx skills list` 或网络）。 */
 export async function snapshotSkillsSection(options: SkillsSnapshotOptions): Promise<TransferResult<SkillsSection>> {
-	const dir = skillsRootDir(options.homeDir ?? resolveHome(), options.root);
+	const homeDir = options.homeDir ?? resolveHome();
+	const dir = skillsRootDir(homeDir, options.root);
+	const otherDir = skillsRootDir(homeDir, options.root === 'agents' ? 'claude' : 'agents');
 	const label = ROOT_LABELS[options.root];
 	const warnings: string[] = [];
-	const skills: ExportedSkill[] = [];
+	const collectedSkills: CollectedSkill[] = [];
 	if (!existsSync(dir)) {
-		return transferOk({root: options.root, skills});
+		return transferOk({schema: SKILLS_SECTION_SCHEMA, root: options.root, skills: []});
 	}
 
 	let names: string[];
 	try {
 		names = readdirSync(dir).sort();
 	} catch {
-		return transferOk({root: options.root, skills}, [`${label} Skill 目录无法读取`]);
+		return transferOk({schema: SKILLS_SECTION_SCHEMA, root: options.root, skills: []}, [`${label} Skill 目录无法读取`]);
+	}
+
+	// 损坏/不支持的 lock 阻断导出，绝不当作“无来源”静默降级。
+	const lockPath = options.lockPath ?? resolveSkillLockPath({homeDir});
+	const lockBefore = readSkillLock(lockPath);
+	if (!lockBefore.ok) {
+		return transferFail('validation', lockBefore.error);
 	}
 
 	for (const name of names) {
@@ -151,13 +245,44 @@ export async function snapshotSkillsSection(options: SkillsSnapshotOptions): Pro
 			}
 
 			warnings.push(...collected.data.warnings);
-			skills.push({id: `${name}#${manifestDigest(snapshot.manifest)}`, name, files: collected.data.entries});
+			const other = await readLocalSkillFact(join(otherDir, name), name, options);
+			const otherRootConflict =
+				other.state === 'invalid' ||
+				(other.state === 'valid' &&
+					other.realPath !== realPath &&
+					JSON.stringify(other.manifest) !== JSON.stringify(localFileManifest(snapshot.manifest)));
+			collectedSkills.push({
+				id: `${name}#${manifestDigest(snapshot.manifest)}`,
+				name,
+				files: collected.data.entries,
+				otherRootConflict
+			});
 		} finally {
 			await cleanupSkillSnapshot(snapshot);
 		}
 	}
 
-	return transferOk({root: options.root, skills}, warnings);
+	// 采集期间 lock 变化会混装两个时刻的来源：明确失败，让用户重试。
+	const lockAfter = readSkillLock(lockPath);
+	if (!lockAfter.ok || !sameLockSnapshot(lockBefore.data, lockAfter.data)) {
+		return transferFail('conflict', '官方 Skills 来源记录在导出期间发生变化，请重试');
+	}
+
+	// 两个目录名 sanitize 后命中同一 lock key 时双方都不认领。
+	const claims = new Map<string, number>();
+	const lock = lockBefore.data;
+	for (const skill of collectedSkills) {
+		for (const key of lock.state === 'valid' ? findSkillLockKeys(lock.lock, skill.name) : []) {
+			claims.set(key, (claims.get(key) ?? 0) + 1);
+		}
+	}
+
+	const skills = collectedSkills.map(skill => {
+		const resolved = trackingOf(skill, lock, claims, label);
+		if (resolved.warning) warnings.push(resolved.warning);
+		return {id: skill.id, name: skill.name, files: skill.files, tracking: resolved.tracking};
+	});
+	return transferOk({schema: SKILLS_SECTION_SCHEMA, root: options.root, skills}, warnings);
 }
 
 /** 旧版（按 Agent 合并、无 `root`）Skills 分类的统一提示。 */
@@ -171,6 +296,12 @@ export function parseSkillsSection(value: unknown): TransferResult<SkillsSection
 
 	if (!isRecord(value) || !(SKILLS_ROOTS as readonly unknown[]).includes(value.root) || !Array.isArray(value.skills)) {
 		return transferFail('validation', 'Skills 分类内容无效');
+	}
+
+	// schema 缺省仅表示旧 v1 当前 root 格式；存在时必须是已知版本且每个条目显式带 tracking。
+	const tracked = Object.hasOwn(value, 'schema');
+	if (tracked && value.schema !== SKILLS_SECTION_SCHEMA) {
+		return transferFail('validation', 'Skills 分类版本不受支持');
 	}
 
 	const state = createPortableTreeValidationState();
@@ -220,12 +351,39 @@ export function parseSkillsSection(value: unknown): TransferResult<SkillsSection
 			return transferFail('validation', `Skill 内容无效：${raw.name}`);
 		}
 
+		const tracking = tracked ? parseSkillTracking(raw) : transferOk(null);
+		if (!tracking.ok) {
+			return transferFail('validation', `Skill 来源跟踪无效或不安全：${raw.name}`);
+		}
+
 		ids.add(raw.id);
 		names.add(raw.name);
-		skills.push({id: raw.id, name: raw.name, files: parsed.data});
+		skills.push({id: raw.id, name: raw.name, files: parsed.data, tracking: tracking.data});
 	}
 
-	return transferOk({root: value.root as SkillsRoot, skills});
+	const root = value.root as SkillsRoot;
+	return transferOk(tracked ? {schema: SKILLS_SECTION_SCHEMA, root, skills} : {root, skills});
+}
+
+/** 包内 tracking 与导出共用同一安全边界：只接受 null 或仍可迁移的 global-lock-v3 条目。 */
+function parseSkillTracking(raw: Record<string, unknown>): TransferResult<SkillTracking | null> {
+	if (!Object.hasOwn(raw, 'tracking')) {
+		return transferFail('validation', 'Skills 分类条目缺少来源跟踪');
+	}
+
+	const tracking = raw.tracking;
+	if (tracking === null) {
+		return transferOk(null);
+	}
+
+	if (!isRecord(tracking) || tracking.kind !== 'global-lock-v3' || Object.keys(tracking).some(key => key !== 'kind' && key !== 'entry')) {
+		return transferFail('validation', 'Skills 来源跟踪类型不受支持');
+	}
+
+	const classified = classifySkillLockEntry(tracking.entry);
+	return classified.kind === 'transferable'
+		? transferOk({kind: 'global-lock-v3', entry: classified.entry})
+		: transferFail('validation', 'Skills 来源跟踪条目不安全');
 }
 
 type LocalSkillFact =
@@ -266,12 +424,24 @@ async function readLocalSkillFact(path: string, name: string, options: SkillStor
 	}
 }
 
+/** 事务快照按路径复制：Skills 根或 lock 父目录若是链接/junction，写入会落到回滚范围外；无法确认也视为链接。 */
+function anyLinked(paths: readonly string[]): boolean {
+	return paths.some(path => {
+		try {
+			return lstatSync(path).isSymbolicLink();
+		} catch (error) {
+			return (error as NodeJS.ErrnoException).code !== 'ENOENT';
+		}
+	});
+}
+
 /**
  * 导入预览：只读取本机事实，零写盘，不返回任何内容或凭据。
- * 本侧内容一致即 unchanged；另一侧不存在 -> 仅本侧；另一侧已链接到同一 canonical 或内容与包相同 -> shared；
- * 另一侧内容不同 -> blocked（绝不删除或静默覆盖另一侧）。
+ * unchanged = 本侧内容一致且官方 lock 中该名称的来源记录与包一致（tracking:null/旧包 = 不应有记录）。
+ * 另一侧不存在 -> 仅本侧；另一侧已链接到同一 canonical 或内容与包相同 -> shared；
+ * 另一侧内容不同 -> blocked（绝不删除或静默覆盖另一侧，也不改写它按名称共享的来源记录）。
  */
-export async function planSkillsImport(data: unknown, options: SkillStorageOptions = {}): Promise<TransferResult<SkillsImportPlan>> {
+export async function planSkillsImport(data: unknown, options: SkillsImportPlanOptions = {}): Promise<TransferResult<SkillsImportPlan>> {
 	const parsed = parseSkillsSection(data);
 	if (!parsed.ok) {
 		return parsed;
@@ -280,10 +450,41 @@ export async function planSkillsImport(data: unknown, options: SkillStorageOptio
 	const homeDir = options.homeDir ?? resolveHome();
 	const root = parsed.data.root;
 	const otherRoot: SkillsRoot = root === 'agents' ? 'claude' : 'agents';
+	const label = ROOT_LABELS[root];
+	const lockPath = options.lockPath ?? resolveSkillLockPath({homeDir});
+	if (anyLinked([skillsRootDir(homeDir, 'agents'), skillsRootDir(homeDir, 'claude'), dirname(lockPath)])) {
+		return transferFail('conflict', 'Skills 目录或官方来源记录目录是链接，无法保证导入可回滚');
+	}
+
+	const lockRead = readSkillLock(lockPath);
+	if (!lockRead.ok) {
+		return transferFail('validation', lockRead.error);
+	}
+
+	const lock = lockRead.data;
+	const peerSection = options.peer === undefined ? undefined : parseSkillsSection(options.peer);
+	const peer = new Map(
+		peerSection?.ok && peerSection.data.root !== root ? peerSection.data.skills.map(skill => [skill.name, skill.tracking]) : []
+	);
 	const items: SkillImportPlanItem[] = [];
 
 	for (const skill of parsed.data.skills) {
 		const base = {id: skill.id, name: skill.name};
+		// 官方 lock 以名称为 key：sanitize 别名或两个分类提案不同都无法表达，拒绝猜测。
+		const keys = lock.state === 'valid' ? findSkillLockKeys(lock.lock, skill.name) : [];
+		if (keys.some(key => key !== skill.name)) {
+			items.push({...base, state: 'blocked', reason: `官方 Skills 来源记录存在同名歧义：${skill.name}`});
+			continue;
+		}
+
+		if (peer.has(skill.name) && !isDeepStrictEqual(peer.get(skill.name), skill.tracking)) {
+			items.push({...base, state: 'blocked', reason: `两个 Skills 分类中同名 Skill 的来源记录不一致：${skill.name}`});
+			continue;
+		}
+
+		const current = lock.state === 'valid' && keys.length > 0 ? lock.lock.skills[skill.name] : undefined;
+		const desired = skill.tracking?.entry;
+		const lockPatch = isDeepStrictEqual(current, desired) ? undefined : {name: skill.name, entry: desired ?? null};
 		const manifest = JSON.stringify(bundleManifestEntries(skill.name, skill.files));
 		const local = await readLocalSkillFact(join(skillsRootDir(homeDir, root), skill.name), skill.name, options);
 		if (local.state === 'invalid') {
@@ -291,7 +492,8 @@ export async function planSkillsImport(data: unknown, options: SkillStorageOptio
 			continue;
 		}
 
-		if (local.state === 'valid' && JSON.stringify(local.manifest) === manifest) {
+		const contentSame = local.state === 'valid' && JSON.stringify(local.manifest) === manifest;
+		if (contentSame && !lockPatch) {
 			items.push({...base, state: 'unchanged'});
 			continue;
 		}
@@ -313,9 +515,40 @@ export async function planSkillsImport(data: unknown, options: SkillStorageOptio
 		items.push({
 			...base,
 			state: local.state === 'missing' ? 'add' : 'replace',
-			targets: shared ? {cc: true, cx: true} : {cc: root === 'claude', cx: root === 'agents'}
+			...(contentSame ? {} : {targets: shared ? {cc: true, cx: true} : {cc: root === 'claude', cx: root === 'agents'}}),
+			...(lockPatch ? {lock: lockPatch} : {})
 		});
 	}
 
-	return transferOk({items});
+	return transferOk({items, lock, warnings: importWarnings(parsed.data, items, label)});
+}
+
+/** 只为将要变化的条目提示：内容离线恢复、来源无法恢复或缺少更新基线（postflight 全部 unchanged 时不重复）。 */
+function importWarnings(section: SkillsSection, items: readonly SkillImportPlanItem[], label: string): readonly string[] {
+	const tracking = new Map(section.skills.map(skill => [skill.name, skill.tracking]));
+	const changed = items.filter(item => item.state === 'add' || item.state === 'replace');
+	const warnings: string[] = [];
+	if (changed.some(item => item.targets)) {
+		warnings.push(`${label} Skills 将离线恢复包内完整内容，不联网安装或更新；后续官方更新可能覆盖本地修改`);
+	}
+
+	const unknown = changed.filter(item => tracking.get(item.name) === null).map(item => item.name);
+	if (unknown.length > 0) {
+		warnings.push(
+			section.schema === undefined
+				? `${label} Skills 来自旧版导出包，不含来源记录，恢复后为未知来源：${unknown.join('、')}`
+				: `${label} Skill 无可迁移来源，恢复后为未知来源：${unknown.join('、')}`
+		);
+	}
+
+	const noBaseline = changed.filter(item => {
+		const entry = tracking.get(item.name)?.entry;
+		const classified = entry ? classifySkillLockEntry(entry) : undefined;
+		return classified?.kind === 'transferable' && classified.missingUpdateFields;
+	});
+	if (noBaseline.length > 0) {
+		warnings.push(`${label} Skill 来源缺少更新基线，恢复后可能无法官方更新：${noBaseline.map(item => item.name).join('、')}`);
+	}
+
+	return warnings;
 }

@@ -1163,6 +1163,7 @@ function ModuleContent({
 					autoUpdateError={autoUpdateError}
 					onAutoUpdateChange={onAutoUpdateChange}
 					onSettingsImported={onSettingsImported}
+					onSkillsImported={skillsCache.refresh}
 					onSubModeChange={onSubModeChange}
 					onBusyStateChange={onBusyStateChange}
 					onExitToNav={onExitToNav}

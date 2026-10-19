@@ -15,8 +15,10 @@ export function createTempHome(prefix: string) {
 		TMP: temp,
 		TMPDIR: temp
 	};
-	const previous = Object.fromEntries(Object.keys(overrides).map(key => [key, process.env[key]]));
+	// XDG_STATE_HOME 会把官方 Skills lock 指向用户真实目录，测试期间一律移除。
+	const previous = Object.fromEntries([...Object.keys(overrides), 'XDG_STATE_HOME'].map(key => [key, process.env[key]]));
 	Object.assign(process.env, overrides);
+	delete process.env.XDG_STATE_HOME;
 	return {
 		path,
 		restore() {

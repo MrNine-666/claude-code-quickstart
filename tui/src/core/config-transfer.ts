@@ -8,7 +8,10 @@ import {atomicWrite, SECRET_FILE_MODE} from './fs-utils.js';
 // 各领域（Provider/Config/MCP/Skills/Extensions）仍由原 owner 解析与合并。
 
 export const CONFIG_BUNDLE_FORMAT = 'ccq-config-bundle';
-export const CONFIG_BUNDLE_VERSION = 1;
+// v2 起 Skills 分类携带官方来源跟踪；旧程序只认 v1，会明确拒绝而不是静默丢弃来源。
+export const CONFIG_BUNDLE_VERSION = 2;
+export const CONFIG_BUNDLE_SUPPORTED_VERSIONS = [1, 2] as const;
+export type BundleVersion = (typeof CONFIG_BUNDLE_SUPPORTED_VERSIONS)[number];
 export const CONFIG_BUNDLE_MAX_BYTES = 64 * 1024 * 1024;
 export const CONFIG_BUNDLE_MAX_TREE_ENTRIES = 10_000;
 export const CONFIG_BUNDLE_EXTENSION = '.ccq-backup';
@@ -174,14 +177,14 @@ export type BundleEncryption = {
 
 export type PlainBundleEnvelope = {
 	readonly format: typeof CONFIG_BUNDLE_FORMAT;
-	readonly version: typeof CONFIG_BUNDLE_VERSION;
+	readonly version: BundleVersion;
 	readonly encryption: null;
 	readonly payload: BundlePayload;
 };
 
 export type EncryptedBundleEnvelope = {
 	readonly format: typeof CONFIG_BUNDLE_FORMAT;
-	readonly version: typeof CONFIG_BUNDLE_VERSION;
+	readonly version: BundleVersion;
 	readonly encryption: BundleEncryption;
 	readonly payload: string;
 };
@@ -218,15 +221,23 @@ function decodeBase64Exact(value: string, expectedBytes: number | undefined): Bu
 }
 
 export function createBundlePayload(input: CreateBundlePayloadInput): TransferResult<BundlePayload> {
-	return parseBundlePayload({
-		createdAt: input.createdAt ?? new Date().toISOString(),
-		createdBy: {name: 'ccq', version: input.version, platform: input.platform},
-		containsCredentials: input.containsCredentials,
-		sections: input.sections
-	});
+	return parseBundlePayload(
+		{
+			createdAt: input.createdAt ?? new Date().toISOString(),
+			createdBy: {name: 'ccq', version: input.version, platform: input.platform},
+			containsCredentials: input.containsCredentials,
+			sections: input.sections
+		},
+		CONFIG_BUNDLE_VERSION
+	);
 }
 
-export function parseBundlePayload(input: unknown): TransferResult<BundlePayload> {
+function isBundleVersion(value: unknown): value is BundleVersion {
+	return (CONFIG_BUNDLE_SUPPORTED_VERSIONS as readonly unknown[]).includes(value);
+}
+
+/** `envelopeVersion` 来自外层 envelope；省略时（内部已解析 payload）不做跨版本 Skills schema 校验。 */
+export function parseBundlePayload(input: unknown, envelopeVersion?: BundleVersion): TransferResult<BundlePayload> {
 	if (!isRecord(input)) {
 		return fail('validation', '导出包内容无效');
 	}
@@ -268,6 +279,17 @@ export function parseBundlePayload(input: unknown): TransferResult<BundlePayload
 
 		if (!Object.hasOwn(raw, 'data')) {
 			return fail('validation', '导出包配置分类缺少内容');
+		}
+
+		// v2 当前 Skills 分类必须带 schema；v1 不得携带来源跟踪（旧包不能凭空获得来源）。
+		if (
+			envelopeVersion !== undefined &&
+			raw.category === 'skills' &&
+			isTransferCategory(raw.tool, raw.category) &&
+			isRecord(raw.data) &&
+			Object.hasOwn(raw.data, 'schema') !== (envelopeVersion === 2)
+		) {
+			return fail('validation', '导出包 Skills 分类版本与导出包版本不一致');
 		}
 
 		const key = categoryKey(raw.tool, raw.category);
@@ -321,18 +343,19 @@ export function parseBundleEnvelope(input: unknown): TransferResult<BundleEnvelo
 		return fail('validation', '导出包版本无效');
 	}
 
-	if (input.version !== CONFIG_BUNDLE_VERSION) {
+	if (!isBundleVersion(input.version)) {
 		return fail('validation', `不支持的导出包版本：${input.version}`);
 	}
 
+	const version = input.version;
 	if (input.encryption === null) {
-		const payload = parseBundlePayload(input.payload);
+		const payload = parseBundlePayload(input.payload, version);
 		if (!payload.ok) {
 			return payload;
 		}
 
 		// 明文含文件型凭据是用户的显式选择；文件权限仍为 0600。OAuth 始终由领域 owner 排除。
-		return ok({format: CONFIG_BUNDLE_FORMAT, version: CONFIG_BUNDLE_VERSION, encryption: null, payload: payload.data});
+		return ok({format: CONFIG_BUNDLE_FORMAT, version, encryption: null, payload: payload.data});
 	}
 
 	const encryption = parseBundleEncryption(input.encryption);
@@ -345,7 +368,7 @@ export function parseBundleEnvelope(input: unknown): TransferResult<BundleEnvelo
 		return fail('validation', '加密导出包内容无效');
 	}
 
-	return ok({format: CONFIG_BUNDLE_FORMAT, version: CONFIG_BUNDLE_VERSION, encryption: encryption.data, payload: input.payload});
+	return ok({format: CONFIG_BUNDLE_FORMAT, version, encryption: encryption.data, payload: input.payload});
 }
 
 // ---------------------------------------------------------------------------
@@ -572,7 +595,7 @@ export async function encryptBundlePayload(payload: BundlePayload, password: str
 
 export async function decryptBundlePayload(envelope: BundleEnvelope, password?: string): Promise<TransferResult<BundlePayload>> {
 	if (envelope.encryption === null) {
-		return parseBundlePayload(envelope.payload);
+		return parseBundlePayload(envelope.payload, envelope.version);
 	}
 
 	if (typeof password !== 'string' || password.length === 0) {
@@ -607,7 +630,7 @@ export async function decryptBundlePayload(envelope: BundleEnvelope, password?: 
 				return passwordFailure();
 			}
 
-			return parseBundlePayload(parsed);
+			return parseBundlePayload(parsed, envelope.version);
 		} finally {
 			plaintext.fill(0);
 		}

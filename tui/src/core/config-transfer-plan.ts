@@ -78,6 +78,7 @@ import {
 	vaultPath
 } from './paths.js';
 import {importPiProvidersSection, type PiProvidersSection, snapshotPiProvidersSection} from './pi-provider.js';
+import {resolveSkillLockPath} from './skills-lock-metadata.js';
 import {
 	type ClaudeProvidersSection,
 	importClaudeProvidersSection,
@@ -489,6 +490,8 @@ export type ConfigTransferImportPlanItem = {
 	readonly identities: ConfigTransferCategoryIdentities;
 	readonly warnings: readonly string[];
 	readonly reason: string | null;
+	/** Skills merge：预览时两侧根与官方 lock 的事实摘要，确认后任何写入前复核。 */
+	readonly targetFact?: string;
 };
 
 export type ConfigTransferImportPlan = {
@@ -558,6 +561,19 @@ async function previewCategory(
 	return transferOk({counts: countsFromReport(result.data, 0), report: result.data, reason: null});
 }
 
+/**
+ * Skills 分类 owner 选项：官方 lock 路径只解析一次，供 preview/snapshot/apply/postflight 复用；
+ * peer = 同批将执行的另一个 Skills 分类（被跳过/阻断时不传，跳过的分类不产生 lock 写入）。
+ */
+function withSkillsContext<T extends ConfigTransferImportOptions>(options: T, peer: unknown): T {
+	const lockPath = options.skills?.lockPath ?? resolveSkillLockPath({homeDir: options.skills?.homeDir});
+	return {...options, skills: {...options.skills, lockPath, peer}};
+}
+
+function otherSkillsKey(tool: TransferTool): string {
+	return tool === 'ccq' ? 'cc:skills' : 'ccq:skills';
+}
+
 function skillsPreview(plan: SkillsImportPlan): CategoryPreview {
 	const added: string[] = [];
 	const replaced: string[] = [];
@@ -577,7 +593,7 @@ function skillsPreview(plan: SkillsImportPlan): CategoryPreview {
 		}
 	}
 
-	const report: SectionMergeReport = {added, replaced, unchanged, skipped, warnings: []};
+	const report: SectionMergeReport = {added, replaced, unchanged, skipped, warnings: plan.warnings};
 	return {counts: countsFromReport(report, skipped.length), report, reason};
 }
 
@@ -595,9 +611,9 @@ function replacementUnavailable(tool: TransferTool, category: string): string | 
 	return '该分类尚无可验证的受管删除投影，覆盖未启用；合并仍可用';
 }
 
-function categoryTargetFact(tool: TransferTool, category: string, data: unknown): string {
+function categoryTargetFact(tool: TransferTool, category: string, data: unknown, skillsLockPath?: string): string {
 	return createHash('sha256')
-		.update(JSON.stringify([data, categoryTargetPaths(tool, category, data).map(digestPath)]))
+		.update(JSON.stringify([data, categoryTargetPaths(tool, category, data, skillsLockPath).map(digestPath)]))
 		.digest('hex');
 }
 
@@ -650,12 +666,19 @@ export async function planConfigTransferImport(
 
 		const noMerge = mergeUnavailable(identity.tool, identity.category);
 		const mergeFlag = noMerge ? {mergeUnavailable: noMerge} : {};
+		const skills = identity.category === 'skills';
+		const categoryOptions = skills
+			? withSkillsContext(previewOptions, byIdentity.get(otherSkillsKey(identity.tool))?.data)
+			: previewOptions;
+		const targetFact = skills
+			? {targetFact: categoryTargetFact(identity.tool, identity.category, section.data, categoryOptions.skills?.lockPath)}
+			: {};
 		const preview = await previewCategory(
 			identity.tool,
 			identity.category,
 			section.data,
 			payload.containsCredentials,
-			previewOptions,
+			categoryOptions,
 			noMerge ? 'replace' : 'merge'
 		);
 		const replace = await previewReplacement(
@@ -663,7 +686,7 @@ export async function planConfigTransferImport(
 			identity.category,
 			section.data,
 			payload.containsCredentials,
-			previewOptions
+			categoryOptions
 		);
 		if (!preview.ok) {
 			items.push({
@@ -685,6 +708,7 @@ export async function planConfigTransferImport(
 		items.push({
 			replace,
 			...mergeFlag,
+			...targetFact,
 			tool: identity.tool,
 			category: identity.category,
 			status,
@@ -783,7 +807,7 @@ async function runCategoryImport(
  * 分类可能写入的本机目标。刻意比 owner 的实际写入范围略宽：
  * 目录级 target（providers/skills/extensions）保证同一分类内的新增文件也能回滚。
  */
-function categoryTargetPaths(tool: TransferTool, category: string, data: unknown): readonly string[] {
+function categoryTargetPaths(tool: TransferTool, category: string, data: unknown, skillsLockPath?: string): readonly string[] {
 	if (tool === 'ccq' && category === 'mcp-library') {
 		// 契约覆盖会立即投影到各 Agent，投影目标同分类回滚。
 		return [vaultPath(), claudeJsonPath(), settingsPath(), codexConfigPath(), piMcpConfigPath(), piMcpAdapterOverridesPath()];
@@ -831,8 +855,8 @@ function categoryTargetPaths(tool: TransferTool, category: string, data: unknown
 
 	if (category === 'skills') {
 		// ponytail: 整个 skills 根目录进事务快照；技能树过大时改为按 Skill 名定向快照。
-		// 两个分类都可能把 Skill 物化为 shared，统一快照 `.claude` 与 `.agents` 两侧。
-		return [join(claudeDir(), 'skills'), join(resolveHome(), '.agents', 'skills')];
+		// 两个分类都可能把 Skill 物化为 shared，统一快照 `.claude` 与 `.agents` 两侧；来源补丁与内容同事务回滚。
+		return [join(claudeDir(), 'skills'), join(resolveHome(), '.agents', 'skills'), skillsLockPath ?? resolveSkillLockPath()];
 	}
 
 	if (category === 'extensions') {
@@ -1024,6 +1048,25 @@ export async function applyConfigTransferImport(
 			return transferFail('conflict', fresh.reason ?? '覆盖目标或包内容已变化，请重新预览并确认');
 		}
 	}
+	// 取消/阻断的 Skills 分类不参与同名来源一致性：按最终决策重算 peer。
+	const runs = (key: string): boolean => {
+		const item = plans.get(key);
+		return item !== undefined && item.status !== 'blocked' && (decisionsByKey.get(key) ?? item.defaultAction) !== 'skip';
+	};
+	const categoryOptionsOf = (identity: TransferCategoryIdentity): ConfigTransferApplyOptions => {
+		if (identity.category !== 'skills') return options;
+		const peerKey = otherSkillsKey(identity.tool);
+		return withSkillsContext(options, runs(peerKey) ? sections.get(peerKey)?.data : undefined);
+	};
+	// Skills merge 与预览时的根/lock 事实绑定；只在任何写入前复核，前序 Skills 分类的合法变化不误拒。
+	for (const item of plan.items) {
+		const key = identityKey(item.tool, item.category);
+		if (item.category !== 'skills' || !runs(key)) continue;
+		const fresh = categoryTargetFact(item.tool, item.category, sections.get(key)!.data, categoryOptionsOf(item).skills?.lockPath);
+		if (fresh !== item.targetFact) {
+			return transferFail('conflict', 'Skills 目标或官方来源记录已变化，请重新预览并确认');
+		}
+	}
 	const completed: TransferCategoryIdentity[] = [];
 	const skipped: TransferCategoryIdentity[] = [];
 	const notExecuted: TransferCategoryIdentity[] = [];
@@ -1031,7 +1074,6 @@ export async function applyConfigTransferImport(
 	const warnings: string[] = [];
 	let stopped = false;
 	let packages: PiPackageImportOutcome | undefined;
-	const importOptions = {...options, piPackages: {...options.piPackages, signal: options.signal}};
 
 	for (const identity of TRANSFER_EXECUTION_ORDER) {
 		const key = identityKey(identity.tool, identity.category);
@@ -1039,6 +1081,13 @@ export async function applyConfigTransferImport(
 		if (!item) {
 			continue;
 		}
+
+		const categoryOptions = categoryOptionsOf(identity);
+		const importOptions = {
+			...categoryOptions,
+			skills: categoryOptions.skills && {...categoryOptions.skills, signal: options.signal},
+			piPackages: {...options.piPackages, signal: options.signal}
+		};
 
 		// 取消落在分类边界：已完成的分类保留，未开始的分类记入 notExecuted，不再写入任何字节。
 		if (options.signal?.aborted) {
@@ -1083,16 +1132,16 @@ export async function applyConfigTransferImport(
 			stopped = true;
 			continue;
 		}
-		// Rules/Extensions write portable trees. Revalidate their realpath/symlink boundary
+		// Rules/Extensions/Skills write portable trees. Revalidate their realpath/symlink boundary
 		// immediately before taking a rollback snapshot: a plan may be stale, and snapshotting
 		// an escaped root could otherwise capture files outside the managed tree.
-		if (identity.category === 'rules' || identity.category === 'extensions') {
+		if (identity.category === 'rules' || identity.category === 'extensions' || identity.category === 'skills') {
 			const preflight = await runCategoryImport(
 				identity.tool,
 				identity.category,
 				section.data,
 				payload.containsCredentials,
-				options,
+				categoryOptions,
 				true,
 				action
 			);
@@ -1103,7 +1152,10 @@ export async function applyConfigTransferImport(
 			}
 		}
 
-		const snapshot = createCategorySnapshot(categoryTargetPaths(identity.tool, identity.category, section.data), options.tempDir);
+		const snapshot = createCategorySnapshot(
+			categoryTargetPaths(identity.tool, identity.category, section.data, categoryOptions.skills?.lockPath),
+			options.tempDir
+		);
 		if (!snapshot.ok) {
 			failures.push({tool: identity.tool, category: identity.category, error: snapshot.error, restored: true});
 			stopped = true;
@@ -1112,13 +1164,13 @@ export async function applyConfigTransferImport(
 		// Close the plan/snapshot race as far as path-based filesystem APIs allow. If the
 		// boundary changed while the snapshot was being taken, no mutation has started, so
 		// discard the snapshot rather than attempting a rollback through the escaped root.
-		if (identity.category === 'rules' || identity.category === 'extensions') {
+		if (identity.category === 'rules' || identity.category === 'extensions' || identity.category === 'skills') {
 			const postSnapshotPreflight = await runCategoryImport(
 				identity.tool,
 				identity.category,
 				section.data,
 				payload.containsCredentials,
-				options,
+				categoryOptions,
 				true,
 				action
 			);
@@ -1168,7 +1220,7 @@ export async function applyConfigTransferImport(
 			identity.category,
 			section.data,
 			payload.containsCredentials,
-			options,
+			categoryOptions,
 			action
 		);
 		if (
