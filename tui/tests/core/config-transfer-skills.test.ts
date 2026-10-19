@@ -268,6 +268,10 @@ describe('Skills 导出附带官方来源跟踪', () => {
 });
 
 describe('Skills 导入不删除另一侧', () => {
+	const lockPath = () => join(home.path, '.agents', '.skill-lock.json');
+	const upstream = {source: 'o/r', sourceType: 'github', sourceUrl: 'https://github.com/o/r.git'};
+	const writeLock = (value: unknown) => writeFileSync(lockPath(), JSON.stringify(value));
+
 	test('公共模块 Skills：Claude 侧缺失/同内容/链接/不同内容', async () => {
 		writeSkill(agentsDir(), 'x', 'v1');
 		const data = await section('agents');
@@ -278,8 +282,12 @@ describe('Skills 导入不删除另一侧', () => {
 		writeSkill(claudeSkillsDir(), 'x', 'v1');
 		expect(await planOf(data)).toMatchObject([{state: 'add', targets: {cc: true, cx: true}}]);
 
+		// 另一侧不同内容：仅本侧独立恢复；只有需要改写按名称共享的 lock 时才阻断。
 		writeSkill(claudeSkillsDir(), 'x', 'v2');
+		expect(await planOf(data)).toMatchObject([{state: 'add', targets: {cc: false, cx: true}}]);
+		writeLock({version: 3, skills: {x: upstream}});
 		expect(await planOf(data)).toMatchObject([{state: 'blocked', reason: 'Claude Code 中已有不同内容的同名 Skill：x'}]);
+		rmSync(lockPath());
 
 		// Claude 侧是指向 canonical 的投影：随 canonical 更新，不算冲突。
 		rmSync(join(claudeSkillsDir(), 'x'), {recursive: true});
@@ -300,7 +308,10 @@ describe('Skills 导入不删除另一侧', () => {
 		expect(await planOf(data)).toMatchObject([{state: 'add', targets: {cc: true, cx: true}}]);
 
 		writeSkill(agentsDir(), 'x', 'v2');
+		expect(await planOf(data)).toMatchObject([{state: 'add', targets: {cc: true, cx: false}}]);
+		writeLock({version: 3, skills: {x: upstream}});
 		expect(await planOf(data)).toMatchObject([{state: 'blocked', reason: 'Codex / Pi 中已有不同内容的同名 Skill：x'}]);
+		rmSync(lockPath());
 
 		// 本侧是指向不同 canonical 的链接：更新会改写 `.agents`，必须阻断。
 		link(join(agentsDir(), 'x'), join(claudeSkillsDir(), 'x'));
@@ -323,6 +334,27 @@ describe('Skills 导入不删除另一侧', () => {
 		expect(readFileSync(join(claudeSkillsDir(), 'x', 'SKILL.md'), 'utf8')).toContain('v1');
 		expect(existsSync(join(agentsDir(), 'keep-a'))).toBe(true);
 		expect(existsSync(join(claudeSkillsDir(), 'keep-c'))).toBe(true);
+
+		const again = await planConfigTransferImport(payloadOf(sections));
+		expect(again.ok && again.data.items.map(item => item.status)).toEqual(['unchanged', 'unchanged']);
+	});
+
+	test('两侧同名不同内容：两个分类各自独立恢复为 complete，目标机陈旧来源由同批一致提案清理', async () => {
+		writeSkill(agentsDir(), 'x', 'agents-side');
+		writeSkill(claudeSkillsDir(), 'x', 'claude-side');
+		const sections = await exportSections(SKILLS);
+		home.restore();
+		home.cleanup();
+
+		home = createTempHome('ccq-transfer-skills-import-');
+		mkdirSync(join(home.path, '.agents'), {recursive: true});
+		writeLock({version: 3, skills: {x: upstream, keep: upstream}});
+		const outcome = await importSections(sections);
+		expect(outcome.ok && outcome.data.status).toBe('complete');
+		expect(readFileSync(join(agentsDir(), 'x', 'SKILL.md'), 'utf8')).toContain('agents-side');
+		expect(readFileSync(join(claudeSkillsDir(), 'x', 'SKILL.md'), 'utf8')).toContain('claude-side');
+		expect(lstatSync(join(claudeSkillsDir(), 'x')).isSymbolicLink()).toBe(false);
+		expect(JSON.parse(readFileSync(lockPath(), 'utf8')).skills).toEqual({keep: upstream});
 
 		const again = await planConfigTransferImport(payloadOf(sections));
 		expect(again.ok && again.data.items.map(item => item.status)).toEqual(['unchanged', 'unchanged']);

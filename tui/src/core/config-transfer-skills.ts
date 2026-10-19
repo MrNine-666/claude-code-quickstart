@@ -439,7 +439,8 @@ function anyLinked(paths: readonly string[]): boolean {
  * 导入预览：只读取本机事实，零写盘，不返回任何内容或凭据。
  * unchanged = 本侧内容一致且官方 lock 中该名称的来源记录与包一致（tracking:null/旧包 = 不应有记录）。
  * 另一侧不存在 -> 仅本侧；另一侧已链接到同一 canonical 或内容与包相同 -> shared；
- * 另一侧内容不同 -> blocked（绝不删除或静默覆盖另一侧，也不改写它按名称共享的来源记录）。
+ * 另一侧内容不同 -> 仅本侧独立恢复，绝不删除或覆盖另一侧；但若需改写按名称共享的来源记录，且另一侧
+ * 不在同批 peer 中（其来源不由本包决定）-> blocked。
  */
 export async function planSkillsImport(data: unknown, options: SkillsImportPlanOptions = {}): Promise<TransferResult<SkillsImportPlan>> {
 	const parsed = parseSkillsSection(data);
@@ -505,9 +506,10 @@ export async function planSkillsImport(data: unknown, options: SkillsImportPlanO
 		}
 
 		// `.claude` 投影指向本侧 canonical 时随 canonical 一起更新，不算冲突。
-		const linked = root === 'agents' && other.state === 'valid' && local.state === 'valid' && other.realPath === local.realPath;
-		const shared = other.state === 'valid' && (linked || JSON.stringify(other.manifest) === manifest);
-		if (other.state === 'valid' && !shared) {
+		const linked = other.state === 'valid' && local.state === 'valid' && other.realPath === local.realPath;
+		const shared = other.state === 'valid' && ((root === 'agents' && linked) || JSON.stringify(other.manifest) === manifest);
+		// 离线恢复只写本侧目录，内容不同的另一侧原样保留；仍会波及它的是拆散本侧共享投影与名称级 lock 补丁。
+		if (other.state === 'valid' && !shared && (linked || (lockPatch && !peer.has(skill.name)))) {
 			items.push({...base, state: 'blocked', reason: `${ROOT_LABELS[otherRoot]} 中已有不同内容的同名 Skill：${skill.name}`});
 			continue;
 		}
