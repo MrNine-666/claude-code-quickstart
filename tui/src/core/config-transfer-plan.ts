@@ -1,7 +1,19 @@
 import {createHash} from 'node:crypto';
-import {cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync} from 'node:fs';
+import {
+	cpSync,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	readlinkSync,
+	rmSync,
+	statSync,
+	symlinkSync
+} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {dirname, join} from 'node:path';
+import {dirname, isAbsolute, join} from 'node:path';
 
 import {
 	codexProvidersContainCredentials,
@@ -920,6 +932,29 @@ function cleanupTransactionDir(rootDir: string, warnings?: string[]): void {
 	}
 }
 
+/**
+ * 事务快照/回滚复制：Windows 上 cpSync 会把 junction 复制成需特权的目录符号链接，
+ * 非管理员无法创建；绝对目标的目录链接（含断链）自行重建为 junction，readlink 结果不变。
+ */
+function copyPreservingLinks(from: string, to: string): void {
+	cpSync(from, to, {
+		recursive: true,
+		verbatimSymlinks: true,
+		filter: (source, destination) => {
+			if (process.platform !== 'win32' || !lstatSync(source).isSymbolicLink()) return true;
+			const target = readlinkSync(source);
+			if (!isAbsolute(target)) return true;
+			try {
+				if (statSync(source).isFile()) return true;
+			} catch {
+				// 断链：junction 允许指向不存在的目录，照样重建。
+			}
+			symlinkSync(target, destination, 'junction');
+			return false;
+		}
+	});
+}
+
 /** 变更前把分类的全部 target 复制到事务临时目录，并记录 missing 事实与原始摘要。 */
 function createCategorySnapshot(targets: readonly string[], tempRoot?: string): TransferResult<CategoryTransactionSnapshot> {
 	let rootDir: string;
@@ -938,7 +973,7 @@ function createCategorySnapshot(targets: readonly string[], tempRoot?: string): 
 		const slot = `entry-${index}`;
 		if (existed) {
 			try {
-				cpSync(targetPath, join(rootDir, slot), {recursive: true, verbatimSymlinks: true});
+				copyPreservingLinks(targetPath, join(rootDir, slot));
 			} catch {
 				cleanupTransactionDir(rootDir);
 				return transferFail('io', '导入事务快照失败');
@@ -959,7 +994,7 @@ function restoreCategorySnapshot(snapshot: CategoryTransactionSnapshot): {readon
 			rmSync(entry.targetPath, {recursive: true, force: true});
 			if (entry.existed) {
 				mkdirSync(dirname(entry.targetPath), {recursive: true});
-				cpSync(join(snapshot.rootDir, entry.slot), entry.targetPath, {recursive: true, verbatimSymlinks: true});
+				copyPreservingLinks(join(snapshot.rootDir, entry.slot), entry.targetPath);
 			}
 		} catch {
 			warnings.push('导入回滚写入失败');

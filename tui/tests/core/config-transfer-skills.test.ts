@@ -595,6 +595,28 @@ describe('Skills 离线恢复内容与官方来源', () => {
 			}
 		});
 
+		// 非管理员 Windows 只能创建 junction：快照/回滚不得把它变成需特权的 <SYMLINKD>。
+		test.skipIf(process.platform !== 'win32')('回滚后本机已有 shared 投影仍是 junction', async () => {
+			const {sections, cleanupSource} = await exportModifiedRemoteSkill();
+			try {
+				writeSkill(agentsDir(), 'keep', 'local');
+				link(join(agentsDir(), 'keep'), join(claudeSkillsDir(), 'keep'));
+				const outcome = await importSections(sections, [], {
+					skills: {
+						createProjection: () => {
+							throw new Error('EPERM');
+						}
+					}
+				});
+				expect(outcome.ok && outcome.data.failed[0]?.restored).toBe(true);
+				const listing = Bun.spawnSync(['cmd', '/c', 'dir', '/AL', claudeSkillsDir()]).stdout.toString();
+				expect(listing).toMatch(/<JUNCTION>\s+keep/);
+				expect(listing).not.toContain('<SYMLINKD>');
+			} finally {
+				cleanupSource();
+			}
+		});
+
 		test('目标原本没有 lock：已创建的 lock 在 postflight 失败后移除', async () => {
 			const {sections, cleanupSource} = await prepareClaudeImport();
 			try {
