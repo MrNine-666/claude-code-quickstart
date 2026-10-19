@@ -256,9 +256,18 @@ export function parseSkillsListJson(parsed: unknown): SkillsListParseResult {
 
 // ── 逻辑实例分组（design Section 5） ────────────────────────────────────────
 
+function provenanceSource(source: string | undefined): string | undefined {
+	if (!source) return undefined;
+	// 官方 add 会把 CCQ 临时快照写成来源；它不是可重装的真实来源，旧导入也需过滤。
+	const localPath = /^(?:[\\/]|[A-Za-z]:[\\/]|file:)/i.test(source);
+	return localPath && /[\\/]ccq-skill-stage-[A-Za-z0-9]{6}[\\/]?$/.test(source) ? undefined : source;
+}
+
 function provenanceOf(record: SkillsCliListRecord): SkillProvenance {
-	// sourceUrl 优先作为操作来源；两个字段都缺失才是未知来源。
-	const installSource = record.sourceUrl ?? record.source;
+	const source = provenanceSource(record.source);
+	const sourceUrl = provenanceSource(record.sourceUrl);
+	// sourceUrl 优先作为操作来源；排除内部快照后两者都缺失才是未知来源。
+	const installSource = sourceUrl ?? source;
 	const identity = normalizeSkillSourceIdentity(installSource);
 	if (!identity || !installSource) {
 		return {kind: 'unknown'};
@@ -267,8 +276,8 @@ function provenanceOf(record: SkillsCliListRecord): SkillProvenance {
 	return {
 		kind: 'known',
 		identity,
-		...(record.source ? {source: record.source} : {}),
-		...(record.sourceUrl ? {sourceUrl: record.sourceUrl} : {}),
+		...(source ? {source} : {}),
+		...(sourceUrl ? {sourceUrl} : {}),
 		installSource
 	};
 }
