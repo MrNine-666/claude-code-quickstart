@@ -1,6 +1,9 @@
 import {TextAttributes} from '@opentui/core';
 import {useRenderer} from '@opentui/react';
 import {Checkbox, Modal, ScrollList, TextField} from '../../components/index.js';
+import {TRANSFER_EXECUTION_ORDER} from '../../core/config-transfer.js';
+import {piPackageOutcomeMessage} from '../../core/config-transfer-pi-packages.js';
+import type {ConfigTransferApplyOutcome} from '../../core/config-transfer-plan.js';
 import {
 	bundleBasename,
 	systemSettingsCategoryKey,
@@ -313,6 +316,116 @@ function SystemSettingsImportConfirm({
 				<text fg={colors.muted} wrapMode="word">
 					Enter 确认覆盖并导入；Esc 返回分类明细。
 				</text>
+			</box>
+		</Modal>
+	);
+}
+
+export type SystemSettingsImportResultEntry = {
+	readonly key: string;
+	readonly title: string;
+	readonly status: string;
+	readonly color: string;
+	readonly details: readonly string[];
+};
+
+/** 导入结果明细：按执行顺序列出每个分类的落地状态，再附 Pi packages 与汇总提示。 */
+export function systemSettingsImportResultEntries(outcome: ConfigTransferApplyOutcome): readonly SystemSettingsImportResultEntry[] {
+	const keyOf = (item: {readonly tool: string; readonly category: string}): string => `${item.tool}:${item.category}`;
+	const completed = new Set(outcome.completed.map(keyOf));
+	const skipped = new Set(outcome.skipped.map(keyOf));
+	const notExecuted = new Set(outcome.notExecuted.map(keyOf));
+	const failed = new Map(outcome.failed.map(item => [keyOf(item), item]));
+	const blocked = new Map(outcome.blocked.map(item => [keyOf(item), item]));
+	const entries: SystemSettingsImportResultEntry[] = [];
+	for (const identity of TRANSFER_EXECUTION_ORDER) {
+		const key = keyOf(identity);
+		const title = `${systemSettingsToolLabel(identity.tool)} · ${systemSettingsCategoryLabel(identity.tool, identity.category)}`;
+		const failure = failed.get(key);
+		const block = blocked.get(key);
+		if (failure) {
+			const restored = failure.restored ? '已恢复导入前文件' : '恢复未确认，请检查本机文件';
+			entries.push({key, title, status: '失败', color: colors.danger, details: [failure.error, restored]});
+		} else if (block) entries.push({key, title, status: '未导入', color: colors.danger, details: [block.reason]});
+		else if (completed.has(key)) entries.push({key, title, status: '已导入', color: colors.success, details: []});
+		else if (notExecuted.has(key)) entries.push({key, title, status: '未执行', color: colors.warning, details: []});
+		else if (skipped.has(key)) entries.push({key, title, status: '已跳过', color: colors.muted, details: []});
+	}
+
+	const packages = outcome.packages;
+	if (packages && (packages.completed.length || packages.failed.length || packages.notExecuted.length)) {
+		const color = packages.failed.length || packages.notExecuted.length ? colors.warning : colors.success;
+		entries.push({key: 'packages', title: 'Pi packages', status: '', color, details: [piPackageOutcomeMessage(packages)]});
+	}
+
+	if (outcome.warnings.length > 0) {
+		entries.push({key: 'warnings', title: '提示', status: '', color: colors.warning, details: [...new Set(outcome.warnings)]});
+	}
+
+	return entries;
+}
+
+export type SystemSettingsImportResultModalProps = {
+	readonly active: boolean;
+	readonly outcome: ConfigTransferApplyOutcome;
+	readonly entries: readonly SystemSettingsImportResultEntry[];
+	readonly cursor: number;
+};
+
+export function SystemSettingsImportResultModal({active, outcome, entries, cursor}: SystemSettingsImportResultModalProps) {
+	const renderer = useRenderer();
+	const title = outcome.cancelled
+		? '导入已取消'
+		: outcome.status === 'complete'
+			? '导入完成'
+			: outcome.status === 'partial'
+				? '导入部分完成'
+				: '导入失败';
+	const skipped = outcome.skipped.length - outcome.blocked.length;
+	const items = entries.map(entry => ({
+		key: entry.key,
+		title: `  ${entry.title}`,
+		titleColor: entry.status ? colors.text : entry.color,
+		titleRight: entry.status ? <text fg={entry.color}>{entry.status}</text> : undefined,
+		...(entry.details.length
+			? {
+					body: (
+						<box flexDirection="column">
+							{entry.details.map((detail, i) => (
+								<text
+									key={i}
+									fg={entry.status ? entry.color : colors.muted}
+									selectionBg={colors.selectionBg}
+									selectionFg={colors.selectionFg}
+									wrapMode="word"
+								>
+									{`    ${detail}`}
+								</text>
+							))}
+						</box>
+					),
+					multiLine: true
+				}
+			: {}),
+		bordered: false
+	}));
+
+	return (
+		<Modal
+			active={active}
+			title={title}
+			hint={systemSettingsHint('import-result')}
+			tone={outcome.status === 'complete' ? 'default' : outcome.status === 'partial' ? 'warning' : 'danger'}
+			width={Math.min(IMPORT_MODAL_WIDTH, Math.max(24, renderer.width - 2))}
+			height={IMPORT_MODAL_HEIGHT}
+		>
+			<box flexDirection="column" flexGrow={1} minHeight={0}>
+				<text fg={colors.text} flexShrink={0} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg}>
+					{`已导入 ${outcome.completed.length} · 跳过 ${skipped} · 未导入 ${outcome.blocked.length} · 失败 ${outcome.failed.length} · 未执行 ${outcome.notExecuted.length} 个分类`}
+				</text>
+				<box flexGrow={1} minHeight={0} flexDirection="column" marginTop={1} overflow="hidden">
+					<ScrollList items={items} cursor={cursor} active={active} showPosition={false} />
+				</box>
 			</box>
 		</Modal>
 	);

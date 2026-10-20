@@ -3,6 +3,7 @@ import {useKeyboard} from '@opentui/react';
 import {Modal, toast, type BusyOverlayState} from '../../components/index.js';
 import {readCcqSystemSettings, writeCcqSystemSettings, type CcqSystemSettings} from '../../core/system-settings.js';
 import {piPackageOutcomeMessage} from '../../core/config-transfer-pi-packages.js';
+import type {ConfigTransferApplyOutcome} from '../../core/config-transfer-plan.js';
 import {createConfigTransferService, type ConfigTransferService} from '../../services/config-transfer-service.js';
 import {
 	createInitialSystemSettingsState,
@@ -16,7 +17,12 @@ import {
 import {executeSystemSettingsOperation} from './system-settings-view-actions.js';
 import {mapSystemSettingsKey} from './system-settings-view-input.js';
 import {SystemSettingsPageView} from './SystemSettingsPageView.js';
-import {SystemSettingsExportModal, SystemSettingsImportModal} from './SystemSettingsModals.js';
+import {
+	SystemSettingsExportModal,
+	SystemSettingsImportModal,
+	SystemSettingsImportResultModal,
+	systemSettingsImportResultEntries
+} from './SystemSettingsModals.js';
 
 // 系统设置模块 root：单页 wiring、键盘路由、busy overlay 投影与原生 picker 编排。
 // 页面组件只 dispatch 纯 action；service 只由本层与 view-actions 调用。
@@ -63,6 +69,11 @@ export function SystemSettingsView({
 	const [draftAutoUpdate, setDraftAutoUpdate] = useState(autoUpdate);
 	const [savedSettings, setSavedSettings] = useState<CcqSystemSettings>({autoUpdate, backupEncryption: false, backupPassword: ''});
 	const [discardConfirm, setDiscardConfirm] = useState(false);
+	const [importResult, setImportResult] = useState<{readonly outcome: ConfigTransferApplyOutcome; readonly cursor: number} | null>(null);
+	const importResultEntries = useMemo(
+		() => (importResult ? systemSettingsImportResultEntries(importResult.outcome) : []),
+		[importResult?.outcome]
+	);
 	const loadPreferences = useCallback(() => {
 		const settings = settingsStore.load();
 		if (settings.status === 'invalid') {
@@ -80,7 +91,7 @@ export function SystemSettingsView({
 	const abortRef = useRef<AbortController | null>(null);
 	const toastedRef = useRef<unknown>(null);
 
-	const subMode = discardConfirm ? 'discard-confirm' : systemSettingsSubMode(state);
+	const subMode = discardConfirm ? 'discard-confirm' : importResult ? 'import-result' : systemSettingsSubMode(state);
 	useEffect(() => {
 		if (active) onSubModeChange?.(subMode);
 	}, [active, onSubModeChange, subMode]);
@@ -140,7 +151,7 @@ export function SystemSettingsView({
 	}, [busyTitle, busyMessage, cancelBusy, onBusyStateChange]);
 	useEffect(() => () => onBusyStateChange?.(null), [onBusyStateChange]);
 
-	// 操作结果只提示一次，不在页面重复渲染状态行。
+	// 操作结果只提示一次：导出用 toast，导入打开结果明细弹窗。
 	useEffect(() => {
 		const lastResult = state.mode === 'page' ? state.lastResult : null;
 		if (!lastResult || toastedRef.current === lastResult) {
@@ -166,22 +177,7 @@ export function SystemSettingsView({
 			return;
 		}
 
-		if (
-			lastResult.outcome.packages &&
-			(lastResult.outcome.packages.completed.length ||
-				lastResult.outcome.packages.failed.length ||
-				lastResult.outcome.packages.notExecuted.length)
-		) {
-			const message = piPackageOutcomeMessage(lastResult.outcome.packages);
-			if (lastResult.outcome.status === 'complete') toast.success(message);
-			else toast.warning(`${message}；分类文件${lastResult.outcome.failed.every(item => item.restored) ? '已恢复' : '恢复未确认'}`);
-		} else if (lastResult.outcome.status === 'complete') {
-			toast.success('配置导入完成');
-		} else if (lastResult.outcome.status === 'partial') {
-			toast.warning('配置导入部分完成');
-		} else {
-			toast.error('配置导入失败');
-		}
+		setImportResult({outcome: lastResult.outcome, cursor: 0});
 	}, [state, onSettingsImported, onSkillsImported, loadPreferences]);
 
 	const lastPageFeedback = useRef<string | null>(null);
@@ -287,6 +283,18 @@ export function SystemSettingsView({
 			return;
 		}
 
+		if (importResult) {
+			keyEvent.preventDefault?.();
+			const key = keyEvent.name.toLowerCase();
+			if (key === 'enter' || key === 'return' || key === 'escape') setImportResult(null);
+			else if (key === 'up' || key === 'down') {
+				const delta = key === 'up' ? -1 : 1;
+				const last = Math.max(0, importResultEntries.length - 1);
+				setImportResult({...importResult, cursor: Math.min(last, Math.max(0, importResult.cursor + delta))});
+			}
+			return;
+		}
+
 		const intent = mapSystemSettingsKey(state, keyEvent);
 		if (intent.kind === 'exit') {
 			keyEvent.preventDefault?.();
@@ -341,7 +349,8 @@ export function SystemSettingsView({
 		}
 	});
 
-	const modalActive = state.mode === 'page' && (state.exportModal !== null || state.importModal !== null || discardConfirm);
+	const modalActive =
+		state.mode === 'page' && (state.exportModal !== null || state.importModal !== null || discardConfirm || importResult !== null);
 	const pageActive = active && state.mode === 'page' && !modalActive;
 	return (
 		<box flexDirection="column" flexGrow={1} minHeight={0}>
@@ -359,6 +368,14 @@ export function SystemSettingsView({
 			) : null}
 			{state.mode === 'page' && state.importModal ? (
 				<SystemSettingsImportModal active modal={state.importModal} dispatch={action => dispatch(action as SystemSettingsAction)} />
+			) : null}
+			{state.mode === 'page' && importResult ? (
+				<SystemSettingsImportResultModal
+					active
+					outcome={importResult.outcome}
+					entries={importResultEntries}
+					cursor={importResult.cursor}
+				/>
 			) : null}
 			<Modal active={discardConfirm} title="放弃未保存的系统设置？" hint="Enter 放弃修改  Esc 继续编辑" tone="warning">
 				<text>自动更新、加密选项和密码的修改尚未保存。</text>

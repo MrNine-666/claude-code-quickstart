@@ -116,6 +116,25 @@ export function mergeTransferDocuments(local: unknown, incoming: unknown): unkno
 
 // ── 通用设置 ─────────────────────────────────────────────────────────────────
 
+// Pi 模型选择（`/model`、`/scoped-models` 写入）对配置页受保护，但没有其它导出分类负责，随通用设置迁移。
+const PI_MODEL_SELECTION_KEYS = ['defaultModel', 'defaultThinkingLevel', 'modelThinkingLevels', 'enabledModels'] as const;
+
+function piModelSelection(source: JsonObject): JsonObject {
+	return Object.fromEntries(PI_MODEL_SELECTION_KEYS.filter(key => source[key] !== undefined).map(key => [key, source[key]]));
+}
+
+function validPiModelSelection(source: JsonObject): boolean {
+	const text = (value: unknown): boolean => value === undefined || typeof value === 'string';
+	return (
+		text(source.defaultModel) &&
+		text(source.defaultThinkingLevel) &&
+		(source.enabledModels === undefined ||
+			(Array.isArray(source.enabledModels) && source.enabledModels.every(item => typeof item === 'string'))) &&
+		(source.modelThinkingLevels === undefined ||
+			(isRecord(source.modelThinkingLevels) && Object.values(source.modelThinkingLevels).every(item => typeof item === 'string')))
+	);
+}
+
 /** 快照通用设置的选项：是否把文件型凭据包含进快照。 */
 export type SnapshotSettingsOptions = {readonly includeCredentials?: boolean};
 
@@ -147,7 +166,8 @@ export function snapshotSettingsSection(tool: TransferSectionTool, options: Snap
 		}
 
 		const includeCredentials = options.includeCredentials === true;
-		const document = JSON.parse(text) as JsonObject;
+		const raw = JSON.parse(readFileSync(piSettingsPath(), 'utf8')) as JsonObject;
+		const document = {...(JSON.parse(text) as JsonObject), ...piModelSelection(raw)};
 		delete document.deviceId;
 		delete document.lastChangelogVersion;
 		const keys = credentialKeysOf(document);
@@ -337,8 +357,12 @@ function importPiSettings(text: string, dryRun: boolean, containsCredentials: bo
 			return transferFail('validation', '通用设置分类不是 JSON 对象');
 		}
 
-		// 其他模块拥有的受保护字段（auth/models/mcp/skills 等）不随设置分类写入。
-		incoming = stripPiConfigProtectedFields(parsed);
+		if (!validPiModelSelection(parsed)) {
+			return transferFail('validation', '通用设置分类包含无效的 Pi 模型选择字段');
+		}
+
+		// 其他模块拥有的受保护字段（auth/models/mcp/skills 等）不随设置分类写入；模型选择除外。
+		incoming = {...stripPiConfigProtectedFields(parsed), ...piModelSelection(parsed)};
 	} catch {
 		return transferFail('validation', '通用设置分类不是有效 JSON');
 	}

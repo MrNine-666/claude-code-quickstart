@@ -29,7 +29,7 @@ import type {PiCatalogIndex, PiCatalogSource} from './pi-model-catalog.js';
 import type {ProviderDisplayData, ProviderDisplayProfile} from './provider.js';
 import type {FormField} from '../components/form/field-types.js';
 import {type SectionMergeReport, type TransferResult, transferFail, transferOk} from './config-transfer.js';
-import {validPiApiKeyEntry, validPiAuthDocument, validPiModelsDocument, validPiProviderDefinition} from './pi-model-config-validation.js';
+import {validPiApiKeyEntry, validPiProviderDefinition} from './pi-model-config-validation.js';
 
 export {PI_APIS, PI_KNOWN_APIS} from './pi-api-discovery.js';
 export type {PiApi, PiFormApi} from './pi-api-discovery.js';
@@ -1351,8 +1351,10 @@ export function snapshotPiProvidersSection(options: {readonly includeCredentials
 	const auth: Record<string, PiApiKeyAuthEntry> = {};
 
 	const modelsResult = readJsonFileStrict<unknown>(piModelsJsonPath());
-	if (modelsResult.status === 'valid' && validPiModelsDocument(modelsResult.value)) {
-		for (const [providerId, entry] of Object.entries(modelsResult.value.providers as JsonObject)) {
+	// 逐条校验：单个无效定义只跳过自身，`{}`（无 providers）视为空。
+	const providers = modelsResult.status === 'valid' && isObject(modelsResult.value) ? (modelsResult.value.providers ?? {}) : null;
+	if (isObject(providers)) {
+		for (const [providerId, entry] of Object.entries(providers)) {
 			if (!isPiSectionProviderId(providerId) || !validPiProviderDefinition(entry)) {
 				warnings.push('已跳过无效的 Pi 供应商定义');
 				continue;
@@ -1483,11 +1485,9 @@ export function importPiProvidersSection(
 	let current: PiDocuments;
 	try {
 		current = validatePiProviderJsonFiles();
-		if (
-			(existsSync(piModelsJsonPath()) && !validPiModelsDocument(current.models)) ||
-			(existsSync(piAuthJsonPath()) && !validPiAuthDocument(current.auth))
-		) {
-			return transferFail('conflict', '本机 Pi models.json 或 auth.json schema 损坏，已停止导入供应商分类');
+		// 只要求文件结构可合并；与包无关的本机条目不做 schema 校验，原样保留。
+		if (current.models.providers !== undefined && !isObject(current.models.providers)) {
+			return transferFail('conflict', '本机 Pi models.json 的 providers 不是对象，已停止导入供应商分类');
 		}
 	} catch {
 		return transferFail('conflict', '本机 Pi models.json 或 auth.json 损坏，已停止导入供应商分类');
@@ -1527,7 +1527,7 @@ export function importPiProvidersSection(
 	}
 
 	let nextAuth = current.auth;
-	let authChanged = false;
+	const writtenAuth: string[] = [];
 	if (options.containsCredentials) {
 		for (const [providerId, entry] of Object.entries(parsed.data.auth)) {
 			const localValue = current.auth[providerId];
@@ -1545,15 +1545,20 @@ export function importPiProvidersSection(
 
 			recordState(providerId, localValue === undefined ? 'added' : 'replaced');
 			nextAuth = {...nextAuth, [providerId]: merged};
-			authChanged = true;
+			writtenAuth.push(providerId);
 		}
 	} else if (Object.keys(parsed.data.auth).length > 0) {
 		warnings.push('导出包标记为不含凭据，已忽略其中的凭据条目');
 	}
 
-	// 检查最终合并结果（包含保留的本机未知字段），不把 schema 失败留给 Pi 启动时发现。
-	if ((modelsChanged && !validPiModelsDocument(nextModels)) || (authChanged && !validPiAuthDocument(nextAuth))) {
-		return transferFail('validation', 'Pi 供应商合并结果 schema 无效，未写入配置');
+	const authChanged = writtenAuth.length > 0;
+	// 检查本次写入条目的最终合并结果（包含保留的本机未知字段），不把 schema 失败留给 Pi 启动时发现。
+	const invalid = [
+		...(modelsChanged ? Object.keys(parsed.data.models).filter(id => !validPiProviderDefinition(providerEntry(nextModels, id))) : []),
+		...writtenAuth.filter(id => !validPiApiKeyEntry(nextAuth[id]))
+	];
+	if (invalid.length > 0) {
+		return transferFail('validation', `Pi 供应商合并结果 schema 无效，未写入配置：${[...new Set(invalid)].join('、')}`);
 	}
 	for (const providerId of Object.keys(parsed.data.models)) {
 		const definition = providerEntry(nextModels, providerId);

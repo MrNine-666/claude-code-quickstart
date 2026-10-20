@@ -186,10 +186,6 @@ export function validPiProviderDefinition(value: unknown): value is JsonObject {
 	return optional(value, 'modelOverrides', v => object(v) && Object.values(v).every(model => validModel(model, true)));
 }
 
-export function validPiModelsDocument(value: unknown): value is JsonObject {
-	return object(value) && object(value.providers) && Object.values(value.providers).every(validPiProviderDefinition);
-}
-
 export function validPiApiKeyEntry(value: unknown): value is JsonObject {
 	return (
 		object(value) &&
@@ -197,20 +193,5 @@ export function validPiApiKeyEntry(value: unknown): value is JsonObject {
 		optional(value, 'key', v => typeof v === 'string') &&
 		optional(value, 'env', strings) &&
 		!['access', 'refresh', 'expires', 'token', 'apiKey', 'api_key'].some(key => Object.hasOwn(value, key))
-	);
-}
-
-export function validPiAuthDocument(value: unknown): value is JsonObject {
-	return (
-		object(value) &&
-		Object.values(value).every(
-			entry =>
-				validPiApiKeyEntry(entry) ||
-				(object(entry) &&
-					entry.type === 'oauth' &&
-					typeof entry.access === 'string' &&
-					typeof entry.refresh === 'string' &&
-					number(entry.expires))
-		)
 	);
 }

@@ -1033,12 +1033,16 @@ export type ConfigTransferApplyFailure = {
 	readonly restored: boolean;
 };
 
+export type ConfigTransferApplyBlocked = TransferCategoryIdentity & {readonly reason: string};
+
 export type ConfigTransferApplyOutcome = {
 	readonly status: 'complete' | 'partial' | 'failed';
 	readonly completed: readonly TransferCategoryIdentity[];
 	readonly skipped: readonly TransferCategoryIdentity[];
 	readonly notExecuted: readonly TransferCategoryIdentity[];
 	readonly failed: readonly ConfigTransferApplyFailure[];
+	/** 预览即阻断、未执行的分类（也在 skipped 中）。 */
+	readonly blocked: readonly ConfigTransferApplyBlocked[];
 	readonly warnings: readonly string[];
 	readonly packages?: PiPackageImportOutcome;
 	readonly cancelled?: boolean;
@@ -1106,6 +1110,7 @@ export async function applyConfigTransferImport(
 	const skipped: TransferCategoryIdentity[] = [];
 	const notExecuted: TransferCategoryIdentity[] = [];
 	const failures: ConfigTransferApplyFailure[] = [];
+	const blocked: ConfigTransferApplyBlocked[] = [];
 	const warnings: string[] = [];
 	let stopped = false;
 	let packages: PiPackageImportOutcome | undefined;
@@ -1152,8 +1157,9 @@ export async function applyConfigTransferImport(
 
 		const action = decisionsByKey.get(key) ?? item.defaultAction;
 		if (item.status === 'blocked' || action === 'skip') {
-			if (item.status === 'blocked' && action === 'merge') {
-				warnings.push(`${key} 本机目标损坏或无法验证，已按跳过处理`);
+			// 阻断不是用户选择的跳过：记录原因，并让整体结果不再报 complete；旧包退役分类是预期跳过。
+			if (item.status === 'blocked' && item.reason !== LEGACY_SKILLS_SECTION_MESSAGE) {
+				blocked.push({...identity, reason: item.reason ?? '本机目标损坏或无法验证'});
 			}
 
 			skipped.push(identity);
@@ -1285,13 +1291,18 @@ export async function applyConfigTransferImport(
 
 	const cancelled = options.signal?.aborted ?? false;
 	const status =
-		failures.length === 0 && !cancelled ? 'complete' : completed.length > 0 || packages?.completed.length ? 'partial' : 'failed';
+		failures.length === 0 && blocked.length === 0 && !cancelled
+			? 'complete'
+			: completed.length > 0 || packages?.completed.length
+				? 'partial'
+				: 'failed';
 	return transferOk({
 		status,
 		completed,
 		skipped,
 		notExecuted,
 		failed: failures,
+		blocked,
 		warnings,
 		...(packages ? {packages} : {}),
 		...(cancelled ? {cancelled} : {})

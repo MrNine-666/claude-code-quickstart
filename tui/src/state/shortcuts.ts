@@ -127,6 +127,12 @@ function systemSettingsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 			{key: 'Esc', label: '继续编辑'}
 		]);
 	}
+	if (subMode === 'import-result') {
+		return manualShortcuts([
+			{key: '↑/↓', label: '滚动'},
+			{key: 'Enter', label: '关闭'}
+		]);
+	}
 	if (subMode === 'busy') {
 		return manualShortcuts([{key: '请稍候', label: '执行中'}]);
 	}
