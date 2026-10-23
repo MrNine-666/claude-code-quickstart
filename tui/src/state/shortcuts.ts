@@ -159,6 +159,10 @@ function systemSettingsShortcuts(subMode: ViewSubMode): readonly Shortcut[] {
 		return buildShortcuts([{command: SYSTEM_SETTINGS_COMMANDS.PRIMARY, label: '解析密码'}, backShortcut('取消导入')]);
 	}
 
+	if (subMode === 'path-input') {
+		return buildShortcuts([{command: SYSTEM_SETTINGS_COMMANDS.PRIMARY, label: '确认路径'}, backShortcut('取消')]);
+	}
+
 	if (subMode === 'import-confirm') {
 		return manualShortcuts([
 			{key: 'Enter', label: '确认覆盖并导入'},

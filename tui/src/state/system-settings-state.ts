@@ -66,6 +66,13 @@ export type SystemSettingsImportModal =
 			readonly decisions: Readonly<Record<string, TransferCategoryAction>>;
 	  };
 
+/** 系统文件对话框不可用时的手动路径输入；导出叠在仍打开的导出明细弹窗之上。 */
+export type SystemSettingsPathInput = {
+	readonly kind: 'import' | 'export';
+	readonly value: string;
+	readonly error: string | null;
+};
+
 /** 本机全局配置清单（只读投影）。 */
 export type SystemSettingsInventory = {
 	readonly status: 'loading' | 'ready' | 'error';
@@ -101,6 +108,7 @@ export type SystemSettingsPageState = {
 	readonly password: string;
 	readonly exportModal: SystemSettingsExportModal | null;
 	readonly importModal: SystemSettingsImportModal | null;
+	readonly pathInput: SystemSettingsPathInput | null;
 	readonly notice: string | null;
 	readonly error: string | null;
 	readonly lastResult: SystemSettingsLastResult;
@@ -134,6 +142,9 @@ export type SystemSettingsAction =
 	| {readonly type: 'export-path-picked'; readonly path: string}
 	| {readonly type: 'export-written'; readonly result: ConfigTransferExportResult}
 	| {readonly type: 'export-modal-error'; readonly message: string}
+	| {readonly type: 'open-path-input'; readonly kind: 'import' | 'export'; readonly value: string}
+	| {readonly type: 'path-input-change'; readonly value: string}
+	| {readonly type: 'path-input-error'; readonly message: string}
 	| {readonly type: 'import-picked'; readonly path: string; readonly savedPassword?: string}
 	| {readonly type: 'import-loaded'; readonly summary: ConfigTransferImportSummary}
 	| {readonly type: 'import-applied'; readonly outcome: ConfigTransferApplyOutcome}
@@ -344,6 +355,10 @@ export function systemSettingsSubMode(state: SystemSettingsState): string {
 		return 'busy';
 	}
 
+	if (state.pathInput !== null) {
+		return 'path-input';
+	}
+
 	if (state.exportModal !== null) {
 		return 'export-modal';
 	}
@@ -379,6 +394,7 @@ export function createInitialSystemSettingsState(): SystemSettingsPageState {
 		password: '',
 		exportModal: null,
 		importModal: null,
+		pathInput: null,
 		notice: null,
 		error: null,
 		lastResult: null,
@@ -431,6 +447,14 @@ export function reduceSystemSettingsState(state: SystemSettingsState, action: Sy
 			return state.mode === 'page' && state.exportModal
 				? {...state, exportModal: {...state.exportModal, error: action.message}}
 				: state;
+		case 'open-path-input':
+			return state.mode === 'page' ? reduceOpenPathInput(state, action.kind, action.value) : state;
+		case 'path-input-change':
+			return state.mode === 'page' && state.pathInput
+				? {...state, pathInput: {...state.pathInput, value: action.value, error: null}}
+				: state;
+		case 'path-input-error':
+			return state.mode === 'page' && state.pathInput ? {...state, pathInput: {...state.pathInput, error: action.message}} : state;
 		case 'import-picked':
 			return reduceImportPicked(state, action.path, action.savedPassword ?? '');
 		case 'import-loaded':
@@ -725,7 +749,22 @@ function reduceMoveField(state: SystemSettingsPageState, direction: 1 | -1): Sys
 	return {...state, focus: fields[(index + direction + fields.length) % fields.length]!};
 }
 
+/** 导出只能在导出明细弹窗内打开；导入只能在无弹窗的页面打开（与对应对话框的调起前提一致）。 */
+function reduceOpenPathInput(state: SystemSettingsPageState, kind: 'import' | 'export', value: string): SystemSettingsState {
+	const allowed = kind === 'export' ? state.exportModal !== null : state.exportModal === null && state.importModal === null;
+	if (!allowed || state.pathInput !== null) {
+		return state;
+	}
+
+	return logged(state, '系统文件对话框不可用，改为手动输入路径', {...state, pathInput: {kind, value, error: null}});
+}
+
 function reduceBack(state: SystemSettingsPageState): SystemSettingsState {
+	// 取消手动路径 = 对话框 cancelled：导出留在明细弹窗，导入静默回到页面。
+	if (state.pathInput !== null) {
+		return logged(state, '已取消手动输入路径', {...state, pathInput: null});
+	}
+
 	if (state.exportModal !== null) {
 		return logged(state, '关闭导出明细弹窗', {...state, exportModal: null, error: null});
 	}
@@ -749,7 +788,7 @@ function beginExportPrepare(state: SystemSettingsPageState): SystemSettingsState
 	// 页面清单只用于浏览；导出默认全选，具体勾选在弹窗内完成。
 	const categories = systemSettingsSelectedCategories(systemSettingsDefaultSelection());
 	return beginBusy(
-		{...state, exportModal: null, importModal: null, error: null, notice: null},
+		{...state, exportModal: null, importModal: null, pathInput: null, error: null, notice: null},
 		'prepare-export',
 		{stage: 'prepare-export', categories},
 		{}
@@ -778,7 +817,7 @@ function reduceExportPathPicked(state: SystemSettingsState, path: string): Syste
 	}
 
 	return beginBusy(
-		logged(state, '已选择导出位置', {...state, notice: null, error: null}),
+		logged(state, '已选择导出位置', {...state, pathInput: null, notice: null, error: null}),
 		'write-export',
 		{
 			stage: 'write-export',
@@ -816,6 +855,7 @@ function reduceImportPicked(state: SystemSettingsState, path: string, savedPassw
 		notice: null,
 		error: null,
 		exportModal: null,
+		pathInput: null,
 		importModal
 	});
 	return beginBusy(picked, 'load-import', {stage: 'load-import', bundlePath: path, password: savedPassword}, {importModal});

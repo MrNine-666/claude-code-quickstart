@@ -1,4 +1,6 @@
 import {spawn as nodeSpawn, type ChildProcess} from 'node:child_process';
+import {dirname, resolve} from 'node:path';
+import {CONFIG_BUNDLE_EXTENSION, ensureBundleExtension} from './config-transfer.js';
 
 // 系统文件选择器：Windows 使用 PowerShell STA + .NET WinForms 对话框，
 // macOS 使用 osascript 的 choose file / choose file name。
@@ -179,4 +181,36 @@ export function pickImportBundle(deps: NativeFileDialogDeps = {}): Promise<FileD
 /** 打开系统“另存为”对话框选择导出目标；取消返回 cancelled，环境不支持返回 unavailable。 */
 export function pickExportBundle(deps: NativeFileDialogDeps = {}): Promise<FileDialogOutcome> {
 	return runFileDialog('export', deps);
+}
+
+// 对话框 unavailable 时的 TUI 手动路径兜底：纯函数，文件系统事实经 stat 注入。
+export type ManualPathKind = 'file' | 'directory' | 'other' | 'missing';
+export type ManualBundlePathDeps = {readonly home: string; readonly stat: (path: string) => ManualPathKind};
+export type ManualBundlePathResult = {readonly ok: true; readonly path: string} | {readonly ok: false; readonly error: string};
+
+/** 手动导出路径默认值，命名与系统另存为一致。 */
+export function defaultManualExportPath(date: Date = new Date()): string {
+	return `~/ccq-config-${formatTimestamp(date)}${CONFIG_BUNDLE_EXTENSION}`;
+}
+
+/** 展开 ~ 并校验：导出须父目录存在且目标不存在（不提供覆盖），导入须为已存在的普通文件。 */
+export function resolveManualBundlePath(kind: 'import' | 'export', raw: string, deps: ManualBundlePathDeps): ManualBundlePathResult {
+	const trimmed = raw.trim();
+	if (trimmed.length === 0) {
+		return {ok: false, error: '请输入路径'};
+	}
+
+	const expanded = trimmed === '~' ? deps.home : /^~[\\/]/.test(trimmed) ? resolve(deps.home, trimmed.slice(2)) : resolve(trimmed);
+	if (kind === 'import') {
+		const found = deps.stat(expanded);
+		if (found === 'missing') return {ok: false, error: '文件不存在'};
+		if (found !== 'file') return {ok: false, error: '路径不是普通文件'};
+		return {ok: true, path: expanded};
+	}
+
+	// 与 writeExport 同一后缀归一化，避免 ~/a 校验通过却覆盖已存在的 ~/a.ccq-backup。
+	const target = ensureBundleExtension(expanded);
+	if (deps.stat(dirname(target)) !== 'directory') return {ok: false, error: '目标目录不存在'};
+	if (deps.stat(target) !== 'missing') return {ok: false, error: '目标文件已存在，请换一个路径'};
+	return {ok: true, path: target};
 }

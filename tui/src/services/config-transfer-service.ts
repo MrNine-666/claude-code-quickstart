@@ -1,3 +1,4 @@
+import {statSync} from 'node:fs';
 import {
 	type BundleEnvelope,
 	type BundlePayload,
@@ -28,7 +29,15 @@ import {
 	type ConfigTransferImportPlan,
 	planConfigTransferImport
 } from '../core/config-transfer-plan.js';
-import {type FileDialogOutcome, pickExportBundle, pickImportBundle} from '../core/native-file-dialog.js';
+import {
+	type FileDialogOutcome,
+	type ManualBundlePathResult,
+	type ManualPathKind,
+	pickExportBundle,
+	pickImportBundle,
+	resolveManualBundlePath
+} from '../core/native-file-dialog.js';
+import {resolveHome} from '../core/paths.js';
 import {
 	systemSettingsExcludedIdentities,
 	type ConfigTransferExportResult,
@@ -53,6 +62,7 @@ function cancelled(): TransferResult<never> {
 export type ConfigTransferServiceDeps = {
 	readonly pickExportPath?: () => Promise<FileDialogOutcome>;
 	readonly pickImportPath?: () => Promise<FileDialogOutcome>;
+	readonly statPath?: (path: string) => ManualPathKind;
 	readonly exportOptions?: ConfigTransferExportOptions;
 	readonly importOptions?: ConfigTransferImportOptions;
 	readonly applyOptions?: ConfigTransferApplyOptions;
@@ -63,6 +73,8 @@ export type ConfigTransferServiceDeps = {
 export type ConfigTransferService = {
 	readonly pickExportPath: () => Promise<FileDialogOutcome>;
 	readonly pickImportPath: () => Promise<FileDialogOutcome>;
+	/** 对话框不可用时校验 TUI 内手动输入的路径（展开 ~，导出不覆盖）。 */
+	readonly resolveManualPath: (kind: 'import' | 'export', raw: string) => ManualBundlePathResult;
 	/** 只读本机清单快照：系统设置页展示工具/分类条目计数，零写盘。 */
 	readonly inventory: (
 		onProgress?: ConfigTransferProgress,
@@ -106,6 +118,8 @@ export function createConfigTransferService(deps: ConfigTransferServiceDeps = {}
 
 	const pickExportPath = deps.pickExportPath ?? ((): Promise<FileDialogOutcome> => pickExportBundle());
 	const pickImportPath = deps.pickImportPath ?? ((): Promise<FileDialogOutcome> => pickImportBundle());
+	const resolveManualPath: ConfigTransferService['resolveManualPath'] = (kind, raw) =>
+		resolveManualBundlePath(kind, raw, {home: resolveHome(), stat: deps.statPath ?? statManualPath});
 
 	const inventory: ConfigTransferService['inventory'] = async (onProgress, options) => {
 		onProgress?.('正在读取本机配置清单...');
@@ -289,5 +303,16 @@ export function createConfigTransferService(deps: ConfigTransferServiceDeps = {}
 		}
 	};
 
-	return {pickExportPath, pickImportPath, inventory, prepareExport, writeExport, loadImport, applyImport};
+	return {pickExportPath, pickImportPath, resolveManualPath, inventory, prepareExport, writeExport, loadImport, applyImport};
+}
+
+function statManualPath(path: string): ManualPathKind {
+	try {
+		const stats = statSync(path);
+		return stats.isFile() ? 'file' : stats.isDirectory() ? 'directory' : 'other';
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		// 权限等其它错误不能当作不存在，否则导出可能覆盖无法确认的目标。
+		return code === 'ENOENT' || code === 'ENOTDIR' ? 'missing' : 'other';
+	}
 }

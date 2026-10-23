@@ -42,6 +42,11 @@ export function mapSystemSettingsKey(state: SystemSettingsState, keyEvent: KeyEv
 	const key = normalizeKeyName(keyEvent.name);
 	const appModified = keyEvent.ctrl === true;
 
+	// 手动路径输入：Enter 由 SingleLineInput onSubmit 提交，这里只接管 Esc 取消。
+	if (state.pathInput !== null) {
+		return key === 'escape' ? action({type: 'back'}) : NONE;
+	}
+
 	// 导出明细弹窗：Enter 确认并打开系统另存为；背景页面失活。
 	if (state.exportModal !== null) {
 		if (key === 'enter') return {kind: 'confirm-export'};

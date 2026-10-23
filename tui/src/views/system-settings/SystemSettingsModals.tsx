@@ -1,6 +1,6 @@
 import {TextAttributes} from '@opentui/core';
 import {useRenderer} from '@opentui/react';
-import {Checkbox, Modal, ScrollList, TextField} from '../../components/index.js';
+import {Checkbox, Modal, ScrollList, SingleLineInput, TextField} from '../../components/index.js';
 import {TRANSFER_EXECUTION_ORDER} from '../../core/config-transfer.js';
 import {piPackageOutcomeMessage} from '../../core/config-transfer-pi-packages.js';
 import type {ConfigTransferApplyOutcome} from '../../core/config-transfer-plan.js';
@@ -18,7 +18,8 @@ import {
 	systemSettingsToolSelectedCount,
 	systemSettingsVisibleRows,
 	type SystemSettingsExportModal as SystemSettingsExportModalState,
-	type SystemSettingsImportModal as SystemSettingsImportModalState
+	type SystemSettingsImportModal as SystemSettingsImportModalState,
+	type SystemSettingsPathInput
 } from '../../state/system-settings-state.js';
 import {colors} from '../../theme/index.js';
 import {systemSettingsHint} from './system-settings-view-input.js';
@@ -109,6 +110,48 @@ export function SystemSettingsExportModal({active, modal, encryption}: SystemSet
 						wrapMode="word"
 					>
 						{modal.error}
+					</text>
+				) : null}
+			</box>
+		</Modal>
+	);
+}
+
+export type SystemSettingsPathInputModalProps = {
+	readonly active: boolean;
+	readonly pathInput: SystemSettingsPathInput;
+	readonly onChange: (value: string) => void;
+	readonly onSubmit: (value: string) => void;
+};
+
+/** 系统文件对话框不可用时的手动路径输入；校验错误留在弹窗内。 */
+export function SystemSettingsPathInputModal({active, pathInput, onChange, onSubmit}: SystemSettingsPathInputModalProps) {
+	const renderer = useRenderer();
+	const exporting = pathInput.kind === 'export';
+	return (
+		<Modal
+			active={active}
+			title={exporting ? '导出到路径' : '从路径导入'}
+			hint={systemSettingsHint('path-input')}
+			width={Math.min(EXPORT_MODAL_WIDTH, Math.max(24, renderer.width - 2))}
+		>
+			<box flexDirection="column">
+				<text fg={colors.muted} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} wrapMode="word">
+					{exporting
+						? '系统文件对话框不可用：输入导出包保存路径（支持 ~，目标已存在时不会覆盖）'
+						: '系统文件对话框不可用：输入要导入的 .ccq-backup 文件路径（支持 ~）'}
+				</text>
+				<SingleLineInput
+					label="路径"
+					value={pathInput.value}
+					focused={active}
+					placeholder="~/ccq-config.ccq-backup"
+					onChange={onChange}
+					onSubmit={onSubmit}
+				/>
+				{pathInput.error ? (
+					<text fg={colors.danger} selectionBg={colors.selectionBg} selectionFg={colors.selectionFg} wrapMode="word">
+						{pathInput.error}
 					</text>
 				) : null}
 			</box>

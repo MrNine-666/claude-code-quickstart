@@ -3,6 +3,7 @@ import {useKeyboard} from '@opentui/react';
 import {Modal, toast, type BusyOverlayState} from '../../components/index.js';
 import {readCcqSystemSettings, writeCcqSystemSettings, type CcqSystemSettings} from '../../core/system-settings.js';
 import {piPackageOutcomeMessage} from '../../core/config-transfer-pi-packages.js';
+import {defaultManualExportPath} from '../../core/native-file-dialog.js';
 import type {ConfigTransferApplyOutcome} from '../../core/config-transfer-plan.js';
 import {createConfigTransferService, type ConfigTransferService} from '../../services/config-transfer-service.js';
 import {
@@ -21,6 +22,7 @@ import {
 	SystemSettingsExportModal,
 	SystemSettingsImportModal,
 	SystemSettingsImportResultModal,
+	SystemSettingsPathInputModal,
 	systemSettingsImportResultEntries
 } from './SystemSettingsModals.js';
 
@@ -232,7 +234,8 @@ export function SystemSettingsView({
 		}
 
 		if (outcome.kind === 'unavailable') {
-			toast.warning(outcome.reason);
+			toast.warning(`${outcome.reason}，请手动输入路径`);
+			dispatch({type: 'open-path-input', kind: 'export', value: defaultManualExportPath()});
 		}
 		// cancelled：留在弹窗，可重试。
 	}, [service, state]);
@@ -250,10 +253,30 @@ export function SystemSettingsView({
 		}
 
 		if (outcome.kind === 'unavailable') {
-			toast.warning(outcome.reason);
+			toast.warning(`${outcome.reason}，请手动输入路径`);
+			dispatch({type: 'open-path-input', kind: 'import', value: ''});
 		}
 		// cancelled：静默返回本页，不报失败。
 	}, [state, service, savedSettings.backupPassword]);
+
+	// 手动路径通过校验后进入与对话框 selected 完全相同的 picked 流程。
+	const submitPathInput = useCallback(
+		(value: string): void => {
+			if (state.mode !== 'page' || state.pathInput === null) {
+				return;
+			}
+
+			const resolved = service.resolveManualPath(state.pathInput.kind, value);
+			if (!resolved.ok) {
+				dispatch({type: 'path-input-error', message: resolved.error});
+			} else if (state.pathInput.kind === 'export') {
+				dispatch({type: 'export-path-picked', path: resolved.path});
+			} else {
+				dispatch({type: 'import-picked', path: resolved.path, savedPassword: savedSettings.backupPassword});
+			}
+		},
+		[state, service, savedSettings.backupPassword]
+	);
 
 	const pageState = state.mode === 'page' ? state : state.restore;
 	const dirty =
@@ -350,7 +373,8 @@ export function SystemSettingsView({
 	});
 
 	const modalActive =
-		state.mode === 'page' && (state.exportModal !== null || state.importModal !== null || discardConfirm || importResult !== null);
+		state.mode === 'page' &&
+		(state.exportModal !== null || state.importModal !== null || state.pathInput !== null || discardConfirm || importResult !== null);
 	const pageActive = active && state.mode === 'page' && !modalActive;
 	return (
 		<box flexDirection="column" flexGrow={1} minHeight={0}>
@@ -364,7 +388,15 @@ export function SystemSettingsView({
 				onPasswordChange={value => dispatch({type: 'password-input', value})}
 			/>
 			{state.mode === 'page' && state.exportModal ? (
-				<SystemSettingsExportModal active modal={state.exportModal} encryption={state.encryption} />
+				<SystemSettingsExportModal active={state.pathInput === null} modal={state.exportModal} encryption={state.encryption} />
+			) : null}
+			{state.mode === 'page' && state.pathInput ? (
+				<SystemSettingsPathInputModal
+					active
+					pathInput={state.pathInput}
+					onChange={value => dispatch({type: 'path-input-change', value})}
+					onSubmit={submitPathInput}
+				/>
 			) : null}
 			{state.mode === 'page' && state.importModal ? (
 				<SystemSettingsImportModal active modal={state.importModal} dispatch={action => dispatch(action as SystemSettingsAction)} />
