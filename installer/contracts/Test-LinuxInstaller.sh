@@ -120,6 +120,7 @@ for tool in bash cat grep sed gzip mktemp head cut tr wc sort dirname basename r
     continue
   fi
   printf '%s\nexec %q "$@"\n' "${SHEBANG}" "${tool_path}" >"${SYSBIN}/${tool}"
+  chmod +x "${SYSBIN}/${tool}"
 done
 
 write_fake() {

@@ -1,5 +1,5 @@
 import {spawn as nodeSpawn, type ChildProcess} from 'node:child_process';
-import {dirname, resolve} from 'node:path';
+import {dirname, resolve, sep} from 'node:path';
 import {CONFIG_BUNDLE_EXTENSION, ensureBundleExtension} from './config-transfer.js';
 
 // 系统文件选择器：Windows 使用 PowerShell STA + .NET WinForms 对话框，
@@ -200,7 +200,9 @@ export function resolveManualBundlePath(kind: 'import' | 'export', raw: string, 
 		return {ok: false, error: '请输入路径'};
 	}
 
-	const expanded = trimmed === '~' ? deps.home : /^~[\\/]/.test(trimmed) ? resolve(deps.home, trimmed.slice(2)) : resolve(trimmed);
+	// POSIX 上反斜杠是合法文件名字符，只有 Windows 把 `~\` 当作主目录前缀。
+	const homePrefix = sep === '\\' ? /^~[\\/]/ : /^~\//;
+	const expanded = trimmed === '~' ? deps.home : homePrefix.test(trimmed) ? resolve(deps.home, trimmed.slice(2)) : resolve(trimmed);
 	if (kind === 'import') {
 		const found = deps.stat(expanded);
 		if (found === 'missing') return {ok: false, error: '文件不存在'};

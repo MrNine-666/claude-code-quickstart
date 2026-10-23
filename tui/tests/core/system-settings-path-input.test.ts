@@ -1,4 +1,4 @@
-import {resolve} from 'node:path';
+import {resolve, sep} from 'node:path';
 import {describe, expect, test} from 'bun:test';
 import type {KeyEvent} from '@opentui/core';
 import {defaultManualExportPath, type ManualPathKind, resolveManualBundlePath} from '../../src/core/native-file-dialog.js';
@@ -29,7 +29,12 @@ describe('resolveManualBundlePath', () => {
 
 	test('导出：~ 展开、补后缀、父目录存在且目标不存在时通过', () => {
 		expect(check('export', '~/backups/new')).toEqual({ok: true, path: resolve(HOME, 'backups', 'new.ccq-backup')});
-		expect(check('export', '  ~\\backups\\new.ccq-backup ')).toEqual({ok: true, path: resolve(HOME, 'backups', 'new.ccq-backup')});
+		if (sep === '\\') {
+			expect(check('export', '  ~\\backups\\new.ccq-backup ')).toEqual({ok: true, path: resolve(HOME, 'backups', 'new.ccq-backup')});
+		} else {
+			// POSIX：`~\` 不是主目录前缀，按普通相对路径处理。
+			expect(check('export', '~\\x')).toEqual({ok: false, error: '目标目录不存在'});
+		}
 	});
 
 	test('导出：目标已存在拒绝（含补后缀后才存在的情况），父目录缺失拒绝', () => {

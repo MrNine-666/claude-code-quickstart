@@ -69,6 +69,12 @@ function checkLinuxPayload(name, content, includeSteps) {
 	assertLatestStableGetter(`${name} Linux payload`, content);
 	// Run extracted payload directly so non-Linux hosts still exercise its bash help/list paths.
 	const file = tempFile('linux-payload.sh', `${content}\n`);
+	run('bash', ['-n', file]);
+	// Linux payload requires Bash >= 4; macOS system bash is 3.2, so only parse there.
+	if (Number(run('bash', ['-c', 'echo "${BASH_VERSINFO[0]}"']).trim()) < 4) {
+		console.log(`[SKIP] ${name}: Linux payload help/list needs Bash >= 4`);
+		return;
+	}
 	assert.match(run('bash', [file, '--help']), /Options/);
 	if (includeSteps) assert.match(run('bash', [file, '--list-steps']), /Node\.js/);
 }
