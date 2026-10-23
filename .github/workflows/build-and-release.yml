@@ -43,7 +43,7 @@ jobs:
         working-directory: tui
 
   build-tui:
-    name: Build three stable TUI targets
+    name: Build stable TUI targets
     if: github.ref_type == 'tag'
     needs: check
     runs-on: ubuntu-latest
@@ -67,6 +67,8 @@ jobs:
           bun scripts/build.ts --target=windows-x64
           bun scripts/build.ts --target=macos-x64
           bun scripts/build.ts --target=macos-arm64
+          bun scripts/build.ts --target=linux-x64
+          bun scripts/build.ts --target=linux-arm64
       - name: Verify stable bytes and resolve upload paths
         id: assets
         run: node tui/scripts/release-assets.mjs --owner=stable --verify=dist --github-output="${GITHUB_OUTPUT}"
@@ -180,10 +182,38 @@ jobs:
             run_ccq </dev/null >/dev/null
           done
 
+  smoke-linux:
+    name: Linux ${{ matrix.arch }} native smoke
+    needs: build-tui
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: tui-stable-${{ github.sha }}
+          path: dist
+      - name: Smoke Linux ${{ matrix.arch }}
+        env:
+          ARCH_NAME: ${{ matrix.arch }}
+        run: |
+          set -eu
+          exe="./dist/ccq-linux-${ARCH_NAME}"
+          chmod +x "${exe}"
+          test "$("${exe}" --version)" = "${GITHUB_REF_NAME#v}"
+          "${exe}" --help
+          "${exe}" </dev/null >/dev/null
+
   release:
-    name: Release eight TUI assets
+    name: Release twelve TUI assets
     if: github.ref_type == 'tag'
-    needs: [check, build-tui, build-windows-arm64, smoke-windows, smoke-macos]
+    needs: [check, build-tui, build-windows-arm64, smoke-windows, smoke-macos, smoke-linux]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

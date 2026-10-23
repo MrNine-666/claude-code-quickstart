@@ -319,6 +319,7 @@ function getAssetName(platform: NodeJS.Platform, arch: string): string {
 	}
 	if (platform === 'win32') return 'ccq-windows-' + arch + '.exe';
 	if (platform === 'darwin') return 'ccq-macos-' + arch;
+	if (platform === 'linux') return 'ccq-linux-' + arch;
 	throw new Error('Unsupported platform: ' + platform + '-' + arch);
 }
 

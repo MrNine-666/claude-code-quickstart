@@ -31,10 +31,16 @@ async function verifyBuildBehavior() {
 	for (const invalid of ['1.2.3', 'v1.2', 'v01.2.3', 'v1.2.3-01', 'v1.2.3-']) assert.throws(() => parseReleaseTag(invalid));
 
 	const build = await import('./build.ts');
-	const targets = ['windows-x64', 'windows-arm64', 'macos-x64', 'macos-arm64'];
+	const targets = build.BUILD_TARGETS.map(target => target.id);
 	assert.deepEqual(build.selectBuildTargets([]).map(target => target.id), targets);
 	for (const target of targets) assert.deepEqual(build.selectBuildTargets([`--target=${target}`]).map(item => item.id), [target]);
-	for (const args of [['--target'], ['--target='], ['--target=linux-x64'], ['--target=windows-x64', '--target=macos-x64']]) {
+	const contract = JSON.parse(readFileSync(join(root, '../installer/contracts/build.json'), 'utf8'));
+	assert.deepEqual(
+		build.BUILD_TARGETS.map(target => build.targetArtifactNames(target).raw).sort(),
+		contract.UpdateTransports.GzipAssets.map(item => item.Raw).sort(),
+		'Build targets must produce exactly the contract raw Release artifacts'
+	);
+	for (const args of [['--target'], ['--target='], ['--target=linux-x86'], ['--target=windows-x64', '--target=macos-x64']]) {
 		assert.throws(() => build.selectBuildTargets(args));
 	}
 	const directory = mkdtempSync(join(tmpdir(), 'ccq-build-contract-'));
@@ -45,7 +51,7 @@ async function verifyBuildBehavior() {
 			for (const name of Object.values(build.targetArtifactNames(target))) writeFileSync(join(directory, name), 'stale');
 		}
 		const manifest = JSON.parse(readFileSync(join(root, '../installer/contracts/build.json'), 'utf8'));
-		const scriptNames = [...manifest.Windows.Artifacts, ...manifest.MacOS.Artifacts].map(item => item.OutputFile);
+		const scriptNames = [...manifest.BuildEntrypoints.Windows.Artifacts, ...manifest.BuildEntrypoints.Unix.Artifacts];
 		for (const name of scriptNames) writeFileSync(join(directory, name), `tracked-${name}`);
 		build.cleanTargetArtifacts(selected, directory);
 		for (const name of scriptNames) assert.equal(readFileSync(join(directory, name), 'utf8'), `tracked-${name}`, 'Binary cleanup must preserve tracked scripts');

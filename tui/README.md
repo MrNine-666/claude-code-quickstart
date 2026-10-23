@@ -1,6 +1,6 @@
 # ccq - OpenTUI Management Console
 
-Claude Code Quickstart 的 **8 页面管理控制台**（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills / 扩展 / 系统设置），基于 **OpenTUI + Bun**，经 `bun build --compile` 交叉编译为 4 平台单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64`），contracts 内嵌进可执行文件。
+Claude Code Quickstart 的 **8 页面管理控制台**（工具管理 / 供应商 / 配置文件 / 全局规则 / MCP / Skills / 扩展 / 系统设置），基于 **OpenTUI + Bun**，经 `bun build --compile` 交叉编译为 6 个目标的单文件可执行产物（`ccq-windows-x64.exe` / `ccq-windows-arm64.exe` / `ccq-macos-x64` / `ccq-macos-arm64` / `ccq-linux-x64` / `ccq-linux-arm64`；Linux 仅 glibc，x64 使用 `bun-linux-x64-baseline`），contracts 内嵌进可执行文件。
 
 > 本文面向开发者。架构与约束详见 [TUI Project Contracts](../.trellis/spec/project/tui/index.md)。用户安装与 CLI 使用说明见根目录 [README.md](../README.md#使用-ccq)；人工安装脚本打包见 [installer README](../installer/README.md#build)。
 
@@ -24,7 +24,7 @@ bun run dev
 # 类型检查
 bun run typecheck
 
-# 默认构建 4 平台 raw/gzip 到仓库根 ../dist/
+# 默认构建 6 个目标的 raw/gzip 到仓库根 ../dist/
 bun run build
 
 # 只构建一个目标
@@ -32,7 +32,7 @@ bun scripts/build.ts --target=windows-x64
 ```
 
 默认多目标构建仍受宿主与 Bun 目标支持限制；不能把部分本地产物当作完整 Release。
-构建只清理所选目标的 raw/gzip，保留人工生成的四个安装脚本。
+构建只清理所选目标的 raw/gzip，保留人工生成的五个安装脚本。
 
 ## Verification
 
@@ -40,7 +40,7 @@ bun scripts/build.ts --target=windows-x64
 # 最小 build 检查：typecheck + test + verify
 bun run check
 
-# 分别运行 gzip 确定性/映射测试与四个 build verifier
+# 分别运行 gzip 确定性/映射测试、系统设置手动路径输入测试与四个 build verifier
 bun run test
 bun run verify
 ```
@@ -50,7 +50,7 @@ bun run verify
 已删除的 UI、parser、业务状态机、迁移和 parity 套件不是现存覆盖；业务修改需按对应合同
 做隔离 focused/manual 验证。format/lint 为可选本地工具，不是 Release 门禁。
 
-PR/main 只运行一次最小 `check`；tag 额外构建四目标并执行原生 smoke，Release 仅含八个
+PR/main 只运行一次最小 `check`；tag 额外构建六个目标并执行原生 smoke，Release 仅含十二个
 raw/gzip 二进制资产。安装脚本由维护者另行打包，不参与 TUI CI。
 
 ## Directory Structure

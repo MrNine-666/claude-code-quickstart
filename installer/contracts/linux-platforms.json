@@ -1,0 +1,113 @@
+{
+  "SchemaVersion": 1,
+  "Source": "installer/linux/core/Platform.sh",
+  "Description": "Linux 发行版矩阵唯一 owner。Bash runtime 在 bootstrap 前不能依赖 Node/jq，Platform.sh/PackageManager.sh 保留等价实现；Test-LinuxInstaller.sh 通过 linux-platform-expectations.mjs 展开的期望表检测漂移。",
+  "Libc": {
+    "Required": "glibc",
+    "Reject": ["musl"]
+  },
+  "Wsl": {
+    "WSL1": "unsupported",
+    "WSL2": "best-effort"
+  },
+  "Architectures": {
+    "x64": ["x86_64", "amd64"],
+    "arm64": ["aarch64", "arm64"]
+  },
+  "Families": {
+    "debian": { "PackageManager": "apt" },
+    "fedora": { "PackageManager": "dnf" },
+    "arch": { "PackageManager": "pacman" }
+  },
+  "PackageManagers": {
+    "apt": {
+      "Command": "apt-get",
+      "Update": ["apt-get", "update"],
+      "InstallGit": ["apt-get", "install", "-y", "git"],
+      "FailureStatus": "Failed"
+    },
+    "dnf": {
+      "Command": "dnf",
+      "InstallGit": ["dnf", "install", "-y", "git"],
+      "FailureStatus": "Failed"
+    },
+    "pacman": {
+      "Command": "pacman",
+      "InstallGit": ["pacman", "-S", "--needed", "--noconfirm", "git"],
+      "FailureStatus": "ManualRequired",
+      "ManualHint": "sudo pacman -Syu git"
+    }
+  },
+  "Distributions": [
+    {
+      "Id": "ubuntu",
+      "Name": "Ubuntu",
+      "Family": "debian",
+      "Image": "ubuntu:24.04",
+      "OfficialVersion": "24.04",
+      "MinVersion": "22.04"
+    },
+    {
+      "Id": "debian",
+      "Name": "Debian",
+      "Family": "debian",
+      "Image": "debian:13",
+      "OfficialVersion": "13",
+      "MinVersion": "12"
+    },
+    {
+      "Id": "fedora",
+      "Name": "Fedora",
+      "Family": "fedora",
+      "Image": "fedora:44",
+      "OfficialVersion": "44",
+      "MinVersion": "42"
+    },
+    {
+      "Id": "centos",
+      "Name": "CentOS Stream",
+      "Family": "fedora",
+      "Image": "quay.io/centos/centos:stream10",
+      "OfficialVersion": "10",
+      "AllowedVersions": ["9", "10"],
+      "RequiredNameContains": "Stream"
+    },
+    {
+      "Id": "arch",
+      "Name": "Arch Linux",
+      "Family": "arch",
+      "Image": "archlinux:latest",
+      "OfficialVersion": "rolling",
+      "Rolling": true
+    }
+  ],
+  "IdLikeFamilies": {
+    "debian": "debian",
+    "ubuntu": "debian",
+    "fedora": "fedora",
+    "rhel": "fedora",
+    "centos": "fedora",
+    "arch": "arch"
+  },
+  "ClassificationSamples": [
+    { "Id": "ubuntu", "VersionId": "24.04", "Name": "Ubuntu", "IdLike": "debian", "Class": "official", "Family": "debian" },
+    { "Id": "debian", "VersionId": "13", "Name": "Debian GNU/Linux", "IdLike": "", "Class": "official", "Family": "debian" },
+    { "Id": "fedora", "VersionId": "44", "Name": "Fedora Linux", "IdLike": "", "Class": "official", "Family": "fedora" },
+    { "Id": "centos", "VersionId": "10", "Name": "CentOS Stream", "IdLike": "rhel fedora", "Class": "official", "Family": "fedora" },
+    { "Id": "arch", "VersionId": "", "Name": "Arch Linux", "IdLike": "", "Class": "official", "Family": "arch" },
+    { "Id": "ubuntu", "VersionId": "22.04", "Name": "Ubuntu", "IdLike": "debian", "Class": "best-effort", "Family": "debian" },
+    { "Id": "ubuntu", "VersionId": "20.04", "Name": "Ubuntu", "IdLike": "debian", "Class": "unsupported", "Family": "" },
+    { "Id": "debian", "VersionId": "12", "Name": "Debian GNU/Linux", "IdLike": "", "Class": "best-effort", "Family": "debian" },
+    { "Id": "fedora", "VersionId": "41", "Name": "Fedora Linux", "IdLike": "", "Class": "unsupported", "Family": "" },
+    { "Id": "centos", "VersionId": "9", "Name": "CentOS Stream", "IdLike": "rhel fedora", "Class": "best-effort", "Family": "fedora" },
+    { "Id": "centos", "VersionId": "8", "Name": "CentOS Stream", "IdLike": "rhel fedora", "Class": "unsupported", "Family": "" },
+    { "Id": "centos", "VersionId": "8", "Name": "CentOS Linux", "IdLike": "rhel fedora", "Class": "unsupported", "Family": "" },
+    { "Id": "centos", "VersionId": "7", "Name": "CentOS Linux", "IdLike": "rhel fedora", "Class": "unsupported", "Family": "" },
+    { "Id": "linuxmint", "VersionId": "22", "Name": "Linux Mint", "IdLike": "ubuntu debian", "Class": "best-effort", "Family": "debian" },
+    { "Id": "rocky", "VersionId": "9.4", "Name": "Rocky Linux", "IdLike": "rhel centos fedora", "Class": "best-effort", "Family": "fedora" },
+    { "Id": "almalinux", "VersionId": "9.4", "Name": "AlmaLinux", "IdLike": "rhel centos fedora", "Class": "best-effort", "Family": "fedora" },
+    { "Id": "manjaro", "VersionId": "", "Name": "Manjaro Linux", "IdLike": "arch", "Class": "best-effort", "Family": "arch" },
+    { "Id": "alpine", "VersionId": "3.20.0", "Name": "Alpine Linux", "IdLike": "", "Class": "unsupported", "Family": "" },
+    { "Id": "opensuse-tumbleweed", "VersionId": "20240101", "Name": "openSUSE Tumbleweed", "IdLike": "opensuse suse", "Class": "unsupported", "Family": "" }
+  ]
+}

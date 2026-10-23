@@ -10,6 +10,7 @@
 !/dist/install.ps1
 !/dist/install.sh
 !/dist/download-tui.ps1
+!/dist/download-tui.sh
 !/dist/download-tui.zsh
 installer/build/*.zip
 installer/build/*.exe

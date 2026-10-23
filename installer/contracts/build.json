@@ -13,13 +13,15 @@
         "download-tui.ps1"
       ]
     },
-    "MacOS": {
+    "Unix": {
       "Script": "installer/build.sh",
       "AllowedPlatforms": [
-        "macos"
+        "macos",
+        "linux"
       ],
       "Artifacts": [
         "install.sh",
+        "download-tui.sh",
         "download-tui.zsh"
       ]
     },
@@ -31,7 +33,11 @@
       "ccq-macos-x64",
       "ccq-macos-x64.gz",
       "ccq-macos-arm64",
-      "ccq-macos-arm64.gz"
+      "ccq-macos-arm64.gz",
+      "ccq-linux-x64",
+      "ccq-linux-x64.gz",
+      "ccq-linux-arm64",
+      "ccq-linux-arm64.gz"
     ]
   },
   "UpdateTransports": {
@@ -51,6 +57,14 @@
       {
         "Raw": "ccq-macos-arm64",
         "Gzip": "ccq-macos-arm64.gz"
+      },
+      {
+        "Raw": "ccq-linux-x64",
+        "Gzip": "ccq-linux-x64.gz"
+      },
+      {
+        "Raw": "ccq-linux-arm64",
+        "Gzip": "ccq-linux-arm64.gz"
       }
     ]
   },
@@ -103,7 +117,7 @@
     "Artifacts": [
       {
         "Role": "Install",
-        "OutputFile": "install.sh",
+        "Payload": true,
         "EntryFile": "macos/Install.zsh",
         "IncludeSteps": true,
         "Wrapper": "bash-to-zsh",
@@ -123,11 +137,53 @@
       },
       {
         "Role": "CcqDownload",
+        "Payload": true,
         "OutputFile": "download-tui.zsh",
         "EntryFile": "macos/Download-Tui.zsh",
         "IncludeSteps": false,
         "Wrapper": "bash-to-zsh",
         "ReuseCoreFilesFromRole": "Install"
+      }
+    ]
+  },
+  "Linux": {
+    "StepContract": "installer/contracts/steps.json",
+    "Artifacts": [
+      {
+        "Role": "Install",
+        "Payload": true,
+        "EntryFile": "linux/Install.sh",
+        "IncludeSteps": true,
+        "CoreFiles": [
+          "linux/core/Load.sh",
+          "linux/core/Ui.sh",
+          "linux/core/Ccq.sh",
+          "linux/core/Process.sh",
+          "linux/core/Profile.sh",
+          "linux/core/Platform.sh",
+          "linux/core/PackageManager.sh",
+          "linux/core/Registry.sh",
+          "linux/core/Bootstrap.sh"
+        ]
+      },
+      {
+        "Role": "CcqDownload",
+        "Payload": true,
+        "EntryFile": "linux/Download-Tui.sh",
+        "IncludeSteps": false,
+        "ReuseCoreFilesFromRole": "Install"
+      }
+    ]
+  },
+  "Unix": {
+    "Artifacts": [
+      {
+        "Role": "Install",
+        "OutputFile": "install.sh"
+      },
+      {
+        "Role": "CcqDownload",
+        "OutputFile": "download-tui.sh"
       }
     ]
   }

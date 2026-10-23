@@ -1,0 +1,112 @@
+name: Installer Unix
+
+# Linux 发行版矩阵 + macOS dispatcher smoke。测试对象是本次新鲜构建的 Unix 脚本（不读 dist/），
+# 不作为 TUI Release 前置。
+on:
+  pull_request:
+    paths:
+      - 'installer/**'
+      - 'dist/install.sh'
+      - 'dist/download-tui.sh'
+      - 'dist/download-tui.zsh'
+      - '.github/workflows/installer-unix.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'installer/**'
+      - 'dist/install.sh'
+      - 'dist/download-tui.sh'
+      - 'dist/download-tui.zsh'
+      - '.github/workflows/installer-unix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-unix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Plan Linux matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          sparse-checkout: installer/contracts
+      - id: matrix
+        # linux-platforms.json 是发行版矩阵唯一 owner。
+        run: |
+          node -e '
+            const {Distributions} = require("./installer/contracts/linux-platforms.json");
+            const include = Distributions.map(d => ({id: d.Id, image: d.Image}));
+            if (include.length === 0) throw new Error("linux-platforms.json has no Distributions");
+            console.log("matrix=" + JSON.stringify({include}));
+          ' >> "$GITHUB_OUTPUT"
+
+  linux-matrix:
+    name: Linux ${{ matrix.id }} (${{ matrix.image }})
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build Unix scripts
+        run: sh installer/build.sh --output "$RUNNER_TEMP/dist"
+      - name: Expand platform expectations
+        run: node installer/contracts/linux-platform-expectations.mjs > "$RUNNER_TEMP/exp.tsv"
+      # 用宿主 docker run 而非 job container，避免 action 依赖容器内 Node/glibc；五个基线镜像均自带 bash。
+      - name: Run Linux installer tests in ${{ matrix.image }}
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          docker run --rm \
+            -v "$PWD:/src:ro" \
+            -v "$RUNNER_TEMP:/ci:ro" \
+            "$IMAGE" \
+            bash /src/installer/contracts/Test-LinuxInstaller.sh --expectations /ci/exp.tsv --dist /ci/dist
+
+  macos-dispatcher:
+    name: macOS dispatcher smoke
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build Unix scripts
+        run: sh installer/build.sh --output "$RUNNER_TEMP/dist"
+      - name: Dispatch through sh / bash / zsh
+        shell: bash
+        run: |
+          set -euo pipefail
+          D="$RUNNER_TEMP/dist"
+          export TMPDIR="$RUNNER_TEMP/ccq-tmp"
+          mkdir -p "$TMPDIR"
+          temps_clean() {
+            if ls "$TMPDIR"/ccq-built.* >/dev/null 2>&1; then
+              echo "::error::leaked temp payload after: $1"
+              ls -la "$TMPDIR"
+              exit 1
+            fi
+          }
+          for f in install.sh download-tui.sh download-tui.zsh; do zsh -n "$D/$f"; done
+          # grep 不加 -q：读完输出，避免 pipefail 下上游收到 SIGPIPE。
+          sh "$D/install.sh" --list-steps | grep 'Node' >/dev/null; temps_clean 'sh install.sh --list-steps'
+          bash "$D/install.sh" --list-steps | grep 'Node' >/dev/null; temps_clean 'bash install.sh --list-steps'
+          cat "$D/install.sh" | bash -s -- --list-steps | grep 'Node' >/dev/null; temps_clean 'curl | bash install.sh --list-steps'
+          zsh "$D/install.sh" --help; temps_clean 'zsh install.sh --help'
+          sh "$D/download-tui.sh" --help; temps_clean 'sh download-tui.sh --help'
+          zsh "$D/download-tui.zsh" --help; temps_clean 'zsh download-tui.zsh --help'
+      - name: Verify raw distribution
+        run: node installer/contracts/verify-raw-distribution.mjs

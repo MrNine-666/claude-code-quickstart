@@ -12,5 +12,8 @@
 /dist/install.ps1 text eol=lf
 /dist/download-tui.ps1 text eol=lf
 /dist/install.sh text eol=lf
+/dist/download-tui.sh text eol=lf
 /dist/download-tui.zsh text eol=lf
 /installer/build.sh text eol=lf
+/installer/linux/** text eol=lf
+/installer/contracts/*.sh text eol=lf

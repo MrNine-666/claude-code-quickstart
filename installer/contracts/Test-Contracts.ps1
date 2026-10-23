@@ -265,6 +265,44 @@ function Test-StepsContract {
         } else {
             Assert-PathExists "steps.$stepId MacOSStepFile" (Join-Path $script:InstallerRoot $macOSStepFile)
         }
+
+        $linuxStepFile = [string](Get-MapValue -Item $step -Key 'LinuxStepFile' -DefaultValue '')
+        if ($linuxStepFile -ne "linux/steps/$stepId.sh") {
+            Add-Issue "steps.$stepId LinuxStepFile 必须是 linux/steps/$stepId.sh，实际: $linuxStepFile"
+        } else {
+            $linuxStepPath = Join-Path $script:InstallerRoot $linuxStepFile
+            Assert-PathExists "steps.$stepId LinuxStepFile" $linuxStepPath
+            if (Test-Path $linuxStepPath -PathType Leaf) {
+                $linuxStepSource = Get-Content -Path $linuxStepPath -Raw -Encoding UTF8
+                foreach ($functionField in @('TestFunction', 'InstallFunction', 'VerifyFunction')) {
+                    $functionName = [string]$step[$functionField]
+                    if ($linuxStepSource -notmatch "(?m)^$([regex]::Escape($functionName))\(\)\s*\{") {
+                        Add-Issue "steps.$stepId LinuxStepFile 未定义 ${functionField}: $functionName"
+                    }
+                }
+            }
+        }
+    }
+
+    # Linux Registry.sh 是 steps.json 的 Bash 快照（安装链尚无 node）：步骤、顺序与函数命名必须一致。
+    $linuxRegistryPath = Join-Path $script:InstallerRoot 'linux\core\Registry.sh'
+    Assert-PathExists 'linux.registry' $linuxRegistryPath
+    if (Test-Path $linuxRegistryPath -PathType Leaf) {
+        $linuxRegistry = Get-Content -Path $linuxRegistryPath -Raw -Encoding UTF8
+        $orderedStepIds = @($contractSteps | Sort-Object { [int]$_['Order'] } | ForEach-Object { [string]$_['StepId'] })
+        $idsMatch = [regex]::Match($linuxRegistry, '(?m)^CCQ_REGISTRY_STEP_IDS=\(([^)]*)\)')
+        $registryIds = if ($idsMatch.Success) { @($idsMatch.Groups[1].Value -split '\s+' | Where-Object { $_ }) } else { @() }
+        Assert-Equal 'linux.registry.step-ids' $orderedStepIds $registryIds
+        Assert-Equal 'linux.registry.basic' @($Contract['Groups']['Basic']['StepIds']) $registryIds
+        foreach ($step in $contractSteps) {
+            $stepId = [string]$step['StepId']
+            if ($linuxRegistry -notmatch "(?m)^\s*$([regex]::Escape($stepId)):Order\)\s*printf\s+'$([int]$step['Order'])'") {
+                Add-Issue "linux.registry.$stepId Order 与 steps.json 不一致（期望 $($step['Order'])）"
+            }
+            Assert-Equal "linux.registry.$stepId.test-function" "Test-${stepId}Installed" ([string]$step['TestFunction'])
+            Assert-Equal "linux.registry.$stepId.install-function" "Install-$stepId" ([string]$step['InstallFunction'])
+            Assert-Equal "linux.registry.$stepId.verify-function" "Verify-$stepId" ([string]$step['VerifyFunction'])
+        }
     }
 
     $groups = Get-StepGroups
@@ -287,6 +325,8 @@ function Test-StepsContract {
     Assert-Equal 'directory.must-not-rename' 'src' $Contract['DirectoryPolicy']['MustNotRenameTo']
     Assert-Equal 'directory.runtime-core.windows' 'installer/windows/core' $Contract['DirectoryPolicy']['RuntimeCoreDirectories']['Windows']
     Assert-Equal 'directory.runtime-core.macos' 'installer/macos/core' $Contract['DirectoryPolicy']['RuntimeCoreDirectories']['MacOS']
+    Assert-Equal 'directory.runtime-core.linux' 'installer/linux/core' $Contract['DirectoryPolicy']['RuntimeCoreDirectories']['Linux']
+    Assert-PathExists 'directory.runtime-core.linux' (Join-Path $script:RepoRoot 'installer/linux/core') -PathType Container
 }
 
 function Resolve-McpServerComparable {
@@ -415,59 +455,78 @@ function Test-BuildManifestContract {
 
     $windowsArtifacts = @($Contract['Windows']['Artifacts'])
     $macOSArtifacts = @($Contract['MacOS']['Artifacts'])
+    $linuxArtifacts = @($Contract['Linux']['Artifacts'])
+    $unixArtifacts = @($Contract['Unix']['Artifacts'])
     $windowsOutputs = @($windowsArtifacts | ForEach-Object { [string]$_['OutputFile'] })
-    $macOSOutputs = @($macOSArtifacts | ForEach-Object { [string]$_['OutputFile'] })
+    # Unix 直接输出 = dispatcher（Unix.Artifacts）+ 仍直接输出的 macOS payload（download-tui.zsh）。
+    $unixOutputs = @($unixArtifacts | ForEach-Object { [string]$_['OutputFile'] }) +
+        @($macOSArtifacts | Where-Object { -not [string]::IsNullOrWhiteSpace([string](Get-MapValue -Item $_ -Key 'OutputFile' -DefaultValue '')) } |
+            ForEach-Object { [string]$_['OutputFile'] })
 
     # raw -> gzip 映射是唯一文件名来源；client 传输层、build 与 CI 都消费它。
     # 不再维护第二份 release 名单：只断言自洽（gzip == raw + '.gz'）与平台归属。
     $gzipMappings = @($Contract['UpdateTransports']['GzipAssets'])
-    Assert-Equal 'build.update-transports.count' 4 $gzipMappings.Count
-    $windowsExeArtifacts = @()
-    $macOSExeArtifacts = @()
+    Assert-Equal 'build.update-transports.count' 6 $gzipMappings.Count
+    $platformAssets = @{ windows = @(); macos = @(); linux = @() }
     foreach ($mapping in $gzipMappings) {
         $raw = [string]$mapping['Raw']
         $gzip = [string]$mapping['Gzip']
         if ("$raw.gz" -ne $gzip) {
             Add-Issue "gzip artifact 名称必须是 raw 名称加 .gz: $gzip"
         }
-        if ($raw.EndsWith('.exe')) {
-            $windowsExeArtifacts += $raw
-            $windowsExeArtifacts += $gzip
-        } else {
-            $macOSExeArtifacts += $raw
-            $macOSExeArtifacts += $gzip
+        $assetMatch = [regex]::Match($raw, '^ccq-(windows|macos|linux)-(x64|arm64)(\.exe)?$')
+        if (-not $assetMatch.Success -or (($assetMatch.Groups[1].Value -eq 'windows') -ne $assetMatch.Groups[3].Success)) {
+            Add-Issue "无法识别的 Release raw 资产名: $raw"
+            continue
         }
+        $platformAssets[$assetMatch.Groups[1].Value] += @($raw, $gzip)
     }
-    if (@($windowsExeArtifacts).Count -ne 4) {
-        Add-Issue "Windows raw/gzip 传输资产应为 4 个，实际: $(@($windowsExeArtifacts).Count)"
-    }
-    if (@($macOSExeArtifacts).Count -ne 4) {
-        Add-Issue "macOS raw/gzip 传输资产应为 4 个，实际: $(@($macOSExeArtifacts).Count)"
+    foreach ($platformName in @('windows', 'macos', 'linux')) {
+        if (@($platformAssets[$platformName]).Count -ne 4) {
+            Add-Issue "$platformName raw/gzip 传输资产应为 4 个，实际: $(@($platformAssets[$platformName]).Count)"
+        }
     }
 
     # 人工 builder 只生成脚本；Release 集合只包含 TUI raw/gzip。
     $entrypoints = $Contract['BuildEntrypoints']
-    $releaseOutputs = @($windowsExeArtifacts) + @($macOSExeArtifacts)
+    $releaseOutputs = @($platformAssets['windows']) + @($platformAssets['macos']) + @($platformAssets['linux'])
 
-    foreach ($output in $windowsOutputs) {
-        if ($output -notin @($entrypoints['Windows']['Artifacts'])) {
-            Add-Issue "Windows artifact 集合缺少脚本产物: $output"
-        }
-    }
-    foreach ($output in $macOSOutputs) {
-        if ($output -notin @($entrypoints['MacOS']['Artifacts'])) {
-            Add-Issue "macOS artifact 集合缺少脚本产物: $output"
-        }
-    }
     Assert-Equal 'build.windows.script-outputs' @($windowsOutputs | Sort-Object) @($entrypoints['Windows']['Artifacts'] | Sort-Object)
-    Assert-Equal 'build.macos.script-outputs' @($macOSOutputs | Sort-Object) @($entrypoints['MacOS']['Artifacts'] | Sort-Object)
+    Assert-Equal 'build.unix.script-outputs' @($unixOutputs | Sort-Object) @($entrypoints['Unix']['Artifacts'] | Sort-Object)
+    Assert-Equal 'build.unix.script-set' @('download-tui.sh', 'download-tui.zsh', 'install.sh') @($entrypoints['Unix']['Artifacts'] | Sort-Object)
+    $trackedScripts = @($entrypoints['Windows']['Artifacts']) + @($entrypoints['Unix']['Artifacts'])
+    Assert-Equal 'build.tracked-scripts.count' 5 @($trackedScripts | Sort-Object -Unique).Count
+    if ($entrypoints.ContainsKey('MacOS')) {
+        Add-Issue 'BuildEntrypoints.MacOS 已并入 BuildEntrypoints.Unix，不应保留'
+    }
 
     Assert-Equal 'build.release.outputs' @($releaseOutputs | Sort-Object) @($entrypoints['ReleaseArtifacts'] | Sort-Object)
+    Assert-Equal 'build.release.count' 12 @($entrypoints['ReleaseArtifacts']).Count
     Assert-Equal 'build.entrypoints.windows.script' 'installer/build.ps1' $entrypoints['Windows']['Script']
     Assert-Equal 'build.entrypoints.windows.allowed' @('Windows') @($entrypoints['Windows']['AllowedPlatforms'])
-    Assert-Equal 'build.entrypoints.macos.script' 'installer/build.sh' $entrypoints['MacOS']['Script']
-    Assert-Equal 'build.entrypoints.macos.allowed' @('macos') @($entrypoints['MacOS']['AllowedPlatforms'])
+    Assert-Equal 'build.entrypoints.unix.script' 'installer/build.sh' $entrypoints['Unix']['Script']
+    Assert-Equal 'build.entrypoints.unix.allowed' @('macos', 'linux') @($entrypoints['Unix']['AllowedPlatforms'])
     Assert-Equal 'build.release.derived-count' @($releaseOutputs).Count @($entrypoints['ReleaseArtifacts']).Count
+
+    # 每个 Unix dispatcher role 必须同时有 macOS 与 Linux payload；MacOS Install 不再直接输出 install.sh。
+    foreach ($unixArtifact in $unixArtifacts) {
+        $role = [string]$unixArtifact['Role']
+        foreach ($payloadPlatform in @(@{ Name = 'MacOS'; Items = $macOSArtifacts }, @{ Name = 'Linux'; Items = $linuxArtifacts })) {
+            $payload = @($payloadPlatform.Items | Where-Object { [string]$_['Role'] -eq $role })
+            if ($payload.Count -ne 1 -or -not [bool](Get-MapValue -Item $payload[0] -Key 'Payload' -DefaultValue $false)) {
+                Add-Issue "build.Unix.$role 缺少 $($payloadPlatform.Name) payload（Role=$role 且 Payload=true）"
+            }
+        }
+    }
+    $macInstall = @($macOSArtifacts | Where-Object { [string]$_['Role'] -eq 'Install' })
+    if ($macInstall.Count -eq 1 -and $macInstall[0].ContainsKey('OutputFile')) {
+        Add-Issue 'build.MacOS.Install 只作为 Unix install.sh 的 payload，不应声明 OutputFile'
+    }
+    foreach ($linuxArtifact in $linuxArtifacts) {
+        if ($linuxArtifact.ContainsKey('OutputFile')) {
+            Add-Issue "build.Linux.$($linuxArtifact['Role']) 只作为 Unix dispatcher payload，不应声明 OutputFile"
+        }
+    }
 
     foreach ($output in $releaseOutputs) {
         if ($output -in @('ccq.ps1', 'ccq.sh') -or $output -match '\.built\.') {
@@ -527,6 +586,33 @@ function Test-BuildManifestContract {
         }
     }
 
+    foreach ($artifact in $linuxArtifacts) {
+        $role = [string]$artifact['Role']
+        $entryFile = [string]$artifact['EntryFile']
+        if ($entryFile -notmatch '^linux/[^/]+\.sh$') {
+            Add-Issue "build.Linux.$role EntryFile 必须指向 linux/*.sh，实际: $entryFile"
+        } else {
+            Assert-PathExists "build.Linux.$role EntryFile" (Join-Path $script:InstallerRoot $entryFile)
+        }
+        # 与 macOS 相同的 ReuseCoreFilesFromRole 语义（该 helper 不分平台）。
+        $linuxCoreFiles = Resolve-MacOSArtifactCoreFiles -Artifact $artifact -AllArtifacts $linuxArtifacts
+        if ($linuxCoreFiles.Count -eq 0) {
+            Add-Issue "build.Linux.$role 未解析出任何 core 文件（需声明 CoreFiles 或 ReuseCoreFilesFromRole）"
+        }
+        foreach ($coreFile in $linuxCoreFiles) {
+            $corePath = [string]$coreFile
+            if ($corePath -notmatch '^linux/core/.+\.sh$') {
+                Add-Issue "build.Linux.$role CoreFiles 必须指向 linux/core/*.sh，实际: $corePath"
+            } else {
+                Assert-PathExists "build.Linux.$role CoreFile" (Join-Path $script:InstallerRoot $corePath)
+            }
+        }
+        if ($role -eq 'CcqDownload') {
+            Assert-Equal 'build.Linux.CcqDownload.IncludeSteps' $false ([bool]$artifact['IncludeSteps'])
+            Assert-Equal 'build.Linux.CcqDownload.ReuseCoreFilesFromRole' 'Install' ([string](Get-MapValue -Item $artifact -Key 'ReuseCoreFilesFromRole' -DefaultValue ''))
+        }
+    }
+
     Assert-PathExists 'build.ps1' (Join-Path $script:InstallerRoot 'build.ps1')
     Assert-PathExists 'build.sh' (Join-Path $script:InstallerRoot 'build.sh')
 
@@ -537,6 +623,15 @@ function Test-BuildManifestContract {
     }
     if ($buildSh -notmatch "readJson\('installer/contracts/build\.json'\)") {
         Add-Issue 'installer/build.sh 未读取共享构建清单 installer/contracts/build.json'
+    }
+    # Unix install.sh / download-tui.sh 是内嵌 macOS + Linux payload 的 POSIX dispatcher。
+    foreach ($requiredFunction in @('buildUnixDispatcher', 'validateUnixDispatcher', 'buildLinuxPayload', 'validateLinuxPayload')) {
+        if ($buildSh -notmatch "function\s+$requiredFunction\(") {
+            Add-Issue "installer/build.sh 缺少 Unix dispatcher 构建函数: $requiredFunction"
+        }
+    }
+    if ($buildSh -notmatch "manifest\.Unix\.Artifacts") {
+        Add-Issue 'installer/build.sh 未从 build.json Unix.Artifacts 生成 dispatcher'
     }
     if ($buildPs1 -match 'GITHUB_REF_NAME|Invoke-ManageTuiPackage|Clear-KnownBuildArtifacts' -or
         $buildSh -match 'GITHUB_REF_NAME|buildManageTuiPackage|clearKnownBuildArtifacts') {
@@ -2106,6 +2201,179 @@ function Test-CcqSingleDefinitionContract {
     }
 }
 
+function Test-LinuxContract {
+    <#
+    Linux runtime 与 linux-platforms.json 门禁：Load.sh 顺序、CCQ 单一定义、专用入口、发行版矩阵结构，
+    以及 Platform.sh / PackageManager.sh 与矩阵的文本级漂移（行为级漂移由 Test-LinuxInstaller.sh 覆盖）。
+    #>
+    $linuxRoot = Join-Path $script:InstallerRoot 'linux'
+    $loadPath = Join-Path $linuxRoot 'core\Load.sh'
+    Assert-PathExists 'linux.core.load' $loadPath
+    $buildContract = Read-ContractJson 'build.json'
+    $linuxArtifacts = @($buildContract['Linux']['Artifacts'])
+    if (Test-Path $loadPath -PathType Leaf) {
+        $orderMatch = [regex]::Match((Get-Content -Path $loadPath -Raw -Encoding UTF8), '(?s)CCQ_CORE_ORDER=\((.*?)\)')
+        if (-not $orderMatch.Success) {
+            Add-Issue 'linux.core.load 缺少 CCQ_CORE_ORDER 有序声明'
+        } else {
+            $declaredOrder = @($orderMatch.Groups[1].Value -split '\s+' | Where-Object { $_ })
+            foreach ($artifact in $linuxArtifacts) {
+                $artifactCore = Resolve-MacOSArtifactCoreFiles -Artifact $artifact -AllArtifacts $linuxArtifacts
+                $declaredCore = @($artifactCore | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension([string]$_) })
+                # Linux 断言精确顺序：build.sh 内联顺序必须等于 source 模式加载顺序。
+                Assert-Equal "ccq.linux.$($artifact['Role']).core-order" $declaredOrder $declaredCore
+            }
+        }
+    }
+
+    # CCQ 行为函数在 installer/linux/** 恰好定义一次，且位于 core/Ccq.sh。
+    $linuxCcqPath = Join-Path $linuxRoot 'core\Ccq.sh'
+    $linuxCcqFunctions = @(
+        'ccq_get_architecture', 'ccq_get_executable_path', 'ccq_normalize_version',
+        'ccq_test_executable_installed', 'ccq_download_file', 'ccq_install_executable',
+        'ccq_get_release_download_base_url', 'ccq_get_release_target_version', 'ccq_confirm_executable_download'
+    )
+    $definitions = @{}
+    foreach ($name in $linuxCcqFunctions) { $definitions[$name] = @() }
+    foreach ($file in @(Get-ChildItem -Path $linuxRoot -Recurse -Filter '*.sh' -File)) {
+        $lines = @(Get-Content -Path $file.FullName -Encoding UTF8)
+        for ($index = 0; $index -lt $lines.Count; $index++) {
+            foreach ($name in $linuxCcqFunctions) {
+                if ($lines[$index] -match "^$([regex]::Escape($name))\(\)\s*\{") {
+                    $definitions[$name] += "$($file.FullName):$($index + 1)"
+                }
+            }
+        }
+    }
+    foreach ($name in $linuxCcqFunctions) {
+        $locations = @($definitions[$name])
+        if ($locations.Count -ne 1 -or -not $locations[0].StartsWith($linuxCcqPath + ':', [System.StringComparison]::OrdinalIgnoreCase)) {
+            Add-Issue "ccq.unique.linux $name 应只在 core/Ccq.sh 定义一次，实际: $($locations -join ', ')"
+        }
+    }
+
+    # 入口：专用入口不含实现细节且不吞失败；完整 install 容忍 ccq 下载失败；两者保留 build.sh 内联所需的结构。
+    $linuxInstall = Get-Content -Path (Join-Path $linuxRoot 'Install.sh') -Raw -Encoding UTF8
+    $linuxDownload = Get-Content -Path (Join-Path $linuxRoot 'Download-Tui.sh') -Raw -Encoding UTF8
+    foreach ($forbiddenPattern in @('ccq_get_architecture', 'ccq_install_executable', '\bmv\s+-f', 'chmod\s', 'ccq_load_step_modules', 'ccq_invoke_step_lifecycle')) {
+        if ($linuxDownload -match $forbiddenPattern) {
+            Add-Issue "ccq.entry.linux 专用入口不应包含实现细节: $forbiddenPattern"
+        }
+    }
+    if ($linuxDownload -notmatch '(?m)^\s*ccq_confirm_executable_download dedicated\s*$') {
+        Add-Issue 'ccq.entry.linux 未以 dedicated 模式调用共享 handoff（且不得吞掉失败状态）'
+    }
+    if ($linuxInstall -notmatch 'ccq_confirm_executable_download\s+install\s*\|\|\s*true') {
+        Add-Issue 'ccq.entry.linux Install.sh 未显式容忍安装模式下的 ccq 下载失败'
+    }
+    foreach ($entry in @(@{ Name = 'Install.sh'; Source = $linuxInstall; Main = 'ccq_main "$@"' }, @{ Name = 'Download-Tui.sh'; Source = $linuxDownload; Main = 'ccq_download_main "$@"' })) {
+        foreach ($requiredLine in @('if [ -n "${CCQ_STREAMED_SCRIPT_PATH:-}" ]; then', 'source "${CCQ_LINUX_ROOT}/core/Load.sh"', $entry.Main, ': "${CCQ_RELEASE_TAG:=__CCQ_RELEASE_TAG__}"')) {
+            if ($entry.Source -notmatch "(?m)^$([regex]::Escape($requiredLine))\s*$") {
+                Add-Issue "ccq.entry.linux $($entry.Name) 缺少 build.sh 内联所需的行: $requiredLine"
+            }
+        }
+    }
+    if ($linuxInstall -match '(?m)^\s*(eval|source)\s+.*os-release') {
+        Add-Issue 'linux.platform 不得 eval/source os-release'
+    }
+
+    # linux-platforms.json 结构
+    $platforms = Read-ContractJson 'linux-platforms.json'
+    $distributions = @($platforms['Distributions'])
+    $expectedImages = [ordered]@{
+        ubuntu = 'ubuntu:24.04'
+        debian = 'debian:13'
+        fedora = 'fedora:44'
+        centos = 'quay.io/centos/centos:stream10'
+        arch   = 'archlinux:latest'
+    }
+    Assert-Equal 'linux.platforms.ids' @($expectedImages.Keys) @($distributions | ForEach-Object { [string]$_['Id'] })
+    Assert-Equal 'linux.platforms.images' @($expectedImages.Values) @($distributions | ForEach-Object { [string]$_['Image'] })
+    $families = $platforms['Families']
+    $packageManagers = $platforms['PackageManagers']
+    $platformSource = Get-Content -Path (Join-Path $linuxRoot 'core\Platform.sh') -Raw -Encoding UTF8
+    $packageManagerSource = Get-Content -Path (Join-Path $linuxRoot 'core\PackageManager.sh') -Raw -Encoding UTF8
+    foreach ($distribution in $distributions) {
+        $id = [string]$distribution['Id']
+        $image = [string]$distribution['Image']
+        $isRolling = [bool](Get-MapValue -Item $distribution -Key 'Rolling' -DefaultValue $false)
+        if (-not $isRolling -and ($image -notmatch ':[^:/]+$' -or $image -match ':(latest|rolling|stable|testing|rawhide)$')) {
+            Add-Issue "linux.platforms.$id 非 rolling 基线不得使用浮动 tag: $image"
+        }
+        if ($isRolling -and $id -ne 'arch') {
+            Add-Issue "linux.platforms.$id 只有 Arch 允许 rolling"
+        }
+        $family = [string]$distribution['Family']
+        if (-not $families.ContainsKey($family)) {
+            Add-Issue "linux.platforms.$id family 未声明: $family"
+        }
+        if ($distribution.ContainsKey('MinVersion')) {
+            $pattern = "(?m)^\s*$([regex]::Escape($id))\)\s*ccq_linux_classify_versioned\s+$([regex]::Escape($family))\s+$([regex]::Escape([string]$distribution['OfficialVersion']))\s+$([regex]::Escape([string]$distribution['MinVersion']))\s*;;"
+            if ($platformSource -notmatch $pattern) {
+                Add-Issue "linux.platforms.$id 与 Platform.sh 判定规则漂移（期望 family/official/min = $family/$($distribution['OfficialVersion'])/$($distribution['MinVersion'])）"
+            }
+        }
+    }
+    $centos = @($distributions | Where-Object { $_['Id'] -eq 'centos' })
+    if ($centos.Count -eq 1) {
+        Assert-Equal 'linux.platforms.centos.allowed' @('9', '10') @($centos[0]['AllowedVersions'])
+    }
+    foreach ($familyName in @($families.Keys)) {
+        $pm = [string]$families[$familyName]['PackageManager']
+        if (-not $packageManagers.ContainsKey($pm)) {
+            Add-Issue "linux.platforms.family.$familyName 缺少包管理器映射: $pm"
+            continue
+        }
+        if ($platformSource -notmatch "(?m)^\s*$([regex]::Escape($familyName))\)\s*printf\s+'$([regex]::Escape($pm))'") {
+            Add-Issue "linux.platforms.family.$familyName 与 Platform.sh 包管理器映射漂移（期望 $pm）"
+        }
+    }
+    foreach ($pmName in @($packageManagers.Keys)) {
+        $manager = $packageManagers[$pmName]
+        foreach ($argvKey in @('Update', 'InstallGit')) {
+            if (-not $manager.ContainsKey($argvKey)) { continue }
+            $argvText = @($manager[$argvKey]) -join ' '
+            if ($packageManagerSource -notmatch "ccq_sudo_run $([regex]::Escape($argvText))(\s|;|$)") {
+                Add-Issue "linux.platforms.pm.$pmName.$argvKey 与 PackageManager.sh 漂移: $argvText"
+            }
+        }
+    }
+    Assert-Equal 'linux.platforms.pacman.argv' @('pacman', '-S', '--needed', '--noconfirm', 'git') @($packageManagers['pacman']['InstallGit'])
+    Assert-Equal 'linux.platforms.pacman.failure' 'ManualRequired' ([string]$packageManagers['pacman']['FailureStatus'])
+    Assert-Equal 'linux.platforms.pacman.hint' 'sudo pacman -Syu git' ([string]$packageManagers['pacman']['ManualHint'])
+    Assert-Equal 'linux.platforms.apt.update' @('apt-get', 'update') @($packageManagers['apt']['Update'])
+    if ($packageManagerSource -match 'ccq_sudo_run\s+pacman\s+-Sy') {
+        Add-Issue 'linux.platforms PackageManager.sh 不得自动执行 pacman -Sy / -Syu'
+    }
+    foreach ($likeEntry in $platforms['IdLikeFamilies'].GetEnumerator()) {
+        if (-not $families.ContainsKey([string]$likeEntry.Value)) {
+            Add-Issue "linux.platforms.id-like.$($likeEntry.Key) 映射到未声明 family: $($likeEntry.Value)"
+        }
+    }
+    Assert-Equal 'linux.platforms.arch.x64' @('x86_64', 'amd64') @($platforms['Architectures']['x64'])
+    Assert-Equal 'linux.platforms.arch.arm64' @('aarch64', 'arm64') @($platforms['Architectures']['arm64'])
+    Assert-Equal 'linux.platforms.libc' 'glibc' ([string]$platforms['Libc']['Required'])
+    Assert-Equal 'linux.platforms.wsl1' 'unsupported' ([string]$platforms['Wsl']['WSL1'])
+    foreach ($sample in @($platforms['ClassificationSamples'])) {
+        $class = [string]$sample['Class']
+        $sampleFamily = [string]$sample['Family']
+        if ($class -notin @('official', 'best-effort', 'unsupported')) {
+            Add-Issue "linux.platforms.sample.$($sample['Id']) Class 无效: $class"
+        } elseif (($class -eq 'unsupported') -ne [string]::IsNullOrEmpty($sampleFamily) -or ($sampleFamily -and -not $families.ContainsKey($sampleFamily))) {
+            Add-Issue "linux.platforms.sample.$($sample['Id']) Family 与 Class 不一致: $class/$sampleFamily"
+        }
+    }
+    foreach ($distribution in $distributions) {
+        $officialVersion = if ([bool](Get-MapValue -Item $distribution -Key 'Rolling' -DefaultValue $false)) { '' } else { [string]$distribution['OfficialVersion'] }
+        $officialSample = @($platforms['ClassificationSamples'] | Where-Object {
+            $_['Id'] -eq $distribution['Id'] -and [string]$_['VersionId'] -eq $officialVersion -and $_['Class'] -eq 'official'
+        })
+        if ($officialSample.Count -ne 1) {
+            Add-Issue "linux.platforms.$($distribution['Id']) 缺少 official 分类样例"
+        }
+    }
+}
+
 function Main {
     if (-not (Test-Path $script:InstallerRoot -PathType Container)) {
         throw "InstallerRoot 不是有效目录: $script:InstallerRoot"
@@ -2113,6 +2381,7 @@ function Main {
 
     Test-CanonicalSourceLayout
     Test-CcqSingleDefinitionContract
+    Test-LinuxContract
     Test-CcqVersionHandoffContract
     Test-CcqGzipTransportContract
     Test-CcqLockedFileReplaceContract

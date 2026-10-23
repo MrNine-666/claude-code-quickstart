@@ -6,7 +6,8 @@
     "MustNotRenameTo": "src",
     "RuntimeCoreDirectories": {
       "Windows": "installer/windows/core",
-      "MacOS": "installer/macos/core"
+      "MacOS": "installer/macos/core",
+      "Linux": "installer/linux/core"
     }
   },
   "LifecycleStates": [
@@ -36,6 +37,7 @@
       "Description": "安装 Node.js，Windows/macOS 均优先复用现有 node/npm：版本达标则直接跳过；不达标时优先在当前 provider 内安装/更新到 LTS；Windows 无法安全修复时提供 nvm-windows / Node.js 直装兜底，macOS 无法原地修复时通过 nvm 官方脚本兜底；不做跨 provider 迁移",
       "StepFile": "windows/steps/NodeJS.ps1",
       "MacOSStepFile": "macos/steps/NodeJS.zsh",
+      "LinuxStepFile": "linux/steps/NodeJS.sh",
       "SubModules": [
         "windows/steps/NodeJS-Detect.ps1",
         "windows/steps/NodeJS-Common.ps1",
@@ -60,6 +62,7 @@
       "Description": "安装 Git 版本控制系统",
       "StepFile": "windows/steps/Git.ps1",
       "MacOSStepFile": "macos/steps/Git.zsh",
+      "LinuxStepFile": "linux/steps/Git.sh",
       "TestFunction": "Test-GitInstalled",
       "InstallFunction": "Install-Git",
       "VerifyFunction": "Verify-Git",

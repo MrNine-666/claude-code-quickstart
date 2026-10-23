@@ -1,12 +1,14 @@
 #!/usr/bin/env bun
 /**
- * TUI 构建脚本 - 默认交叉编译 4 平台，也可通过 --target=<id> 只构建一个目标
+ * TUI 构建脚本 - 默认交叉编译 6 个目标，也可通过 --target=<id> 只构建一个目标
  *
  * 产物：
  * - dist/ccq-windows-x64.exe（带自定义图标）
  * - dist/ccq-windows-arm64.exe（交叉编译限制，保留 Bun 默认图标）
  * - dist/ccq-macos-x64
  * - dist/ccq-macos-arm64
+ * - dist/ccq-linux-x64（bun-linux-x64-baseline，不要求 AVX2）
+ * - dist/ccq-linux-arm64
  *
  * 契约内嵌：通过 src/core/embedded-contracts.ts 静态 import 内嵌
  * 图标：Windows x64 本机构建时自动嵌入 assets/ccq-icon.ico
@@ -21,6 +23,8 @@ export const BUILD_TARGETS = [
   { id: "windows-arm64", platform: "windows", arch: "arm64", ext: ".exe", icon: false },
   { id: "macos-x64", platform: "macos", arch: "x64", ext: "", icon: false },
   { id: "macos-arm64", platform: "macos", arch: "arm64", ext: "", icon: false },
+  { id: "linux-x64", platform: "linux", arch: "x64", ext: "", icon: false, bunTarget: "bun-linux-x64-baseline" },
+  { id: "linux-arm64", platform: "linux", arch: "arm64", ext: "", icon: false },
 ] as const;
 
 export type BuildTarget = (typeof BUILD_TARGETS)[number];
@@ -75,7 +79,7 @@ export function selectBuildTargets(args: readonly string[]): readonly BuildTarge
 }
 
 async function compileTarget(target: BuildTarget): Promise<void> {
-  const bunTarget = `bun-${target.platform}-${target.arch}`;
+  const bunTarget = "bunTarget" in target ? target.bunTarget : `bun-${target.platform}-${target.arch}`;
   const artifacts = targetArtifactNames(target);
   const outfile = join(DIST_DIR, artifacts.raw);
 
@@ -168,9 +172,9 @@ export async function runBuildTargets(
   console.log("产物列表:");
   for (const { target, success, error } of results) {
     if (success) {
-      console.log(`  ✓ ccq-${target.id}${target.platform === "windows" ? ".exe" : ""}`);
+      console.log(`  ✓ ${targetArtifactNames(target).raw}`);
     } else {
-      console.log(`  ✗ ccq-${target.id}${target.platform === "windows" ? ".exe" : ""} (${error})`);
+      console.log(`  ✗ ${targetArtifactNames(target).raw} (${error})`);
     }
   }
 

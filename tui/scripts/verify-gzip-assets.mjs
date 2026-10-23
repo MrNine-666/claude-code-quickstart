@@ -12,7 +12,7 @@ try {
 	const {releaseAssets, verifyReleaseAssets} = await import('./release-assets.mjs');
 	assert.deepEqual(releaseAssets('stable').concat(releaseAssets('arm64')).map(item => item.Raw).sort(), RAW_TO_GZIP.map(item => item.raw).sort());
 
-	// ── 四个平台目录级打包：必须先有 raw，且解压等于 raw ────────────────────────
+	// ── 全部平台目录级打包：必须先有 raw，且解压等于 raw ────────────────────────
 	const rawBytes = new Map();
 	for (const {raw} of RAW_TO_GZIP) {
 		const bytes = Buffer.from(`binary-${raw}-${'x'.repeat(4096)}`);
@@ -20,7 +20,7 @@ try {
 		writeFileSync(join(workDir, raw), bytes);
 	}
 	const results = packageGzipAssetsInDir(workDir);
-	assert.equal(results.length, 4, '必须为四个平台各生成一个 gzip 资产');
+	assert.equal(results.length, RAW_TO_GZIP.length, '必须为每个平台各生成一个 gzip 资产');
 	for (const {raw, gzip} of RAW_TO_GZIP) {
 		const produced = readFileSync(join(workDir, gzip));
 		assert.equal(Buffer.from(gunzipSync(produced)).equals(rawBytes.get(raw)), true, `${gzip} 解压结果必须与最终 raw 字节完全一致`);
