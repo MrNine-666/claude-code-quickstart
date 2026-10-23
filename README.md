@@ -1,6 +1,6 @@
 # Claude Code Quickstart (CCQ)
 
-Windows / macOS 上的 CLI Agent 环境安装器 + 管理控制台，支持 Claude Code、Codex、Pi。
+Windows / macOS / Linux 上的 CLI Agent 环境安装器 + 管理控制台，支持 Claude Code、Codex、Pi。
 
 一条命令装好 Node.js、Git 和 `ccq`，之后在 `ccq` 里统一管理三个 Agent 的工具、供应商、MCP、Skills 和扩展，预览配置与全局规则，并按分类备份和迁移配置。
 
@@ -18,7 +18,7 @@ Windows / macOS 上的 CLI Agent 环境安装器 + 管理控制台，支持 Clau
 
 ## 它能做什么
 
-- **装环境一条命令**：Windows 走 PowerShell，macOS 走 Homebrew / zsh，自动装好 Node.js 和 Git；已经装好的自动跳过，重复执行也不会出错
+- **装环境一条命令**：Windows 走 PowerShell，macOS 走 Homebrew / zsh，Linux 走发行版包管理器 / Bash，自动装好 Node.js 和 Git；已经装好的自动跳过，重复执行也不会出错
 - **三个 Agent 一个界面**：顶部 Header 切换 Claude Code / Codex / Pi，三套配置互不影响
 - **换供应商不碰其它配置**：每个供应商单独一份，切换或设默认只改供应商相关的东西，语言、权限等设置原样保留
 - **模型信息自动填**：从上游拉出模型列表，再自动补上上下文窗口、输出上限、价格、思考等级
@@ -31,13 +31,15 @@ Windows / macOS 上的 CLI Agent 环境安装器 + 管理控制台，支持 Clau
 
 ## 系统要求
 
-|  | Windows | macOS |
-|---|---|---|
-| 系统 | Windows 10 1903+ / Windows 11 | macOS 12 及以上 |
-| 权限 | 建议用管理员 | 普通用户即可 |
-| Node.js | 已有达标版本就复用，否则自动装 LTS | 同左 |
+|  | Windows | macOS | Linux |
+|---|---|---|---|
+| 系统 | Windows 10 1903+ / Windows 11 | macOS 12 及以上 | Ubuntu 22.04+ / Debian 12+ / Fedora 42+ / CentOS Stream 9、10 / Arch（x64 / arm64，glibc） |
+| 权限 | 建议用管理员 | 普通用户即可 | 普通用户运行，装系统包时按需 `sudo`；不要用 root |
+| Node.js | 已有达标版本就复用，否则自动装 LTS | 同左 | 同左（通过 nvm 装到当前用户） |
 
 网络需要能访问 GitHub 与 npm registry。
+
+Linux 正式测试基线为 Ubuntu 24.04、Debian 13、Fedora 44、CentOS Stream 10 与 Arch；Linux Mint、Rocky、AlmaLinux、Manjaro 等衍生版和 WSL2 会提示“未经验证”后尽力安装，Alpine（musl）与 WSL1 不支持。Linux 上的 `ccq` 暂不支持写入剪贴板；配置导入 / 导出没有系统文件对话框，改为在控制台内手动输入路径。
 
 ---
 
@@ -52,7 +54,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 irm 'https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/install.ps1' | iex
 ```
 
-macOS（12+）：
+macOS（12+）/ Linux：用普通用户执行
 
 ```sh
 curl -fsSL "https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/install.sh" | bash
@@ -71,13 +73,13 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 irm 'https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/download-tui.ps1' | iex
 ```
 
-macOS：
+macOS / Linux：
 
 ```sh
-curl -fsSL "https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/download-tui.zsh" | zsh
+curl -fsSL "https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/download-tui.sh" | bash
 ```
 
-这两个入口只装 `ccq` 本体，不装 Node.js、Git 和三个 Agent。
+macOS 上原来的 `download-tui.zsh | zsh` 命令仍然可用。这些入口只装 `ccq` 本体，不装 Node.js、Git 和三个 Agent。
 
 ![macOS 安装界面](./assets/screenshots/macos-install.png)
 
@@ -85,7 +87,7 @@ curl -fsSL "https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/
 
 ### 方式二 下载脚本执行
 
-下载 [Windows 安装脚本](https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/install.ps1) 或 [macOS 安装脚本](https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/install.sh)，保存后运行。脚本会下载最新稳定版二进制：
+下载 [Windows 安装脚本](https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/install.ps1) 或 [macOS / Linux 安装脚本](https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/install.sh)，保存后运行。脚本会下载最新稳定版二进制：
 
 ```powershell
 # Windows
@@ -94,7 +96,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
 ```
 
 ```sh
-# macOS
+# macOS / Linux
 bash ./install.sh
 ```
 
@@ -200,7 +202,7 @@ $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
 ```
 
 ```sh
-# macOS
+# macOS / Linux
 export PATH="$HOME/.local/bin:$PATH"
 ```
 

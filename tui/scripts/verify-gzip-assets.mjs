@@ -88,7 +88,7 @@ try {
 	await publish();
 	assert.equal(remote.draft, false);
 	assert.ok(remote.body.startsWith('Generated release notes\n\n'), 'Keep generated Release notes');
-	for (const name of ['install.ps1', 'install.sh', 'download-tui.ps1', 'download-tui.zsh']) {
+	for (const name of ['install.ps1', 'install.sh', 'download-tui.ps1', 'download-tui.sh']) {
 		assert.ok(remote.body.includes(`https://raw.githubusercontent.com/owner/repo/main/dist/${name}`));
 	}
 	assert.ok(!remote.body.includes('/v2.5.0/dist/'), 'Installer links have no script version');

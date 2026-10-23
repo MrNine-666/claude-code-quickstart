@@ -119,7 +119,7 @@ Unix dispatcher 按 `uname -s` 把对应 payload 从带引号 heredoc 写入 `mk
 
 **上线顺序：先 Release，后提交脚本。** 脚本默认下载 `releases/latest/download`，必须先发布含 Linux 资产的稳定 Release（确认 12 个资产、Linux smoke 通过且已是 latest stable），再本地构建并提交含 Linux 支持的 `dist/install.sh` 与 `dist/download-tui.sh`，同时更新根 README 与 Release 正文的 Linux 命令。在此之前 main 上的 Unix 脚本保持 macOS-only 行为。回滚脚本只需恢复上一版 `dist/*.sh`。
 
-固定入口为 `https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/<脚本名>`（`install.ps1`、`download-tui.ps1`、`install.sh`、`download-tui.zsh`；`download-tui.sh` 随 Linux 首个 Release 上线），用户命令见[根 README](../README.md#安装)。脚本无版本号，默认下载最新稳定版二进制；已有程序仍保留，升级用 `ccq update`。维护者需保证滚动脚本与最新稳定版兼容。
+固定入口为 `https://raw.githubusercontent.com/MrNine-666/claude-code-quickstart/main/dist/<脚本名>`（`install.ps1`、`download-tui.ps1`、`install.sh`、`download-tui.sh`、`download-tui.zsh`；Linux 支持自 v2.7.0 起上线），用户命令见[根 README](../README.md#安装)。脚本无版本号，默认下载最新稳定版二进制；已有程序仍保留，升级用 `ccq update`。维护者需保证滚动脚本与最新稳定版兼容。
 
 TUI Release CI 采用 sparse checkout 排除 `dist` 安装脚本，只使用 TUI 与构建契约；不读取、构建或上传安装脚本，只发布以下十二个 raw/gzip artifact（Linux x64 以 `bun-linux-x64-baseline` 编译，不要求 AVX2；Linux 仅 glibc）：
 

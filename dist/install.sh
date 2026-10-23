@@ -1,8 +1,21 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════════════════
+# 本文件由 build.sh 自动生成，请勿手动编辑
+# 生成时间: 2026-10-23T07:34:55.744Z
+# Unix 入口: 按 uname -s 把 macOS zsh 或 Linux Bash payload 写入临时文件，再交给对应解释器执行。
+# 未选中平台的 payload 位于带引号 heredoc 内，不会被当前 shell 解析。
+# ═══════════════════════════════════════════════════════════════════════════════
+ccq_payload="$(mktemp "${TMPDIR:-/tmp}/ccq-built.XXXXXX")" || exit 1
+ccq_os="$(uname -s 2>/dev/null)"
+case "${ccq_os}" in
+  Darwin)
+    ccq_interp=/bin/zsh
+    cat > "${ccq_payload}" <<'CCQ_MACOS_PAYLOAD_a2741b5553aa' || { rm -f "${ccq_payload}"; exit 1; }
 #!/usr/bin/env bash
 set +x 2>/dev/null || true
 # ═══════════════════════════════════════════════════════════════════════════════
 # 本文件由 build.sh 自动生成，请勿手动编辑
-# 生成时间: 2026-10-09T05:47:50.730Z
+# 生成时间: 2026-10-23T07:34:55.696Z
 # ═══════════════════════════════════════════════════════════════════════════════
 if [ -z "${ZSH_VERSION:-}" ]; then
   if [ -x "/bin/zsh" ]; then
@@ -36,7 +49,8 @@ cat > "${CCQ_BUILT_CONTRACTS_DIR}/steps.json" <<'CCQ_CONTRACT_STEPS_JSON'
     "MustNotRenameTo": "src",
     "RuntimeCoreDirectories": {
       "Windows": "installer/windows/core",
-      "MacOS": "installer/macos/core"
+      "MacOS": "installer/macos/core",
+      "Linux": "installer/linux/core"
     }
   },
   "LifecycleStates": [
@@ -66,6 +80,7 @@ cat > "${CCQ_BUILT_CONTRACTS_DIR}/steps.json" <<'CCQ_CONTRACT_STEPS_JSON'
       "Description": "安装 Node.js，Windows/macOS 均优先复用现有 node/npm：版本达标则直接跳过；不达标时优先在当前 provider 内安装/更新到 LTS；Windows 无法安全修复时提供 nvm-windows / Node.js 直装兜底，macOS 无法原地修复时通过 nvm 官方脚本兜底；不做跨 provider 迁移",
       "StepFile": "windows/steps/NodeJS.ps1",
       "MacOSStepFile": "macos/steps/NodeJS.zsh",
+      "LinuxStepFile": "linux/steps/NodeJS.sh",
       "SubModules": [
         "windows/steps/NodeJS-Detect.ps1",
         "windows/steps/NodeJS-Common.ps1",
@@ -90,6 +105,7 @@ cat > "${CCQ_BUILT_CONTRACTS_DIR}/steps.json" <<'CCQ_CONTRACT_STEPS_JSON'
       "Description": "安装 Git 版本控制系统",
       "StepFile": "windows/steps/Git.ps1",
       "MacOSStepFile": "macos/steps/Git.zsh",
+      "LinuxStepFile": "linux/steps/Git.sh",
       "TestFunction": "Test-GitInstalled",
       "InstallFunction": "Install-Git",
       "VerifyFunction": "Verify-Git",
@@ -4958,3 +4974,1807 @@ ccq_main() {
 
 
 ccq_main "$@"
+CCQ_MACOS_PAYLOAD_a2741b5553aa
+    ;;
+  Linux)
+    ccq_interp="$(command -v bash 2>/dev/null || true)"
+    cat > "${ccq_payload}" <<'CCQ_LINUX_PAYLOAD_a2741b5553aa' || { rm -f "${ccq_payload}"; exit 1; }
+export CCQ_BUILT_MODE=1
+# 原始文件:
+#   - linux/core/Load.sh
+#   - linux/core/Ui.sh
+#   - linux/core/Ccq.sh
+#   - linux/core/Process.sh
+#   - linux/core/Profile.sh
+#   - linux/core/Platform.sh
+#   - linux/core/PackageManager.sh
+#   - linux/core/Registry.sh
+#   - linux/core/Bootstrap.sh
+#   - linux/steps/NodeJS.sh
+#   - linux/steps/Git.sh
+#   - linux/Install.sh
+
+# ─── 来自: linux/core/Load.sh ────────────────────────────────────────
+
+# Load.sh - Linux core 加载顺序与加载函数的唯一声明处
+# 功能: 以唯一一份有序声明 CCQ_CORE_ORDER 驱动 source 模式 core 加载。
+# 说明: Install.sh 与 Download-Tui.sh 都只 source 本文件并调用 ccq_load_core。
+#       Bash runtime 在 bootstrap 前不能依赖 node 读取 build.json，因此顺序只在此声明一次，
+#       由 installer/contracts/Test-Contracts.ps1 断言与 build.json 的 Linux CoreFiles 一致。
+
+CCQ_CORE_ORDER=(
+  Load
+  Ui
+  Ccq
+  Process
+  Profile
+  Platform
+  PackageManager
+  Registry
+  Bootstrap
+)
+
+ccq_source_file() {
+  local file_path="${1:-}"
+  [ -f "${file_path}" ] || return 1
+}
+
+ccq_load_core() {
+  if [ "${CCQ_BUILT_MODE:-0}" = "1" ] && declare -F ccq_set_output_mode >/dev/null 2>&1; then
+    ccq_set_output_mode "${CCQ_PARAM_OUTPUT_MODE:-normal}"
+    return 0
+  fi
+
+  local core_dir="${CCQ_LINUX_ROOT}/core"
+  local core_file
+  for core_file in "${CCQ_CORE_ORDER[@]}"; do
+    # Load.sh 已由入口先行 source。
+    [ "${core_file}" = "Load" ] && continue
+    ccq_source_file "${core_dir}/${core_file}.sh" || {
+      printf '无法加载 Linux core: %s\n' "${core_file}.sh" >&2
+      return 1
+    }
+  done
+  ccq_set_output_mode "${CCQ_PARAM_OUTPUT_MODE:-normal}"
+}
+
+
+# ─── 来自: linux/core/Ui.sh ────────────────────────────────────────
+
+# Ui.sh - Linux 终端 UI 组件（Bash 语义）
+# 功能: 语义输出、/dev/tty 交互、编号单选菜单、步骤状态与安装摘要
+# 说明: 交互全部经 /dev/tty（兼容 curl … | bash 时 stdin 已被脚本占用）。
+#       CCQ_TTY_IN / CCQ_TTY_OUT 仅供测试替换为普通文件，默认都是 /dev/tty。
+
+: "${CCQ_OUTPUT_MODE:=normal}"
+: "${CCQ_TTY_IN:=/dev/tty}"
+: "${CCQ_TTY_OUT:=/dev/tty}"
+CCQ_TTY_FD_OPEN=0
+
+if [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ] && [ -z "${NO_COLOR:-}" ]; then
+  CCQ_ANSI_RESET=$'\033[0m'
+  CCQ_ANSI_PRIMARY=$'\033[1;36m'
+  CCQ_ANSI_SUCCESS=$'\033[32m'
+  CCQ_ANSI_WARNING=$'\033[33m'
+  CCQ_ANSI_DANGER=$'\033[31m'
+  CCQ_ANSI_INFO=''
+  CCQ_ANSI_DIM=$'\033[2m'
+else
+  CCQ_ANSI_RESET='' CCQ_ANSI_PRIMARY='' CCQ_ANSI_SUCCESS='' CCQ_ANSI_WARNING=''
+  CCQ_ANSI_DANGER='' CCQ_ANSI_INFO='' CCQ_ANSI_DIM=''
+fi
+
+ccq_set_output_mode() {
+  case "${1:-normal}" in
+    developer) CCQ_OUTPUT_MODE=developer ;;
+    *) CCQ_OUTPUT_MODE=normal ;;
+  esac
+}
+
+ccq_output_is_developer() {
+  [ "${CCQ_OUTPUT_MODE}" = "developer" ]
+}
+
+ccq_ui_color() {
+  case "${1:-info}" in
+    success) printf '%s' "${CCQ_ANSI_SUCCESS}" ;;
+    primary) printf '%s' "${CCQ_ANSI_PRIMARY}" ;;
+    warning) printf '%s' "${CCQ_ANSI_WARNING}" ;;
+    danger) printf '%s' "${CCQ_ANSI_DANGER}" ;;
+    dim) printf '%s' "${CCQ_ANSI_DIM}" ;;
+    *) printf '%s' "${CCQ_ANSI_INFO}" ;;
+  esac
+}
+
+ccq_ui_write() {
+  local type="${1:-info}" message="${2:-}" level="${3:-essential}"
+  if [ "${level}" != "essential" ] && ! ccq_output_is_developer; then
+    return 0
+  fi
+  printf '%s%s%s\n' "$(ccq_ui_color "${type}")" "${message}" "${CCQ_ANSI_RESET}"
+}
+
+ccq_ui_success() { ccq_ui_write success "${1:-}" "${2:-essential}"; }
+ccq_ui_primary() { ccq_ui_write primary "${1:-}" "${2:-essential}"; }
+ccq_ui_warning() { ccq_ui_write warning "${1:-}" "${2:-essential}"; }
+ccq_ui_danger() { ccq_ui_write danger "${1:-}" "${2:-essential}"; }
+ccq_ui_info() { ccq_ui_write info "${1:-}" "${2:-essential}"; }
+ccq_ui_dim() { ccq_ui_write dim "${1:-}" "${2:-essential}"; }
+
+ccq_show_banner() {
+  printf '\n'
+  ccq_ui_primary "═══ ${1:-Claude Code Quickstart} ═══"
+  printf '\n'
+}
+
+# ─── /dev/tty ────────────────────────────────────────────────────────────────
+
+ccq_tty_available() {
+  # 真正尝试打开：容器内 /dev/tty 节点存在但无控制终端时 open 会失败，[ -r ] 判断不可靠。
+  { : <"${CCQ_TTY_IN}" && : >>"${CCQ_TTY_OUT}"; } 2>/dev/null
+}
+
+ccq_tty_open() {
+  [ "${CCQ_TTY_FD_OPEN}" = "1" ] && return 0
+  ccq_tty_available || return 1
+  # fd 9 只打开一次：菜单在 $(...) 子 shell 中读取时共享同一读偏移。
+  exec 9<"${CCQ_TTY_IN}" || return 1
+  CCQ_TTY_FD_OPEN=1
+}
+
+ccq_tty_write() {
+  local type="${1:-info}" message="${2:-}"
+  printf '%s%s%s\n' "$(ccq_ui_color "${type}")" "${message}" "${CCQ_ANSI_RESET}" >>"${CCQ_TTY_OUT}"
+}
+
+ccq_require_tty() {
+  # 所有系统修改之前调用；无 TTY 时不得依赖隐含默认值继续。
+  if ccq_tty_open; then
+    return 0
+  fi
+  ccq_ui_danger "未检测到可交互终端（/dev/tty 不可读写），已安全退出，未做任何修改"
+  ccq_ui_info "请在交互式终端中重新运行；--list-steps / --help 可在无终端环境使用"
+  return 1
+}
+
+ccq_show_single_select_menu() {
+  # 用法: ccq_show_single_select_menu <标题> <默认索引> <选项...>
+  # 输出所选 0-based 索引；Enter 选默认项；q 或读取失败返回 1。
+  local title="${1:-请选择}" default_index="${2:-0}"
+  shift 2 || true
+  local options=("$@") count="$#" choice i
+  [ "${count}" -gt 0 ] || return 1
+  case "${default_index}" in ''|*[!0-9]*) default_index=0 ;; esac
+  [ "${default_index}" -lt "${count}" ] || default_index=$((count - 1))
+  ccq_tty_open || return 1
+
+  ccq_tty_write primary "${title}"
+  for ((i = 0; i < count; i++)); do
+    if [ "${i}" -eq "${default_index}" ]; then
+      ccq_tty_write info "  $((i + 1)). ${options[i]}（默认）"
+    else
+      ccq_tty_write info "  $((i + 1)). ${options[i]}"
+    fi
+  done
+
+  while true; do
+    printf '请选择 (1-%s)，直接按 Enter 使用默认项，q 取消: ' "${count}" >>"${CCQ_TTY_OUT}"
+    IFS= read -r choice <&9 || return 1
+    choice="${choice//[[:space:]]/}"
+    case "${choice}" in
+      q|Q) return 1 ;;
+      '') printf '%s\n' "${default_index}"; return 0 ;;
+      *[!0-9]*) ;;
+      *)
+        if [ "${choice}" -ge 1 ] && [ "${choice}" -le "${count}" ]; then
+          printf '%s\n' $((choice - 1))
+          return 0
+        fi
+        ;;
+    esac
+    ccq_tty_write danger "无效选择，请输入 1 到 ${count} 之间的数字"
+  done
+}
+
+# ─── 步骤状态与摘要 ──────────────────────────────────────────────────────────
+
+ccq_result_field_from_text() {
+  local result="${1:-}" field="${2:-}" line
+  [ -n "${field}" ] || return 1
+  while IFS= read -r line; do
+    if [[ "${line}" == "${field}="* ]]; then
+      printf '%s\n' "${line#"${field}="}"
+      return 0
+    fi
+  done <<<"${result}"
+  return 1
+}
+
+ccq_first_line() {
+  local text="${1:-}"
+  printf '%s\n' "${text%%$'\n'*}"
+}
+
+ccq_show_step_progress() {
+  local step_name="${1:-}" step_status="${2:-Info}" message="${3:-}" detail
+  detail="$(ccq_result_field_from_text "${message}" ErrorMessage 2>/dev/null || ccq_first_line "${message}")"
+  case "${step_status}" in
+    Success) ccq_ui_success "✅ ${step_name} 已安装" ;;
+    Skipped) ccq_ui_warning "⏭ ${step_name} ${detail:-已跳过}" ;;
+    Failed) ccq_ui_danger "❌ ${step_name} 安装失败${detail:+ - ${detail}}" ;;
+    ManualRequired|Unsupported) ccq_ui_warning "⏭ ${step_name} 需手动处理${detail:+ - ${detail}}" ;;
+    *) ccq_ui_info "  ${step_name} ${detail}" ;;
+  esac
+}
+
+ccq_summary_status_text() {
+  case "${1:-}" in
+    Success) printf '成功' ;;
+    Skipped) printf '跳过' ;;
+    Failed) printf '失败' ;;
+    ManualRequired|Unsupported) printf '需手动处理' ;;
+    Pending) printf '未执行' ;;
+    *) printf '未知' ;;
+  esac
+}
+
+ccq_show_install_summary() {
+  # 参数: 每行 "名称<TAB>状态<TAB>版本"
+  local row name row_status version
+  ccq_ui_primary "安装结果："
+  for row in "$@"; do
+    IFS=$'\t' read -r name row_status version <<<"${row}"
+    case "${row_status}" in
+      成功) ccq_ui_success "  ${name}: ${row_status} (${version:--})" ;;
+      失败) ccq_ui_danger "  ${name}: ${row_status} (${version:--})" ;;
+      *) ccq_ui_warning "  ${name}: ${row_status} (${version:--})" ;;
+    esac
+  done
+}
+
+
+# ─── 来自: linux/core/Ccq.sh ────────────────────────────────────────
+
+# Ccq.sh - ccq 可执行文件管理（Linux 平台唯一实现）
+# 功能: 架构/路径检测、版本规范化、已安装探测、下载（gzip-first/raw fallback）、
+#       chmod 0755 原子落盘、幂等 PATH 受管片段，以及 Release URL/版本与下载 handoff。
+# 说明: 以 macOS core/Ccq.zsh 为蓝本移植，handoff 语义保持一致；差异仅限 Linux 判定、
+#       linux-x64/linux-arm64 资产名与 profile 文件（见 core/Profile.sh）。
+
+# ccq_get_architecture 的失败原因（仅 Linux x64/arm64 受支持）。
+CCQ_PLATFORM_ERROR=""
+
+ccq_get_architecture() {
+  # 输出: "linux-x64" | "linux-arm64"；错误 OS 或未知架构明确失败，不回退猜测。
+  CCQ_PLATFORM_ERROR=""
+  local kernel arch
+  kernel="$(uname -s 2>/dev/null || true)"
+  if [ "${kernel}" != "Linux" ]; then
+    CCQ_PLATFORM_ERROR="不支持的平台: ${kernel:-unknown}（Linux 安装器仅支持 Linux）"
+    return 1
+  fi
+
+  arch="$(uname -m 2>/dev/null || true)"
+  case "${arch}" in
+    aarch64|arm64) printf 'linux-arm64' ;;
+    x86_64|amd64) printf 'linux-x64' ;;
+    *)
+      CCQ_PLATFORM_ERROR="无法识别的处理器架构: ${arch:-unknown}"
+      return 1
+      ;;
+  esac
+}
+
+ccq_get_executable_path() {
+  printf '%s/.local/bin/ccq' "${HOME}"
+}
+
+ccq_normalize_version() {
+  # 规范化 ccq 命令输出或 Release tag，供安装器比较版本。
+  local version="${1:-}"
+  version="${version#"${version%%[![:space:]]*}"}"
+  version="${version%"${version##*[![:space:]]}"}"
+  case "${version}" in
+    ccq\ *) version="${version#ccq }" ;;
+  esac
+  case "${version}" in
+    v[0-9]*) version="${version#v}" ;;
+  esac
+  printf '%s' "${version}"
+}
+
+ccq_test_executable_installed() {
+  # 输出 JSON: {"isInstalled":0/1,"version":"x.y.z","path":"..."}
+  local ccq_path is_installed=0 version=""
+  ccq_path="$(ccq_get_executable_path)"
+
+  if [ -f "${ccq_path}" ] && [ -x "${ccq_path}" ]; then
+    # 只信任可快速响应 --version 的 ccq；旧/损坏可执行文件可能卡住，必须允许后续重新下载覆盖。
+    local version_file version_pid waited=0
+    version_file="$(mktemp "${TMPDIR:-/tmp}/ccq_version.XXXXXX" 2>/dev/null || printf '%s/.ccq-version-%s' "${TMPDIR:-/tmp}" "$$")"
+    "${ccq_path}" --version >"${version_file}" 2>/dev/null &
+    version_pid="$!"
+    while kill -0 "${version_pid}" >/dev/null 2>&1; do
+      if [ "${waited}" -ge 3 ]; then
+        kill "${version_pid}" >/dev/null 2>&1 || true
+        wait "${version_pid}" 2>/dev/null || true
+        break
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+    if wait "${version_pid}" 2>/dev/null; then
+      version="$(head -n 1 "${version_file}" 2>/dev/null || true)"
+      if [ -n "${version}" ]; then
+        is_installed=1
+        version="$(ccq_normalize_version "${version}")"
+      fi
+    fi
+    rm -f "${version_file}" 2>/dev/null || true
+  fi
+
+  printf '{"isInstalled":%s,"version":"%s","path":"%s"}\n' "${is_installed}" "${version}" "${ccq_path}"
+}
+
+CCQ_DOWNLOAD_ERROR=""
+
+ccq_download_file() {
+  # 下载单个 URL 到指定临时文件。每次调用都是独立传输。
+  local download_url="${1:-}" output_path="${2:-}"
+  CCQ_DOWNLOAD_ERROR=""
+  if [ -z "${download_url}" ] || [ -z "${output_path}" ]; then
+    CCQ_DOWNLOAD_ERROR="下载 URL 或输出路径为空"
+    return 1
+  fi
+
+  rm -f "${output_path}" 2>/dev/null || true
+  if command -v curl >/dev/null 2>&1; then
+    if ! curl -fL --progress-bar --connect-timeout 20 --max-time 600 -o "${output_path}" "${download_url}"; then
+      rm -f "${output_path}" 2>/dev/null || true
+      CCQ_DOWNLOAD_ERROR="curl 下载失败"
+      return 1
+    fi
+  elif command -v wget >/dev/null 2>&1; then
+    if ! wget --show-progress --progress=bar:force --timeout=20 --tries=3 -O "${output_path}" "${download_url}"; then
+      rm -f "${output_path}" 2>/dev/null || true
+      CCQ_DOWNLOAD_ERROR="wget 下载失败"
+      return 1
+    fi
+  else
+    CCQ_DOWNLOAD_ERROR="curl 和 wget 均不可用"
+    return 1
+  fi
+
+  if [ ! -f "${output_path}" ]; then
+    CCQ_DOWNLOAD_ERROR="下载成功但输出文件不存在"
+    return 1
+  fi
+  return 0
+}
+
+ccq_install_executable() {
+  # 下载并安装 ccq 可执行文件到 ~/.local/bin/ccq，并确保该目录在 PATH
+  # 参数: $1 = 下载 URL；返回: 0 = 成功; 1 = 失败（现有 ccq 保持不变）
+  local download_url="${1:-}"
+  [ -z "${download_url}" ] && { printf 'Error: download_url required\n' >&2; return 1; }
+
+  local ccq_path ccq_bin_dir tmp_path gzip_tmp_path gzip_url
+  local gzip_error="" gzip_ready=0
+  ccq_path="$(ccq_get_executable_path)"
+  ccq_bin_dir="$(dirname "${ccq_path}")"
+  tmp_path="${ccq_path}.download.$$"
+  gzip_tmp_path="${tmp_path}.gz"
+  gzip_url="${download_url}.gz"
+
+  # 1. 创建目标目录
+  if [ ! -d "${ccq_bin_dir}" ]; then
+    mkdir -p "${ccq_bin_dir}" || { printf 'Error: 无法创建目录 %s\n' "${ccq_bin_dir}" >&2; return 1; }
+    ccq_ui_info "创建 ccq 目录: ${ccq_bin_dir}"
+  fi
+
+  # 2. 优先传输 gzip 资产；不可用或损坏时重新开始一次 raw 下载。
+  ccq_ui_info "正在下载 ccq 可执行文件..."
+  ccq_ui_dim "  URL: ${gzip_url}"
+
+  rm -f "${tmp_path}" "${gzip_tmp_path}" 2>/dev/null || true
+  if ccq_download_file "${gzip_url}" "${gzip_tmp_path}"; then
+    if ! command -v gzip >/dev/null 2>&1; then
+      gzip_error="系统 gzip 命令不可用"
+    elif gzip -dc -- "${gzip_tmp_path}" >"${tmp_path}" && [ -s "${tmp_path}" ]; then
+      gzip_ready=1
+      rm -f "${gzip_tmp_path}" 2>/dev/null || true
+    elif [ -f "${tmp_path}" ] && [ ! -s "${tmp_path}" ]; then
+      gzip_error="gzip 解压结果为空"
+    else
+      gzip_error="gzip 解压失败或数据损坏"
+    fi
+  else
+    gzip_error="gzip 下载失败: ${CCQ_DOWNLOAD_ERROR:-未知错误}"
+  fi
+
+  if [ "${gzip_ready}" -ne 1 ]; then
+    rm -f "${tmp_path}" "${gzip_tmp_path}" 2>/dev/null || true
+    [ -n "${gzip_error}" ] || gzip_error="gzip 传输未生成可用文件"
+    ccq_ui_warning "gzip 传输失败（${gzip_error}），正在改用 raw 资产..."
+    ccq_ui_dim "  URL: ${download_url}"
+
+    if ! ccq_download_file "${download_url}" "${tmp_path}"; then
+      local raw_error="${CCQ_DOWNLOAD_ERROR:-未知错误}"
+      rm -f "${tmp_path}" "${gzip_tmp_path}" 2>/dev/null || true
+      printf 'Error: raw 下载失败: %s；gzip 失败上下文: %s\n' "${raw_error}" "${gzip_error}" >&2
+      return 1
+    fi
+  fi
+
+  # 3. 无论来源为何，只有完整且非空的 raw temp 才能进入最终落盘流程。
+  if [ ! -s "${tmp_path}" ]; then
+    rm -f "${tmp_path}" "${gzip_tmp_path}" 2>/dev/null || true
+    if [ "${gzip_ready}" -eq 1 ]; then
+      printf 'Error: gzip 解压后的 raw 文件为空或不存在\n' >&2
+    else
+      printf 'Error: raw 下载失败: 下载的文件为空或不存在；gzip 失败上下文: %s\n' "${gzip_error}" >&2
+    fi
+    return 1
+  fi
+
+  local file_size
+  file_size="$(wc -c <"${tmp_path}" | tr -d '[:space:]')"
+
+  # 4. 设置可执行权限并原子替换（同目录 rename）
+  rm -f "${gzip_tmp_path}" 2>/dev/null || true
+  chmod 0755 "${tmp_path}" || { rm -f "${tmp_path}" 2>/dev/null || true; printf 'Error: 无法设置可执行权限\n' >&2; return 1; }
+  mv -f "${tmp_path}" "${ccq_path}" || { rm -f "${tmp_path}" 2>/dev/null || true; printf 'Error: 无法安装 ccq 可执行文件\n' >&2; return 1; }
+
+  ccq_ui_success "✓ ccq 可执行文件已下载到: ${ccq_path}"
+  ccq_ui_dim "  文件大小: $((file_size / 1048576)).$(printf '%02d' $((file_size * 100 / 1048576 % 100))) MB"
+
+  # 5. 幂等写入 ~/.local/bin PATH 受管片段（失败只告警，不回滚已落盘的 ccq）
+  ccq_profile_ensure_local_bin || true
+  case ":${PATH}:" in
+    *":${ccq_bin_dir}:"*) ;;
+    *) ccq_ui_warning "⚠ 请开启新终端后使用 ccq 命令（当前会话 PATH 尚未刷新）" ;;
+  esac
+
+  return 0
+}
+
+# ─── CCQ Release 解析与下载 handoff ──────────────────────────────────────────
+
+# ccq_confirm_executable_download 接收入口模式参数：
+#   install   = 完整安装入口，首次未安装时保留「是否现在下载」确认
+#   dedicated = 专用下载入口，用户主动运行即视为已授权，跳过首次确认菜单
+# 两种模式都保留同版本跳过、版本不一致默认保留、目标版本未知时保留现有可执行文件。
+# 返回值: 0 = 已安装/同版本/按既定策略有意保留或跳过；1 = 确实尝试下载但未得到可用的 ccq。
+ccq_get_release_download_base_url() {
+  # 默认 latest stable，保留调用方显式 tag/URL 覆盖。
+  if [ -n "${CCQ_RELEASE_DOWNLOAD_BASE_URL:-}" ]; then
+    printf '%s' "${CCQ_RELEASE_DOWNLOAD_BASE_URL%/}"
+    return 0
+  fi
+
+  # 仅调用方显式提供 v* tag 时选择固定 Release；人工 builder 不注入 tag。
+  local tag="${CCQ_RELEASE_TAG:-}"
+  case "${tag}" in
+    v*)
+      printf 'https://github.com/MrNine-666/claude-code-quickstart/releases/download/%s' "${tag}"
+      return 0
+      ;;
+  esac
+
+  printf 'https://github.com/MrNine-666/claude-code-quickstart/releases/latest/download'
+}
+
+ccq_get_release_target_version() {
+  # 从 Release tag 提取可与 ccq --version 比较的目标版本。
+  local tag="${CCQ_RELEASE_TAG:-}" version=""
+  case "${tag}" in
+    v*) version="$(ccq_normalize_version "${tag}")" ;;
+    *) return 0 ;;
+  esac
+  case "${version}" in
+    [0-9]*.[0-9]*.[0-9]*) printf '%s' "${version}" ;;
+  esac
+}
+
+ccq_confirm_executable_download() {
+  # 参数: $1 = 模式（install | dedicated，默认 install）
+  local mode="${1:-install}"
+
+  ccq_ui_primary "ccq 管理工具安装"
+  printf '\n'
+  ccq_ui_info "ccq 是 Claude Code Quickstart 的管理控制台，提供以下功能："
+  ccq_ui_info "  • 供应商管理（Provider 配置）"
+  ccq_ui_info "  • MCP Server 管理"
+  ccq_ui_info "  • Skills 管理"
+  ccq_ui_info "  • 提示词配置"
+  ccq_ui_info "  • 配置文件管理"
+  ccq_ui_info "  • 工具管理（安装/更新 Claude Code、Codex、Pi、CodeGraph、OpenSpec 等）"
+  ccq_ui_info "  • 扩展管理（安装/更新/卸载 Pi package 扩展）"
+  printf '\n'
+
+  # 1. 已安装时先比较当前版本与安装器 Release 版本。
+  local installed_json installed_status installed_path installed_version target_version current_version decision
+  installed_json="$(ccq_test_executable_installed)"
+  installed_status="$(printf '%s' "${installed_json}" | grep -o '"isInstalled":[^,}]*' | cut -d: -f2)"
+
+  if [ "${installed_status}" = "1" ] || [ "${installed_status}" = "true" ]; then
+    installed_path="$(printf '%s' "${installed_json}" | grep -o '"path":"[^"]*"' | cut -d'"' -f4)"
+    installed_version="$(printf '%s' "${installed_json}" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)"
+    current_version="$(ccq_normalize_version "${installed_version}")"
+    target_version="$(ccq_get_release_target_version)"
+
+    ccq_ui_success "✓ ccq 可执行文件已安装: ${installed_path}"
+    ccq_ui_info "  当前版本: ${current_version}"
+
+    if [ -z "${target_version}" ]; then
+      ccq_ui_warning "无法确定安装器目标版本，已保留现有 ccq"
+      ccq_ui_dim "  如需更新，请运行 ccq update"
+      return 0
+    fi
+
+    ccq_ui_info "  目标版本: ${target_version}"
+    if [ "${current_version}" = "${target_version}" ]; then
+      ccq_ui_success "✓ 当前版本与目标版本一致，无需覆盖"
+      return 0
+    fi
+
+    ccq_ui_warning "检测到 ccq 版本不一致"
+    decision="$(ccq_show_single_select_menu "是否覆盖现有文件？" 1 "是，覆盖为 ${target_version}" "否，保留当前版本 ${current_version}")" || decision=1
+    if [ "${decision}" != "0" ]; then
+      ccq_ui_info "已保留当前 ccq 版本: ${current_version}"
+      return 0
+    fi
+
+    ccq_ui_warning "将使用目标版本 ${target_version} 覆盖当前版本 ${current_version}"
+  elif [ "${mode}" = "dedicated" ]; then
+    ccq_ui_info "用户主动运行 CCQ 专用下载入口，视为已授权下载 ccq 可执行文件"
+  else
+    decision="$(ccq_show_single_select_menu "是否现在下载 ccq 可执行文件到 ~/.local/bin？（拒绝则跳过，可稍后手动安装）" 0 "是，下载 ccq" "否，稍后手动安装")" || decision=1
+    if [ "${decision}" != "0" ]; then
+      printf '\n'
+      ccq_ui_info "已跳过 ccq 可执行文件下载"
+      ccq_ui_dim "  如需稍后安装，请访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
+      printf '\n'
+      ccq_ui_primary "后续安装 Claude Code / Codex / Pi："
+      ccq_ui_info "  稍后安装 ccq 后运行 ccq，进入「工具管理」按需安装 Claude Code、Codex 或 Pi"
+      ccq_ui_info "  API Key、provider/profile 可在「供应商」菜单中可视化配置；Pi 官方登录请在 Pi 中执行 /login"
+      return 0
+    fi
+  fi
+
+  printf '\n'
+  ccq_ui_info "正在准备下载 ccq 可执行文件..."
+
+  # 2. 检测平台架构（错误 OS 或未知架构明确失败，不回退猜测）
+  local arch
+  if ! arch="$(ccq_get_architecture)"; then
+    ccq_ui_danger "${CCQ_PLATFORM_ERROR:-无法识别当前平台架构}"
+    return 1
+  fi
+  ccq_ui_info "检测到平台架构: ${arch}"
+
+  # 3. 构建下载 URL
+  local base_url exe_name download_url
+  base_url="$(ccq_get_release_download_base_url)"
+  exe_name="ccq-${arch}"
+  download_url="${base_url}/${exe_name}"
+
+  ccq_ui_dim "  下载 URL: ${download_url}"
+
+  # 4. 执行下载与安装
+  if ccq_install_executable "${download_url}"; then
+    printf '\n'
+    ccq_ui_success " ccq 可执行文件安装成功！"
+    printf '\n'
+    ccq_ui_primary "下一步："
+    ccq_ui_info "  1. 打开一个新的终端窗口"
+    ccq_ui_info "  2. 输入 ccq 进入管理控制台"
+    ccq_ui_info "  3. 进入「工具管理」安装 Claude Code、Codex 或 Pi，再到「供应商」配置 API Key、provider/profile"
+    ccq_ui_info "  4. 使用「扩展管理」维护 Pi package 扩展"
+    printf '\n'
+    ccq_ui_dim "（当前会话 PATH 尚未刷新，必须开启新终端 ccq 命令才生效）"
+  else
+    printf '\n'
+    ccq_ui_warning "ccq 可执行文件下载失败"
+    ccq_ui_info "您可以稍后手动下载："
+    ccq_ui_info "  1. 访问: https://github.com/MrNine-666/claude-code-quickstart/releases"
+    ccq_ui_info "  2. 下载对应平台的可执行文件（${exe_name}）"
+    ccq_ui_info "  3. 放置到 ~/.local/bin 并设置可执行权限（chmod +x）"
+    printf '\n'
+    ccq_ui_primary "后续安装 Claude Code / Codex / Pi："
+    ccq_ui_info "  等待 ccq 安装完成后运行 ccq，进入「工具管理」按需安装 Claude Code、Codex 或 Pi"
+    ccq_ui_info "  API Key、provider/profile 可在「供应商」菜单中可视化配置；Pi 官方登录请在 Pi 中执行 /login"
+    return 1
+  fi
+
+  return 0
+}
+
+
+# ─── 来自: linux/core/Process.sh ────────────────────────────────────────
+
+# Process.sh - Linux 命令执行与 PATH 刷新
+# 功能: 命令探测、原生命令执行（输出到 stderr，不污染 step 结果字段）、单条 sudo、当前会话 PATH 刷新
+
+ccq_command_exists() {
+  command -v "${1:-}" >/dev/null 2>&1
+}
+
+ccq_run_native_command() {
+  # step 函数的 stdout 是 key=value 结果，命令输出一律转到 stderr 供用户查看。
+  "$@" >&2
+}
+
+ccq_format_command() {
+  local arg out=""
+  for arg in "$@"; do
+    out="${out:+${out} }${arg}"
+  done
+  printf '%s' "${out}"
+}
+
+ccq_sudo_run() {
+  # 只对单条包管理命令提权；sudo 自行经 /dev/tty 询问密码。
+  # 返回: 命令退出码；sudo 不存在时返回 126（调用方据此进入 ManualRequired）。
+  if ! ccq_command_exists sudo; then
+    return 126
+  fi
+  ccq_ui_info "执行: sudo $(ccq_format_command "$@")" >&2
+  sudo -- "$@" >&2
+}
+
+ccq_refresh_path() {
+  # 当前会话补充 ~/.local/bin、fnm 与 nvm default，使安装后的命令立即可见。
+  case ":${PATH}:" in
+    *":${HOME}/.local/bin:"*) ;;
+    *) PATH="${HOME}/.local/bin:${PATH}" ;;
+  esac
+
+  if ccq_command_exists fnm; then
+    eval "$(fnm env --shell bash 2>/dev/null)" 2>/dev/null || true
+  fi
+
+  local nvm_dir="${NVM_DIR:-}"
+  if [ -z "${nvm_dir}" ]; then
+    if [ -n "${XDG_CONFIG_HOME:-}" ]; then nvm_dir="${XDG_CONFIG_HOME%/}/nvm"; else nvm_dir="${HOME}/.nvm"; fi
+  fi
+  nvm_dir="${nvm_dir%/}"
+  if [ -s "${nvm_dir}/nvm.sh" ]; then
+    export NVM_DIR="${nvm_dir}"
+    . "${nvm_dir}/nvm.sh" >/dev/null 2>&1 || true
+    if ccq_command_exists nvm; then
+      nvm use --silent default >/dev/null 2>&1 || true
+    fi
+  fi
+  hash -r 2>/dev/null || true
+  export PATH
+}
+
+
+# ─── 来自: linux/core/Profile.sh ────────────────────────────────────────
+
+# Profile.sh - Linux shell profile 受管片段
+# 功能: 以标记块幂等地把 ~/.local/bin 写入 ~/.bashrc（及已存在的 ~/.zshrc）；
+#       fish 等其他登录 shell 只打印手动指引，不修改其配置。
+
+CCQ_PROFILE_BLOCK_BEGIN='# >>> ccq local-bin >>>'
+CCQ_PROFILE_BLOCK_END='# <<< ccq local-bin <<<'
+
+ccq_profile_block_body() {
+  # 单引号保留 $HOME/$PATH，交由用户 shell 展开；重复执行时 PATH 已含则不再追加。
+  printf '%s\n' 'case ":${PATH}:" in *":${HOME}/.local/bin:"*) ;; *) export PATH="${HOME}/.local/bin:${PATH}" ;; esac'
+}
+
+ccq_profile_set_block() {
+  # 已有标记块则原位替换，否则追加；写入经同目录临时文件 + mv（沿用原权限），避免截断用户配置。
+  local profile_path="$1" body tmp_path in_block=0 replaced=0 line
+  # 符号链接（dotfile 管理器）写到真实目标，mv 不能替换掉链接本身。
+  if [ -L "${profile_path}" ]; then
+    profile_path="$(readlink -f "${profile_path}")" || return 1
+  fi
+  body="$(ccq_profile_block_body)"
+  tmp_path="${profile_path}.ccq-tmp.$$"
+
+  {
+    if [ -f "${profile_path}" ]; then
+      while IFS= read -r line || [ -n "${line}" ]; do
+        if [ "${in_block}" = "1" ]; then
+          [ "${line}" = "${CCQ_PROFILE_BLOCK_END}" ] && in_block=0
+          continue
+        fi
+        if [ "${line}" = "${CCQ_PROFILE_BLOCK_BEGIN}" ]; then
+          if [ "${replaced}" = "0" ]; then
+            printf '%s\n%s\n%s\n' "${CCQ_PROFILE_BLOCK_BEGIN}" "${body}" "${CCQ_PROFILE_BLOCK_END}"
+            replaced=1
+          fi
+          in_block=1
+          continue
+        fi
+        printf '%s\n' "${line}"
+      done <"${profile_path}"
+    fi
+    if [ "${replaced}" = "0" ]; then
+      printf '\n%s\n%s\n%s\n' "${CCQ_PROFILE_BLOCK_BEGIN}" "${body}" "${CCQ_PROFILE_BLOCK_END}"
+    fi
+  } >"${tmp_path}" || { rm -f "${tmp_path}"; return 1; }
+
+  if [ -f "${profile_path}" ] && [ "$(cat "${tmp_path}")" = "$(cat "${profile_path}")" ]; then
+    rm -f "${tmp_path}"
+    return 0
+  fi
+  [ -f "${profile_path}" ] && chmod --reference="${profile_path}" "${tmp_path}" 2>/dev/null
+  mv -f "${tmp_path}" "${profile_path}" || { rm -f "${tmp_path}"; return 1; }
+}
+
+ccq_profile_login_shell() {
+  basename "${SHELL:-bash}"
+}
+
+ccq_profile_ensure_local_bin() {
+  # 返回 0 = 已写入（或已存在）受管片段；失败只返回 1，由调用方告警。
+  local rc_file failed=0 shell_name
+  for rc_file in "${HOME}/.bashrc" "${HOME}/.zshrc"; do
+    # ~/.bashrc 始终处理；~/.zshrc 仅在已存在时处理，不替用户创建 zsh 配置。
+    [ "${rc_file}" = "${HOME}/.zshrc" ] && [ ! -f "${rc_file}" ] && continue
+    if ccq_profile_set_block "${rc_file}"; then
+      ccq_ui_dim "  已确保 ~/.local/bin 写入 ${rc_file}"
+    else
+      ccq_ui_warning "无法写入 ${rc_file}，请手动把 ~/.local/bin 加入 PATH"
+      failed=1
+    fi
+  done
+
+  shell_name="$(ccq_profile_login_shell)"
+  case "${shell_name}" in
+    bash|zsh) ;;
+    fish)
+      ccq_ui_warning "检测到登录 shell 为 fish，未自动修改其配置；请手动执行: fish_add_path ~/.local/bin"
+      ;;
+    *)
+      ccq_ui_warning "检测到登录 shell 为 ${shell_name}，未自动修改其配置；请手动把 ~/.local/bin 加入 PATH"
+      ;;
+  esac
+  [ "${failed}" = "0" ]
+}
+
+
+# ─── 来自: linux/core/Platform.sh ────────────────────────────────────────
+
+# Platform.sh - Linux 平台识别
+# 功能: /etc/os-release 解析与发行版分类、WSL/libc/架构检测、root 与 Bash 版本前置检查
+# 说明: 判定规则与 installer/contracts/linux-platforms.json 等价（bootstrap 前不能依赖 node/jq），
+#       漂移由 Test-LinuxInstaller.sh 对照 linux-platform-expectations.mjs 展开的期望表检测。
+#       CCQ_OS_RELEASE_FILE / CCQ_PROC_VERSION_FILE 可覆盖探测路径；uname / id / ldd / getconf
+#       经 PATH 解析，测试用 fake 命令替换。
+
+CCQ_LAST_PLATFORM_ERROR=""
+
+ccq_is_linux() {
+  [ "$(uname -s 2>/dev/null)" = "Linux" ]
+}
+
+ccq_linux_bash_ok() {
+  [ "${BASH_VERSINFO[0]:-0}" -ge 4 ]
+}
+
+ccq_linux_is_root() {
+  [ "$(id -u 2>/dev/null)" = "0" ]
+}
+
+# ─── os-release ──────────────────────────────────────────────────────────────
+
+ccq_linux_unquote_os_release_value() {
+  # os-release 值: 双引号（支持 \" \\ \$ \` 转义）、单引号或不含空白/引号的裸值。
+  local value="$1" inner
+  case "${value}" in
+    \"*\")
+      inner="${value:1:${#value}-2}"
+      inner="${inner//\\\"/\"}"
+      inner="${inner//\\\$/\$}"
+      inner="${inner//\\\`/\`}"
+      inner="${inner//\\\\/\\}"
+      printf '%s' "${inner}"
+      ;;
+    \'*\')
+      printf '%s' "${value:1:${#value}-2}"
+      ;;
+    *[[:space:]\"\'\`\$\\]*)
+      return 1
+      ;;
+    *)
+      printf '%s' "${value}"
+      ;;
+  esac
+}
+
+ccq_linux_parse_os_release() {
+  # 逐行解析 key=value，不 eval、不 source。成功设置 CCQ_OS_ID/VERSION_ID/NAME/ID_LIKE/PRETTY_NAME。
+  # 返回: 0 = 成功; 1 = 文件缺失; 2 = 畸形
+  local file="${CCQ_OS_RELEASE_FILE:-}"
+  local line key raw value line_number=0
+  CCQ_OS_ID="" CCQ_OS_VERSION_ID="" CCQ_OS_NAME="" CCQ_OS_ID_LIKE="" CCQ_OS_PRETTY_NAME=""
+
+  if [ -z "${file}" ]; then
+    if [ -f /etc/os-release ]; then file=/etc/os-release; else file=/usr/lib/os-release; fi
+  fi
+  if [ ! -f "${file}" ] || [ ! -r "${file}" ]; then
+    CCQ_LAST_PLATFORM_ERROR="无法读取 ${file}，无法识别 Linux 发行版"
+    return 1
+  fi
+
+  while IFS= read -r line || [ -n "${line}" ]; do
+    line_number=$((line_number + 1))
+    line="${line%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    case "${line}" in ''|'#'*) continue ;; esac
+    if [[ ! "${line}" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      CCQ_LAST_PLATFORM_ERROR="${file} 第 ${line_number} 行格式无效"
+      return 2
+    fi
+    key="${BASH_REMATCH[1]}"
+    raw="${BASH_REMATCH[2]}"
+    if ! value="$(ccq_linux_unquote_os_release_value "${raw}")"; then
+      CCQ_LAST_PLATFORM_ERROR="${file} 第 ${line_number} 行取值无效"
+      return 2
+    fi
+    case "${key}" in
+      ID) CCQ_OS_ID="${value,,}" ;;
+      VERSION_ID) CCQ_OS_VERSION_ID="${value}" ;;
+      NAME) CCQ_OS_NAME="${value}" ;;
+      ID_LIKE) CCQ_OS_ID_LIKE="${value,,}" ;;
+      PRETTY_NAME) CCQ_OS_PRETTY_NAME="${value}" ;;
+    esac
+  done <"${file}"
+
+  if [ -z "${CCQ_OS_ID}" ]; then
+    CCQ_LAST_PLATFORM_ERROR="${file} 缺少 ID 字段"
+    return 2
+  fi
+  return 0
+}
+
+ccq_linux_version_ge() {
+  # 数字点分版本比较（最多 3 段）；非数字段按 0 处理。
+  local -a actual required
+  local i a r
+  IFS=. read -r -a actual <<<"${1:-0}"
+  IFS=. read -r -a required <<<"${2:-0}"
+  for i in 0 1 2; do
+    a="${actual[i]:-0}"; r="${required[i]:-0}"
+    [[ "${a}" =~ ^[0-9]+$ ]] || a=0
+    [[ "${r}" =~ ^[0-9]+$ ]] || r=0
+    if ((10#${a} > 10#${r})); then return 0; fi
+    if ((10#${a} < 10#${r})); then return 1; fi
+  done
+  return 0
+}
+
+ccq_linux_family_package_manager() {
+  case "${1:-}" in
+    debian) printf 'apt' ;;
+    fedora) printf 'dnf' ;;
+    arch) printf 'pacman' ;;
+    *) return 1 ;;
+  esac
+}
+
+ccq_linux_classify_versioned() {
+  # 参数: family official_version min_version
+  local family="$1" official="$2" min="$3" version="${CCQ_OS_VERSION_ID}"
+  CCQ_LINUX_FAMILY="${family}"
+  if [ "${version}" = "${official}" ]; then
+    CCQ_LINUX_CLASS=official
+  elif [ -z "${version}" ]; then
+    CCQ_LINUX_CLASS=best-effort
+    CCQ_LINUX_REASON="未提供 VERSION_ID，非 CI 验证基线"
+  elif ccq_linux_version_ge "${version}" "${min}"; then
+    CCQ_LINUX_CLASS=best-effort
+    CCQ_LINUX_REASON="版本 ${version} 不是 CI 验证基线 ${official}"
+  else
+    CCQ_LINUX_CLASS=unsupported
+    CCQ_LINUX_FAMILY=""
+    CCQ_LINUX_REASON="版本 ${version} 低于最低要求 ${min}"
+  fi
+}
+
+ccq_linux_classify() {
+  # 依据已解析的 os-release 分类，设置 CCQ_LINUX_CLASS（official|best-effort|unsupported）、
+  # CCQ_LINUX_FAMILY、CCQ_LINUX_PM、CCQ_LINUX_REASON。已知 ID 只按自身规则判定，不回退 ID_LIKE。
+  local token
+  CCQ_LINUX_CLASS=unsupported CCQ_LINUX_FAMILY="" CCQ_LINUX_PM="" CCQ_LINUX_REASON=""
+
+  case "${CCQ_OS_ID}" in
+    ubuntu) ccq_linux_classify_versioned debian 24.04 22.04 ;;
+    debian) ccq_linux_classify_versioned debian 13 12 ;;
+    fedora) ccq_linux_classify_versioned fedora 44 42 ;;
+    centos)
+      # 仅 CentOS Stream 9/10；CentOS Linux 7/8 已停止维护。
+      if [[ "${CCQ_OS_NAME}" != *Stream* ]]; then
+        CCQ_LINUX_REASON="仅支持 CentOS Stream 9/10，不支持 ${CCQ_OS_NAME:-CentOS} ${CCQ_OS_VERSION_ID}"
+      else
+        case "${CCQ_OS_VERSION_ID}" in
+          10) CCQ_LINUX_CLASS=official CCQ_LINUX_FAMILY=fedora ;;
+          9) CCQ_LINUX_CLASS=best-effort CCQ_LINUX_FAMILY=fedora CCQ_LINUX_REASON="CentOS Stream 9 不是 CI 验证基线 10" ;;
+          *) CCQ_LINUX_REASON="仅支持 CentOS Stream 9/10，当前版本 ${CCQ_OS_VERSION_ID:-unknown}" ;;
+        esac
+      fi
+      ;;
+    arch) CCQ_LINUX_CLASS=official CCQ_LINUX_FAMILY=arch ;;
+    *)
+      for token in ${CCQ_OS_ID_LIKE}; do
+        case "${token}" in
+          debian|ubuntu) CCQ_LINUX_FAMILY=debian ;;
+          fedora|rhel|centos) CCQ_LINUX_FAMILY=fedora ;;
+          arch) CCQ_LINUX_FAMILY=arch ;;
+          *) continue ;;
+        esac
+        CCQ_LINUX_CLASS=best-effort
+        CCQ_LINUX_REASON="${CCQ_OS_NAME:-${CCQ_OS_ID}} 按 ID_LIKE=${token} 进入 ${CCQ_LINUX_FAMILY} 家族路径，未经验证"
+        break
+      done
+      [ "${CCQ_LINUX_CLASS}" = "unsupported" ] && CCQ_LINUX_REASON="无法识别的发行版: ${CCQ_OS_NAME:-${CCQ_OS_ID}}"
+      ;;
+  esac
+
+  if [ -n "${CCQ_LINUX_FAMILY}" ]; then
+    CCQ_LINUX_PM="$(ccq_linux_family_package_manager "${CCQ_LINUX_FAMILY}")"
+  fi
+  [ "${CCQ_LINUX_CLASS}" != "unsupported" ]
+}
+
+ccq_linux_detect_distribution() {
+  # 解析 + 分类；缺失/畸形 os-release 一律 unsupported，不猜包管理器。
+  CCQ_LINUX_CLASS=unsupported CCQ_LINUX_FAMILY="" CCQ_LINUX_PM="" CCQ_LINUX_REASON=""
+  if ! ccq_linux_parse_os_release; then
+    CCQ_LINUX_REASON="${CCQ_LAST_PLATFORM_ERROR}"
+    return 1
+  fi
+  ccq_linux_classify
+}
+
+# ─── WSL / libc / 架构 ───────────────────────────────────────────────────────
+
+ccq_linux_wsl_kind() {
+  # 输出 none | wsl1 | wsl2。WSL2 内核含 microsoft-standard 或 WSL2 标记；WSL1 只有 Microsoft。
+  local proc_version
+  proc_version="$(cat "${CCQ_PROC_VERSION_FILE:-/proc/version}" 2>/dev/null || true)"
+  case "${proc_version,,}" in
+    *microsoft-standard*|*wsl2*) printf 'wsl2' ;;
+    *microsoft*) printf 'wsl1' ;;
+    *) printf 'none' ;;
+  esac
+}
+
+ccq_linux_libc() {
+  # 输出 glibc | musl | unknown
+  local ldd_output
+  ldd_output="$(ldd --version 2>&1 || true)"
+  case "${ldd_output,,}" in
+    *musl*) printf 'musl'; return 0 ;;
+  esac
+  if getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
+    printf 'glibc'; return 0
+  fi
+  case "${ldd_output,,}" in
+    *glibc*|*"gnu libc"*|*"gnu c library"*) printf 'glibc'; return 0 ;;
+  esac
+  if compgen -G '/lib/ld-musl-*' >/dev/null 2>&1; then
+    printf 'musl'; return 0
+  fi
+  printf 'unknown'
+}
+
+ccq_linux_arch() {
+  # uname -m 别名 → x64 | arm64（与 linux-platforms.json Architectures 一致）
+  local machine
+  machine="$(uname -m 2>/dev/null || true)"
+  case "${machine}" in
+    x86_64|amd64) printf 'x64' ;;
+    aarch64|arm64) printf 'arm64' ;;
+    *)
+      CCQ_LAST_PLATFORM_ERROR="不支持的处理器架构: ${machine:-unknown}（仅支持 x86_64 / aarch64）"
+      return 1
+      ;;
+  esac
+}
+
+ccq_linux_check_binary_runtime() {
+  # ccq 二进制可运行前提：Linux 内核、非 WSL1、glibc、x64/arm64。任何下载/修改之前调用。
+  local kernel wsl libc
+  CCQ_LAST_PLATFORM_ERROR=""
+  kernel="$(uname -s 2>/dev/null || true)"
+  if [ "${kernel}" != "Linux" ]; then
+    CCQ_LAST_PLATFORM_ERROR="不支持的平台: ${kernel:-unknown}（Linux 安装器仅支持 Linux）"
+    return 1
+  fi
+  wsl="$(ccq_linux_wsl_kind)"
+  if [ "${wsl}" = "wsl1" ]; then
+    CCQ_LAST_PLATFORM_ERROR="不支持 WSL1；请执行 wsl --set-version <发行版> 2 升级到 WSL2，或在 Windows 中使用 install.ps1"
+    return 1
+  fi
+  libc="$(ccq_linux_libc)"
+  case "${libc}" in
+    glibc) ;;
+    musl)
+      CCQ_LAST_PLATFORM_ERROR="不支持 musl libc（如 Alpine）；ccq 仅提供 glibc 版本"
+      return 1
+      ;;
+    *)
+      CCQ_LAST_PLATFORM_ERROR="无法确认 glibc 环境（ldd/getconf 均不可用）；ccq 仅提供 glibc 版本"
+      return 1
+      ;;
+  esac
+  ccq_linux_arch >/dev/null || return 1
+  [ "${wsl}" = "wsl2" ] && ccq_ui_warning "检测到 WSL2：属于尽力兼容环境，未纳入正式 CI"
+  return 0
+}
+
+ccq_linux_require_runtime_user() {
+  # Linux + Bash ≥ 4 + 非 root。--list-steps / --help 不经过这里。
+  if ! ccq_is_linux; then
+    CCQ_LAST_PLATFORM_ERROR="不支持的平台: $(uname -s 2>/dev/null || printf unknown)（Linux 安装器仅支持 Linux）"
+    return 1
+  fi
+  if ! ccq_linux_bash_ok; then
+    CCQ_LAST_PLATFORM_ERROR="需要 Bash 4 或更高版本，当前: ${BASH_VERSION:-unknown}"
+    return 1
+  fi
+  if ccq_linux_is_root; then
+    CCQ_LAST_PLATFORM_ERROR="请勿以 root 运行安装器；请切换到普通用户后重新运行（安装系统包时会单独调用 sudo）"
+    return 1
+  fi
+  return 0
+}
+
+
+# ─── 来自: linux/core/PackageManager.sh ────────────────────────────────────────
+
+# PackageManager.sh - Linux 系统包管理器封装（APT / DNF / Pacman）
+# 功能: 按 linux-platforms.json 的 family→包管理器映射，以单条 sudo 安装 git。
+# 说明: 不猜测其他修改路径；缺包管理器、缺 sudo、不可变系统或用户拒绝时进入 ManualRequired。
+#       Pacman 只执行 -S --needed，不做 -Syu / -Sy（避免全系统升级与 partial upgrade）。
+
+: "${CCQ_OSTREE_BOOTED_FILE:=/run/ostree-booted}"
+
+ccq_pm_command() {
+  case "${1:-}" in
+    apt) printf 'apt-get' ;;
+    dnf) printf 'dnf' ;;
+    pacman) printf 'pacman' ;;
+    *) return 1 ;;
+  esac
+}
+
+ccq_pm_manual_hint() {
+  case "${1:-}" in
+    apt) printf 'sudo apt-get update && sudo apt-get install -y git' ;;
+    dnf) printf 'sudo dnf install -y git' ;;
+    pacman) printf 'sudo pacman -Syu git' ;;
+    *) printf '请使用发行版包管理器手动安装 git' ;;
+  esac
+}
+
+ccq_pm_install_git() {
+  # 参数: $1 = 包管理器（apt|dnf|pacman）
+  # 返回 0 = 包管理命令成功；非 0 时设置 CCQ_PM_STATUS（Failed|ManualRequired）与 CCQ_PM_ERROR。
+  local pm="${1:-}" command_name hint choice
+  CCQ_PM_STATUS="" CCQ_PM_ERROR=""
+  hint="$(ccq_pm_manual_hint "${pm}")"
+
+  if ! command_name="$(ccq_pm_command "${pm}")"; then
+    CCQ_PM_STATUS=ManualRequired
+    CCQ_PM_ERROR="未识别当前发行版的包管理器，请手动安装 git"
+    return 1
+  fi
+  if ! ccq_command_exists "${command_name}"; then
+    CCQ_PM_STATUS=ManualRequired
+    CCQ_PM_ERROR="缺少预期的包管理器 ${command_name}，请手动安装 git"
+    return 1
+  fi
+  if [ -e "${CCQ_OSTREE_BOOTED_FILE}" ]; then
+    CCQ_PM_STATUS=ManualRequired
+    CCQ_PM_ERROR="检测到不可变系统（ostree），不自动修改系统包；请按发行版方式手动安装 git"
+    return 1
+  fi
+  if ! ccq_command_exists sudo; then
+    CCQ_PM_STATUS=ManualRequired
+    CCQ_PM_ERROR="sudo 不可用，无法安装系统包；请由管理员执行: ${hint}"
+    return 1
+  fi
+
+  ccq_ui_warning "安装 Git 需要以 sudo 执行系统包管理命令：" >&2
+  case "${pm}" in
+    apt) ccq_ui_info "  sudo apt-get update" >&2; ccq_ui_info "  sudo apt-get install -y git" >&2 ;;
+    dnf) ccq_ui_info "  sudo dnf install -y git" >&2 ;;
+    pacman) ccq_ui_info "  sudo pacman -S --needed --noconfirm git" >&2 ;;
+  esac
+  choice="$(ccq_show_single_select_menu "是否继续通过 sudo 安装 Git？" 0 "是，继续" "否，稍后手动安装")" || choice=1
+  if [ "${choice}" != "0" ]; then
+    CCQ_PM_STATUS=ManualRequired
+    CCQ_PM_ERROR="已取消自动安装；请手动执行: ${hint}"
+    return 1
+  fi
+
+  case "${pm}" in
+    apt)
+      if ! ccq_sudo_run apt-get update || ! ccq_sudo_run apt-get install -y git; then
+        CCQ_PM_STATUS=Failed
+        CCQ_PM_ERROR="APT 安装 git 失败；请手动执行: ${hint}"
+        return 1
+      fi
+      ;;
+    dnf)
+      if ! ccq_sudo_run dnf install -y git; then
+        CCQ_PM_STATUS=Failed
+        CCQ_PM_ERROR="DNF 安装 git 失败；请手动执行: ${hint}"
+        return 1
+      fi
+      ;;
+    pacman)
+      if ! ccq_sudo_run pacman -S --needed --noconfirm git; then
+        # 常见原因是本地包数据库过期；不替用户做全系统升级。
+        CCQ_PM_STATUS=ManualRequired
+        CCQ_PM_ERROR="pacman 安装 git 失败；请先完成系统升级后手动执行: ${hint}"
+        return 1
+      fi
+      ;;
+  esac
+  return 0
+}
+
+
+# ─── 来自: linux/core/Registry.sh ────────────────────────────────────────
+
+# Registry.sh - Linux 步骤注册表
+# 功能: Basic 分组的步骤字段、步骤文件清单与执行顺序。
+# 说明: Linux 安装链的目的就是装 Node.js，因此不能像 macOS 那样用 node 读取 steps.json；
+#       本文件是 steps.json 的 Bash 快照，StepId/Order/函数名/LinuxStepFile 由
+#       installer/contracts/Test-Contracts.ps1 断言与 steps.json 一致。
+# 注意: core 在 ccq_source_file 函数内 source，顶层不得用 declare/local（会变成局部变量）。
+
+CCQ_REGISTRY_STEP_IDS=(NodeJS Git)
+
+ccq_get_group_step_ids() {
+  case "${1:-}" in
+    Basic) printf '%s\n' "${CCQ_REGISTRY_STEP_IDS[@]}" ;;
+    *) return 1 ;;
+  esac
+}
+
+ccq_get_group_field() {
+  case "${1:-}:${2:-}" in
+    Basic:Label) printf '基础环境' ;;
+    Basic:Description) printf 'ccq 运行所需基础环境' ;;
+    Basic:InstallMode) printf 'OneClickOnly' ;;
+    *) return 1 ;;
+  esac
+}
+
+ccq_get_step_field() {
+  local step_id="${1:-}" field="${2:-}"
+  case "${step_id}:${field}" in
+    NodeJS:StepName) printf 'Node.js' ;;
+    NodeJS:Description) printf '现有 node/npm 达标则跳过；否则在当前 nvm/fnm 内安装 LTS，无 provider 时通过 nvm 官方脚本兜底' ;;
+    NodeJS:Order) printf '10' ;;
+    Git:StepName) printf 'Git' ;;
+    Git:Description) printf '通过发行版包管理器（APT / DNF / Pacman，单条 sudo）安装 Git' ;;
+    Git:Order) printf '20' ;;
+    NodeJS:LinuxStepFile|Git:LinuxStepFile) printf 'linux/steps/%s.sh' "${step_id}" ;;
+    NodeJS:TestFunction|Git:TestFunction) printf 'Test-%sInstalled' "${step_id}" ;;
+    NodeJS:InstallFunction|Git:InstallFunction) printf 'Install-%s' "${step_id}" ;;
+    NodeJS:VerifyFunction|Git:VerifyFunction) printf 'Verify-%s' "${step_id}" ;;
+    NodeJS:SkipIfInstalled|Git:SkipIfInstalled) printf 'true' ;;
+    NodeJS:IsOptional|Git:IsOptional) printf 'false' ;;
+    NodeJS:Dependencies|Git:Dependencies) ;;
+    *) return 1 ;;
+  esac
+}
+
+ccq_get_step_files() {
+  local step_id
+  for step_id in "${CCQ_REGISTRY_STEP_IDS[@]}"; do
+    ccq_get_step_field "${step_id}" LinuxStepFile
+    printf '\n'
+  done
+}
+
+ccq_get_execution_order() {
+  # Basic 步骤无依赖，按 Order 排序即可。
+  local step_id
+  for step_id in "$@"; do
+    printf '%s %s\n' "$(ccq_get_step_field "${step_id}" Order || printf 999)" "${step_id}"
+  done | sort -n | cut -d' ' -f2
+}
+
+
+# ─── 来自: linux/core/Bootstrap.sh ────────────────────────────────────────
+
+# Bootstrap.sh - Linux 步骤生命周期调度
+# 功能: Test → Install → Verify 生命周期与 Pending/Running/Success/Failed/Skipped/Unsupported/ManualRequired 状态
+# 说明: step 函数以 stdout 输出 key=value 结果（Success / Status / Version / ErrorMessage），
+#       命令输出与交互分别走 stderr 与 /dev/tty。
+
+CCQ_STATE_STEP_IDS=()
+CCQ_STATE_STEP_STATUSES=()
+CCQ_STATE_STEP_DATA=()
+
+ccq_state_index_of() {
+  local i
+  for i in "${!CCQ_STATE_STEP_IDS[@]}"; do
+    if [ "${CCQ_STATE_STEP_IDS[i]}" = "${1:-}" ]; then
+      printf '%s' "${i}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ccq_state_set_step() {
+  local step_id="$1" step_status="$2" data="${3:-}" idx
+  if idx="$(ccq_state_index_of "${step_id}")"; then
+    CCQ_STATE_STEP_STATUSES[idx]="${step_status}"
+    CCQ_STATE_STEP_DATA[idx]="${data}"
+  else
+    CCQ_STATE_STEP_IDS+=("${step_id}")
+    CCQ_STATE_STEP_STATUSES+=("${step_status}")
+    CCQ_STATE_STEP_DATA+=("${data}")
+  fi
+}
+
+ccq_state_get_status() {
+  local idx
+  idx="$(ccq_state_index_of "${1:-}")" || return 1
+  printf '%s\n' "${CCQ_STATE_STEP_STATUSES[idx]}"
+}
+
+ccq_state_get_data() {
+  local idx
+  idx="$(ccq_state_index_of "${1:-}")" || return 1
+  printf '%s\n' "${CCQ_STATE_STEP_DATA[idx]}"
+}
+
+ccq_normalize_success() {
+  case "${1:-}" in
+    true|True|TRUE|1|yes|Yes|success|Success) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+ccq_capture_step_function() {
+  # 运行 step 函数并把 stdout 收集到 CCQ_CAPTURED_STEP_OUTPUT；stderr 直接给用户看。
+  local function_name="${1:-}" output_file cmd_status
+  CCQ_CAPTURED_STEP_OUTPUT=""
+  if ! declare -F "${function_name}" >/dev/null 2>&1; then
+    return 127
+  fi
+  output_file="$(mktemp "${TMPDIR:-/tmp}/ccq-step.XXXXXX")" || return 1
+  "${function_name}" >"${output_file}"
+  cmd_status=$?
+  CCQ_CAPTURED_STEP_OUTPUT="$(cat "${output_file}" 2>/dev/null || true)"
+  rm -f "${output_file}"
+  return "${cmd_status}"
+}
+
+ccq_invoke_step_lifecycle() {
+  local step_id="${1:-}" step_name test_function install_function verify_function skip_if_installed
+  local test_result install_result install_status result_status verify_result verify_status
+  [ -n "${step_id}" ] || return 1
+  step_name="$(ccq_get_step_field "${step_id}" StepName || printf '%s' "${step_id}")"
+  test_function="$(ccq_get_step_field "${step_id}" TestFunction || true)"
+  install_function="$(ccq_get_step_field "${step_id}" InstallFunction || true)"
+  verify_function="$(ccq_get_step_field "${step_id}" VerifyFunction || true)"
+  skip_if_installed="$(ccq_get_step_field "${step_id}" SkipIfInstalled || printf 'false')"
+
+  ccq_state_set_step "${step_id}" Running
+
+  if [ -n "${test_function}" ] && ccq_capture_step_function "${test_function}"; then
+    test_result="${CCQ_CAPTURED_STEP_OUTPUT}"
+    if ccq_normalize_success "$(ccq_result_field_from_text "${test_result}" IsInstalled)" &&
+      ccq_normalize_success "${skip_if_installed}"; then
+      ccq_state_set_step "${step_id}" Skipped "${test_result}"
+      ccq_show_step_progress "${step_name}" Skipped "组件已安装，跳过安装"
+      return 0
+    fi
+  fi
+
+  if ! declare -F "${install_function}" >/dev/null 2>&1; then
+    ccq_state_set_step "${step_id}" ManualRequired "ErrorMessage=安装函数不存在: ${install_function}"
+    ccq_show_step_progress "${step_name}" ManualRequired "ErrorMessage=安装函数不存在"
+    return 1
+  fi
+
+  ccq_capture_step_function "${install_function}"
+  install_status=$?
+  install_result="${CCQ_CAPTURED_STEP_OUTPUT}"
+  if [ "${install_status}" -ne 0 ] || ! ccq_normalize_success "$(ccq_result_field_from_text "${install_result}" Success)"; then
+    result_status="$(ccq_result_field_from_text "${install_result}" Status || true)"
+    case "${result_status}" in
+      Unsupported|ManualRequired) ccq_state_set_step "${step_id}" "${result_status}" "${install_result}" ;;
+      *) ccq_state_set_step "${step_id}" Failed "${install_result}" ;;
+    esac
+    ccq_show_step_progress "${step_name}" "$(ccq_state_get_status "${step_id}")" "${install_result}"
+    return 1
+  fi
+
+  if [ -n "${verify_function}" ]; then
+    ccq_capture_step_function "${verify_function}"
+    verify_status=$?
+    verify_result="${CCQ_CAPTURED_STEP_OUTPUT}"
+    if [ "${verify_status}" -ne 0 ] || ! ccq_normalize_success "$(ccq_result_field_from_text "${verify_result}" Success)"; then
+      ccq_state_set_step "${step_id}" Failed "${verify_result}"
+      ccq_show_step_progress "${step_name}" Failed "${verify_result}"
+      return 1
+    fi
+  fi
+
+  ccq_state_set_step "${step_id}" Success "${install_result}"
+  ccq_show_step_progress "${step_name}" Success ""
+}
+
+
+# ─── 来自: linux/steps/NodeJS.sh ────────────────────────────────────────
+
+# NodeJS.sh - Linux Node.js 安装步骤
+# 功能: runtime-first：现有 node/npm 达标即复用；当前 provider 为 nvm/fnm 时只在其内安装 LTS；
+#       否则用固定版本的 nvm 官方脚本做用户级兜底。不使用发行版包管理器安装系统 Node，
+#       不迁移 provider、PATH 或全局 npm 包。
+
+: "${CCQ_REQUIRED_NODE_MAJOR:=20}"
+# nvm 官方脚本版本唯一声明处（与 macOS 兜底版本保持一致）。
+CCQ_NVM_VERSION="v0.40.4"
+: "${CCQ_NVM_INSTALL_URL:=https://raw.githubusercontent.com/nvm-sh/nvm/${CCQ_NVM_VERSION}/install.sh}"
+
+ccq_nodejs_result() {
+  printf 'IsInstalled=%s\nVersion=%s\nMessage=%s\n' "${1:-false}" "${2:-}" "${3:-}"
+}
+
+ccq_nodejs_install_result() {
+  printf 'Success=%s\nVersion=%s\nNpmVersion=%s\nErrorMessage=%s\n' "${1:-false}" "${2:-}" "${3:-}" "${4:-}"
+}
+
+ccq_nodejs_versions_ok() {
+  ccq_command_exists node && ccq_command_exists npm || return 1
+  local node_version node_major
+  node_version="$(node --version 2>/dev/null || true)"
+  node_version="${node_version#v}"
+  node_major="${node_version%%.*}"
+  [[ "${node_major}" =~ ^[0-9]+$ ]] && [ "${node_major}" -ge "${CCQ_REQUIRED_NODE_MAJOR}" ]
+}
+
+ccq_nodejs_nvm_dir() {
+  if [ -n "${NVM_DIR:-}" ]; then
+    printf '%s\n' "${NVM_DIR%/}"
+  elif [ -n "${XDG_CONFIG_HOME:-}" ]; then
+    printf '%s\n' "${XDG_CONFIG_HOME%/}/nvm"
+  else
+    printf '%s\n' "${HOME}/.nvm"
+  fi
+}
+
+ccq_nodejs_load_nvm() {
+  local nvm_script
+  NVM_DIR="$(ccq_nodejs_nvm_dir)"
+  export NVM_DIR
+  nvm_script="${NVM_DIR}/nvm.sh"
+  [ -s "${nvm_script}" ] && [ -r "${nvm_script}" ] || return 1
+  . "${nvm_script}" >/dev/null 2>&1 || return 1
+  declare -F nvm >/dev/null 2>&1
+}
+
+ccq_nodejs_active_provider() {
+  # 按当前 node 所在路径判断 provider；没有 node 但 nvm 可加载时视为 nvm。
+  local node_path
+  node_path="$(command -v node 2>/dev/null || true)"
+  case "${node_path}" in
+    */.fnm/*|*/fnm/node-versions/*|*/fnm_multishells/*) printf 'fnm' ;;
+    */.nvm/*|*/nvm/versions/node/*) printf 'nvm' ;;
+    '')
+      if ccq_nodejs_load_nvm; then printf 'nvm'
+      elif ccq_command_exists fnm; then printf 'fnm'
+      else printf 'none'
+      fi
+      ;;
+    *) printf 'other' ;;
+  esac
+}
+
+ccq_nodejs_install_nvm_official() {
+  ccq_nodejs_load_nvm && return 0
+  if ! ccq_command_exists curl && ! ccq_command_exists wget; then
+    CCQ_NODEJS_ERROR="curl 与 wget 均不可用，无法下载 nvm 官方安装脚本"
+    return 1
+  fi
+  ccq_ui_info "正在通过 nvm ${CCQ_NVM_VERSION} 官方脚本安装 nvm..." >&2
+  if ! (
+    set -o pipefail
+    if ccq_command_exists curl; then
+      curl -fsSL "${CCQ_NVM_INSTALL_URL}" | bash
+    else
+      wget -qO- "${CCQ_NVM_INSTALL_URL}" | bash
+    fi
+  ) >&2; then
+    CCQ_NODEJS_ERROR="nvm 官方安装脚本执行失败"
+    return 1
+  fi
+  if ! ccq_nodejs_load_nvm; then
+    CCQ_NODEJS_ERROR="nvm 已安装但当前会话未能加载；请重新打开终端或执行 source \"$(ccq_nodejs_nvm_dir)/nvm.sh\""
+    return 1
+  fi
+}
+
+ccq_nodejs_install_via_nvm() {
+  ccq_run_native_command nvm install --lts || { CCQ_NODEJS_ERROR="nvm install --lts 失败"; return 1; }
+  ccq_run_native_command nvm alias default 'lts/*' || { CCQ_NODEJS_ERROR="nvm alias default 失败"; return 1; }
+  ccq_run_native_command nvm use default || { CCQ_NODEJS_ERROR="nvm use default 失败"; return 1; }
+}
+
+ccq_nodejs_install_via_fnm() {
+  ccq_run_native_command fnm install --lts || { CCQ_NODEJS_ERROR="fnm install --lts 失败"; return 1; }
+  ccq_run_native_command fnm default lts-latest || { CCQ_NODEJS_ERROR="fnm default lts-latest 失败"; return 1; }
+  ccq_refresh_path
+}
+
+Test-NodeJSInstalled() {
+  if ccq_nodejs_versions_ok; then
+    ccq_nodejs_result true "$(node --version 2>/dev/null)" "Node.js 与 npm 已就绪"
+    return 0
+  fi
+  ccq_refresh_path
+  if ccq_nodejs_versions_ok; then
+    ccq_nodejs_result true "$(node --version 2>/dev/null)" "Node.js 与 npm 已就绪"
+    return 0
+  fi
+  ccq_nodejs_result false "$(node --version 2>/dev/null || true)" "Node.js 未安装、npm 不可用或版本低于 v${CCQ_REQUIRED_NODE_MAJOR}"
+}
+
+Install-NodeJS() {
+  local provider
+  CCQ_NODEJS_ERROR=""
+  ccq_refresh_path
+  if ccq_nodejs_versions_ok; then
+    ccq_nodejs_install_result true "$(node --version 2>/dev/null)" "$(npm --version 2>/dev/null)" ""
+    return 0
+  fi
+
+  provider="$(ccq_nodejs_active_provider)"
+  case "${provider}" in
+    fnm)
+      ccq_ui_info "检测到 fnm，将在 fnm 内安装 Node.js LTS" >&2
+      ccq_nodejs_install_via_fnm
+      ;;
+    nvm)
+      ccq_ui_info "检测到 nvm，将在 nvm 内安装 Node.js LTS" >&2
+      ccq_nodejs_load_nvm && ccq_nodejs_install_via_nvm
+      ;;
+    *)
+      ccq_nodejs_install_nvm_official && ccq_nodejs_install_via_nvm
+      ;;
+  esac || {
+    ccq_nodejs_install_result false "" "" "${CCQ_NODEJS_ERROR:-安装 Node.js LTS 失败}"
+    return 1
+  }
+
+  ccq_refresh_path
+  if ! ccq_nodejs_versions_ok; then
+    ccq_nodejs_install_result false "$(node --version 2>/dev/null || true)" "$(npm --version 2>/dev/null || true)" "Node.js 安装后验证失败"
+    return 1
+  fi
+  ccq_nodejs_install_result true "$(node --version 2>/dev/null)" "$(npm --version 2>/dev/null)" ""
+}
+
+Verify-NodeJS() {
+  if ccq_nodejs_versions_ok; then
+    printf 'Success=true\nErrorMessage=\n'
+    return 0
+  fi
+  printf 'Success=false\nErrorMessage=Node.js 或 npm 验证失败\n'
+  return 1
+}
+
+
+# ─── 来自: linux/steps/Git.sh ────────────────────────────────────────
+
+# Git.sh - Linux Git 安装和基础配置
+# 功能: 复用达标 git；否则按发行版家族的包管理器（单条 sudo）安装，安装后以 git --version 校验，
+#       并应用与 Windows/macOS 一致的推荐 global config（不覆盖用户已有值）。
+
+: "${CCQ_MIN_GIT_VERSION:=2.30.0}"
+
+ccq_git_install_result() {
+  printf 'Success=%s\nVersion=%s\nErrorMessage=%s\n' "${1:-false}" "${2:-}" "${3:-}"
+}
+
+ccq_git_version() {
+  git --version 2>/dev/null | head -n 1 || true
+}
+
+ccq_git_version_ok() {
+  ccq_command_exists git || return 1
+  local version
+  version="$(ccq_git_version)"
+  version="${version#git version }"
+  version="${version%% *}"
+  [ -n "${version}" ] && ccq_linux_version_ge "${version}" "${CCQ_MIN_GIT_VERSION}"
+}
+
+ccq_git_config_value() {
+  git config --global --get "$1" 2>/dev/null || true
+}
+
+ccq_git_has_required_config() {
+  [ "$(ccq_git_config_value init.defaultBranch)" = "main" ] && [ "$(ccq_git_config_value core.quotepath)" = "false" ]
+}
+
+ccq_git_apply_config() {
+  # 推荐配置键值对与 Windows/macOS 对齐；已有用户值不覆盖。
+  local key value existing failed=0
+  while read -r key value; do
+    existing="$(ccq_git_config_value "${key}")"
+    [ -n "${existing}" ] && continue
+    git config --global "${key}" "${value}" 2>/dev/null || failed=1
+  done <<'EOF'
+init.defaultBranch main
+core.quotepath false
+i18n.commit.encoding utf-8
+i18n.logoutputencoding utf-8
+EOF
+  [ "${failed}" -eq 0 ]
+}
+
+Test-GitInstalled() {
+  if ccq_git_version_ok && ccq_git_has_required_config; then
+    printf 'IsInstalled=true\nVersion=%s\nMessage=Git 已安装并完成推荐配置\n' "$(ccq_git_version)"
+  else
+    printf 'IsInstalled=false\nVersion=%s\nMessage=Git 未安装、版本过低或推荐配置未完成\n' "$(ccq_git_version)"
+  fi
+}
+
+Install-Git() {
+  if ! ccq_git_version_ok; then
+    if ! ccq_pm_install_git "${CCQ_LINUX_PM:-}"; then
+      printf 'Success=false\nStatus=%s\nErrorMessage=%s\n' "${CCQ_PM_STATUS:-Failed}" "${CCQ_PM_ERROR:-Git 安装失败}"
+      return 1
+    fi
+    hash -r 2>/dev/null || true
+    # postflight：包管理命令成功不等于可用，必须能运行 git --version。
+    if ! ccq_git_version_ok; then
+      ccq_git_install_result false "$(ccq_git_version)" "包管理器执行成功但 git --version 校验失败"
+      return 1
+    fi
+  fi
+
+  if ! ccq_git_apply_config; then
+    ccq_git_install_result false "$(ccq_git_version)" "Git 推荐配置写入失败"
+    return 1
+  fi
+  ccq_git_install_result true "$(ccq_git_version)" ""
+}
+
+Verify-Git() {
+  if ccq_git_version_ok && ccq_git_has_required_config; then
+    printf 'Success=true\nErrorMessage=\n'
+    return 0
+  fi
+  printf 'Success=false\nErrorMessage=Git 安装或推荐配置验证失败\n'
+  return 1
+}
+
+
+# ─── 来自: linux/Install.sh ────────────────────────────────────────
+
+# Install.sh - Linux 安装入口
+# 功能: 前置检测（发行版/权限/TTY）、Basic 步骤（Node.js / Git）与 ccq 下载 handoff
+# 用法: bash installer/linux/Install.sh [--list-steps] [--output-mode <Normal|Developer>] [--help]
+
+if [ -z "${BASH_VERSION:-}" ]; then
+  printf '%s\n' 'Install.sh 需要 bash 执行：bash installer/linux/Install.sh' >&2
+  exit 1
+fi
+
+if [ -n "${CCQ_STREAMED_SCRIPT_PATH:-}" ]; then
+  trap 'rm -f "${CCQ_STREAMED_SCRIPT_PATH}"' EXIT
+fi
+
+set +x 2>/dev/null || true
+set -o pipefail
+
+CCQ_LINUX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CCQ_INSTALLER_ROOT="$(cd "${CCQ_LINUX_ROOT}/.." && pwd)"
+export CCQ_LINUX_ROOT CCQ_INSTALLER_ROOT
+
+CCQ_PARAM_LIST_STEPS=0
+CCQ_PARAM_OUTPUT_MODE="normal"
+: "${CCQ_RELEASE_TAG:=__CCQ_RELEASE_TAG__}"
+
+ccq_usage() {
+  cat <<'EOF'
+Usage: Install.sh [OPTIONS]
+
+Options:
+  -ListSteps, --list-steps        列出已注册步骤后退出
+  -OutputMode, --output-mode <Normal|Developer>
+  -h, --help                     显示帮助
+
+需在交互式终端中以普通用户运行；安装系统包时会单独调用 sudo。
+EOF
+}
+
+ccq_parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -ListSteps|--list-steps)
+        CCQ_PARAM_LIST_STEPS=1
+        shift
+        ;;
+      -OutputMode|--output-mode)
+        CCQ_PARAM_OUTPUT_MODE="${2:-normal}"
+        shift 2 || shift
+        ;;
+      -h|--help)
+        ccq_usage
+        exit 0
+        ;;
+      *)
+        printf '未知参数: %s\n' "$1" >&2
+        ccq_usage >&2
+        exit 2
+        ;;
+    esac
+  done
+  case "${CCQ_PARAM_OUTPUT_MODE,,}" in
+    developer) CCQ_PARAM_OUTPUT_MODE="developer" ;;
+    *) CCQ_PARAM_OUTPUT_MODE="normal" ;;
+  esac
+}
+
+# core 加载顺序唯一声明在 core/Load.sh。
+
+ccq_load_step_modules() {
+  [ "${CCQ_BUILT_MODE:-0}" = "1" ] && return 0
+  local step_file full_path
+  for step_file in $(ccq_get_step_files); do
+    full_path="${CCQ_INSTALLER_ROOT}/${step_file}"
+    if [ ! -f "${full_path}" ]; then
+      printf '无法加载 Linux 步骤模块: %s\n' "${step_file}" >&2
+      return 1
+    fi
+  done
+}
+
+ccq_show_step_list() {
+  local step_id index=0
+  ccq_ui_primary "已注册的安装步骤："
+  printf '\n'
+  ccq_ui_primary "─── $(ccq_get_group_field Basic Label)（$(ccq_get_group_field Basic Description)）───"
+  printf '\n'
+  for step_id in $(ccq_get_group_step_ids Basic); do
+    index=$((index + 1))
+    ccq_ui_info "  ${index}. [必选] $(ccq_get_step_field "${step_id}" StepName)"
+    ccq_ui_dim "       $(ccq_get_step_field "${step_id}" Description)"
+    printf '\n'
+  done
+}
+
+ccq_preflight() {
+  # 只读检测全部通过后才要求 TTY；任何失败都发生在系统修改之前。
+  if ! ccq_linux_require_runtime_user; then
+    ccq_ui_danger "${CCQ_LAST_PLATFORM_ERROR}"
+    return 1
+  fi
+  if ! ccq_linux_detect_distribution; then
+    ccq_ui_danger "不支持的 Linux 环境: ${CCQ_LINUX_REASON}"
+    ccq_ui_info "受支持基线: Ubuntu 24.04 / Debian 13 / Fedora 44 / CentOS Stream 10 / Arch Linux"
+    ccq_ui_info "可手动安装 Node.js ${CCQ_REQUIRED_NODE_MAJOR:-20}+ 与 Git 后，用 download-tui.sh 只安装 ccq"
+    return 1
+  fi
+  if ! ccq_linux_check_binary_runtime; then
+    ccq_ui_danger "${CCQ_LAST_PLATFORM_ERROR}"
+    return 1
+  fi
+  if ! ccq_command_exists curl && ! ccq_command_exists wget; then
+    ccq_ui_danger "缺少 curl 或 wget，无法下载 nvm 与 ccq；请先通过发行版包管理器安装 curl"
+    return 1
+  fi
+  ccq_command_exists gzip || ccq_ui_warning "未检测到 gzip，ccq 将直接下载未压缩资产"
+  ccq_require_tty || return 1
+
+  if [ "${CCQ_LINUX_CLASS}" = "official" ]; then
+    ccq_ui_success "检测到 ${CCQ_OS_PRETTY_NAME:-${CCQ_OS_NAME}}（正式支持，包管理器: ${CCQ_LINUX_PM}）"
+    return 0
+  fi
+
+  ccq_ui_warning "⚠ ${CCQ_OS_PRETTY_NAME:-${CCQ_OS_NAME:-${CCQ_OS_ID}}}：${CCQ_LINUX_REASON}"
+  ccq_ui_warning "该环境未经验证，仅尽力兼容（包管理器: ${CCQ_LINUX_PM}），不承诺修复兼容问题"
+  local choice
+  choice="$(ccq_show_single_select_menu "是否在未经验证的环境中继续？" 1 "是，继续安装" "否，退出")" || choice=1
+  [ "${choice}" = "0" ]
+}
+
+ccq_confirm_basic_install_plan() {
+  ccq_ui_primary "本次将检查/安装以下基础环境组件："
+  printf '\n'
+  ccq_ui_info "  1. Node.js（已达标则复用；否则在现有 nvm/fnm 内安装，或用 nvm 官方脚本安装到用户目录）"
+  ccq_ui_info "  2. Git（缺失时通过 ${CCQ_LINUX_PM} 安装，需要 sudo）"
+  ccq_ui_info "  3. ccq 管理控制台（安装到 ~/.local/bin/ccq，末尾确认下载）"
+  ccq_ui_dim "     Claude Code / Codex / Pi 将在 ccq「工具管理」中按需安装"
+  printf '\n'
+
+  local choice
+  choice="$(ccq_show_single_select_menu "确认开始安装基础环境？" 0 "是，开始安装" "否，取消")" || return 1
+  [ "${choice}" = "0" ]
+}
+
+ccq_run_basic_steps() {
+  # 返回 0 = 全部 Success/Skipped；否则 1（ManualRequired/Unsupported/Failed 都不得伪装成功）。
+  local ordered=() step_id index=0 rows=() step_status version not_ok=0
+  read -r -a ordered <<<"$(ccq_get_execution_order $(ccq_get_group_step_ids Basic) | tr '\n' ' ')"
+
+  for step_id in "${ordered[@]}"; do
+    index=$((index + 1))
+    printf '\n'
+    ccq_ui_primary "步骤 ${index} / ${#ordered[@]}: $(ccq_get_step_field "${step_id}" StepName)"
+    ccq_invoke_step_lifecycle "${step_id}" || true
+  done
+
+  printf '\n'
+  for step_id in "${ordered[@]}"; do
+    step_status="$(ccq_state_get_status "${step_id}" || printf 'Pending')"
+    version="$(ccq_result_field_from_text "$(ccq_state_get_data "${step_id}")" Version || true)"
+    rows+=("$(ccq_get_step_field "${step_id}" StepName)"$'\t'"$(ccq_summary_status_text "${step_status}")"$'\t'"${version:--}")
+    case "${step_status}" in Success|Skipped) ;; *) not_ok=$((not_ok + 1)) ;; esac
+  done
+  ccq_show_install_summary "${rows[@]}"
+
+  if [ "${not_ok}" -gt 0 ]; then
+    ccq_ui_warning "有 ${not_ok} 个基础环境步骤未完成；请按上方提示处理后重新运行安装器"
+    return 1
+  fi
+  return 0
+}
+
+ccq_main() {
+  ccq_parse_args "$@"
+  ccq_load_core || return 1
+  ccq_load_step_modules || return 1
+
+  if [ "${CCQ_PARAM_LIST_STEPS}" = "1" ]; then
+    ccq_show_step_list
+    return 0
+  fi
+
+  ccq_show_banner "Claude Code Quickstart"
+  ccq_preflight || return 1
+
+  if ! ccq_confirm_basic_install_plan; then
+    ccq_ui_info "安装已取消"
+    return 0
+  fi
+
+  local steps_status=0
+  ccq_run_basic_steps || steps_status=1
+
+  # 完整 install 沿用 macOS 语义：ccq 下载失败只告警；退出码反映基础环境是否完成。
+  printf '\n'
+  ccq_confirm_executable_download install || true
+  return "${steps_status}"
+}
+
+
+
+ccq_main "$@"
+CCQ_LINUX_PAYLOAD_a2741b5553aa
+    ;;
+  *)
+    rm -f "${ccq_payload}"
+    printf '不支持的平台: %s；本脚本仅支持 macOS 与 Linux，Windows 请使用 install.ps1 / download-tui.ps1\n' "${ccq_os:-unknown}" >&2
+    exit 1
+    ;;
+esac
+if [ -z "${ccq_interp}" ] || [ ! -x "${ccq_interp}" ]; then
+  rm -f "${ccq_payload}"
+  printf '缺少解释器: %s 需要 %s\n' "${ccq_os}" "${ccq_interp:-bash}" >&2
+  exit 1
+fi
+# payload 内的 CCQ_STREAMED_SCRIPT_PATH trap 负责退出时删除临时文件。
+export CCQ_STREAMED_SCRIPT_PATH="${ccq_payload}"
+exec "${ccq_interp}" "${ccq_payload}" "$@"

@@ -86,7 +86,7 @@ export async function publishRelease({directory, repository, tag, token, fetch: 
 		'Set-ExecutionPolicy Bypass -Scope Process -Force',
 		`irm '${rawBase}/install.ps1' | iex`,
 		'```',
-		'macOS 完整安装：',
+		'macOS / Linux 完整安装（Linux 请用普通用户运行）：',
 		'```sh',
 		`curl -fsSL "${rawBase}/install.sh" | bash`,
 		'```',
@@ -95,7 +95,7 @@ export async function publishRelease({directory, repository, tag, token, fetch: 
 		`irm '${rawBase}/download-tui.ps1' | iex`,
 		'```',
 		'```sh',
-		`curl -fsSL "${rawBase}/download-tui.zsh" | zsh`,
+		`curl -fsSL "${rawBase}/download-tui.sh" | bash`,
 		'```',
 		'旧 releases/latest/download/install.* 与 download-ccq.* 入口请改用以上 Raw 命令。已有 ccq 请运行 `ccq update`。'
 	].join('\n');
