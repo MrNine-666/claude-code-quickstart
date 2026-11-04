@@ -249,7 +249,8 @@ export async function getInstalledSkills(
 	const lockMetadata = scope === 'global' ? await readGlobalSkillLockMetadata() : new Map<string, SkillInstallMetadata>();
 	const records: InstalledSkill[] = [];
 	for (const item of parsed) {
-		if (!isRecord(item)) {
+		// lock 中有记录但磁盘已不存在（path 为 null），不算已安装。
+		if (!isRecord(item) || item.status === 'missing') {
 			continue;
 		}
 

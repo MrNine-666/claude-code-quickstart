@@ -1,5 +1,5 @@
 import {describe, expect, test} from 'bun:test';
-import {groupInstalledSkillItems, type SkillsCliListRecord} from '../../src/core/skills-installed.js';
+import {groupInstalledSkillItems, parseSkillsListJson, type SkillsCliListRecord} from '../../src/core/skills-installed.js';
 
 function record(fields: Partial<SkillsCliListRecord> = {}): SkillsCliListRecord {
 	return {
@@ -65,5 +65,14 @@ describe('导入 Skills 的来源解析', () => {
 		expect(items).toHaveLength(2);
 		expect(new Set(items.map(item => item.id)).size).toBe(2);
 		expect(items.every(item => item.provenance.kind === 'unknown' && item.projections.length === 1)).toBe(true);
+	});
+});
+
+describe('Skills list JSON 解析', () => {
+	test('跳过 status=missing 的记录，其它 path 非字符串仍报错', () => {
+		const missing = {name: 'antd', path: null, scope: 'global', agents: [], status: 'missing'};
+		const result = parseSkillsListJson([record(), missing]);
+		expect(result).toEqual({ok: true, records: [record()]});
+		expect(parseSkillsListJson([{...missing, status: 'tracked'}])).toMatchObject({ok: false});
 	});
 });

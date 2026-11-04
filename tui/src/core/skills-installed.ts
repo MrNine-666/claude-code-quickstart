@@ -219,6 +219,11 @@ export function parseSkillsListJson(parsed: unknown): SkillsListParseResult {
 			return {ok: false, error: `Skills 列表检测失败：第 ${index} 条记录的 name 无效`};
 		}
 
+		// lock 中有记录但磁盘已不存在（path 为 null），不算已安装。
+		if (item.status === 'missing') {
+			continue;
+		}
+
 		if (typeof item.path !== 'string') {
 			return {ok: false, error: `Skills 列表检测失败：第 ${index} 条记录的 path 无效`};
 		}
