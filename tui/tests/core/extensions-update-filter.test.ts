@@ -9,13 +9,14 @@ function item(name: string, current: string, latest: string): PiExtensionPackage
 }
 function press(key: string, installed: readonly PiExtensionPackage[], searchResults?: readonly PiExtensionPackage[]) {
 	const actions: PendingExtensionAction[] = [];
+	const confirmations: PendingExtensionAction[] = [];
 	let skipped = 0;
 	const handlers: ExtensionsViewInputHandlers = {
 		dispatch: () => {},
 		onSearch: () => {},
 		onOpenExternal: () => {},
-		onOpenConfirm: action => actions.push(action),
-		onRunConfirm: () => {},
+		onOpenConfirm: action => confirmations.push(action),
+		onRunConfirm: action => actions.push(action),
 		onAlreadyCurrent: () => {
 			skipped += 1;
 		},
@@ -28,7 +29,7 @@ function press(key: string, installed: readonly PiExtensionPackage[], searchResu
 		...(searchResults ? {query: 'test', searchResults} : {})
 	};
 	handleExtensionsKey({name: key, preventDefault: () => {}} as unknown as KeyEvent, state, handlers, installed);
-	return {actions, skipped};
+	return {actions, confirmations, skipped};
 }
 
 describe('extension update eligibility', () => {
@@ -50,13 +51,38 @@ describe('extension update eligibility', () => {
 		const unknown = item('unknown', '', '2.0.0');
 		const offline = item('offline', '1.0.0', '');
 		const result = press('a', [newer, item('current', '1.0.0', '1.0.0'), item('ahead', '3.0.0', '2.0.0'), unknown, offline]);
+		expect(result.confirmations).toEqual([]);
 		expect(result.actions).toEqual([
 			{kind: 'update-all', targets: [newer, unknown, offline].map(({name, source}) => ({name, source}))}
 		]);
 	});
 	test('all-current single/all update never opens a mutation', () => {
 		const current = item('current', '1.0.0', '1.0.0');
-		for (const key of ['a', 'enter']) expect(press(key, [current])).toEqual({actions: [], skipped: 1});
+		for (const key of ['a', 'enter']) expect(press(key, [current])).toEqual({actions: [], confirmations: [], skipped: 1});
+	});
+	test('single update runs without confirmation', () => {
+		const target = item('extension', '1.0.0', '2.0.0');
+		expect(press('enter', [target])).toEqual({
+			actions: [{kind: 'update', name: target.name, source: target.source}],
+			confirmations: [],
+			skipped: 0
+		});
+	});
+	test('install runs without confirmation', () => {
+		const target = {...item('extension', '', '2.0.0'), installed: false};
+		expect(press('enter', [], [target])).toEqual({
+			actions: [{kind: 'install', name: target.name, source: target.source}],
+			confirmations: [],
+			skipped: 0
+		});
+	});
+	test('remove still requires confirmation', () => {
+		const target = item('extension', '1.0.0', '2.0.0');
+		expect(press('d', [target])).toEqual({
+			actions: [],
+			confirmations: [{kind: 'remove', name: target.name, source: target.source}],
+			skipped: 0
+		});
 	});
 	test('single unknown version remains eligible', () => {
 		const unknown = item('unknown', '', '2.0.0');
@@ -66,6 +92,6 @@ describe('extension update eligibility', () => {
 		const local = {...item('extension', '1.0.0', '1.0.0'), source: 'npm:extension@^1.0.0'};
 		const remote = {...local, installed: false, installedVersion: undefined, source: 'npm:extension', version: '2.0.0'};
 		expect(press('enter', [local], [remote]).actions).toEqual([{kind: 'update', name: local.name, source: local.source}]);
-		expect(press('enter', [local], [{...remote, version: '1.0.0'}])).toEqual({actions: [], skipped: 1});
+		expect(press('enter', [local], [{...remote, version: '1.0.0'}])).toEqual({actions: [], confirmations: [], skipped: 1});
 	});
 });

@@ -102,7 +102,7 @@ export function handleExtensionsKey(
 			handlers.onAlreadyCurrent?.();
 			return;
 		}
-		handlers.onOpenConfirm({
+		handlers.onRunConfirm({
 			kind: 'update-all',
 			targets: targets.map(item => ({name: item.name, source: item.source}))
 		});
@@ -120,7 +120,7 @@ export function handleExtensionsKey(
 			handlers.onAlreadyCurrent?.();
 			return;
 		}
-		handlers.onOpenConfirm({
+		handlers.onRunConfirm({
 			kind: isInstalled ? 'update' : 'install',
 			name: item.name,
 			source: local?.source ?? item.source
